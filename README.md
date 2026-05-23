@@ -124,25 +124,27 @@ Future commercial offerings from Machinise will include hosted dashboard, team a
 
 ## Status
 
-**Pre-v0.1 implementation, v0.2 architecture.** The current scaffold is a working week-2 prototype:
+**Pre-v0.1 implementation, v0.2 architecture. Batches 1 and 2 complete.**
+
+What ships today:
 
 - ✅ Full schema layer for the epistemic chain (Observation, Claim, Evidence, Belief, Decision, Action, Outcome, Revision, Explanation)
 - ✅ Append-only NDJSON event log with monotonic sequence numbers and payload hashes
 - ✅ Two-phase action execution with precondition revalidation
 - ✅ Memory firewall with four orthogonal lifecycle axes and per-axis transition tables
 - ✅ Cognitive core: claim extractors, evidence linker, world model, ingestion orchestrator
-- ✅ Six passing probes:
-  - memory poisoning resistance
-  - epistemic chain smoke test
-  - external document not normal-retrievable
-  - quarantined belief not retrievable
-  - sensitivity ceiling blocks secret belief
-  - auto-observation evidence-quality gate
-- ✅ End-to-end example: action proposal → policy approval → execution → claims → beliefs → world model update
+- ✅ `@orrery/guard` — `wrap()` helper that drives an agent loop through the full trust layer
+- ✅ `@orrery/trace` — `orrery report <session-id>` renders a markdown trust report from any event log
+- ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
+- ✅ Reorganised CLI: `orrery report`, `orrery guard wrap`, `orrery action list/describe`, `orrery trace inspect`, `orrery probe <name>`
+- ✅ Seven passing probes (six pre-existing plus a new `guard-import-no-self-promote` probe enforcing that adapter imports cannot self-promote)
+- ✅ End-to-end examples:
+  - `examples/telenotes-governed-dev/` — full pipeline producing an 11-event audit trail
+  - `examples/doc-insight/` — auto-observation gate demo
+  - `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown coding-agent loop
 
-What's coming in the next four batches:
+What's coming in the next three batches:
 
-- **Batch 2** — Guard + Trace + Memory Firewall adapters as developer-facing packages, with `orrery report` as the primary explanation command
 - **Batch 3** — Thin MCP proxy: wrap an existing coding agent (e.g., Claude Code) and route its tool calls through the Action Kernel
 - **Batch 4** — Harness infrastructure (sentinel base, calibrator, probe pack format)
 - **Batch 5** — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
