@@ -22,7 +22,8 @@
     "probe:quarantine": "bun run research/probes/quarantined-not-retrievable.ts",
     "probe:sensitivity": "bun run research/probes/sensitivity-ceiling.ts",
     "probe:autoobs": "bun run research/probes/auto-observation-gate.ts",
-    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs",
+    "probe:guard-import": "bun run research/probes/guard-import-no-self-promote.ts",
+    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import",
     "orrery": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
