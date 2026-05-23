@@ -35,7 +35,8 @@
     "@orrery/memory-firewall": "workspace:*",
     "@orrery/cognitive-core": "workspace:*",
     "@orrery/adapter-filesystem": "workspace:*",
-    "@orrery/adapter-git": "workspace:*"
+    "@orrery/adapter-git": "workspace:*",
+    "@orrery/trace": "workspace:*"
   },
   "engines": {
     "bun": ">=1.1.0"
