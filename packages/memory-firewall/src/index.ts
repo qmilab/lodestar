@@ -39,3 +39,12 @@ export {
   isTransitionAllowed,
   authoritiesFor,
 } from "./transitions"
+
+export {
+  AdapterImportOptionsSchema,
+  AdapterImportResultSchema,
+  notImplementedFor,
+  type AdapterImportOptions,
+  type AdapterImportResult,
+  type ExternalMemoryAdapter,
+} from "./adapter-contract"
