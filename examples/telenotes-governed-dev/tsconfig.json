@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["./*.ts", "./probes/*.ts"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/event-log" },
+    { "path": "../../packages/action-kernel" },
+    { "path": "../../packages/memory-firewall" },
+    { "path": "../../packages/cognitive-core" },
+    { "path": "../../packages/adapters/filesystem" },
+    { "path": "../../packages/adapters/git" }
+  ]
+}
