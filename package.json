@@ -6,6 +6,7 @@
   "workspaces": [
     "packages/*",
     "packages/adapters/*",
+    "packages/memory-firewall/adapters/*",
     "examples/*"
   ],
   "scripts": {
@@ -37,7 +38,10 @@
     "@orrery/adapter-filesystem": "workspace:*",
     "@orrery/adapter-git": "workspace:*",
     "@orrery/trace": "workspace:*",
-    "@orrery/guard": "workspace:*"
+    "@orrery/guard": "workspace:*",
+    "@orrery/memory-firewall-mem0": "workspace:*",
+    "@orrery/memory-firewall-letta": "workspace:*",
+    "@orrery/memory-firewall-zep": "workspace:*"
   },
   "engines": {
     "bun": ">=1.1.0"

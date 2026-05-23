@@ -14,6 +14,9 @@
         "@orrery/event-log": "workspace:*",
         "@orrery/guard": "workspace:*",
         "@orrery/memory-firewall": "workspace:*",
+        "@orrery/memory-firewall-letta": "workspace:*",
+        "@orrery/memory-firewall-mem0": "workspace:*",
+        "@orrery/memory-firewall-zep": "workspace:*",
         "@orrery/trace": "workspace:*",
         "@types/bun": "latest",
         "typescript": "5.6.3",
@@ -182,6 +185,42 @@
         "typescript": "5.6.3",
       },
     },
+    "packages/memory-firewall/adapters/letta": {
+      "name": "@orrery/memory-firewall-letta",
+      "version": "0.1.0",
+      "dependencies": {
+        "@orrery/core": "workspace:*",
+        "@orrery/memory-firewall": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
+    "packages/memory-firewall/adapters/mem0": {
+      "name": "@orrery/memory-firewall-mem0",
+      "version": "0.1.0",
+      "dependencies": {
+        "@orrery/core": "workspace:*",
+        "@orrery/memory-firewall": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
+    "packages/memory-firewall/adapters/zep": {
+      "name": "@orrery/memory-firewall-zep",
+      "version": "0.1.0",
+      "dependencies": {
+        "@orrery/core": "workspace:*",
+        "@orrery/memory-firewall": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
     "packages/trace": {
       "name": "@orrery/trace",
       "version": "0.1.0",
@@ -240,6 +279,12 @@
     "@orrery/guard": ["@orrery/guard@workspace:packages/guard"],
 
     "@orrery/memory-firewall": ["@orrery/memory-firewall@workspace:packages/memory-firewall"],
+
+    "@orrery/memory-firewall-letta": ["@orrery/memory-firewall-letta@workspace:packages/memory-firewall/adapters/letta"],
+
+    "@orrery/memory-firewall-mem0": ["@orrery/memory-firewall-mem0@workspace:packages/memory-firewall/adapters/mem0"],
+
+    "@orrery/memory-firewall-zep": ["@orrery/memory-firewall-zep@workspace:packages/memory-firewall/adapters/zep"],
 
     "@orrery/trace": ["@orrery/trace@workspace:packages/trace"],
 
