@@ -1,0 +1,21 @@
+{
+  "name": "@orrery-examples/doc-insight",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./index.ts",
+  "scripts": {
+    "start": "bun run index.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@orrery/core": "workspace:*",
+    "@orrery/event-log": "workspace:*",
+    "@orrery/memory-firewall": "workspace:*",
+    "@orrery/cognitive-core": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}

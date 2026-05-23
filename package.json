@@ -1,0 +1,43 @@
+{
+  "name": "orrery",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "packages/adapters/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "build": "bun run --filter '*' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun test",
+    "lint": "biome check packages examples research",
+    "format": "biome format --write packages examples research",
+    "example:telenotes": "bun run examples/telenotes-governed-dev/index.ts",
+    "probe:poison": "bun run research/probes/memory-poisoning-basic.ts",
+    "probe:chain": "bun run research/probes/epistemic-chain-smoke.ts",
+    "probe:external": "bun run research/probes/external-document-not-normal.ts",
+    "probe:quarantine": "bun run research/probes/quarantined-not-retrievable.ts",
+    "probe:sensitivity": "bun run research/probes/sensitivity-ceiling.ts",
+    "probe:autoobs": "bun run research/probes/auto-observation-gate.ts",
+    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs",
+    "orrery": "bun run packages/cli/src/index.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@types/bun": "latest",
+    "typescript": "5.6.3",
+    "zod": "^3.23.8",
+    "@orrery/core": "workspace:*",
+    "@orrery/event-log": "workspace:*",
+    "@orrery/action-kernel": "workspace:*",
+    "@orrery/memory-firewall": "workspace:*",
+    "@orrery/cognitive-core": "workspace:*",
+    "@orrery/adapter-filesystem": "workspace:*",
+    "@orrery/adapter-git": "workspace:*"
+  },
+  "engines": {
+    "bun": ">=1.1.0"
+  }
+}
