@@ -12,6 +12,7 @@
         "@orrery/cognitive-core": "workspace:*",
         "@orrery/core": "workspace:*",
         "@orrery/event-log": "workspace:*",
+        "@orrery/guard": "workspace:*",
         "@orrery/memory-firewall": "workspace:*",
         "@orrery/trace": "workspace:*",
         "@types/bun": "latest",
