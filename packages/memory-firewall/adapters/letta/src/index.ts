@@ -14,7 +14,7 @@ import {
   type ExternalMemoryAdapter,
   type MemoryFirewall,
 } from "@orrery/memory-firewall"
-import { LettaExportSchema, type LettaBlock } from "./schema"
+import { LettaBlockSchema, LettaEnvelopeSchema, type LettaBlock } from "./schema"
 
 export { LettaExportSchema, LettaBlockSchema } from "./schema"
 export type { LettaExport, LettaBlock } from "./schema"
@@ -44,7 +44,10 @@ export class LettaAdapter implements ExternalMemoryAdapter {
     options: AdapterImportOptions,
   ): Promise<AdapterImportResult> {
     const opts = AdapterImportOptionsSchema.parse(options)
-    const parsed = LettaExportSchema.parse(raw)
+    // Validate the envelope's shape but treat each block as unknown so
+    // per-record schema failures can be reported via rejection_reasons
+    // instead of aborting the whole import.
+    const envelope = LettaEnvelopeSchema.parse(raw)
 
     const result: AdapterImportResult = {
       adapter: ADAPTER_NAME,
@@ -55,11 +58,21 @@ export class LettaAdapter implements ExternalMemoryAdapter {
       belief_ids: [],
     }
 
-    for (let i = 0; i < parsed.blocks.length; i++) {
-      const block = parsed.blocks[i]
-      if (!block) continue
+    for (let i = 0; i < envelope.blocks.length; i++) {
+      const candidate = envelope.blocks[i]
+      const parsed = LettaBlockSchema.safeParse(candidate)
+      if (!parsed.success) {
+        result.rejected_count += 1
+        result.rejection_reasons.push({
+          record_index: i,
+          reason: `invalid Letta block: ${parsed.error.issues
+            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("; ")}`,
+        })
+        continue
+      }
       try {
-        const { claim, beliefId } = await this.importOne(block, opts)
+        const { claim, beliefId } = await this.importOne(parsed.data, opts)
         result.imported_count += 1
         result.claim_ids.push(claim.id)
         if (beliefId) result.belief_ids.push(beliefId)

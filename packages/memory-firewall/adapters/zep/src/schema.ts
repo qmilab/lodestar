@@ -29,3 +29,14 @@ export const ZepExportSchema = z.object({
   facts: z.array(ZepFactSchema),
 })
 export type ZepExport = z.infer<typeof ZepExportSchema>
+
+/**
+ * Envelope-only schema. Mirrors `ZepExportSchema` but treats each fact
+ * as `unknown` so per-record validation failures can be reported via
+ * `rejection_reasons` instead of aborting the whole import.
+ */
+export const ZepEnvelopeSchema = z.object({
+  source: z.literal("zep"),
+  exported_at: z.string().optional(),
+  facts: z.array(z.unknown()),
+})

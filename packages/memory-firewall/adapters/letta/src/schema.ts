@@ -29,3 +29,14 @@ export const LettaExportSchema = z.object({
   blocks: z.array(LettaBlockSchema),
 })
 export type LettaExport = z.infer<typeof LettaExportSchema>
+
+/**
+ * Envelope-only schema. Mirrors `LettaExportSchema` but treats each
+ * block as `unknown` so per-record validation failures can be reported
+ * via `rejection_reasons` instead of aborting the whole import.
+ */
+export const LettaEnvelopeSchema = z.object({
+  source: z.literal("letta"),
+  exported_at: z.string().optional(),
+  blocks: z.array(z.unknown()),
+})

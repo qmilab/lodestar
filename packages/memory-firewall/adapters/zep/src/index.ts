@@ -14,7 +14,7 @@ import {
   type ExternalMemoryAdapter,
   type MemoryFirewall,
 } from "@orrery/memory-firewall"
-import { ZepExportSchema, type ZepFact } from "./schema"
+import { ZepEnvelopeSchema, ZepFactSchema, type ZepFact } from "./schema"
 
 export { ZepExportSchema, ZepFactSchema } from "./schema"
 export type { ZepExport, ZepFact } from "./schema"
@@ -46,7 +46,10 @@ export class ZepAdapter implements ExternalMemoryAdapter {
     options: AdapterImportOptions,
   ): Promise<AdapterImportResult> {
     const opts = AdapterImportOptionsSchema.parse(options)
-    const parsed = ZepExportSchema.parse(raw)
+    // Validate the envelope's shape but treat each fact as unknown so
+    // per-record schema failures can be reported via rejection_reasons
+    // instead of aborting the whole import.
+    const envelope = ZepEnvelopeSchema.parse(raw)
 
     const result: AdapterImportResult = {
       adapter: ADAPTER_NAME,
@@ -57,11 +60,21 @@ export class ZepAdapter implements ExternalMemoryAdapter {
       belief_ids: [],
     }
 
-    for (let i = 0; i < parsed.facts.length; i++) {
-      const fact = parsed.facts[i]
-      if (!fact) continue
+    for (let i = 0; i < envelope.facts.length; i++) {
+      const candidate = envelope.facts[i]
+      const parsed = ZepFactSchema.safeParse(candidate)
+      if (!parsed.success) {
+        result.rejected_count += 1
+        result.rejection_reasons.push({
+          record_index: i,
+          reason: `invalid Zep fact: ${parsed.error.issues
+            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("; ")}`,
+        })
+        continue
+      }
       try {
-        const { claim, beliefId } = await this.importOne(fact, opts)
+        const { claim, beliefId } = await this.importOne(parsed.data, opts)
         result.imported_count += 1
         result.claim_ids.push(claim.id)
         if (beliefId) result.belief_ids.push(beliefId)

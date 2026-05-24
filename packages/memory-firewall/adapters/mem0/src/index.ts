@@ -14,7 +14,7 @@ import {
   type ExternalMemoryAdapter,
   type MemoryFirewall,
 } from "@orrery/memory-firewall"
-import { Mem0ExportSchema, type Mem0Record } from "./schema"
+import { Mem0EnvelopeSchema, Mem0RecordSchema, type Mem0Record } from "./schema"
 
 export { Mem0ExportSchema, Mem0RecordSchema } from "./schema"
 export type { Mem0Export, Mem0Record } from "./schema"
@@ -58,7 +58,10 @@ export class Mem0Adapter implements ExternalMemoryAdapter {
     options: AdapterImportOptions,
   ): Promise<AdapterImportResult> {
     const opts = AdapterImportOptionsSchema.parse(options)
-    const parsed = Mem0ExportSchema.parse(raw)
+    // Validate the envelope's shape but treat each record as unknown
+    // so per-record schema failures can be reported via
+    // rejection_reasons instead of aborting the whole import.
+    const envelope = Mem0EnvelopeSchema.parse(raw)
 
     const result: AdapterImportResult = {
       adapter: ADAPTER_NAME,
@@ -69,11 +72,21 @@ export class Mem0Adapter implements ExternalMemoryAdapter {
       belief_ids: [],
     }
 
-    for (let i = 0; i < parsed.memories.length; i++) {
-      const record = parsed.memories[i]
-      if (!record) continue
+    for (let i = 0; i < envelope.memories.length; i++) {
+      const candidate = envelope.memories[i]
+      const parsed = Mem0RecordSchema.safeParse(candidate)
+      if (!parsed.success) {
+        result.rejected_count += 1
+        result.rejection_reasons.push({
+          record_index: i,
+          reason: `invalid mem0 record: ${parsed.error.issues
+            .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+            .join("; ")}`,
+        })
+        continue
+      }
       try {
-        const { claim, beliefId } = await this.importOne(record, opts)
+        const { claim, beliefId } = await this.importOne(parsed.data, opts)
         result.imported_count += 1
         result.claim_ids.push(claim.id)
         if (beliefId) result.belief_ids.push(beliefId)
