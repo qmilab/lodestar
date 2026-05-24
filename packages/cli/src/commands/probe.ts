@@ -22,6 +22,7 @@ const PROBE_ALIASES: Record<string, string> = {
   sensitivity: "sensitivity-ceiling",
   autoobs: "auto-observation-gate",
   "guard-import": "guard-import-no-self-promote",
+  "guard-precond": "guard-precondition-revalidation",
 }
 
 export async function probeCommand(argv: string[]): Promise<number> {

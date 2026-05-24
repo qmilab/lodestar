@@ -23,7 +23,8 @@
     "probe:sensitivity": "bun run research/probes/sensitivity-ceiling.ts",
     "probe:autoobs": "bun run research/probes/auto-observation-gate.ts",
     "probe:guard-import": "bun run research/probes/guard-import-no-self-promote.ts",
-    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import",
+    "probe:guard-precond": "bun run research/probes/guard-precondition-revalidation.ts",
+    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond",
     "orrery": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
