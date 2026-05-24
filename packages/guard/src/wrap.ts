@@ -322,23 +322,12 @@ export async function runGuarded<T>(
       throw new Error(`guard.callTool: tool '${toolName}' is not registered`)
     }
 
-    // Validate inputs once so we can hand them to the tool's
-    // precondition factory below. ActionKernel.propose() re-validates
-    // internally; Zod's parse is idempotent on valid data, so this is
-    // not wasteful.
-    const validatedInputs = tool.inputs.parse(inputs)
-
-    // The tool's `preconditions` factory produces the contract entries
-    // the kernel re-checks at execution time (the TOCTOU defense).
-    // Tool-declared preconditions are NEVER discarded — even if the
-    // caller passes their own override list, we prepend the tool's
-    // declarations so a guarded call can only add to, not remove from,
-    // what the tool author published. (Without this, an agent could
-    // bypass revalidation by passing `contract: { preconditions: [] }`.)
+    // Build the action contract from session defaults + caller
+    // overrides. Tool-declared preconditions are merged in by the
+    // kernel (so the inputs are parsed exactly once — schemas with
+    // `.transform`/`.preprocess` are not necessarily idempotent under
+    // repeated parse).
     const overrides = options?.contract ?? {}
-    const declaredPreconditions = tool.preconditions
-      ? tool.preconditions(validatedInputs)
-      : []
     const callerPreconditions = overrides.preconditions ?? []
 
     // The action contract's `data_sensitivity` alphabet is narrower
@@ -358,13 +347,13 @@ export async function runGuarded<T>(
         defaultActionSensitivity,
         overrides.data_sensitivity,
       ),
-      preconditions: [...declaredPreconditions, ...callerPreconditions],
+      preconditions: callerPreconditions,
     }
 
     const proposed = kernel.propose({
       intent: options?.intent ?? `invoke ${toolName}`,
       tool: toolName,
-      inputs: validatedInputs,
+      inputs,
       contract,
       proposed_by: config.actor_id,
       decision_id: options?.decision_id,

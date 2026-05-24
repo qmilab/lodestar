@@ -86,6 +86,11 @@ export class ActionKernel {
 
     // Validate inputs against the tool schema at propose time.
     // The kernel refuses to even queue an action with malformed inputs.
+    // Inputs are parsed exactly once here; callers must not re-parse
+    // them before reaching propose() — Zod schemas with `.transform`
+    // or `.preprocess` are not necessarily idempotent under repeated
+    // parse, so a double-parse can shift the value the tool actually
+    // executes against what its preconditions saw.
     const parsedInputs = tool.inputs.parse(input.inputs)
 
     // Tool's required trust level is a floor on the contract's required level.
@@ -95,13 +100,26 @@ export class ActionKernel {
       )
     }
 
+    // Merge tool-declared preconditions with the caller's contract.
+    // Tool-declared preconditions go first and can never be removed by
+    // the caller — overrides are additive only. The kernel owns this
+    // merge so callers don't have to (and so they can't get it wrong
+    // by double-parsing inputs to compute declared preconditions).
+    const declaredPreconditions = tool.preconditions
+      ? tool.preconditions(parsedInputs)
+      : []
+    const mergedContract: ActionContract = {
+      ...input.contract,
+      preconditions: [...declaredPreconditions, ...input.contract.preconditions],
+    }
+
     const action: Action = {
       id: randomUUID(),
       decision_id: input.decision_id,
       intent: input.intent,
       tool: input.tool,
       inputs: parsedInputs,
-      contract: input.contract,
+      contract: mergedContract,
       phase: "proposed",
       audit: [
         {
