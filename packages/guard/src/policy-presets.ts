@@ -19,6 +19,23 @@ export function autoApprovePolicy(input: {
   auto_approve_up_to: 0 | 1 | 2 | 3 | 4
   approver_id: string
 }): PolicyGate {
+  // Validate the ceiling at construction time. The TypeScript narrowing
+  // is helpful but not load-bearing — callers that hand us a value
+  // typed as `unknown` (config files, CLI args, JS hosts) can sneak
+  // through. The L5 check in the returned gate stops L5 actions but
+  // does NOT stop a ceiling of 5+: under such a ceiling, L4 actions
+  // would silently auto-approve.
+  if (
+    !Number.isInteger(input.auto_approve_up_to) ||
+    input.auto_approve_up_to < 0 ||
+    input.auto_approve_up_to > 4
+  ) {
+    throw new Error(
+      `autoApprovePolicy: auto_approve_up_to must be an integer in [0,4]; ` +
+        `got ${String(input.auto_approve_up_to)}. ` +
+        `L5 is prohibited and cannot be used as an auto-approve ceiling.`,
+    )
+  }
   return async (action: Action): Promise<PolicyDecision> => {
     const level = action.contract.required_level
 
