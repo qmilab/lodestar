@@ -7,11 +7,6 @@
  * `orrery report <session-id>`; everything else is structured under
  * area prefixes so the help output stays scannable.
  *
- * Some adapters (fs.read, git.status) are registered at module load
- * so `orrery action list` and `orrery action describe` produce useful
- * output without first running a session. The host project root is the
- * CWD.
- *
  * Usage:
  *   orrery report <session-id> ...           (headline command)
  *   orrery guard wrap --target <module> ...  (programmatic)
@@ -31,18 +26,29 @@ import { probeCommand } from "./commands/probe"
 import { reportCommand } from "./commands/report"
 import { traceInspectCommand } from "./commands/trace"
 
-// Register the v0 tool set bound to the current working directory so
-// the introspection commands have something to show. Guard-driven
-// sessions register their own tools.
-try {
-  registerFsReadTool(process.cwd())
-} catch {
-  // Already registered — fine (the registry refuses duplicates).
-}
-try {
-  registerGitStatusTool(process.cwd())
-} catch {
-  // Already registered — fine.
+/**
+ * Pre-register the v0 built-in tools (fs.read, git.status) bound to
+ * the current working directory. Called only by commands that need a
+ * populated registry without first running a guarded session — namely
+ * `orrery action list` and `orrery action describe`.
+ *
+ * Other commands (notably `orrery guard wrap`) must NOT eagerly
+ * register, because the target module being loaded typically calls
+ * the same `registerFsReadTool` / `registerGitStatusTool` itself; the
+ * action-kernel registry rejects duplicate names, which would make
+ * the most common target shape fail to import.
+ */
+function registerBuiltinTools(): void {
+  try {
+    registerFsReadTool(process.cwd())
+  } catch {
+    // Already registered — fine (the registry refuses duplicates).
+  }
+  try {
+    registerGitStatusTool(process.cwd())
+  } catch {
+    // Already registered — fine.
+  }
 }
 
 const argv = process.argv.slice(2)
@@ -59,6 +65,7 @@ async function dispatch(): Promise<number> {
       return 2
 
     case "action":
+      registerBuiltinTools()
       if (sub === "list") return actionListCommand()
       if (sub === "describe") return actionDescribeCommand(rest)
       process.stderr.write("usage: orrery action list | orrery action describe <action-id>\n")
