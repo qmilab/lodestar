@@ -1246,6 +1246,110 @@ async function caseU(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case V: malformed chain payloads (observation/claim/belief/
+//                 evidence/outcome) don't crash the renderer ────────────────
+
+async function caseV(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 })
+  const LOG_ROOT = "/tmp/orrery-probe-contract-V"
+  const PROJECT = "probe-contract-V"
+  const SESSION = "session-probe-V"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  // Emit deliberately partial payloads on the canonical event types
+  // an attacker / careless caller might choose. Each payload has just
+  // enough keys to pass the previous shallow checks but is missing
+  // fields the renderer dereferences.
+  await runGuarded(
+    async (ctx) => {
+      // Partial observation: missing `source`, `context`, `payload`.
+      await ctx.emit("observation.recorded", {
+        id: "obs-bad",
+        schema: "probe.bad@1",
+        trust: "validated",
+        sensitivity: "internal",
+      })
+      // Partial claim: missing source_observation_ids, scope, etc.
+      await ctx.emit("claim.extracted", {
+        id: "claim-bad",
+        statement: "partial",
+        source_observation_ids: ["non-empty"],
+        status: "extracted",
+      })
+      // Partial belief: missing confidence, scope, axes, etc.
+      await ctx.emit("belief.adopted", {
+        id: "belief-bad",
+        claim_id: "claim-bad",
+        truth_status: "unverified",
+        retrieval_status: "restricted",
+      })
+      // Partial evidence: missing items entries detail.
+      await ctx.emit("evidence.assessed", {
+        id: "evidence-bad",
+        claim_id: "claim-bad",
+        items: [],
+      })
+      // Partial outcome: missing observed_at, duration_ms, etc.
+      await ctx.emit("outcome.observed", {
+        id: "outcome-bad",
+        action_id: "action-bad",
+        result: "success",
+      })
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+  const { projectChain, renderReport } = await import("@orrery/trace")
+  const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
+
+  // None of the malformed payloads should be in their respective
+  // collections — each one was missing fields required by the core
+  // schema, so safeParse should reject them all.
+  const buckets: Array<{ kind: string; size: number }> = [
+    { kind: "observations", size: projection.observations.length },
+    { kind: "claims", size: projection.claims.length },
+    { kind: "beliefs", size: projection.beliefs.length },
+    { kind: "evidence_sets", size: projection.evidence_sets.length },
+  ]
+  for (const { kind, size } of buckets) {
+    if (size !== 0) {
+      return (
+        `[V] projection.${kind}.length=${size} after emitting malformed payloads. ` +
+        `Strict Zod validation must reject events that don't match the full schema.`
+      )
+    }
+  }
+  // The malformed outcome should not attach to a ProjectedAction.
+  const projectedOutcome = projection.actions.find(
+    (a) => a.outcome?.action_id === "action-bad",
+  )
+  if (projectedOutcome) {
+    return `[V] malformed outcome.observed event was projected onto a ProjectedAction`
+  }
+
+  // Rendering must not throw despite all the malformed events being in raw_events.
+  try {
+    renderReport(projection)
+  } catch (err) {
+    return (
+      `[V] renderReport threw with a session full of malformed chain payloads: ` +
+      `${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -1269,6 +1373,7 @@ async function run(): Promise<ProbeResult> {
     { name: "S: outcome.observed events project + render", fn: caseS },
     { name: "T: per-call data_sensitivity propagates into observations", fn: caseT },
     { name: "U: malformed action.* events don't crash the report", fn: caseU },
+    { name: "V: malformed chain payloads don't crash the report", fn: caseV },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
