@@ -173,7 +173,12 @@ export async function runGuarded<T>(
 ): Promise<GuardRunResult<T>> {
   ensureExtractors()
 
-  const session_id = config.session_id ?? `session-${Date.now()}`
+  // Default session_id uses randomUUID(), not Date.now() — `Date.now()`
+  // can return the same millisecond value across rapid or concurrent
+  // `runGuarded` calls, and since `orrery report` slices the event log
+  // by session_id only, collisions would merge two distinct guarded
+  // runs into the same report.
+  const session_id = config.session_id ?? `session-${randomUUID()}`
   const log_root = config.log_root ?? resolve(process.cwd(), ".orrery", "events")
   const writer = new EventLogWriter(log_root)
 
