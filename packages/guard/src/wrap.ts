@@ -104,6 +104,30 @@ function liftSensitivity(observed: Sensitivity, floor: Sensitivity): Sensitivity
 }
 
 /**
+ * Return the stricter of two action-contract data sensitivities.
+ *
+ * Used to clamp a caller-supplied `contract.data_sensitivity` override
+ * against the floor derived from the session's `default_sensitivity`.
+ * Caller overrides may RAISE the classification (e.g. one specific
+ * call handles secret data even in an internal session) but may not
+ * LOWER it — otherwise a hostile loop in a secret session could pass
+ * `contract: { data_sensitivity: "public" }` and bypass policy gates
+ * that branch on secret data.
+ */
+function clampActionSensitivity(
+  floor: "public" | "private" | "secret",
+  override: "public" | "private" | "secret" | undefined,
+): "public" | "private" | "secret" {
+  const order: Record<"public" | "private" | "secret", number> = {
+    public: 0,
+    private: 1,
+    secret: 2,
+  }
+  if (override === undefined) return floor
+  return order[override] >= order[floor] ? override : floor
+}
+
+/**
  * Wrap a user-supplied agent loop with the Orrery trust layer.
  *
  * The returned function accepts a {@link GuardConfig} and runs the
@@ -291,7 +315,10 @@ export async function runGuarded<T>(
       blast_radius: overrides.blast_radius ?? "self",
       reversibility: overrides.reversibility ?? tool.reversibility,
       scope: overrides.scope ?? config.default_scope,
-      data_sensitivity: overrides.data_sensitivity ?? defaultActionSensitivity,
+      data_sensitivity: clampActionSensitivity(
+        defaultActionSensitivity,
+        overrides.data_sensitivity,
+      ),
       preconditions: [...declaredPreconditions, ...callerPreconditions],
     }
 
