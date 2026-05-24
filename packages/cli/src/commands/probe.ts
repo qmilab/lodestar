@@ -1,4 +1,6 @@
-import { resolve } from "node:path"
+import { existsSync } from "node:fs"
+import { dirname, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { spawn } from "node:child_process"
 
 /**
@@ -11,7 +13,32 @@ import { spawn } from "node:child_process"
  *
  * Probe names follow the file names (without the `.ts` extension).
  */
-const PROBE_DIR_REL = "research/probes"
+
+/**
+ * Locate `research/probes/` by walking up from this file's location.
+ * Resolving against `process.cwd()` would only work when the CLI is
+ * invoked from the repo root — `orrery probe …` called from any
+ * subdirectory (or from an installed CLI) needs to find the probes
+ * relative to the package, not the caller.
+ */
+function findProbeDir(): string {
+  const thisFile = fileURLToPath(import.meta.url)
+  let dir = dirname(thisFile)
+  // Walk up until we find a directory containing `research/probes`.
+  // Bounded by filesystem root.
+  while (true) {
+    const candidate = resolve(dir, "research", "probes")
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) break // hit filesystem root
+    dir = parent
+  }
+  // Fall back to a CWD-relative lookup so callers running from the
+  // repo root still work even if the bin was relocated.
+  return resolve(process.cwd(), "research", "probes")
+}
+
+const PROBE_DIR = findProbeDir()
 
 /** Short-name → file mapping. Kept in sync with `research/probes/`. */
 const PROBE_ALIASES: Record<string, string> = {
@@ -35,7 +62,7 @@ export async function probeCommand(argv: string[]): Promise<number> {
     return 2
   }
   const file = PROBE_ALIASES[name] ?? name
-  const path = resolve(process.cwd(), PROBE_DIR_REL, `${file}.ts`)
+  const path = resolve(PROBE_DIR, `${file}.ts`)
 
   return new Promise<number>((resolveExit) => {
     const proc = spawn("bun", ["run", path], { stdio: "inherit" })
