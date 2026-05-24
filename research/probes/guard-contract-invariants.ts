@@ -31,6 +31,13 @@ import { _resetToolsForTests, registerTool } from "@orrery/action-kernel"
 import { registerBuiltInExtractors } from "@orrery/cognitive-core"
 import { EventLogReader } from "@orrery/event-log"
 import {
+  InMemoryBeliefStore,
+  InMemoryClaimStore,
+  InMemoryEvidenceStore,
+  MemoryFirewall,
+} from "@orrery/memory-firewall"
+import { Mem0Adapter } from "@orrery/memory-firewall-mem0"
+import {
   alwaysHoldsChecker,
   autoApprovePolicy,
   runGuarded,
@@ -427,8 +434,160 @@ async function caseG(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case H: autoApprovePolicy rejects invalid ceilings ──────────────
+
+function caseH(): string | undefined {
+  // TypeScript narrows `auto_approve_up_to` to 0..4, but a JS caller
+  // (or a config cast from `unknown`) can sneak through. Without the
+  // construction-time check, a ceiling of 5 would auto-approve every
+  // L0..L4 action; the runtime check at the gate's call site only
+  // catches the L5 action itself, not the broken ceiling.
+  let threw = false
+  try {
+    // biome-ignore lint/suspicious/noExplicitAny: probing invalid input
+    autoApprovePolicy({ auto_approve_up_to: 5 as any, approver_id: "p" })
+  } catch (err) {
+    threw = true
+    if (
+      !/auto_approve_up_to|L5|prohibited/i.test(
+        err instanceof Error ? err.message : String(err),
+      )
+    ) {
+      return `[H] autoApprovePolicy threw on ceiling=5 but the error message did not mention the invalid ceiling: ${String(err)}`
+    }
+  }
+  if (!threw) {
+    return "[H] autoApprovePolicy accepted auto_approve_up_to=5 (must reject; L5 is prohibited)"
+  }
+  return undefined
+}
+
+// ─── Sub-case I: ingestObservation rewrites context + lifts sensitivity ───
+
+async function caseI(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 }) // ensure registry is non-empty
+  let observed: { sensitivity?: string; context?: { session_id?: string; project_id?: string } } = {}
+
+  // Clean the log dir so we read only this run's events (no chance of
+  // matching an `observation.recorded` event written by a previous run
+  // when the fix was in place).
+  await fs.rm("/tmp/orrery-probe-contract-I", { recursive: true, force: true }).catch(() => {})
+
+  await runGuarded(
+    async (ctx) => {
+      const externalObs: import("@orrery/core").Observation = {
+        id: crypto.randomUUID(),
+        // Schema doesn't need an extractor for this assertion — we
+        // only care about the recorded event, not extracted claims.
+        schema: "probe.contract@1",
+        payload: { ran: true },
+        source: {
+          tool: "external.feed",
+          invocation_id: crypto.randomUUID(),
+          captured_at: new Date().toISOString(),
+        },
+        // Foreign context + low sensitivity — simulates copying an
+        // observation in from a webhook or another agent.
+        context: {
+          session_id: "foreign-session",
+          project_id: "foreign-project",
+          actor_id: "foreign-actor",
+        },
+        trust: "validated",
+        sensitivity: "internal",
+      }
+      // Record what ingestObservation forwarded to the cognitive
+      // core (which is what lands in the event log).
+      const result = await ctx.ingestObservation(externalObs)
+      void result
+    },
+    {
+      project_id: "probe-contract-I",
+      actor_id: "tester",
+      session_id: "session-probe-I",
+      log_root: "/tmp/orrery-probe-contract-I",
+      default_scope: { level: "project", identifier: "probe-contract-I" },
+      default_sensitivity: "secret",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  // Read the event log and inspect the observation.recorded payload.
+  const reader = new EventLogReader("/tmp/orrery-probe-contract-I")
+  const events = await reader.readSession("probe-contract-I", "session-probe-I")
+  const obsEvent = events.find((e) => e.type === "observation.recorded")
+  if (!obsEvent) {
+    return "[I] no observation.recorded event was written"
+  }
+  const payload = obsEvent.payload as {
+    sensitivity?: string
+    context?: { session_id?: string; project_id?: string }
+  }
+  observed = { sensitivity: payload.sensitivity, context: payload.context }
+
+  if (observed.context?.session_id !== "session-probe-I") {
+    return (
+      `[I] observation.recorded.context.session_id='${observed.context?.session_id}'; ` +
+      `expected 'session-probe-I'. Manual ingestObservation should rewrite context like callTool.`
+    )
+  }
+  if (observed.context?.project_id !== "probe-contract-I") {
+    return `[I] observation.recorded.context.project_id='${observed.context?.project_id}'; expected 'probe-contract-I'.`
+  }
+  if (observed.sensitivity !== "secret") {
+    return (
+      `[I] observation.recorded.sensitivity='${observed.sensitivity}'; expected 'secret'. ` +
+      `ingestObservation must lift sensitivity to the session floor.`
+    )
+  }
+  return undefined
+}
+
+// ─── Sub-case J: mem0 adapter tolerates malformed records ─────────────────
+
+async function caseJ(): Promise<string | undefined> {
+  const claims = new InMemoryClaimStore()
+  const beliefs = new InMemoryBeliefStore()
+  const evidence = new InMemoryEvidenceStore()
+  const firewall = new MemoryFirewall(claims, beliefs, evidence, async () => {})
+  const adapter = new Mem0Adapter(firewall, evidence)
+
+  const result = await adapter.importMemories(
+    {
+      source: "mem0",
+      memories: [
+        { id: "ok-1", memory: "valid record" },
+        { id: "bad-2" }, // missing `memory` — should be rejected per-record
+        { id: "ok-3", memory: "another valid record" },
+      ],
+    },
+    {
+      scope: { level: "project", identifier: "probe-contract-J" },
+      sensitivity: "internal",
+      source_actor_id: "probe",
+      trust_baseline: 0.5,
+    },
+  )
+
+  if (result.imported_count !== 2) {
+    return (
+      `[J] expected 2 imported records around 1 bad record; got imported=${result.imported_count}, ` +
+      `rejected=${result.rejected_count}. Adapter must validate the envelope only and safeParse each record.`
+    )
+  }
+  if (result.rejected_count !== 1) {
+    return `[J] expected 1 rejected record; got ${result.rejected_count}`
+  }
+  const rejection = result.rejection_reasons[0]
+  if (!rejection || rejection.record_index !== 1) {
+    return `[J] rejection_reasons did not point at index 1: ${JSON.stringify(result.rejection_reasons)}`
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
-  const cases: Array<{ name: string; fn: () => Promise<string | undefined> }> = [
+  const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
     { name: "B: secret session → secret action sensitivity", fn: caseB },
     { name: "C: built-in extractor registration is idempotent", fn: caseC },
@@ -436,6 +595,9 @@ async function run(): Promise<ProbeResult> {
     { name: "E: default session_ids are collision-resistant", fn: caseE },
     { name: "F: tool.execute receives the guarded session/project", fn: caseF },
     { name: "G: event log seq is monotonic across runGuarded calls", fn: caseG },
+    { name: "H: autoApprovePolicy rejects out-of-range ceilings", fn: caseH },
+    { name: "I: ingestObservation rewrites context + lifts sensitivity", fn: caseI },
+    { name: "J: mem0 adapter tolerates malformed records", fn: caseJ },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
