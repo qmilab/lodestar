@@ -125,7 +125,20 @@ export async function runGuarded<T>(
    */
   type Capture = { observation: Observation; ingest: IngestResult }
   const captureBox: { current: Capture | undefined } = { current: undefined }
-  const observationSink = async (observation: Observation): Promise<void> => {
+  const observationSink = async (raw: Observation): Promise<void> => {
+    // The Action Kernel constructs observations with hardcoded
+    // session-stub / project-stub context in v0 (the real context
+    // propagation patch lands with the MCP proxy in Batch 3). Rewrite
+    // the context here so every consumer sees the real guarded session
+    // — both the event log and the value handed back via callTool.
+    const observation: Observation = {
+      ...raw,
+      context: {
+        session_id,
+        project_id: config.project_id,
+        actor_id: config.actor_id,
+      },
+    }
     await emit("observation.recorded", observation)
     const ingest = await cognitive.ingest({
       observation,
