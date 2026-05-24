@@ -35,10 +35,33 @@ export interface ChainProjection {
   claims: Claim[]
   evidence_sets: EvidenceSet[]
   beliefs: Belief[]
+  decisions: ProjectedDecision[]
   actions: ProjectedAction[]
   transitions: FirewallTransition[]
   cognitive_summaries: CognitiveSummary[]
   raw_events: EventEnvelope[]
+}
+
+/**
+ * A projected Decision. The cognitive core's planner produces fully-
+ * typed `Decision` records, but `ctx.emit` is the escape hatch for
+ * partial / custom decision payloads (the greenfield example uses
+ * `{ id, intent, chosen_option, decided_by, decided_at }`). The
+ * projection captures whichever fields are present and keeps the raw
+ * payload available for the report.
+ */
+export interface ProjectedDecision {
+  id?: string
+  /** Either the planner's `question` or the loop's `intent`. */
+  question?: string
+  selected_option_id?: string
+  chosen_option?: unknown
+  rationale_id?: string
+  belief_dependencies?: string[]
+  policy_dependencies?: string[]
+  made_by?: string
+  made_at?: string
+  raw: unknown
 }
 
 /**
@@ -108,6 +131,7 @@ export function projectChain(
   const claims: Claim[] = []
   const beliefs: Belief[] = []
   const evidence_sets: EvidenceSet[] = []
+  const decisions: ProjectedDecision[] = []
   const transitions: FirewallTransition[] = []
   const cognitive_summaries: CognitiveSummary[] = []
   const actorIds = new Set<string>()
@@ -139,7 +163,17 @@ export function projectChain(
       continue
     }
 
-    if (type === "action.outcome" && isOutcomePayload(payload)) {
+    if (type === "decision.made" && payload && typeof payload === "object") {
+      decisions.push(projectDecision(payload))
+      continue
+    }
+
+    // Accept both `action.outcome` (the legacy / planner-emitted name)
+    // and `outcome.observed` (the documented `ctx.emit` name in Guard).
+    if (
+      (type === "action.outcome" || type === "outcome.observed") &&
+      isOutcomePayload(payload)
+    ) {
       const existing = actionsById.get(payload.action_id)
       if (existing) {
         existing.outcome = payload
@@ -207,6 +241,7 @@ export function projectChain(
     claims,
     evidence_sets,
     beliefs,
+    decisions,
     actions,
     transitions,
     cognitive_summaries,
@@ -215,6 +250,39 @@ export function projectChain(
   if (firstEvent) projection.first_event_at = firstEvent.timestamp
   if (lastEvent) projection.last_event_at = lastEvent.timestamp
   return projection
+}
+
+/**
+ * Project a `decision.made` event payload into the tolerant
+ * {@link ProjectedDecision} shape. Accepts both the planner's typed
+ * Decision (question / selected_option_id / made_by) and the loop's
+ * informal shape (intent / chosen_option / decided_by).
+ */
+function projectDecision(payload: Record<string, unknown>): ProjectedDecision {
+  const result: ProjectedDecision = { raw: payload }
+  if (typeof payload.id === "string") result.id = payload.id
+  if (typeof payload.question === "string") result.question = payload.question
+  else if (typeof payload.intent === "string") result.question = payload.intent
+  if (typeof payload.selected_option_id === "string") {
+    result.selected_option_id = payload.selected_option_id
+  }
+  if ("chosen_option" in payload) result.chosen_option = payload.chosen_option
+  if (typeof payload.rationale_id === "string") result.rationale_id = payload.rationale_id
+  if (Array.isArray(payload.belief_dependencies)) {
+    result.belief_dependencies = payload.belief_dependencies.filter(
+      (b): b is string => typeof b === "string",
+    )
+  }
+  if (Array.isArray(payload.policy_dependencies)) {
+    result.policy_dependencies = payload.policy_dependencies.filter(
+      (p): p is string => typeof p === "string",
+    )
+  }
+  if (typeof payload.made_by === "string") result.made_by = payload.made_by
+  else if (typeof payload.decided_by === "string") result.made_by = payload.decided_by
+  if (typeof payload.made_at === "string") result.made_at = payload.made_at
+  else if (typeof payload.decided_at === "string") result.made_at = payload.decided_at
+  return result
 }
 
 function projectFirewallTransition(

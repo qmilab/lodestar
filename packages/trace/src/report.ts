@@ -43,6 +43,7 @@ export function renderReport(
       body: renderEvidence(projection.evidence_sets, projection.claims),
     },
     { heading: "## Beliefs", body: renderBeliefs(projection.beliefs, projection.claims) },
+    { heading: "## Decisions", body: renderDecisions(projection.decisions) },
     { heading: "## Actions", body: renderActions(projection.actions) },
     { heading: "## Firewall activity", body: renderTransitions(projection.transitions) },
     {
@@ -183,6 +184,51 @@ function renderBeliefs(beliefs: Belief[], claims: Claim[]): string[] {
     )
   }
   return lines
+}
+
+function renderDecisions(decisions: ChainProjection["decisions"]): string[] {
+  if (decisions.length === 0) return []
+  const lines: string[] = []
+  for (const d of decisions) {
+    const heading = d.question ?? `(decision ${d.id?.slice(0, 8) ?? "?"})`
+    const idTag = d.id ? ` \`(${d.id.slice(0, 8)})\`` : ""
+    lines.push(`- **${heading}**${idTag}`)
+    if (d.chosen_option !== undefined) {
+      const summary = describeChosenOption(d.chosen_option)
+      if (summary) lines.push(`    - chose: ${summary}`)
+    } else if (d.selected_option_id) {
+      lines.push(`    - selected option: \`${d.selected_option_id}\``)
+    }
+    if (d.belief_dependencies && d.belief_dependencies.length > 0) {
+      const ids = d.belief_dependencies
+        .slice(0, 4)
+        .map((b) => `\`${b.slice(0, 8)}\``)
+        .join(", ")
+      const more =
+        d.belief_dependencies.length > 4
+          ? `, …${d.belief_dependencies.length - 4} more`
+          : ""
+      lines.push(`    - belief dependencies: ${ids}${more}`)
+    }
+    if (d.made_by) {
+      const when = d.made_at ? ` at ${d.made_at}` : ""
+      lines.push(`    - made by \`${d.made_by}\`${when}`)
+    }
+  }
+  return lines
+}
+
+function describeChosenOption(option: unknown): string | undefined {
+  if (option === null || option === undefined) return undefined
+  if (typeof option === "string") return option
+  if (typeof option !== "object") return String(option)
+  const o = option as Record<string, unknown>
+  const label = typeof o.label === "string" ? o.label : undefined
+  const rationale = typeof o.rationale === "string" ? o.rationale : undefined
+  if (label && rationale) return `**${label}** — ${rationale}`
+  if (label) return `**${label}**`
+  if (rationale) return rationale
+  return undefined
 }
 
 function renderActions(actions: ProjectedAction[]): string[] {

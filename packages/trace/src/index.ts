@@ -14,6 +14,7 @@ export { projectChain } from "./chain"
 export type {
   ChainProjection,
   CognitiveSummary,
+  ProjectedDecision,
   FirewallTransition,
   ProjectedAction,
 } from "./chain"
