@@ -1027,6 +1027,109 @@ async function caseQ(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case R: decision.made events render in the report ────────────────
+
+async function caseR(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 })
+  const LOG_ROOT = "/tmp/orrery-probe-contract-R"
+  const PROJECT = "probe-contract-R"
+  const SESSION = "session-probe-R"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  await runGuarded(
+    async (ctx) => {
+      await ctx.emit("decision.made", {
+        id: "decision-probe-r",
+        intent: "probe decision rendering",
+        chosen_option: { label: "test", rationale: "probing the renderer" },
+        decided_by: ctx.actor_id,
+        decided_at: new Date().toISOString(),
+      })
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+  const { projectChain, renderReport } = await import("@orrery/trace")
+  const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
+  if (projection.decisions.length === 0) {
+    return `[R] projectChain returned 0 decisions despite an emitted decision.made event`
+  }
+  const report = renderReport(projection)
+  if (!report.includes("## Decisions")) {
+    return `[R] rendered trust report did not include a Decisions section`
+  }
+  if (!report.includes("probe decision rendering")) {
+    return `[R] rendered trust report did not include the decision's intent`
+  }
+  if (!report.includes("probing the renderer")) {
+    return `[R] rendered trust report did not include the chosen_option rationale`
+  }
+  return undefined
+}
+
+// ─── Sub-case S: outcome.observed events project + render ─────────────────
+
+async function caseS(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 })
+  const LOG_ROOT = "/tmp/orrery-probe-contract-S"
+  const PROJECT = "probe-contract-S"
+  const SESSION = "session-probe-S"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  const actionId = crypto.randomUUID()
+  await runGuarded(
+    async (ctx) => {
+      // Emit an Outcome under the documented `outcome.observed` name.
+      await ctx.emit("outcome.observed", {
+        id: crypto.randomUUID(),
+        action_id: actionId,
+        result: "success",
+        effect_observation_ids: [],
+        side_effects_observed: ["probe-side-effect"],
+        duration_ms: 7,
+        observed_at: new Date().toISOString(),
+      })
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+  const { projectChain, renderReport } = await import("@orrery/trace")
+  const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
+  // Outcome was emitted without a preceding action — projectChain should
+  // still capture it as a standalone ProjectedAction with outcome only.
+  const projected = projection.actions.find((a) => a.outcome?.action_id === actionId)
+  if (!projected) {
+    return `[S] projectChain did not project the outcome.observed event onto its action`
+  }
+  const report = renderReport(projection)
+  if (!report.includes("probe-side-effect")) {
+    return `[S] trust report did not include the outcome's side effects`
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -1046,6 +1149,8 @@ async function run(): Promise<ProbeResult> {
     { name: "O: concurrent writers share seq across instances", fn: caseO },
     { name: "P: tool inputs are parsed exactly once", fn: caseP },
     { name: "Q: evidence persists in event log + renders in report", fn: caseQ },
+    { name: "R: decision.made events render in the trust report", fn: caseR },
+    { name: "S: outcome.observed events project + render", fn: caseS },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
