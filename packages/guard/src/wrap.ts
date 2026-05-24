@@ -384,7 +384,21 @@ export async function runGuarded<T>(
     default_scope: config.default_scope,
     default_sensitivity: config.default_sensitivity,
     callTool,
-    ingestObservation: async (observation) => {
+    ingestObservation: async (raw) => {
+      // Apply the same context rewrite + sensitivity lift the kernel
+      // observation sink does, so an observation copied from a
+      // webhook or another source can't leak a foreign session/project
+      // id into the event log, and can't record at a lower sensitivity
+      // than the guarded session.
+      const observation: Observation = {
+        ...raw,
+        context: {
+          session_id,
+          project_id: config.project_id,
+          actor_id: config.actor_id,
+        },
+        sensitivity: liftSensitivity(raw.sensitivity, config.default_sensitivity),
+      }
       await emit("observation.recorded", observation)
       const result = await cognitive.ingest({
         observation,
