@@ -887,6 +887,146 @@ async function caseO(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case P: tool inputs are parsed exactly once ──────────────────────
+
+async function caseP(): Promise<string | undefined> {
+  _resetToolsForTests()
+  const OUT = "probe.p_out@1"
+  if (!registry.has(OUT)) {
+    registry.register(OUT, z.object({ ran: z.boolean() }))
+  }
+
+  // Tool with a non-idempotent transform: every parse appends "+" to
+  // the token. If Guard parses once and the kernel parses again, the
+  // precondition factory sees `abc+` while tool.execute sees `abc++`
+  // — a TOCTOU mismatch.
+  const InputSchema = z
+    .object({ token: z.string() })
+    .transform((value) => ({ token: `${value.token}+` }))
+
+  let preconditionFactoryToken = ""
+  let executeToken = ""
+
+  registerTool({
+    name: "probe.transform_tool",
+    inputs: InputSchema,
+    output_schema_key: OUT,
+    effects: [],
+    reversibility: "reversible",
+    permissions: [],
+    required_trust_level: 0,
+    sandbox: "read",
+    preconditions: (inputs) => {
+      preconditionFactoryToken = inputs.token
+      return []
+    },
+    execute: async (inputs) => {
+      executeToken = inputs.token
+      return { ran: true }
+    },
+  })
+
+  await runGuarded(
+    async (ctx) => {
+      await ctx.callTool("probe.transform_tool", { token: "abc" })
+    },
+    {
+      project_id: "probe-contract-P",
+      actor_id: "tester",
+      log_root: "/tmp/orrery-probe-contract-P",
+      default_scope: { level: "project", identifier: "probe-contract-P" },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  // Two assertions:
+  //   1. factory and execute see the same token (no mismatch between
+  //      what preconditions guarded and what executed)
+  //   2. the transform was applied exactly once — `token + "+"`. If
+  //      the schema is parsed more than once, the transform compounds
+  //      ("abc++", "abc+++", …) which mis-records both factory and
+  //      execute against the caller's intent.
+  if (preconditionFactoryToken !== executeToken) {
+    return (
+      `[P] precondition factory saw token='${preconditionFactoryToken}' but ` +
+      `tool.execute saw token='${executeToken}'. Inputs are being parsed more than ` +
+      `once; the second parse re-applies the transform and shifts the value the ` +
+      `tool executes against what its preconditions guarded.`
+    )
+  }
+  if (executeToken !== "abc+") {
+    return (
+      `[P] tool.execute saw token='${executeToken}'; expected 'abc+' (single transform). ` +
+      `Repeated parse compounded the transform — the kernel/Guard pair must parse ` +
+      `tool inputs exactly once per callTool.`
+    )
+  }
+  return undefined
+}
+
+// ─── Sub-case Q: evidence persists in the event log & renders in report ───
+
+async function caseQ(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 })
+  const LOG_ROOT = "/tmp/orrery-probe-contract-Q"
+  const PROJECT = "probe-contract-Q"
+  const SESSION = "session-probe-Q"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  // Register a tool that's plain enough for the built-in extractors
+  // to produce claims + evidence. The greenfield git.status is the
+  // simplest; we use the cleared registry to add fs.read + git.status
+  // here.
+  const { registerFsReadTool } = await import("@orrery/adapter-filesystem")
+  const { registerGitStatusTool } = await import("@orrery/adapter-git")
+  registerFsReadTool(process.cwd())
+  registerGitStatusTool(process.cwd())
+
+  await runGuarded(
+    async (ctx) => {
+      await ctx.callTool("git.status", { repo: "." })
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+  const evidenceEvents = events.filter((e) => e.type === "evidence.assessed")
+  if (evidenceEvents.length === 0) {
+    return (
+      `[Q] no 'evidence.assessed' events in the guarded session log. ` +
+      `Guard must emit the EvidenceSets the cognitive core produces so the trust ` +
+      `report can audit why beliefs were adopted.`
+    )
+  }
+
+  // Render and confirm the Evidence section is present.
+  const { projectChain, renderReport } = await import("@orrery/trace")
+  const projection = projectChain(events, {
+    session_id: SESSION,
+    project_id: PROJECT,
+  })
+  if (projection.evidence_sets.length === 0) {
+    return `[Q] projectChain returned 0 evidence sets despite ${evidenceEvents.length} evidence events in the log`
+  }
+  const report = renderReport(projection)
+  if (!report.includes("## Evidence")) {
+    return `[Q] rendered trust report did not include an Evidence section`
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -904,6 +1044,8 @@ async function run(): Promise<ProbeResult> {
     { name: "M: writer hydration is race-safe", fn: caseM },
     { name: "N: caller cannot lower contract.reversibility", fn: caseN },
     { name: "O: concurrent writers share seq across instances", fn: caseO },
+    { name: "P: tool inputs are parsed exactly once", fn: caseP },
+    { name: "Q: evidence persists in event log + renders in report", fn: caseQ },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
