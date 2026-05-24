@@ -2,9 +2,9 @@
 /**
  * Probe: guard_import_no_self_promote
  *
- * Verifies that imports from external memory stores cannot land at
- * `truth_status: supported` or `retrieval_status: normal`, even when
- * the upstream record looks confident or carries a high rating.
+ * Verifies that imports from external memory stores cannot bypass the
+ * firewall's retrieval gate, even when the upstream record looks
+ * confident or carries a high rating.
  *
  * Setup:
  * - Construct a firewall with empty stores.
@@ -16,19 +16,24 @@
  * Assertions:
  * 1. The import succeeds (it's a valid mem0 export — the firewall
  *    governs adoption, not parsing).
- * 2. The resulting belief is at `truth_status: unverified` and
- *    `retrieval_status: restricted`, regardless of the trust baseline.
- * 3. A direct firewall attempt to promote the same claim to
- *    `truth_status: supported` under `auto_observation` is rejected
- *    because the strongest evidence is external_document.
+ * 2. The adapter places the resulting belief at `truth_status:
+ *    unverified` and `retrieval_status: restricted`, regardless of
+ *    the trust baseline.
+ * 3. **Retrieval gate (isolated).** A second adoption attempt that
+ *    leaves `truth_status` at `unverified` (a safe value) but
+ *    elevates `retrieval_status` to `normal` under `auto_observation`
+ *    is rejected. Only one axis is varied from the safe defaults so
+ *    the rejection unambiguously cites the retrieval gate — not the
+ *    truth-status check, which the firewall does *not* enforce against
+ *    auto_observation (that gate lives in the cognitive core; see
+ *    the `auto_observation_evidence_quality_gate` probe).
  *
  * Why this matters:
  * Memory-store integrations are the primary vector by which adversarial
- * content reaches the agent. Adapters that silently promote imported
- * memories to "supported" reintroduce the exact failure mode the
- * firewall is designed to prevent. The probe enforces that the
- * adapter family treats imports as external_document and that the
- * Round 5 auto-observation gate continues to block them.
+ * content reaches the agent. The retrieval gate is the firewall-level
+ * defense that keeps imports out of normal retrieval until something
+ * outside auto_observation (a user, a probe, or a reflection pass)
+ * explicitly promotes them.
  */
 
 import {
@@ -109,15 +114,15 @@ async function run(): Promise<ProbeResult> {
     }
   }
 
-  // Assertion 3: the firewall must reject a direct auto_observation
-  // promotion of the same claim to truth_status='supported'. We feed
-  // the existing evidence_id back in with elevated authority.
+  // Assertion 3: the firewall must reject an attempt to elevate the
+  // imported belief's retrieval_status to 'normal' under
+  // `auto_observation`. Only the retrieval axis is varied from a safe
+  // baseline so the rejection unambiguously cites the retrieval gate.
   const claimId = result.claim_ids[0]
   if (!claimId) {
     return { passed: false, details: "no claim id returned from adapter" }
   }
 
-  // Find the evidence set for that claim.
   const evidenceForClaim = await evidence.forClaim(claimId)
   const ev = evidenceForClaim[0]
   if (!ev) {
@@ -129,8 +134,11 @@ async function run(): Promise<ProbeResult> {
     subject_type: "memory_promotion",
     subject_id: claimId,
     audience: "audit",
-    summary: "probe attempt to silently promote imported belief",
-    full_text: "Probe trying to adopt a second belief at truth_status=supported under auto_observation.",
+    summary: "probe attempt to elevate imported belief to normal retrieval",
+    full_text:
+      "Probe varying only retrieval_status from 'restricted' to 'normal' " +
+      "under auto_observation. truth_status stays 'unverified' so the " +
+      "firewall's response can only come from the retrieval gate.",
     claims_used: [claimId],
     evidence_used: [ev.id],
     uncertainties: [],
@@ -150,14 +158,18 @@ async function run(): Promise<ProbeResult> {
         scope: { level: "project", identifier: "probe-project" },
         sensitivity: "internal",
         authority: "imported",
-        truth_status: "supported", // adversarial: skip 'unverified' entirely
-        retrieval_status: "normal", // adversarial: bypass 'restricted'
+        // truth stays at the safe default so this assertion isolates
+        // the retrieval gate. The Round 5 truth gate at the cognitive
+        // core is covered by auto_observation_evidence_quality_gate.
+        truth_status: "unverified",
+        // Adversarial: try to enter normal retrieval directly.
+        retrieval_status: "normal",
         security_status: "clean",
         freshness_status: "fresh",
         observed_at: new Date().toISOString(),
       },
       evidence_id: ev.id,
-      by_authority: "auto_observation", // the gate Round 5 patched
+      by_authority: "auto_observation",
       rationale: explanation,
     })
   } catch (err) {
@@ -169,8 +181,16 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: false,
       details:
-        "firewall accepted a direct auto_observation promotion of imported evidence to 'supported'. " +
-        "This is the exact failure Round 5 closed; the adapter family relies on this gate.",
+        "firewall accepted retrieval_status='normal' from an imported belief under auto_observation. " +
+        "Imports must not enter normal retrieval without explicit promotion by user/probe/reflection.",
+    }
+  }
+  if (!/retrieval/i.test(rejectionMessage)) {
+    return {
+      passed: false,
+      details:
+        `firewall rejected the elevation attempt but not via the retrieval gate. ` +
+        `Expected a message mentioning 'retrieval'; got: ${rejectionMessage}`,
     }
   }
 
@@ -179,7 +199,7 @@ async function run(): Promise<ProbeResult> {
     details:
       `Adapter imported the poisoned record at truth='${belief.truth_status}', ` +
       `retrieval='${belief.retrieval_status}'.\n` +
-      `Direct auto_observation promotion attempt was rejected.\nRejection: ${rejectionMessage}`,
+      `Retrieval-gate elevation attempt was rejected.\nRejection: ${rejectionMessage}`,
   }
 }
 
