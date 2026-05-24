@@ -38,6 +38,10 @@ export function renderReport(
   const sections: Array<{ heading: string; body: string[] }> = [
     { heading: "## Observations", body: renderObservations(projection.observations) },
     { heading: "## Claims", body: renderClaims(projection.claims) },
+    {
+      heading: "## Evidence",
+      body: renderEvidence(projection.evidence_sets, projection.claims),
+    },
     { heading: "## Beliefs", body: renderBeliefs(projection.beliefs, projection.claims) },
     { heading: "## Actions", body: renderActions(projection.actions) },
     { heading: "## Firewall activity", body: renderTransitions(projection.transitions) },
@@ -134,6 +138,30 @@ function renderClaims(claims: Claim[]): string[] {
       `- _${claim.extraction_method}_ ${claim.statement}  ` +
         `\`(${claim.status}, sensitivity ${claim.sensitivity})\``,
     )
+  }
+  return lines
+}
+
+function renderEvidence(
+  evidence_sets: ChainProjection["evidence_sets"],
+  claims: Claim[],
+): string[] {
+  if (evidence_sets.length === 0) return []
+  const claimById = new Map(claims.map((c) => [c.id, c]))
+  const lines: string[] = []
+  for (const set of evidence_sets) {
+    const claim = claimById.get(set.claim_id)
+    const heading =
+      claim?.statement ?? `(claim ${set.claim_id.slice(0, 8)})`
+    lines.push(`- **${heading}**`)
+    for (const item of set.items) {
+      const indep =
+        item.independence_group ? ` · indep \`${item.independence_group}\`` : ""
+      const notes = item.notes ? ` — ${item.notes}` : ""
+      lines.push(
+        `    - ${item.relation} · quality \`${item.quality}\` · freshness \`${item.freshness}\`${indep}${notes}`,
+      )
+    }
   }
   return lines
 }
