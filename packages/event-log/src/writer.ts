@@ -21,8 +21,15 @@ import { type EventEnvelope, EventEnvelopeSchema } from "@orrery/core"
 export class EventLogWriter {
   private nextSeq: Map<string, number> = new Map()
   private nextLogicalClock: Map<string, number> = new Map()
-  /** Project ids whose on-disk state has been scanned into the seq map. */
-  private hydrated: Set<string> = new Set()
+  /**
+   * Per-project hydration promises. Once a project's first `append`
+   * starts scanning disk, every subsequent concurrent append for that
+   * project awaits the same promise — preventing the race where two
+   * appends both observe an empty `nextSeq` map and allocate seq=0.
+   * The entry stays in the map after fulfilment so later appends
+   * resolve immediately without re-scanning.
+   */
+  private hydrations: Map<string, Promise<void>> = new Map()
 
   constructor(private readonly rootDir: string) {}
 
@@ -70,15 +77,25 @@ export class EventLogWriter {
    * `nextLogicalClock` from the highest values found. Runs at most
    * once per project per writer instance.
    *
+   * Concurrent first appends for the same project all await the same
+   * in-flight scan; without this, two appends could both see an
+   * empty seq map and allocate `seq=0` simultaneously, breaking the
+   * monotonic-ordering invariant.
+   *
    * Tolerant: malformed lines are skipped. The goal is not to validate
    * the log (the reader does that) — only to find a safe starting
    * sequence number. If the project directory doesn't exist or is
    * empty, the maps stay at their defaults (seq starts at 0).
    */
-  private async hydrate(projectId: string): Promise<void> {
-    if (this.hydrated.has(projectId)) return
-    this.hydrated.add(projectId)
+  private hydrate(projectId: string): Promise<void> {
+    const existing = this.hydrations.get(projectId)
+    if (existing) return existing
+    const promise = this.scanForHydration(projectId)
+    this.hydrations.set(projectId, promise)
+    return promise
+  }
 
+  private async scanForHydration(projectId: string): Promise<void> {
     const projectDir = join(this.rootDir, projectId)
     if (!existsSync(projectDir)) return
 
