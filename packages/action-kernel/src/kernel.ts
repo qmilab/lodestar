@@ -247,6 +247,12 @@ export class ActionKernel {
       const validatedOutput = outputSchema.parse(result)
 
       // Construct the observation and route it to the cognitive core.
+      // Sensitivity is derived from the action contract's
+      // `data_sensitivity` so a per-call override (e.g. caller raised
+      // an L0 tool's classification to 'secret' for this one
+      // invocation) propagates into the observation, the claims it
+      // extracts, and the resulting log entry — not just the policy
+      // gate. Hosts can still lift further (see @orrery/guard).
       const obs: Observation = {
         id: randomUUID(),
         schema: tool.output_schema_key,
@@ -262,7 +268,7 @@ export class ActionKernel {
           actor_id: executing.proposed_by,
         },
         trust: "validated",
-        sensitivity: "internal", // default; tool can override via contract metadata in later versions
+        sensitivity: sensitivityForContract(executing.contract.data_sensitivity),
       }
       await this.observationSink(obs)
 
@@ -290,6 +296,26 @@ export class ActionKernel {
         ],
       }
     }
+  }
+}
+
+/**
+ * Map the action contract's narrow `data_sensitivity` alphabet back
+ * to the broader Observation `sensitivity`. The reverse mapping is
+ * intentionally conservative — "private" round-trips through
+ * "internal" (the next-strictest Sensitivity value), so an observation
+ * derived from a private action carries at least Internal handling.
+ */
+function sensitivityForContract(
+  ds: "public" | "private" | "secret",
+): "public" | "internal" | "confidential" | "secret" {
+  switch (ds) {
+    case "public":
+      return "public"
+    case "secret":
+      return "secret"
+    case "private":
+      return "internal"
   }
 }
 

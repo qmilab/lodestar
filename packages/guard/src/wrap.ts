@@ -276,6 +276,12 @@ export async function runGuarded<T>(
       sensitivity: liftSensitivity(raw.sensitivity, config.default_sensitivity),
     }
     await emit("observation.recorded", observation)
+    // Use the lifted observation sensitivity (which already accounts
+    // for both the kernel-derived contract sensitivity and the
+    // session floor) as the ingest default. Otherwise per-call
+    // overrides — e.g. a secret-classified tool call inside an
+    // internal session — would extract claims labelled `internal`
+    // and bypass downstream retrieval / redaction.
     const ingest = await cognitive.ingest({
       observation,
       context: {
@@ -283,7 +289,7 @@ export async function runGuarded<T>(
         project_id: config.project_id,
         session_id,
         default_scope: config.default_scope,
-        default_sensitivity: config.default_sensitivity,
+        default_sensitivity: observation.sensitivity,
       },
     })
     await emit("cognitive.ingested", {
@@ -444,6 +450,10 @@ export async function runGuarded<T>(
         sensitivity: liftSensitivity(raw.sensitivity, config.default_sensitivity),
       }
       await emit("observation.recorded", observation)
+      // Match the kernel sink path: extract claims at the lifted
+      // observation sensitivity, not the session default, so a
+      // foreign-source observation carrying a strict label is
+      // honoured for downstream retrieval/redaction.
       const result = await cognitive.ingest({
         observation,
         context: {
@@ -451,7 +461,7 @@ export async function runGuarded<T>(
           project_id: config.project_id,
           session_id,
           default_scope: config.default_scope,
-          default_sensitivity: config.default_sensitivity,
+          default_sensitivity: observation.sensitivity,
         },
       })
       await emit("cognitive.ingested", {
