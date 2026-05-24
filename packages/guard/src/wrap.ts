@@ -12,10 +12,13 @@ import {
   CognitiveCore,
   EvidenceLinker,
   ExplanationGenerator,
+  FsReadExtractor,
+  GitStatusExtractor,
   InMemoryWorldModel,
-  registerBuiltInExtractors,
+  lookupExtractor,
+  registerExtractor,
 } from "@orrery/cognitive-core"
-import type { IngestResult } from "@orrery/cognitive-core"
+import type { ClaimExtractor, IngestResult } from "@orrery/cognitive-core"
 import type {
   Action,
   ActionContract,
@@ -31,12 +34,27 @@ import type {
   GuardInternals,
 } from "./types"
 
-let extractorsRegistered = false
-
+/**
+ * Register the built-in extractors if they are not already in the
+ * cognitive-core registry. Idempotent across calls in the same
+ * process AND across other modules that may have registered them
+ * already (the telenotes example and several probes call
+ * `registerBuiltInExtractors()` directly).
+ *
+ * The cognitive-core registry throws on duplicate `schema_key`, so we
+ * cannot blindly call `registerBuiltInExtractors()` once Guard is
+ * in the same process as another consumer.
+ */
 function ensureExtractors(): void {
-  if (extractorsRegistered) return
-  registerBuiltInExtractors()
-  extractorsRegistered = true
+  const builtins: ClaimExtractor[] = [GitStatusExtractor, FsReadExtractor]
+  for (const extractor of builtins) {
+    // `lookupExtractor` falls back to a `__generic__` entry if the
+    // specific key is missing, so probe identity directly via the
+    // returned extractor's `schema_key`.
+    const present = lookupExtractor(extractor.schema_key)
+    if (present && present.schema_key === extractor.schema_key) continue
+    registerExtractor(extractor)
+  }
 }
 
 /**
@@ -223,7 +241,7 @@ export async function runGuarded<T>(
 
     // The tool's `preconditions` factory produces the contract entries
     // the kernel re-checks at execution time (the TOCTOU defense).
-    // Tool-declared preconditions are NEVER discarded — even when the
+    // Tool-declared preconditions are NEVER discarded — even if the
     // caller passes their own override list, we prepend the tool's
     // declarations so a guarded call can only add to, not remove from,
     // what the tool author published. (Without this, an agent could
