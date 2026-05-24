@@ -7,7 +7,14 @@ import type {
   Observation,
   Outcome,
 } from "@orrery/core"
-import { ActionSchema } from "@orrery/core"
+import {
+  ActionSchema,
+  BeliefSchema,
+  ClaimSchema,
+  EvidenceSetSchema,
+  ObservationSchema,
+  OutcomeSchema,
+} from "@orrery/core"
 
 /**
  * Projection of an event log into the epistemic chain.
@@ -320,68 +327,37 @@ function matchFirewallKind(
   return "unknown"
 }
 
+// ── Payload validation ─────────────────────────────────────────────────────
+//
+// Every chain primitive is validated against its core Zod schema before
+// entering the projection. The escape hatch `ctx.emit` lets a loop write
+// arbitrary payloads under any event type — including the canonical
+// names. Without strict validation, a partial payload like
+// `ctx.emit("observation.recorded", { id, schema, trust, sensitivity })`
+// would slip into `projection.observations` and the renderer would
+// crash on `obs.source.tool`. Failed payloads stay in `raw_events` for
+// the optional event-log section but don't reach the renderer.
+
 function isObservationPayload(p: unknown): p is Observation {
-  if (!p || typeof p !== "object") return false
-  const obj = p as Record<string, unknown>
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.schema === "string" &&
-    typeof obj.trust === "string" &&
-    typeof obj.sensitivity === "string"
-  )
+  return ObservationSchema.safeParse(p).success
 }
 
 function isClaimPayload(p: unknown): p is Claim {
-  if (!p || typeof p !== "object") return false
-  const obj = p as Record<string, unknown>
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.statement === "string" &&
-    Array.isArray(obj.source_observation_ids) &&
-    typeof obj.status === "string"
-  )
+  return ClaimSchema.safeParse(p).success
 }
 
 function isEvidenceSetPayload(p: unknown): p is EvidenceSet {
-  if (!p || typeof p !== "object") return false
-  const obj = p as Record<string, unknown>
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.claim_id === "string" &&
-    Array.isArray(obj.items)
-  )
+  return EvidenceSetSchema.safeParse(p).success
 }
 
 function isBeliefPayload(p: unknown): p is Belief {
-  if (!p || typeof p !== "object") return false
-  const obj = p as Record<string, unknown>
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.claim_id === "string" &&
-    typeof obj.truth_status === "string" &&
-    typeof obj.retrieval_status === "string"
-  )
+  return BeliefSchema.safeParse(p).success
 }
 
-/**
- * Validate a payload against the full Action schema before treating
- * it as an Action. The renderer reads `action.contract.required_level`
- * and `action.audit` unconditionally; accepting a partial payload
- * (e.g. a custom `ctx.emit("action.foo", { id, tool, phase, intent })`
- * shape) would crash the report at render time. A failed validation
- * leaves the event in `raw_events` for the optional event-log section
- * but does not contribute to `actions`.
- */
 function isActionPayload(p: unknown): p is Action {
   return ActionSchema.safeParse(p).success
 }
 
 function isOutcomePayload(p: unknown): p is Outcome {
-  if (!p || typeof p !== "object") return false
-  const obj = p as Record<string, unknown>
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.action_id === "string" &&
-    typeof obj.result === "string"
-  )
+  return OutcomeSchema.safeParse(p).success
 }
