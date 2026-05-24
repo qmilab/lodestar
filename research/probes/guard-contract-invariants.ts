@@ -29,7 +29,11 @@ import { z } from "zod"
 import { registry } from "@orrery/core"
 import { _resetToolsForTests, registerTool } from "@orrery/action-kernel"
 import { registerBuiltInExtractors } from "@orrery/cognitive-core"
-import { EventLogReader, EventLogWriter } from "@orrery/event-log"
+import {
+  EventLogReader,
+  EventLogWriter,
+  _resetEventLogStateForTests,
+} from "@orrery/event-log"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
@@ -758,6 +762,131 @@ async function caseM(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case N: caller cannot lower contract.reversibility ───────────────
+
+async function caseN(): Promise<string | undefined> {
+  _resetToolsForTests()
+  const OUT = "probe.n_out@1"
+  if (!registry.has(OUT)) {
+    registry.register(OUT, z.object({ ran: z.boolean() }))
+  }
+
+  // Tool declares itself irreversible. A hostile caller passes
+  // `contract: { reversibility: "reversible" }`. Guard must clamp to
+  // the tool's declared (higher-risk) value.
+  registerTool({
+    name: "probe.irreversible_tool",
+    inputs: z.object({}),
+    output_schema_key: OUT,
+    effects: [],
+    reversibility: "irreversible",
+    permissions: [],
+    required_trust_level: 0,
+    sandbox: "read",
+    execute: async () => ({ ran: true }),
+  })
+
+  let seenReversibility = ""
+  const recordingPolicy: PolicyGate = async (action) => {
+    seenReversibility = action.contract.reversibility
+    return {
+      approved: true,
+      reason: `recorded ${action.contract.reversibility}`,
+      approver_id: "recorder",
+    }
+  }
+
+  await runGuarded(
+    async (ctx) => {
+      await ctx.callTool(
+        "probe.irreversible_tool",
+        {},
+        { contract: { reversibility: "reversible" } },
+      )
+    },
+    {
+      project_id: "probe-contract-N",
+      actor_id: "tester",
+      log_root: "/tmp/orrery-probe-contract-N",
+      default_scope: { level: "project", identifier: "probe-contract-N" },
+      default_sensitivity: "internal",
+      policy_gate: recordingPolicy,
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  if (seenReversibility !== "irreversible") {
+    return (
+      `[N] policy_gate saw reversibility='${seenReversibility}' after a caller passed ` +
+      `'reversible' for an irreversible tool. The override should be clamped to ` +
+      `the tool's declared (higher-risk) value.`
+    )
+  }
+  return undefined
+}
+
+// ─── Sub-case O: concurrent writer instances share seq across sessions ────
+
+async function caseO(): Promise<string | undefined> {
+  const LOG_ROOT = "/tmp/orrery-probe-contract-O"
+  const PROJECT = "probe-contract-O"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+  _resetEventLogStateForTests()
+
+  // Two concurrent writers for the same project — the runGuarded x
+  // runGuarded scenario. Each constructs its own EventLogWriter. They
+  // must share allocation state or both will scan an empty log and
+  // allocate seq=0 simultaneously.
+  const writers = [
+    new EventLogWriter(LOG_ROOT),
+    new EventLogWriter(LOG_ROOT),
+  ]
+
+  const PER_WRITER = 5
+  const appends: Promise<unknown>[] = []
+  for (let w = 0; w < writers.length; w++) {
+    for (let i = 0; i < PER_WRITER; i++) {
+      const writer = writers[w]
+      if (!writer) continue
+      appends.push(
+        writer.append({
+          id: crypto.randomUUID(),
+          type: "probe.concurrent_writers",
+          schema_version: "0.1.0",
+          project_id: PROJECT,
+          session_id: `session-w${w}-${i}`,
+          actor_id: "tester",
+          timestamp: new Date().toISOString(),
+          causal_parent_ids: [],
+          payload: { w, i },
+          versions: {},
+        }),
+      )
+    }
+  }
+  await Promise.all(appends)
+
+  // Read everything back and assert no duplicate seq values.
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readAll(PROJECT)
+  const seen = new Map<number, number>()
+  for (const e of events) {
+    seen.set(e.seq, (seen.get(e.seq) ?? 0) + 1)
+  }
+  const duplicates = [...seen.entries()].filter(([_, c]) => c > 1)
+  if (duplicates.length > 0) {
+    const sample = duplicates.slice(0, 3).map(([s, c]) => `seq=${s}×${c}`).join(", ")
+    return (
+      `[O] concurrent writer instances produced duplicate seq values: ${sample}. ` +
+      `EventLogWriter must share seq state across instances pointed at the same root/project.`
+    )
+  }
+  if (events.length !== writers.length * PER_WRITER) {
+    return `[O] expected ${writers.length * PER_WRITER} events; got ${events.length}`
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -773,6 +902,8 @@ async function run(): Promise<ProbeResult> {
     { name: "K: execution-time rejections emit action.rejected", fn: caseK },
     { name: "L: orrery probe works from any working directory", fn: caseL },
     { name: "M: writer hydration is race-safe", fn: caseM },
+    { name: "N: caller cannot lower contract.reversibility", fn: caseN },
+    { name: "O: concurrent writers share seq across instances", fn: caseO },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
