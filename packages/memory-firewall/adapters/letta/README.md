@@ -1,9 +1,9 @@
-# @orrery/memory-firewall-letta
+# @qmilab/lodestar-memory-firewall-letta
 
 Adapter that imports memory blocks from [Letta](https://github.com/letta-ai/letta)
 (formerly MemGPT) into the Orrery memory firewall.
 
-Same shape as `@orrery/memory-firewall-mem0` — see that package's
+Same shape as `@qmilab/lodestar-memory-firewall-mem0` — see that package's
 README for the broader narrative around why imports cannot
 self-promote. The only difference is the upstream schema (`blocks`
 instead of `memories`).
@@ -18,7 +18,7 @@ instead of `memories`).
 ## Usage
 
 ```ts
-import { LettaAdapter } from "@orrery/memory-firewall-letta"
+import { LettaAdapter } from "@qmilab/lodestar-memory-firewall-letta"
 
 const adapter = new LettaAdapter(firewall, evidenceStore)
 await adapter.importMemories(

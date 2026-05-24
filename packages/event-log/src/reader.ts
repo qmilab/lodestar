@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { existsSync } from "node:fs"
-import { type EventEnvelope, EventEnvelopeSchema } from "@orrery/core"
+import { type EventEnvelope, EventEnvelopeSchema } from "@qmilab/lodestar-core"
 
 /**
  * Reader over the NDJSON event log.

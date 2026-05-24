@@ -1,5 +1,5 @@
 /**
- * @orrery/trace — the read side of the epistemic chain.
+ * @qmilab/lodestar-trace — the read side of the epistemic chain.
  *
  * Consumes the append-only event log and projects it into the chain
  * primitives (Observation → Claim → EvidenceSet → Belief → Decision →

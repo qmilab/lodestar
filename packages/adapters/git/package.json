@@ -1,5 +1,5 @@
 {
-  "name": "@orrery/adapter-git",
+  "name": "@qmilab/lodestar-adapter-git",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/action-kernel": "workspace:*",
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-action-kernel": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

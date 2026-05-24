@@ -57,11 +57,11 @@ Use Claude Code or OpenClaw to run the agent. Use Orrery to make its actions and
 
 Orrery is one architecture, exposed through four developer-facing packages:
 
-### `@orrery/guard`
+### `@qmilab/lodestar-guard`
 The **write side**. Wraps agent tool calls, captures observations, gates risky actions, records the epistemic chain. This is the first thing most developers adopt.
 
 ```ts
-import { guard } from "@orrery/guard"
+import { guard } from "@qmilab/lodestar-guard"
 const agent = guard.wrap({
   tools,
   memory,
@@ -77,23 +77,23 @@ orrery init
 orrery guard run -- claude code "fix the failing test"
 ```
 
-### `@orrery/trace`
-The **read side**. Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. The package is `@orrery/trace`; the user-facing CLI command is `orrery report`.
+### `@qmilab/lodestar-trace`
+The **read side**. Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. The package is `@qmilab/lodestar-trace`; the user-facing CLI command is `orrery report`.
 
 ```
 orrery report <session-id>
 ```
 
-### `@orrery/memory-firewall`
+### `@qmilab/lodestar-memory-firewall`
 The **memory governance entry point**. Works alongside [mem0](https://github.com/mem0ai/mem0), [Letta](https://github.com/letta-ai/letta), [Zep](https://github.com/getzep/zep), or custom memory layers. Decides what beliefs to adopt, retrieve, quarantine, or block — with audited transitions on four lifecycle axes (truth, retrieval, security, freshness).
 
 ```ts
-import { MemoryFirewall } from "@orrery/memory-firewall"
-import { mem0Adapter } from "@orrery/memory-firewall/adapters/mem0"
+import { MemoryFirewall } from "@qmilab/lodestar-memory-firewall"
+import { mem0Adapter } from "@qmilab/lodestar-memory-firewall/adapters/mem0"
 const firewall = new MemoryFirewall({ adapter: mem0Adapter(mem0Client) })
 ```
 
-### `@orrery/harness`
+### `@qmilab/lodestar-harness`
 **Probes, sentinels, and calibrators.** Safety tests, runtime monitors, and confidence-vs-outcome measurement. The natural surface for community-shared trust packs.
 
 ```
@@ -106,14 +106,14 @@ orrery harness run --pack memory-poisoning
 
 The four packages above and their dependencies are licensed under **Apache 2.0**:
 
-- `@orrery/core` (schemas)
-- `@orrery/event-log`
-- `@orrery/action-kernel`
-- `@orrery/memory-firewall`
-- `@orrery/cognitive-core`
-- `@orrery/guard`
-- `@orrery/trace`
-- `@orrery/harness`
+- `@qmilab/lodestar-core` (schemas)
+- `@qmilab/lodestar-event-log`
+- `@qmilab/lodestar-action-kernel`
+- `@qmilab/lodestar-memory-firewall`
+- `@qmilab/lodestar-cognitive-core`
+- `@qmilab/lodestar-guard`
+- `@qmilab/lodestar-trace`
+- `@qmilab/lodestar-harness`
 - All built-in adapters (Git, GitHub, filesystem, shell, Langfuse, Phoenix, OTel)
 - Example probe packs and research benchmarks
 - Policy language and basic replay
@@ -133,8 +133,8 @@ What ships today:
 - ✅ Two-phase action execution with precondition revalidation
 - ✅ Memory firewall with four orthogonal lifecycle axes and per-axis transition tables
 - ✅ Cognitive core: claim extractors, evidence linker, world model, ingestion orchestrator
-- ✅ `@orrery/guard` — `wrap()` helper that drives an agent loop through the full trust layer
-- ✅ `@orrery/trace` — `orrery report <session-id>` renders a markdown trust report from any event log
+- ✅ `@qmilab/lodestar-guard` — `wrap()` helper that drives an agent loop through the full trust layer
+- ✅ `@qmilab/lodestar-trace` — `orrery report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
 - ✅ Reorganised CLI: `orrery report`, `orrery guard wrap`, `orrery action list/describe`, `orrery trace inspect`, `orrery probe <name>`
 - ✅ Seven passing probes (six pre-existing plus a new `guard-import-no-self-promote` probe enforcing that adapter imports cannot self-promote)

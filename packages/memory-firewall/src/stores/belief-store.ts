@@ -7,7 +7,7 @@ import type {
   SecurityStatus,
   Sensitivity,
   TruthStatus,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 
 /**
  * Storage for beliefs.

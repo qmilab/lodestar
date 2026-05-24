@@ -4,9 +4,9 @@ import type {
   Observation,
   ResourceScope,
   Sensitivity,
-} from "@orrery/core"
-import type { PolicyGate, PreconditionChecker } from "@orrery/action-kernel"
-import type { IngestResult } from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-core"
+import type { PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
+import type { IngestResult } from "@qmilab/lodestar-cognitive-core"
 
 /**
  * Configuration for a guarded session.
@@ -119,11 +119,11 @@ export type AgentLoop<T> = (ctx: GuardContext) => Promise<T>
  * `GuardSession` for the example to introspect what was recorded.
  */
 export interface GuardInternals {
-  readonly firewall: import("@orrery/memory-firewall").MemoryFirewall
-  readonly claims: import("@orrery/memory-firewall").InMemoryClaimStore
-  readonly beliefs: import("@orrery/memory-firewall").InMemoryBeliefStore
-  readonly evidence: import("@orrery/memory-firewall").InMemoryEvidenceStore
-  readonly cognitive: import("@orrery/cognitive-core").CognitiveCore
-  readonly worldModel: import("@orrery/cognitive-core").InMemoryWorldModel
-  readonly kernel: import("@orrery/action-kernel").ActionKernel
+  readonly firewall: import("@qmilab/lodestar-memory-firewall").MemoryFirewall
+  readonly claims: import("@qmilab/lodestar-memory-firewall").InMemoryClaimStore
+  readonly beliefs: import("@qmilab/lodestar-memory-firewall").InMemoryBeliefStore
+  readonly evidence: import("@qmilab/lodestar-memory-firewall").InMemoryEvidenceStore
+  readonly cognitive: import("@qmilab/lodestar-cognitive-core").CognitiveCore
+  readonly worldModel: import("@qmilab/lodestar-cognitive-core").InMemoryWorldModel
+  readonly kernel: import("@qmilab/lodestar-action-kernel").ActionKernel
 }

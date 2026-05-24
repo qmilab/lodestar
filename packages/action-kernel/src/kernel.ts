@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto"
-import { type Action, type ActionContract, type ActionPrecondition, type Observation, registry } from "@orrery/core"
+import { type Action, type ActionContract, type ActionPrecondition, type Observation, registry } from "@qmilab/lodestar-core"
 import { lookupTool, type Tool } from "./registry"
 
 /**
  * The policy gate interface. The action kernel does not implement policy
- * itself — that lives in @orrery/policy-kernel. The kernel calls into
+ * itself — that lives in @qmilab/lodestar-policy-kernel. The kernel calls into
  * a PolicyGate function to arbitrate every action.
  *
  * Returning `approved: true` lets execution proceed. Returning `false`
@@ -50,7 +50,7 @@ export type PreconditionChecker = (
  * inside their `ToolContext`. Without a resolver, the kernel falls
  * back to `"session-stub"` / `"project-stub"` placeholders — fine for
  * unit tests, broken for any tool that scopes side effects by
- * session or project. Hosts (@orrery/guard, the eventual MCP proxy)
+ * session or project. Hosts (@qmilab/lodestar-guard, the eventual MCP proxy)
  * MUST supply a resolver in production.
  */
 export type ToolContextResolver = () => {
@@ -252,7 +252,7 @@ export class ActionKernel {
       // an L0 tool's classification to 'secret' for this one
       // invocation) propagates into the observation, the claims it
       // extracts, and the resulting log entry — not just the policy
-      // gate. Hosts can still lift further (see @orrery/guard).
+      // gate. Hosts can still lift further (see @qmilab/lodestar-guard).
       const obs: Observation = {
         id: randomUUID(),
         schema: tool.output_schema_key,

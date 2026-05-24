@@ -108,9 +108,9 @@ research/
 
 ## Coding norms
 
-- Every public type lives in `packages/core` and is exported through `@orrery/core`.
+- Every public type lives in `packages/core` and is exported through `@qmilab/lodestar-core`.
 - Every package has its own `CLAUDE.md`, `README.md`, `package.json`, and `tsconfig.json` extending the root `tsconfig.base.json`.
-- No package imports from another package via relative path. All cross-package imports use the `@orrery/*` workspace alias.
+- No package imports from another package via relative path. All cross-package imports use the `@qmilab/lodestar-*` workspace alias.
 - No Telenotes-specific code in `packages/`. Telenotes-aware code lives only in `examples/telenotes-governed-dev/`.
 - No silent defaults for security-relevant settings. Sandbox profile, sensitivity ceiling, trust level are explicit in every action contract.
 - No `console.log` in production code paths. Use the event log for observability.
@@ -151,7 +151,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `orrery report <session-id>` is the headline command. Not `orrery trace report`.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
-- **`@orrery/*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/orrery-*`) is deferred and is mechanical when made.
+- **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
 - **Six probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
 
 ## Quick references

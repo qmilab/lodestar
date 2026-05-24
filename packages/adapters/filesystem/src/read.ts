@@ -1,8 +1,8 @@
 import { readFile, stat } from "node:fs/promises"
 import { resolve, relative } from "node:path"
 import { z } from "zod"
-import { registry } from "@orrery/core"
-import { registerTool, type Tool } from "@orrery/action-kernel"
+import { registry } from "@qmilab/lodestar-core"
+import { registerTool, type Tool } from "@qmilab/lodestar-action-kernel"
 
 /**
  * fs.read — read a file's contents.

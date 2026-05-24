@@ -68,7 +68,7 @@ Wraps agent tool calls. Captures observations. Records claims/beliefs/decisions.
 
 ### Orrery Trace — the read side
 
-Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. Same data as Guard; different command. The package name is `@orrery/trace`; the user-facing CLI command is `orrery report` (explanation-focused, not tracing-tool-collision).
+Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. Same data as Guard; different command. The package name is `@qmilab/lodestar-trace`; the user-facing CLI command is `orrery report` (explanation-focused, not tracing-tool-collision).
 
 **Adoption shape**: CLI command (`orrery report`), web viewer, OTel exporter.
 
@@ -100,11 +100,11 @@ Platform-first with self-hosted as a secondary option. Requires existing categor
 Open code, hosted convenience. Similar to Model A but with less emphasis on inspectability of the local runtime.
 
 ### What is Apache 2.0
-- All schemas (`@orrery/core`)
-- Append-only event log (`@orrery/event-log`)
-- Action kernel and policy language (`@orrery/action-kernel`)
-- Memory firewall, including all four lifecycle axes (`@orrery/memory-firewall`)
-- Cognitive core (`@orrery/cognitive-core`)
+- All schemas (`@qmilab/lodestar-core`)
+- Append-only event log (`@qmilab/lodestar-event-log`)
+- Action kernel and policy language (`@qmilab/lodestar-action-kernel`)
+- Memory firewall, including all four lifecycle axes (`@qmilab/lodestar-memory-firewall`)
+- Cognitive core (`@qmilab/lodestar-cognitive-core`)
 - Guard, Trace, Harness packages
 - All first-party adapters (Git, GitHub, filesystem, shell, MCP, mem0, Letta, Zep, Langfuse, Phoenix, OTel)
 - Basic replay capability — replaying events from the NDJSON log

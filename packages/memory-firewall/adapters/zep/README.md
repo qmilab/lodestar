@@ -1,10 +1,10 @@
-# @orrery/memory-firewall-zep
+# @qmilab/lodestar-memory-firewall-zep
 
 Adapter that imports facts from [Zep](https://github.com/getzep/zep)
 into the Orrery memory firewall.
 
 Same shape as the mem0 and Letta adapters — see
-`@orrery/memory-firewall-mem0` for the broader narrative. The
+`@qmilab/lodestar-memory-firewall-mem0` for the broader narrative. The
 difference here is that v0.2 imports Zep *facts* (the higher-order
 summary structure) rather than raw message histories; per-message
 import is deferred until claim-extraction strategies exist for
@@ -20,7 +20,7 @@ free-form conversation.
 ## Usage
 
 ```ts
-import { ZepAdapter } from "@orrery/memory-firewall-zep"
+import { ZepAdapter } from "@qmilab/lodestar-memory-firewall-zep"
 
 const adapter = new ZepAdapter(firewall, evidenceStore)
 await adapter.importMemories(

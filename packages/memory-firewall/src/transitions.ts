@@ -1,4 +1,4 @@
-import type { FreshnessStatus, RetrievalStatus, SecurityStatus, TruthStatus } from "@orrery/core"
+import type { FreshnessStatus, RetrievalStatus, SecurityStatus, TruthStatus } from "@qmilab/lodestar-core"
 import type { LifecycleAxis } from "./stores/belief-store"
 
 /**

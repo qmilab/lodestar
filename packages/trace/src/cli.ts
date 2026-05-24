@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * `orrery-report` — standalone CLI binary for `@orrery/trace`.
+ * `orrery-report` — standalone CLI binary for `@qmilab/lodestar-trace`.
  *
  * Typically invoked via `orrery report <session-id>` (the unified CLI
- * in `@orrery/cli` dispatches here). Provided as its own bin so the
+ * in `@qmilab/lodestar-cli` dispatches here). Provided as its own bin so the
  * trace package is self-contained.
  *
  * Usage:

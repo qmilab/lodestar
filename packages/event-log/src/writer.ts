@@ -2,7 +2,7 @@ import { mkdir, appendFile, readdir, readFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
-import { type EventEnvelope, EventEnvelopeSchema } from "@orrery/core"
+import { type EventEnvelope, EventEnvelopeSchema } from "@qmilab/lodestar-core"
 
 /**
  * Append-only NDJSON event log.

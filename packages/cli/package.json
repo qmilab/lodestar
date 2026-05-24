@@ -1,5 +1,5 @@
 {
-  "name": "@orrery/cli",
+  "name": "@qmilab/lodestar-cli",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -12,13 +12,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/event-log": "workspace:*",
-    "@orrery/action-kernel": "workspace:*",
-    "@orrery/guard": "workspace:*",
-    "@orrery/trace": "workspace:*",
-    "@orrery/adapter-filesystem": "workspace:*",
-    "@orrery/adapter-git": "workspace:*",
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-event-log": "workspace:*",
+    "@qmilab/lodestar-action-kernel": "workspace:*",
+    "@qmilab/lodestar-guard": "workspace:*",
+    "@qmilab/lodestar-trace": "workspace:*",
+    "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+    "@qmilab/lodestar-adapter-git": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

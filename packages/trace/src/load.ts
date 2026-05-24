@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
-import type { EventEnvelope } from "@orrery/core"
-import { EventLogReader } from "@orrery/event-log"
+import type { EventEnvelope } from "@qmilab/lodestar-core"
+import { EventLogReader } from "@qmilab/lodestar-event-log"
 
 /**
  * Locate the project directory under a log root that contains events

@@ -4,7 +4,7 @@ import {
   loadSessionEvents,
   projectChain,
   renderReport,
-} from "@orrery/trace"
+} from "@qmilab/lodestar-trace"
 
 /**
  * `orrery report <session-id> [--project <id>] [--log-root <path>] [--out <file>]`

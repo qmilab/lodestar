@@ -1,4 +1,4 @@
-import { listTools, lookupTool } from "@orrery/action-kernel"
+import { listTools, lookupTool } from "@qmilab/lodestar-action-kernel"
 
 /**
  * `orrery action list`

@@ -1,4 +1,4 @@
-import type { EventEnvelope } from "@orrery/core"
+import type { EventEnvelope } from "@qmilab/lodestar-core"
 
 /**
  * Debug-grade inspection of a single event envelope.

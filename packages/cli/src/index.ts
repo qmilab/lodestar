@@ -17,8 +17,8 @@
  *   orrery help
  */
 
-import { registerFsReadTool } from "@orrery/adapter-filesystem"
-import { registerGitStatusTool } from "@orrery/adapter-git"
+import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
+import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import { actionDescribeCommand, actionListCommand } from "./commands/action"
 import { guardWrapCommand } from "./commands/guard"
 import { HELP_TEXT } from "./commands/help"

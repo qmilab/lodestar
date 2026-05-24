@@ -1,4 +1,4 @@
-# @orrery/cli
+# @qmilab/lodestar-cli
 
 The `orrery` command-line interface.
 

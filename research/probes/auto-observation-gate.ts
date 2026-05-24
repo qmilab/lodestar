@@ -18,20 +18,20 @@
  */
 
 import { z } from "zod"
-import type { Observation } from "@orrery/core"
-import { registry } from "@orrery/core"
+import type { Observation } from "@qmilab/lodestar-core"
+import { registry } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   EvidenceLinker,
   ExplanationGenerator,
   InMemoryWorldModel,
-} from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-cognitive-core"
 
 // Register a synthetic schema for the probe
 const SCHEMA_KEY = "probe.external_doc@1"
@@ -44,7 +44,7 @@ if (!registry.has(SCHEMA_KEY)) {
 // external_document evidence item. For probe purposes, this simulates
 // what would happen if a generic LLM extractor pulled claims from a
 // README or webpage observation.
-import { lookupExtractor, registerExtractor, type ClaimExtractor } from "@orrery/cognitive-core"
+import { lookupExtractor, registerExtractor, type ClaimExtractor } from "@qmilab/lodestar-cognitive-core"
 
 const probeExtractor: ClaimExtractor = {
   schema_key: SCHEMA_KEY,
@@ -78,14 +78,14 @@ if (!lookupExtractor(SCHEMA_KEY) || lookupExtractor(SCHEMA_KEY)?.schema_key !== 
 // Custom EvidenceLinker that produces external_document evidence
 class ExternalDocumentEvidenceLinker {
   constructor(
-    private readonly evidence: import("@orrery/memory-firewall").EvidenceStore,
+    private readonly evidence: import("@qmilab/lodestar-memory-firewall").EvidenceStore,
   ) {}
 
   async linkForClaim(input: {
-    claim: import("@orrery/core").Claim
+    claim: import("@qmilab/lodestar-core").Claim
     source_observations: Observation[]
     assessor_actor_id: string
-  }): Promise<import("@orrery/core").EvidenceSet> {
+  }): Promise<import("@qmilab/lodestar-core").EvidenceSet> {
     const items = input.source_observations.map((obs) => ({
       source_id: obs.id,
       relation: "supports" as const,
@@ -94,7 +94,7 @@ class ExternalDocumentEvidenceLinker {
       freshness: "fresh" as const,
       notes: `from external document via ${obs.schema}`,
     }))
-    const evidenceSet: import("@orrery/core").EvidenceSet = {
+    const evidenceSet: import("@qmilab/lodestar-core").EvidenceSet = {
       id: crypto.randomUUID(),
       claim_id: input.claim.id,
       items,

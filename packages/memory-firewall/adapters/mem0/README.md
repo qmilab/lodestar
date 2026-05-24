@@ -1,4 +1,4 @@
-# @orrery/memory-firewall-mem0
+# @qmilab/lodestar-memory-firewall-mem0
 
 Adapter that imports memories from [mem0](https://github.com/mem0ai/mem0)
 into the Orrery memory firewall.
@@ -21,8 +21,8 @@ import {
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import { Mem0Adapter } from "@orrery/memory-firewall-mem0"
+} from "@qmilab/lodestar-memory-firewall"
+import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
 
 const claims = new InMemoryClaimStore()
 const beliefs = new InMemoryBeliefStore()

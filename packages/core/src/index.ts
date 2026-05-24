@@ -1,5 +1,5 @@
 /**
- * @orrery/core
+ * @qmilab/lodestar-core
  *
  * Epistemic chain primitives and schemas. Everything else in Orrery
  * depends on this package.

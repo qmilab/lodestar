@@ -1,5 +1,5 @@
 {
-  "name": "@orrery/action-kernel",
+  "name": "@qmilab/lodestar-action-kernel",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/event-log": "workspace:*",
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-event-log": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

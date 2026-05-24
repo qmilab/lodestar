@@ -369,7 +369,7 @@ The open-source TypeScript implementation. Bun runtime. Strict TypeScript with `
 
 ### 10.2 Architecture as code
 
-The repository structure mirrors the architecture. Each architectural component is a separate package. Schemas in `@orrery/core`, event log in `@orrery/event-log`, action kernel in `@orrery/action-kernel`, memory firewall in `@orrery/memory-firewall`, cognitive core in `@orrery/cognitive-core`. Adapters in `@orrery/adapter-*`.
+The repository structure mirrors the architecture. Each architectural component is a separate package. Schemas in `@qmilab/lodestar-core`, event log in `@qmilab/lodestar-event-log`, action kernel in `@qmilab/lodestar-action-kernel`, memory firewall in `@qmilab/lodestar-memory-firewall`, cognitive core in `@qmilab/lodestar-cognitive-core`. Adapters in `@qmilab/lodestar-adapter-*`.
 
 ### 10.3 The two passing probes
 
@@ -453,7 +453,7 @@ Restate the gap. Restate the contribution. Argue that epistemic governance is a 
 
 ### A. Full schema definitions
 
-The Zod schemas in `@orrery/core` reproduced with comments. ~3 pages.
+The Zod schemas in `@qmilab/lodestar-core` reproduced with comments. ~3 pages.
 
 ### B. The transition tables in full
 

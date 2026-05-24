@@ -1,4 +1,4 @@
-import type { Claim } from "@orrery/core"
+import type { Claim } from "@qmilab/lodestar-core"
 import type { ClaimExtractor, ExtractionInput } from "./base"
 
 /**

@@ -1,4 +1,4 @@
-# @orrery/memory-firewall — CLAUDE.md
+# @qmilab/lodestar-memory-firewall — CLAUDE.md
 
 This package governs the lifecycle of claims and beliefs. It is the gate between "an agent extracted something" and "the agent has adopted this as a belief it acts on."
 
@@ -22,10 +22,10 @@ This package governs the lifecycle of claims and beliefs. It is the gate between
 
 ## What does not live here
 
-- Claim extraction from observations: see `@orrery/cognitive-core/extractors`.
-- Belief retrieval into model context: see `@orrery/cognitive-core` planner.
-- Reflection that proposes promotions: see `@orrery/cognitive-core/reflection`.
-- Sentinel hooks that flag suspicious beliefs: see `@orrery/harness/sentinels`.
+- Claim extraction from observations: see `@qmilab/lodestar-cognitive-core/extractors`.
+- Belief retrieval into model context: see `@qmilab/lodestar-cognitive-core` planner.
+- Reflection that proposes promotions: see `@qmilab/lodestar-cognitive-core/reflection`.
+- Sentinel hooks that flag suspicious beliefs: see `@qmilab/lodestar-harness/sentinels`.
 
 ## File layout
 

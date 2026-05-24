@@ -1,4 +1,4 @@
-import type { Claim, Observation, ResourceScope, Sensitivity } from "@orrery/core"
+import type { Claim, Observation, ResourceScope, Sensitivity } from "@qmilab/lodestar-core"
 
 /**
  * An extractor consumes an Observation and produces zero or more Claims.

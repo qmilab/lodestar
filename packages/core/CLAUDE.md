@@ -1,4 +1,4 @@
-# @orrery/core — CLAUDE.md
+# @qmilab/lodestar-core — CLAUDE.md
 
 This package defines the epistemic chain primitives. Everything else in the monorepo depends on it.
 
@@ -12,14 +12,14 @@ This package defines the epistemic chain primitives. Everything else in the mono
 
 1. **No runtime behavior.** This package is types and schemas only. No I/O, no database, no HTTP.
 2. **Zod and TypeScript types stay in sync.** When you add a type, add the Zod schema, and use `z.infer<typeof schema>` to derive the type from the schema. Never define them separately.
-3. **No package-local imports.** This is the dependency root. Nothing in `@orrery/core` imports from `@orrery/*`.
+3. **No package-local imports.** This is the dependency root. Nothing in `@qmilab/lodestar-core` imports from `@qmilab/lodestar-*`.
 4. **Backwards-compatible additions only after v0.2.** Until then, schema changes are free. Once we declare v0.2 stable, every schema change ships with a `schema_version` bump and a migration note.
 
 ## What does not live here
 
-- Persistence: see `@orrery/event-log` and the Postgres adapters in respective packages.
-- Tool registry: see `@orrery/action-kernel`.
-- Policy evaluation: see `@orrery/policy-kernel`.
+- Persistence: see `@qmilab/lodestar-event-log` and the Postgres adapters in respective packages.
+- Tool registry: see `@qmilab/lodestar-action-kernel`.
+- Policy evaluation: see `@qmilab/lodestar-policy-kernel`.
 - Telenotes-specific extensions: see `examples/telenotes-governed-dev/`.
 
 ## File layout

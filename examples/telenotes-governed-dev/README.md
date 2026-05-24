@@ -2,7 +2,7 @@
 
 Status: scaffold. Real demo lands in week 8.
 
-This example shows how to use Orrery to govern an agent that performs development work on the Telenotes codebase (or any codebase). It is a *reference demonstration*, not a core package. Nothing here is imported by `@orrery/core` or other workspace packages.
+This example shows how to use Orrery to govern an agent that performs development work on the Telenotes codebase (or any codebase). It is a *reference demonstration*, not a core package. Nothing here is imported by `@qmilab/lodestar-core` or other workspace packages.
 
 ## What this demonstrates
 

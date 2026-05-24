@@ -15,14 +15,14 @@
  */
 
 import { z } from "zod"
-import type { Claim, EvidenceSet, Explanation, Observation } from "@orrery/core"
-import { registry } from "@orrery/core"
+import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
+import { registry } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 
 const SCHEMA_KEY = "probe.external@1"
 if (!registry.has(SCHEMA_KEY)) {

@@ -25,15 +25,15 @@ import {
   autoApprovePolicy,
   wrap,
   type GuardContext,
-} from "@orrery/guard"
-import { registerFsReadTool } from "@orrery/adapter-filesystem"
-import { registerGitStatusTool } from "@orrery/adapter-git"
+} from "@qmilab/lodestar-guard"
+import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
+import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import {
   defaultLogRoot,
   loadSessionEvents,
   projectChain,
   renderReport,
-} from "@orrery/trace"
+} from "@qmilab/lodestar-trace"
 
 const PROJECT_ROOT = process.cwd()
 const PROJECT_ID = "coding-agent-greenfield"

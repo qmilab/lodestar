@@ -3,7 +3,7 @@
  * Probe: guard_precondition_revalidation
  *
  * Verifies that tool-declared preconditions reach the Action Kernel's
- * revalidation step when a tool is invoked through `@orrery/guard`.
+ * revalidation step when a tool is invoked through `@qmilab/lodestar-guard`.
  *
  * Setup:
  * - Register a synthetic tool whose `preconditions` factory returns a
@@ -29,9 +29,9 @@
  */
 
 import { z } from "zod"
-import { registry } from "@orrery/core"
-import { registerTool, _resetToolsForTests } from "@orrery/action-kernel"
-import { autoApprovePolicy, runGuarded } from "@orrery/guard"
+import { registry } from "@qmilab/lodestar-core"
+import { registerTool, _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
+import { autoApprovePolicy, runGuarded } from "@qmilab/lodestar-guard"
 
 interface ProbeResult {
   passed: boolean

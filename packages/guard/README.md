@@ -1,4 +1,4 @@
-# @orrery/guard
+# @qmilab/lodestar-guard
 
 The write-side trust layer. A single import surface for governing an
 agent: every tool call goes through the Action Kernel, every observation
@@ -12,7 +12,7 @@ import {
   autoApprovePolicy,
   alwaysHoldsChecker,
   registerTool,
-} from "@orrery/guard"
+} from "@qmilab/lodestar-guard"
 
 // Wrap your loop.
 const run = wrap(async (ctx) => {
@@ -75,10 +75,10 @@ policy — the explicit ceiling makes the intent visible in the call site.
 
 ## What's re-exported
 
-Everything from `@orrery/event-log`, `@orrery/action-kernel`,
-`@orrery/memory-firewall`, and `@orrery/cognitive-core` that a typical
-caller needs, plus the most-used types from `@orrery/core`. A consumer
-who imports only from `@orrery/guard` should have the full trust-layer
+Everything from `@qmilab/lodestar-event-log`, `@qmilab/lodestar-action-kernel`,
+`@qmilab/lodestar-memory-firewall`, and `@qmilab/lodestar-cognitive-core` that a typical
+caller needs, plus the most-used types from `@qmilab/lodestar-core`. A consumer
+who imports only from `@qmilab/lodestar-guard` should have the full trust-layer
 surface available.
 
 ## What this package does not include
@@ -86,6 +86,6 @@ surface available.
 - Skill manifests, signing, or skill marketplace plumbing (out of scope
   through v1.5).
 - MCP proxy mode for wrapping existing agents — that's
-  `@orrery/guard-mcp`, scheduled for Batch 3.
+  `@qmilab/lodestar-guard-mcp`, scheduled for Batch 3.
 - Production-grade policy (trust ladder, approval surfaces) — that's
-  `@orrery/policy-kernel`, scheduled for Batch 4+.
+  `@qmilab/lodestar-policy-kernel`, scheduled for Batch 4+.

@@ -4,7 +4,7 @@ import type {
   EvidenceSet,
   Explanation,
   Observation,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 import {
   AdapterImportOptionsSchema,
   notImplementedFor,
@@ -13,7 +13,7 @@ import {
   type EvidenceStore,
   type ExternalMemoryAdapter,
   type MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import { ZepEnvelopeSchema, ZepFactSchema, type ZepFact } from "./schema"
 
 export { ZepExportSchema, ZepFactSchema } from "./schema"

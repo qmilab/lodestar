@@ -1,4 +1,4 @@
-# @orrery/memory-firewall-zep — CLAUDE.md
+# @qmilab/lodestar-memory-firewall-zep — CLAUDE.md
 
 Stub-level adapter for Zep facts. Same shape as the mem0 adapter — see
 `../mem0/CLAUDE.md` for the invariants.

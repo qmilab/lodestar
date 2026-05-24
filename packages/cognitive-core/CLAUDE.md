@@ -1,4 +1,4 @@
-# @orrery/cognitive-core — CLAUDE.md
+# @qmilab/lodestar-cognitive-core — CLAUDE.md
 
 This is where the epistemic chain comes alive. The core consumes typed Observations and produces Claims, EvidenceSets, Beliefs, Decisions, and Explanations.
 
@@ -16,13 +16,13 @@ This is where the epistemic chain comes alive. The core consumes typed Observati
 1. **No claim without an observation.** Every Claim references at least one Observation. Free-form LLM extractions without a source observation are invalid.
 2. **No belief without evidence.** Every Belief points to a Claim, and adoption goes through the Memory Firewall, which requires an EvidenceSet.
 3. **No decision without belief dependencies.** When `ContextPolicy.require_evidence_for_decisions = true`, decisions without `belief_dependencies` are rejected before they reach the planner output.
-4. **No silent retrieval.** Every retrieval into model context goes through `@orrery/memory-firewall`'s `GatedRetrieval`. The core does not query the belief store directly.
+4. **No silent retrieval.** Every retrieval into model context goes through `@qmilab/lodestar-memory-firewall`'s `GatedRetrieval`. The core does not query the belief store directly.
 5. **Reflection never auto-commits.** Reflection outputs are always proposals. The Memory Firewall (with appropriate authority) is the only path to commit.
 6. **Working memory is ephemeral.** Anything in `working` is gone at session end. If something needs to survive, it must be promoted to episodic or semantic memory through the firewall.
 
 ## What does not live here
 
-- Belief storage and lifecycle transitions: see `@orrery/memory-firewall`.
-- Tool registry and execution: see `@orrery/action-kernel`.
-- Trust ladder and approval surfaces: see `@orrery/policy-kernel`.
-- Probes, sentinels, and calibrators: see `@orrery/harness`.
+- Belief storage and lifecycle transitions: see `@qmilab/lodestar-memory-firewall`.
+- Tool registry and execution: see `@qmilab/lodestar-action-kernel`.
+- Trust ladder and approval surfaces: see `@qmilab/lodestar-policy-kernel`.
+- Probes, sentinels, and calibrators: see `@qmilab/lodestar-harness`.

@@ -1,7 +1,7 @@
-# @orrery/cli — CLAUDE.md
+# @qmilab/lodestar-cli — CLAUDE.md
 
-The `orrery` binary. Dispatches to `@orrery/trace` for the report and
-to `@orrery/guard` for guarded runs; the package itself owns the
+The `orrery` binary. Dispatches to `@qmilab/lodestar-trace` for the report and
+to `@qmilab/lodestar-guard` for guarded runs; the package itself owns the
 command shape and the help text.
 
 ## File layout

@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
-import { EventLogWriter, canonicalHash } from "@orrery/event-log"
-import { ActionKernel, lookupTool } from "@orrery/action-kernel"
+import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import { ActionKernel, lookupTool } from "@qmilab/lodestar-action-kernel"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   EvidenceLinker,
@@ -17,15 +17,15 @@ import {
   InMemoryWorldModel,
   lookupExtractor,
   registerExtractor,
-} from "@orrery/cognitive-core"
-import type { ClaimExtractor, IngestResult } from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-cognitive-core"
+import type { ClaimExtractor, IngestResult } from "@qmilab/lodestar-cognitive-core"
 import type {
   Action,
   ActionContract,
   Observation,
   Reversibility,
   Sensitivity,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 import type {
   AgentLoop,
   CallToolOptions,
@@ -60,7 +60,7 @@ function ensureExtractors(): void {
 
 /**
  * Map a session-level {@link Sensitivity} to the narrower
- * {@link import("@orrery/core").DataSensitivityForAction} alphabet
+ * {@link import("@qmilab/lodestar-core").DataSensitivityForAction} alphabet
  * the Action Contract accepts.
  *
  *   public        → public

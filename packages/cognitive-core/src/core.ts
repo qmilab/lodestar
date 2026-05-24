@@ -1,6 +1,6 @@
-import type { Belief, Claim, EvidenceItem, EvidenceSet, Observation, ResourceScope } from "@orrery/core"
-import type { MemoryFirewall } from "@orrery/memory-firewall"
-import { aggregateStrength } from "@orrery/memory-firewall"
+import type { Belief, Claim, EvidenceItem, EvidenceSet, Observation, ResourceScope } from "@qmilab/lodestar-core"
+import type { MemoryFirewall } from "@qmilab/lodestar-memory-firewall"
+import { aggregateStrength } from "@qmilab/lodestar-memory-firewall"
 import type { EvidenceLinker } from "./evidence-linker"
 import type { ExplanationGenerator } from "./explanation"
 import { lookupExtractor } from "./extractors/base"
@@ -184,7 +184,7 @@ export interface IngestInput {
     project_id: string
     session_id: string
     default_scope: ResourceScope
-    default_sensitivity: import("@orrery/core").Sensitivity
+    default_sensitivity: import("@qmilab/lodestar-core").Sensitivity
   }
 }
 

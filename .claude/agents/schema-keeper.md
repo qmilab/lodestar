@@ -1,6 +1,6 @@
 ---
 name: schema-keeper
-description: Guards the epistemic chain schemas in @orrery/core and the observation registry. Use this agent when adding new types, modifying existing schemas, or registering new observation schemas.
+description: Guards the epistemic chain schemas in @qmilab/lodestar-core and the observation registry. Use this agent when adding new types, modifying existing schemas, or registering new observation schemas.
 tools: Read, Write, Edit, Bash, Grep, Glob
 ---
 

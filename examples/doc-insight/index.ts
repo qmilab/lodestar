@@ -35,20 +35,20 @@ import type {
   Observation,
   ResourceScope,
   Sensitivity,
-} from "@orrery/core"
-import { registry } from "@orrery/core"
+} from "@qmilab/lodestar-core"
+import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import type { EvidenceItem, EvidenceSet } from "@orrery/core"
+} from "@qmilab/lodestar-memory-firewall"
+import type { EvidenceItem, EvidenceSet } from "@qmilab/lodestar-core"
 import {
   ExplanationGenerator,
   InMemoryWorldModel,
-} from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-cognitive-core"
 
 // -----------------------------------------------------------------------------
 // Register the doc.parse@1 schema

@@ -4,7 +4,7 @@ import type {
   EvidenceSet,
   Explanation,
   Observation,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 import {
   AdapterImportOptionsSchema,
   notImplementedFor,
@@ -13,7 +13,7 @@ import {
   type EvidenceStore,
   type ExternalMemoryAdapter,
   type MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import { LettaBlockSchema, LettaEnvelopeSchema, type LettaBlock } from "./schema"
 
 export { LettaExportSchema, LettaBlockSchema } from "./schema"
@@ -28,7 +28,7 @@ const ADAPTER_NAME = "letta"
  * export, validates it, produces one Claim + Evidence + Belief per
  * block (statement = block label + value). Imports land at
  * `unverified/restricted`. The other adapter methods throw — see
- * `@orrery/memory-firewall-mem0` for the shape this adapter family
+ * `@qmilab/lodestar-memory-firewall-mem0` for the shape this adapter family
  * settles into.
  */
 export class LettaAdapter implements ExternalMemoryAdapter {

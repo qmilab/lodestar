@@ -26,27 +26,27 @@
 
 import * as fs from "node:fs/promises"
 import { z } from "zod"
-import { registry } from "@orrery/core"
-import { _resetToolsForTests, registerTool } from "@orrery/action-kernel"
-import { registerBuiltInExtractors } from "@orrery/cognitive-core"
+import { registry } from "@qmilab/lodestar-core"
+import { _resetToolsForTests, registerTool } from "@qmilab/lodestar-action-kernel"
+import { registerBuiltInExtractors } from "@qmilab/lodestar-cognitive-core"
 import {
   EventLogReader,
   EventLogWriter,
   _resetEventLogStateForTests,
-} from "@orrery/event-log"
+} from "@qmilab/lodestar-event-log"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import { Mem0Adapter } from "@orrery/memory-firewall-mem0"
+} from "@qmilab/lodestar-memory-firewall"
+import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
 import {
   alwaysHoldsChecker,
   autoApprovePolicy,
   runGuarded,
   type PolicyGate,
-} from "@orrery/guard"
+} from "@qmilab/lodestar-guard"
 
 interface ProbeResult {
   passed: boolean
@@ -479,7 +479,7 @@ async function caseI(): Promise<string | undefined> {
 
   await runGuarded(
     async (ctx) => {
-      const externalObs: import("@orrery/core").Observation = {
+      const externalObs: import("@qmilab/lodestar-core").Observation = {
         id: crypto.randomUUID(),
         // Schema doesn't need an extractor for this assertion — we
         // only care about the recorded event, not extracted claims.
@@ -979,8 +979,8 @@ async function caseQ(): Promise<string | undefined> {
   // to produce claims + evidence. The greenfield git.status is the
   // simplest; we use the cleared registry to add fs.read + git.status
   // here.
-  const { registerFsReadTool } = await import("@orrery/adapter-filesystem")
-  const { registerGitStatusTool } = await import("@orrery/adapter-git")
+  const { registerFsReadTool } = await import("@qmilab/lodestar-adapter-filesystem")
+  const { registerGitStatusTool } = await import("@qmilab/lodestar-adapter-git")
   registerFsReadTool(process.cwd())
   registerGitStatusTool(process.cwd())
 
@@ -1012,7 +1012,7 @@ async function caseQ(): Promise<string | undefined> {
   }
 
   // Render and confirm the Evidence section is present.
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, {
     session_id: SESSION,
     project_id: PROJECT,
@@ -1060,7 +1060,7 @@ async function caseR(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
   if (projection.decisions.length === 0) {
     return `[R] projectChain returned 0 decisions despite an emitted decision.made event`
@@ -1115,7 +1115,7 @@ async function caseS(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
   // Outcome was emitted without a preceding action — projectChain should
   // still capture it as a standalone ProjectedAction with outcome only.
@@ -1220,7 +1220,7 @@ async function caseU(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
 
   // The malformed action must NOT be in projection.actions — it
@@ -1310,7 +1310,7 @@ async function caseV(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
 
   // None of the malformed payloads should be in their respective

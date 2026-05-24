@@ -1,4 +1,4 @@
-# @orrery/trace
+# @qmilab/lodestar-trace
 
 The read side of the epistemic chain. Consumes an Orrery event log and
 produces a markdown trust report that explains what an agent observed,
@@ -41,7 +41,7 @@ import {
   projectChain,
   renderReport,
   defaultLogRoot,
-} from "@orrery/trace"
+} from "@qmilab/lodestar-trace"
 
 const { events, project_id } = await loadSessionEvents({
   logRoot: defaultLogRoot(),
@@ -62,5 +62,5 @@ when the agent process has exited and only the log remains.
 
 - Real-time tailing of an active session (planned for v0.2).
 - Rendering to HTML or JSON (markdown only in v0).
-- Exporting to LangSmith / Langfuse / Phoenix (that's `@orrery/otel-exporter`).
+- Exporting to LangSmith / Langfuse / Phoenix (that's `@qmilab/lodestar-otel-exporter`).
 - Single-writer enforcement on the underlying event log (that's Batch 3).

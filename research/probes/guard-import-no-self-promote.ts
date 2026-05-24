@@ -41,9 +41,9 @@ import {
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import { Mem0Adapter } from "@orrery/memory-firewall-mem0"
-import type { Explanation } from "@orrery/core"
+} from "@qmilab/lodestar-memory-firewall"
+import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
+import type { Explanation } from "@qmilab/lodestar-core"
 
 interface ProbeResult {
   passed: boolean

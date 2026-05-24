@@ -5,8 +5,8 @@ import {
   runGuarded,
   type AgentLoop,
   type GuardConfig,
-} from "@orrery/guard"
-import { defaultLogRoot } from "@orrery/trace"
+} from "@qmilab/lodestar-guard"
+import { defaultLogRoot } from "@qmilab/lodestar-trace"
 
 /**
  * `orrery guard wrap --target <module> [--project <id>] [--actor <id>] [--log-root <path>]`

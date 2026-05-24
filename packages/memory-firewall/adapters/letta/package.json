@@ -1,5 +1,5 @@
 {
-  "name": "@orrery/memory-firewall-letta",
+  "name": "@qmilab/lodestar-memory-firewall-letta",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -9,8 +9,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/memory-firewall": "workspace:*",
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-memory-firewall": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

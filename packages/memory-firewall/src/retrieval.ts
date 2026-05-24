@@ -1,4 +1,4 @@
-import type { Belief, ContextPolicy, ResourceScope } from "@orrery/core"
+import type { Belief, ContextPolicy, ResourceScope } from "@qmilab/lodestar-core"
 import type { BeliefStore } from "./stores/belief-store"
 
 /**
