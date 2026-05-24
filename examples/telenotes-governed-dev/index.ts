@@ -20,31 +20,31 @@
 
 import { resolve } from "node:path"
 import { randomUUID } from "node:crypto"
-import { EventLogWriter, canonicalHash } from "@orrery/event-log"
-import { ActionKernel, type PolicyDecision } from "@orrery/action-kernel"
-import { registerFsReadTool } from "@orrery/adapter-filesystem"
-import { registerGitStatusTool } from "@orrery/adapter-git"
-import type { Observation } from "@orrery/core"
+import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import { ActionKernel, type PolicyDecision } from "@qmilab/lodestar-action-kernel"
+import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
+import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
+import type { Observation } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   EvidenceLinker,
   ExplanationGenerator,
   InMemoryWorldModel,
   registerBuiltInExtractors,
-} from "@orrery/cognitive-core"
-import { TELENOTES_TOOL_POLICIES } from "./policy.orrery"
+} from "@qmilab/lodestar-cognitive-core"
+import { TELENOTES_TOOL_POLICIES } from "./policy.lodestar"
 
 const PROJECT_ID = "telenotes-governed-dev"
 const SESSION_ID = `session-${Date.now()}`
 const ACTOR_ID = "agent-demo"
 const PROJECT_ROOT = process.cwd()
-const LOG_DIR = resolve(PROJECT_ROOT, ".orrery", "events")
+const LOG_DIR = resolve(PROJECT_ROOT, ".lodestar", "events")
 
 const writer = new EventLogWriter(LOG_DIR)
 
@@ -73,7 +73,7 @@ function policyForTool(toolName: string): { default_level: number } {
 }
 
 async function policyGate(
-  action: import("@orrery/core").Action,
+  action: import("@qmilab/lodestar-core").Action,
 ): Promise<PolicyDecision> {
   const policy = policyForTool(action.tool)
   if (action.contract.required_level < policy.default_level) {

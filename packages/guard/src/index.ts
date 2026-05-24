@@ -1,5 +1,5 @@
 /**
- * @orrery/guard — the write-side meta-package.
+ * @qmilab/lodestar-guard — the write-side meta-package.
  *
  * Bundles the action-kernel, memory-firewall, cognitive-core, and
  * event-log surfaces a developer needs to govern an agent loop, plus
@@ -13,10 +13,10 @@
  *     the Action Kernel and every observation through the Cognitive Core.
  *  2. Policy presets — minimal `autoApprovePolicy` and `alwaysHoldsChecker`
  *     to get an example running. Anything beyond that lives in the
- *     forthcoming `@orrery/policy-kernel`.
+ *     forthcoming `@qmilab/lodestar-policy-kernel`.
  *
  * Everything else is re-exported so a consumer can `import { ... }
- * from "@orrery/guard"` without picking each underlying package.
+ * from "@qmilab/lodestar-guard"` without picking each underlying package.
  */
 
 // ── Helpers and types defined here ──────────────────────────────────────────
@@ -35,7 +35,7 @@ export { autoApprovePolicy, alwaysHoldsChecker } from "./policy-presets"
 // ── Re-exports from the underlying packages ─────────────────────────────────
 
 // Event log surface
-export { EventLogWriter, EventLogReader, canonicalHash } from "@orrery/event-log"
+export { EventLogWriter, EventLogReader, canonicalHash } from "@qmilab/lodestar-event-log"
 
 // Action kernel surface
 export {
@@ -43,7 +43,7 @@ export {
   registerTool,
   lookupTool,
   listTools,
-} from "@orrery/action-kernel"
+} from "@qmilab/lodestar-action-kernel"
 export type {
   PolicyGate,
   PolicyDecision,
@@ -53,7 +53,7 @@ export type {
   Permission,
   Effect,
   ToolContext,
-} from "@orrery/action-kernel"
+} from "@qmilab/lodestar-action-kernel"
 
 // Memory firewall surface
 export {
@@ -64,7 +64,7 @@ export {
   InMemoryEvidenceStore,
   aggregateStrength,
   isTransitionAllowed,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 export type {
   FirewallAuditEvent,
   ClaimStore,
@@ -75,7 +75,7 @@ export type {
   Transition,
   RetrievalQuery,
   RetrievalResult,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 
 // Cognitive core surface
 export {
@@ -86,7 +86,7 @@ export {
   registerBuiltInExtractors,
   registerExtractor,
   lookupExtractor,
-} from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-cognitive-core"
 export type {
   IngestInput,
   IngestResult,
@@ -94,7 +94,7 @@ export type {
   WorldModelEntry,
   ClaimExtractor,
   ExtractionInput,
-} from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-cognitive-core"
 
 // Core types (the ones an agent loop typically touches)
 export type {
@@ -113,4 +113,4 @@ export type {
   SecurityStatus,
   FreshnessStatus,
   BeliefAuthority,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"

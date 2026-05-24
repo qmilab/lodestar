@@ -1,18 +1,18 @@
 import { readdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { join } from "node:path"
-import { EventLogReader } from "@orrery/event-log"
+import { EventLogReader } from "@qmilab/lodestar-event-log"
 import {
   defaultLogRoot,
   describeEvent,
   findEventById,
-} from "@orrery/trace"
+} from "@qmilab/lodestar-trace"
 
 /**
- * `orrery trace inspect <event-id> [--project <id>] [--session <id>] [--log-root <path>]`
+ * `lodestar trace inspect <event-id> [--project <id>] [--session <id>] [--log-root <path>]`
  *
  * Debug-grade event inspection. The user-facing command is
- * `orrery report`; this exists for developers who need to look at a
+ * `lodestar report`; this exists for developers who need to look at a
  * specific envelope by id.
  */
 export async function traceInspectCommand(argv: string[]): Promise<number> {
@@ -37,7 +37,7 @@ export async function traceInspectCommand(argv: string[]): Promise<number> {
 
   if (!event_id) {
     process.stderr.write(
-      "usage: orrery trace inspect <event-id> [--project <id>] [--session <id>] [--log-root <path>]\n",
+      "usage: lodestar trace inspect <event-id> [--project <id>] [--session <id>] [--log-root <path>]\n",
     )
     return 2
   }

@@ -1,4 +1,4 @@
-# Whitepaper outline — "Orrery: Epistemic Governance for Agentic Systems"
+# Whitepaper outline — "Lodestar: Epistemic Governance for Agentic Systems"
 
 **Target venue**: arXiv preprint first, then adapted to one of: USENIX Security, AAAI Workshop on Safe and Responsible AI, ICML/NeurIPS Workshop on Agentic AI. The systems-paper framing also opens SOSP/OSDI but only with a stronger empirical evaluation than v0.2 will support.
 
@@ -14,7 +14,7 @@
 
 ### Title
 
-> **Orrery: Epistemic Governance for Agentic Systems**
+> **Lodestar: Epistemic Governance for Agentic Systems**
 
 Alternates worth considering:
 - "Epistemic Governance: An Architectural Primitive for Trustworthy AI Agents"
@@ -25,8 +25,8 @@ Alternates worth considering:
 Structure:
 1. **One-sentence problem statement.** Current agentic systems can record what an agent *did*, but not what it *believed* before doing it, why those beliefs were adopted, or whether they were verified.
 2. **Three-sentence motivation.** Observability tools (LangSmith, Langfuse) capture LLM call traces but stop at the call boundary. Memory layers (mem0, Letta, Zep) persist information but have no principled answer to "what is safe to retrieve, promote, or trust." This gap is increasingly load-bearing as agents act on persistent state and as memory-poisoning attacks (MINJA, MemoryGraft) demonstrate concrete failure modes.
-3. **Three-sentence contribution.** We present *epistemic governance* as an architectural primitive: a governance layer that treats claims, evidence, beliefs, decisions, actions, outcomes, and revisions as first-class artifacts. The architecture comprises (a) an Action Kernel with two-phase execution and precondition revalidation, (b) a Memory Firewall with four orthogonal lifecycle axes (truth, retrieval, security, freshness) and per-axis transition tables, (c) a Cognitive Core that walks the epistemic chain (Observation → Claim → Evidence → Belief), and (d) a Harness for probes, sentinels, and calibration. We instantiate the design in Orrery, an open-source TypeScript implementation, and demonstrate that the no-self-promotion rule in the Memory Firewall defeats synthetic-experience injection attacks of the MemoryGraft class.
-4. **Two-sentence framing of scope.** Orrery is presented as a design contribution validated by working implementation and adversarial probes, not as an empirical study of agent failure rates. We argue that epistemic governance is a missing architectural category alongside observability, memory management, and runtime, and that its absence is increasingly difficult to defend.
+3. **Three-sentence contribution.** We present *epistemic governance* as an architectural primitive: a governance layer that treats claims, evidence, beliefs, decisions, actions, outcomes, and revisions as first-class artifacts. The architecture comprises (a) an Action Kernel with two-phase execution and precondition revalidation, (b) a Memory Firewall with four orthogonal lifecycle axes (truth, retrieval, security, freshness) and per-axis transition tables, (c) a Cognitive Core that walks the epistemic chain (Observation → Claim → Evidence → Belief), and (d) a Harness for probes, sentinels, and calibration. We instantiate the design in Lodestar, an open-source TypeScript implementation, and demonstrate that the no-self-promotion rule in the Memory Firewall defeats synthetic-experience injection attacks of the MemoryGraft class.
+4. **Two-sentence framing of scope.** Lodestar is presented as a design contribution validated by working implementation and adversarial probes, not as an empirical study of agent failure rates. We argue that epistemic governance is a missing architectural category alongside observability, memory management, and runtime, and that its absence is increasingly difficult to defend.
 
 ---
 
@@ -64,7 +64,7 @@ Explicit list:
 
 5. **A replay-grade audit log.** Append-only event log with monotonic sequence numbers, logical clocks, and payload hashes, sufficient for full reproducibility of an agent's epistemic state at any point in its history.
 
-6. **Orrery, an open-source implementation.** A working TypeScript implementation under Apache 2.0, with two passing adversarial probes (memory-poisoning resistance and full-chain integrity) and an end-to-end example producing an 11-event audit trail.
+6. **Lodestar, an open-source implementation.** A working TypeScript implementation under Apache 2.0, with two passing adversarial probes (memory-poisoning resistance and full-chain integrity) and an end-to-end example producing an 11-event audit trail.
 
 ### 1.4 Roadmap of the paper
 
@@ -105,11 +105,11 @@ Microsoft Agent Governance Toolkit, MCP gateways, scanning tools. They focus on 
 
 ### 2.6 Capability machines and provenance tracking
 
-Brief connection to capability-based security (CHERI, the original capability machines from Lampson), provenance systems (PROV-O, OpenLineage), and immutable audit logs (Certificate Transparency, Sigstore). Position Orrery as borrowing principles from these older traditions and applying them to agentic systems.
+Brief connection to capability-based security (CHERI, the original capability machines from Lampson), provenance systems (PROV-O, OpenLineage), and immutable audit logs (Certificate Transparency, Sigstore). Position Lodestar as borrowing principles from these older traditions and applying them to agentic systems.
 
 ### 2.7 Calibration and uncertainty in LLMs
 
-Brief coverage of work on LLM confidence calibration (ECE, Brier score, temperature scaling for LLMs), SMARTCAL, recent calibration evaluation methodologies. Position Orrery's Calibrator as integration-level rather than a novel calibration algorithm.
+Brief coverage of work on LLM confidence calibration (ECE, Brier score, temperature scaling for LLMs), SMARTCAL, recent calibration evaluation methodologies. Position Lodestar's Calibrator as integration-level rather than a novel calibration algorithm.
 
 ---
 
@@ -213,9 +213,9 @@ How retrieval into model context routes through the firewall. The ContextPolicy 
 ### 4.7 Limitations
 
 Honest section on what the firewall does NOT defend against:
-- Direct prompt injection in the LLM call itself (Orrery's scope ends at the tool boundary)
+- Direct prompt injection in the LLM call itself (Lodestar's scope ends at the tool boundary)
 - Compromised tool implementations (the Action Kernel verifies output schemas but does not verify execution semantics)
-- Adversarial users with elevated authority (user authority is trusted; if the user account is compromised, Orrery cannot help)
+- Adversarial users with elevated authority (user authority is trusted; if the user account is compromised, Lodestar cannot help)
 - Side-channel attacks on the event log (the log assumes its append-only invariant is preserved by the substrate)
 
 ---
@@ -304,11 +304,11 @@ Outline planned sentinels:
 
 Confidence-vs-outcome measurement. The Calibrator consumes the event log, groups beliefs by `calibration_class`, and computes per-class ECE/Brier scores.
 
-Position this carefully: Orrery is not contributing a novel calibration *algorithm*. It is providing the *infrastructure* for calibration to happen continuously and at the right granularity (per-claim-class, per-scope, per-source).
+Position this carefully: Lodestar is not contributing a novel calibration *algorithm*. It is providing the *infrastructure* for calibration to happen continuously and at the right granularity (per-claim-class, per-scope, per-source).
 
 ### 7.4 The probe pack format
 
-How probes are packaged and shared. The `orrery.probe-pack.json` manifest. Why this is the marketplace surface (see §11).
+How probes are packaged and shared. The `lodestar.probe-pack.json` manifest. Why this is the marketplace surface (see §11).
 
 ---
 
@@ -316,7 +316,7 @@ How probes are packaged and shared. The `orrery.probe-pack.json` manifest. Why t
 
 ### 8.1 Attack classes covered
 
-For each, give: attacker capabilities, attack mechanism, Orrery's defense, residual risk.
+For each, give: attacker capabilities, attack mechanism, Lodestar's defense, residual risk.
 
 - MINJA (query-only memory injection)
 - MemoryGraft (indirect memory grafting)
@@ -328,7 +328,7 @@ For each, give: attacker capabilities, attack mechanism, Orrery's defense, resid
 
 ### 8.2 Attack classes NOT covered
 
-Honest section. Orrery does not defend against:
+Honest section. Lodestar does not defend against:
 - LLM-internal prompt injection
 - Adversarial users with legitimate authority
 - Substrate compromises (the event log assumes append-only)
@@ -337,7 +337,7 @@ Honest section. Orrery does not defend against:
 
 ### 8.3 The threat model boundary
 
-Clarify what Orrery treats as trusted: the substrate, the event log writer, the user account, the schemas. What Orrery treats as adversarial: tool outputs, retrieved memories, external content, downstream agents.
+Clarify what Lodestar treats as trusted: the substrate, the event log writer, the user account, the schemas. What Lodestar treats as adversarial: tool outputs, retrieved memories, external content, downstream agents.
 
 ---
 
@@ -363,13 +363,13 @@ Explicit: this is integration-level work. We are not proposing a new calibration
 
 ## 10. Implementation and validation (~3 pages)
 
-### 10.1 Orrery
+### 10.1 Lodestar
 
 The open-source TypeScript implementation. Bun runtime. Strict TypeScript with `noUncheckedIndexedAccess`. Apache 2.0. Currently at pre-v0.1 / week-2 scaffold.
 
 ### 10.2 Architecture as code
 
-The repository structure mirrors the architecture. Each architectural component is a separate package. Schemas in `@orrery/core`, event log in `@orrery/event-log`, action kernel in `@orrery/action-kernel`, memory firewall in `@orrery/memory-firewall`, cognitive core in `@orrery/cognitive-core`. Adapters in `@orrery/adapter-*`.
+The repository structure mirrors the architecture. Each architectural component is a separate package. Schemas in `@qmilab/lodestar-core`, event log in `@qmilab/lodestar-event-log`, action kernel in `@qmilab/lodestar-action-kernel`, memory firewall in `@qmilab/lodestar-memory-firewall`, cognitive core in `@qmilab/lodestar-cognitive-core`. Adapters in `@qmilab/lodestar-adapter-*`.
 
 ### 10.3 The two passing probes
 
@@ -415,7 +415,7 @@ Restate the contributions in §1.3 with the benefit of the technical sections ha
 
 ### 11.2 What we explicitly do not claim
 
-- That Orrery is the only viable design
+- That Lodestar is the only viable design
 - That the four axes are the only correct decomposition
 - That the trust ladder values L0–L5 are universal (they encode an opinion about what "blast radius" means)
 - That the architecture defends against attacks beyond the threat model in §8
@@ -430,7 +430,7 @@ Restate the contributions in §1.3 with the benefit of the technical sections ha
 ### 11.4 Limitations of the evaluation
 
 - v0.2 evaluation is by adversarial probes against the architecture, not by deployment metrics
-- The MemoryGraft defense is demonstrated against synthetic attacks, not against real attack research against deployed Orrery instances
+- The MemoryGraft defense is demonstrated against synthetic attacks, not against real attack research against deployed Lodestar instances
 - Calibration is designed but not yet measured
 
 ### 11.5 Future work
@@ -453,7 +453,7 @@ Restate the gap. Restate the contribution. Argue that epistemic governance is a 
 
 ### A. Full schema definitions
 
-The Zod schemas in `@orrery/core` reproduced with comments. ~3 pages.
+The Zod schemas in `@qmilab/lodestar-core` reproduced with comments. ~3 pages.
 
 ### B. The transition tables in full
 
@@ -461,7 +461,7 @@ The complete per-axis transition tables. ~1 page.
 
 ### C. The probe pack format specification
 
-The structure of `orrery.probe-pack.json`. ~1 page.
+The structure of `lodestar.probe-pack.json`. ~1 page.
 
 ### D. Reproducing the results
 
@@ -490,4 +490,4 @@ Some things to do well when drafting:
 
 **When to write**: after Batch 2 lands (the package surfaces should be stable before the paper commits to the surfaces it describes). Could start outline expansion now in parallel with Batch 2 implementation.
 
-**Co-authors**: solo for v0.2 draft. As collaborators join QMI Lab and Orrery's user base grows, they earn co-author slots through specific technical contributions (a new probe pack, a substantial adapter, a deployment study).
+**Co-authors**: solo for v0.2 draft. As collaborators join QMI Lab and Lodestar's user base grows, they earn co-author slots through specific technical contributions (a new probe pack, a substantial adapter, a deployment study).

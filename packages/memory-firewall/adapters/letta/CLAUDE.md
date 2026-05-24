@@ -1,4 +1,4 @@
-# @orrery/memory-firewall-letta — CLAUDE.md
+# @qmilab/lodestar-memory-firewall-letta — CLAUDE.md
 
 Stub-level adapter for Letta memory blocks. Same shape as the mem0
 adapter — see `../mem0/CLAUDE.md` for the invariants. The only

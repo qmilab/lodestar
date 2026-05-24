@@ -6,7 +6,7 @@ import type {
   EvidenceSet,
   Observation,
   Outcome,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 import {
   ActionSchema,
   BeliefSchema,
@@ -14,7 +14,7 @@ import {
   EvidenceSetSchema,
   ObservationSchema,
   OutcomeSchema,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 
 /**
  * Projection of an event log into the epistemic chain.

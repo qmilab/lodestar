@@ -3,48 +3,48 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "orrery",
+      "name": "lodestar",
       "devDependencies": {
         "@biomejs/biome": "1.9.4",
-        "@orrery/action-kernel": "workspace:*",
-        "@orrery/adapter-filesystem": "workspace:*",
-        "@orrery/adapter-git": "workspace:*",
-        "@orrery/cognitive-core": "workspace:*",
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
-        "@orrery/guard": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
-        "@orrery/memory-firewall-letta": "workspace:*",
-        "@orrery/memory-firewall-mem0": "workspace:*",
-        "@orrery/memory-firewall-zep": "workspace:*",
-        "@orrery/trace": "workspace:*",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+        "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-cognitive-core": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-guard": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
+        "@qmilab/lodestar-memory-firewall-letta": "workspace:*",
+        "@qmilab/lodestar-memory-firewall-mem0": "workspace:*",
+        "@qmilab/lodestar-memory-firewall-zep": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
         "@types/bun": "latest",
         "typescript": "5.6.3",
         "zod": "^3.23.8",
       },
     },
     "examples/coding-agent-greenfield": {
-      "name": "@orrery-examples/coding-agent-greenfield",
+      "name": "@qmilab-examples/coding-agent-greenfield",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/adapter-filesystem": "workspace:*",
-        "@orrery/adapter-git": "workspace:*",
-        "@orrery/core": "workspace:*",
-        "@orrery/guard": "workspace:*",
-        "@orrery/trace": "workspace:*",
+        "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+        "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-guard": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
       },
       "devDependencies": {
         "typescript": "5.6.3",
       },
     },
     "examples/doc-insight": {
-      "name": "@orrery-examples/doc-insight",
+      "name": "@qmilab-examples/doc-insight",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/cognitive-core": "workspace:*",
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-cognitive-core": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -52,16 +52,16 @@
       },
     },
     "examples/telenotes-governed-dev": {
-      "name": "@orrery-examples/telenotes-governed-dev",
+      "name": "@qmilab-examples/telenotes-governed-dev",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/action-kernel": "workspace:*",
-        "@orrery/adapter-filesystem": "workspace:*",
-        "@orrery/adapter-git": "workspace:*",
-        "@orrery/cognitive-core": "workspace:*",
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+        "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-cognitive-core": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -69,11 +69,11 @@
       },
     },
     "packages/action-kernel": {
-      "name": "@orrery/action-kernel",
+      "name": "@qmilab/lodestar-action-kernel",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -81,11 +81,11 @@
       },
     },
     "packages/adapters/filesystem": {
-      "name": "@orrery/adapter-filesystem",
+      "name": "@qmilab/lodestar-adapter-filesystem",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/action-kernel": "workspace:*",
-        "@orrery/core": "workspace:*",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -93,11 +93,11 @@
       },
     },
     "packages/adapters/git": {
-      "name": "@orrery/adapter-git",
+      "name": "@qmilab/lodestar-adapter-git",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/action-kernel": "workspace:*",
-        "@orrery/core": "workspace:*",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -105,19 +105,19 @@
       },
     },
     "packages/cli": {
-      "name": "@orrery/cli",
+      "name": "@qmilab/lodestar-cli",
       "version": "0.1.0",
       "bin": {
-        "orrery": "./src/index.ts",
+        "lodestar": "./src/index.ts",
       },
       "dependencies": {
-        "@orrery/action-kernel": "workspace:*",
-        "@orrery/adapter-filesystem": "workspace:*",
-        "@orrery/adapter-git": "workspace:*",
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
-        "@orrery/guard": "workspace:*",
-        "@orrery/trace": "workspace:*",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+        "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-guard": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -125,12 +125,12 @@
       },
     },
     "packages/cognitive-core": {
-      "name": "@orrery/cognitive-core",
+      "name": "@qmilab/lodestar-cognitive-core",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -138,7 +138,7 @@
       },
     },
     "packages/core": {
-      "name": "@orrery/core",
+      "name": "@qmilab/lodestar-core",
       "version": "0.1.0",
       "dependencies": {
         "zod": "^3.23.8",
@@ -148,10 +148,10 @@
       },
     },
     "packages/event-log": {
-      "name": "@orrery/event-log",
+      "name": "@qmilab/lodestar-event-log",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -159,14 +159,14 @@
       },
     },
     "packages/guard": {
-      "name": "@orrery/guard",
+      "name": "@qmilab/lodestar-guard",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/action-kernel": "workspace:*",
-        "@orrery/cognitive-core": "workspace:*",
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-cognitive-core": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -174,11 +174,11 @@
       },
     },
     "packages/memory-firewall": {
-      "name": "@orrery/memory-firewall",
+      "name": "@qmilab/lodestar-memory-firewall",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -186,11 +186,11 @@
       },
     },
     "packages/memory-firewall/adapters/letta": {
-      "name": "@orrery/memory-firewall-letta",
+      "name": "@qmilab/lodestar-memory-firewall-letta",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -198,11 +198,11 @@
       },
     },
     "packages/memory-firewall/adapters/mem0": {
-      "name": "@orrery/memory-firewall-mem0",
+      "name": "@qmilab/lodestar-memory-firewall-mem0",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -210,11 +210,11 @@
       },
     },
     "packages/memory-firewall/adapters/zep": {
-      "name": "@orrery/memory-firewall-zep",
+      "name": "@qmilab/lodestar-memory-firewall-zep",
       "version": "0.1.0",
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/memory-firewall": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -222,14 +222,14 @@
       },
     },
     "packages/trace": {
-      "name": "@orrery/trace",
+      "name": "@qmilab/lodestar-trace",
       "version": "0.1.0",
       "bin": {
-        "orrery-report": "./src/cli.ts",
+        "lodestar-report": "./src/cli.ts",
       },
       "dependencies": {
-        "@orrery/core": "workspace:*",
-        "@orrery/event-log": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -256,37 +256,37 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@1.9.4", "", { "os": "win32", "cpu": "x64" }, "sha512-8Y5wMhVIPaWe6jw2H+KlEm4wP/f7EW3810ZLmDlrEEy5KvBsb9ECEfu/kMWD484ijfQ8+nIi0giMgu9g1UAuuA=="],
 
-    "@orrery-examples/coding-agent-greenfield": ["@orrery-examples/coding-agent-greenfield@workspace:examples/coding-agent-greenfield"],
+    "@qmilab-examples/coding-agent-greenfield": ["@qmilab-examples/coding-agent-greenfield@workspace:examples/coding-agent-greenfield"],
 
-    "@orrery-examples/doc-insight": ["@orrery-examples/doc-insight@workspace:examples/doc-insight"],
+    "@qmilab-examples/doc-insight": ["@qmilab-examples/doc-insight@workspace:examples/doc-insight"],
 
-    "@orrery-examples/telenotes-governed-dev": ["@orrery-examples/telenotes-governed-dev@workspace:examples/telenotes-governed-dev"],
+    "@qmilab-examples/telenotes-governed-dev": ["@qmilab-examples/telenotes-governed-dev@workspace:examples/telenotes-governed-dev"],
 
-    "@orrery/action-kernel": ["@orrery/action-kernel@workspace:packages/action-kernel"],
+    "@qmilab/lodestar-action-kernel": ["@qmilab/lodestar-action-kernel@workspace:packages/action-kernel"],
 
-    "@orrery/adapter-filesystem": ["@orrery/adapter-filesystem@workspace:packages/adapters/filesystem"],
+    "@qmilab/lodestar-adapter-filesystem": ["@qmilab/lodestar-adapter-filesystem@workspace:packages/adapters/filesystem"],
 
-    "@orrery/adapter-git": ["@orrery/adapter-git@workspace:packages/adapters/git"],
+    "@qmilab/lodestar-adapter-git": ["@qmilab/lodestar-adapter-git@workspace:packages/adapters/git"],
 
-    "@orrery/cli": ["@orrery/cli@workspace:packages/cli"],
+    "@qmilab/lodestar-cli": ["@qmilab/lodestar-cli@workspace:packages/cli"],
 
-    "@orrery/cognitive-core": ["@orrery/cognitive-core@workspace:packages/cognitive-core"],
+    "@qmilab/lodestar-cognitive-core": ["@qmilab/lodestar-cognitive-core@workspace:packages/cognitive-core"],
 
-    "@orrery/core": ["@orrery/core@workspace:packages/core"],
+    "@qmilab/lodestar-core": ["@qmilab/lodestar-core@workspace:packages/core"],
 
-    "@orrery/event-log": ["@orrery/event-log@workspace:packages/event-log"],
+    "@qmilab/lodestar-event-log": ["@qmilab/lodestar-event-log@workspace:packages/event-log"],
 
-    "@orrery/guard": ["@orrery/guard@workspace:packages/guard"],
+    "@qmilab/lodestar-guard": ["@qmilab/lodestar-guard@workspace:packages/guard"],
 
-    "@orrery/memory-firewall": ["@orrery/memory-firewall@workspace:packages/memory-firewall"],
+    "@qmilab/lodestar-memory-firewall": ["@qmilab/lodestar-memory-firewall@workspace:packages/memory-firewall"],
 
-    "@orrery/memory-firewall-letta": ["@orrery/memory-firewall-letta@workspace:packages/memory-firewall/adapters/letta"],
+    "@qmilab/lodestar-memory-firewall-letta": ["@qmilab/lodestar-memory-firewall-letta@workspace:packages/memory-firewall/adapters/letta"],
 
-    "@orrery/memory-firewall-mem0": ["@orrery/memory-firewall-mem0@workspace:packages/memory-firewall/adapters/mem0"],
+    "@qmilab/lodestar-memory-firewall-mem0": ["@qmilab/lodestar-memory-firewall-mem0@workspace:packages/memory-firewall/adapters/mem0"],
 
-    "@orrery/memory-firewall-zep": ["@orrery/memory-firewall-zep@workspace:packages/memory-firewall/adapters/zep"],
+    "@qmilab/lodestar-memory-firewall-zep": ["@qmilab/lodestar-memory-firewall-zep@workspace:packages/memory-firewall/adapters/zep"],
 
-    "@orrery/trace": ["@orrery/trace@workspace:packages/trace"],
+    "@qmilab/lodestar-trace": ["@qmilab/lodestar-trace@workspace:packages/trace"],
 
     "@types/bun": ["@types/bun@1.3.14", "", { "dependencies": { "bun-types": "1.3.14" } }, "sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw=="],
 

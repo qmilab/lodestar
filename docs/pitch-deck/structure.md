@@ -1,4 +1,4 @@
-# Pitch deck structure — Orrery
+# Pitch deck structure — Lodestar
 
 **Format**: ~12 slides. Trust-layer voice (external positioning), not "epistemic governance framework" voice.
 
@@ -16,13 +16,13 @@
 
 ## Slide 1 — Title
 
-**Visual**: Orrery wordmark on dark background. Subtitle below.
+**Visual**: Lodestar wordmark on dark background. Subtitle below.
 
-**Headline**: Orrery
+**Headline**: Lodestar
 
 **Subhead**: The trust layer for AI agents.
 
-**Footer**: A QMI Lab research project · qmilab.com/orrery
+**Footer**: A QMI Lab research project · qmilab.com/lodestar
 
 **Speaker note**: Open with a question to the room, not the title. "How many of you have had an AI agent do something you couldn't explain afterward?" Show of hands. Then advance to slide 2.
 
@@ -41,7 +41,7 @@
 - Was the belief verified?
 - Did the agent learn the right lesson afterward?
 
-**Speaker note**: This is the pain. Don't introduce Orrery yet. Spend 30 seconds making sure the room agrees these are the right questions. If they don't, the rest of the deck won't land.
+**Speaker note**: This is the pain. Don't introduce Lodestar yet. Spend 30 seconds making sure the room agrees these are the right questions. If they don't, the rest of the deck won't land.
 
 ---
 
@@ -62,15 +62,15 @@ A fourth row underneath, drawn in dashes: "**Trust** — [missing]".
 - Observability tools record what happened.
 - *None of them* answer "what did the agent believe, why did it act, and was it right."
 
-**Speaker note**: This is where you place Orrery in the landscape without yet saying its name. Audiences understand layered stacks. Letting them see the gap visually is more effective than telling them about it.
+**Speaker note**: This is where you place Lodestar in the landscape without yet saying its name. Audiences understand layered stacks. Letting them see the gap visually is more effective than telling them about it.
 
 ---
 
-## Slide 4 — What Orrery is
+## Slide 4 — What Lodestar is
 
-**Visual**: The same stack from slide 3, with the dashed bottom row now filled in and labeled "Orrery" in the accent color.
+**Visual**: The same stack from slide 3, with the dashed bottom row now filled in and labeled "Lodestar" in the accent color.
 
-**Headline**: Orrery is the trust layer.
+**Headline**: Lodestar is the trust layer.
 
 **Subhead**: Know what your agent believed, why it acted, and whether it was right.
 
@@ -93,7 +93,7 @@ Observation → Claim → Evidence → Belief → Decision → Action → Outcom
 
 Color coding: blue for inputs (Observation, Evidence), amber for governance (Claim, Belief, Decision), green for outputs (Action, Outcome, Revision).
 
-**Headline**: Every action has a story. Orrery records it.
+**Headline**: Every action has a story. Lodestar records it.
 
 **Body**:
 - The agent **observes** something via a tool call.
@@ -105,7 +105,7 @@ Color coding: blue for inputs (Observation, Evidence), amber for governance (Cla
 - Actions produce **outcomes**.
 - Outcomes drive **revisions** to beliefs.
 
-**Speaker note**: Walk the chain left to right on the slide. Take ~45 seconds. The point is not to teach the chain in detail — it's to show that Orrery has a structured answer to each of the five questions on slide 2.
+**Speaker note**: Walk the chain left to right on the slide. Take ~45 seconds. The point is not to teach the chain in detail — it's to show that Lodestar has a structured answer to each of the five questions on slide 2.
 
 ---
 
@@ -129,15 +129,15 @@ Each axis has its own allowed transitions. Highlight the no-self-promotion rule 
 - Per-axis transition tables specify who can change what
 - The no-self-promotion rule defeats memory-poisoning attacks (MINJA, MemoryGraft)
 
-**Speaker note**: This slide is dense. Don't try to teach the four axes — just show that the system has them. The takeaway: memory in Orrery has structure that mem0 / Letta / Zep don't have.
+**Speaker note**: This slide is dense. Don't try to teach the four axes — just show that the system has them. The takeaway: memory in Lodestar has structure that mem0 / Letta / Zep don't have.
 
 ---
 
 ## Slide 7 — Where it fits
 
-**Visual**: The "use X for Y, use Orrery for Z" table from `docs/positioning.md`:
+**Visual**: The "use X for Y, use Lodestar for Z" table from `docs/positioning.md`:
 
-| You use… | Orrery's role |
+| You use… | Lodestar's role |
 | --- | --- |
 | Claude Code, Cursor, OpenClaw, LangGraph | Wraps and governs their actions |
 | mem0, Letta, Zep | Governs what is safe to remember |
@@ -145,20 +145,20 @@ Each axis has its own allowed transitions. Highlight the no-self-promotion rule 
 | MS Agent Governance Toolkit, MCP gateways | Extends governance to beliefs, memory, skills |
 | Claude Skills, MCP servers | Verifies, signs, scores, policy-wraps them |
 
-**Headline**: Orrery does not replace what you have. It governs it.
+**Headline**: Lodestar does not replace what you have. It governs it.
 
 **Body**:
-- *Use LangSmith to see traces. Use Orrery to know whether the agent was allowed to believe and do what it did.*
-- *Use mem0 for memory. Use Orrery to govern memory promotion and retrieval.*
-- *Use Claude Code or OpenClaw to run the agent. Use Orrery to make its actions and memories trustworthy.*
+- *Use LangSmith to see traces. Use Lodestar to know whether the agent was allowed to believe and do what it did.*
+- *Use mem0 for memory. Use Lodestar to govern memory promotion and retrieval.*
+- *Use Claude Code or OpenClaw to run the agent. Use Lodestar to make its actions and memories trustworthy.*
 
-**Speaker note**: This is the "are you competing with X?" defense. The audience will be wondering this. Get ahead of it. The integration-first stance is genuinely defensible and matches what Orrery actually does.
+**Speaker note**: This is the "are you competing with X?" defense. The audience will be wondering this. Get ahead of it. The integration-first stance is genuinely defensible and matches what Lodestar actually does.
 
 ---
 
 ## Slide 8 — Demo (the trace report)
 
-**Visual**: Real screenshot of an `orrery trace report` output. Markdown rendering with:
+**Visual**: Real screenshot of an `lodestar trace report` output. Markdown rendering with:
 - Action header (what was attempted)
 - Claims extracted (with their structured predicates)
 - Beliefs adopted (with confidence and lifecycle state)
@@ -166,7 +166,7 @@ Each axis has its own allowed transitions. Highlight the no-self-promotion rule 
 
 This is the killer screenshot. It should occupy ~80% of the slide.
 
-**Headline**: This is what Orrery produces.
+**Headline**: This is what Lodestar produces.
 
 **Speaker note**: Live demo if possible. If not, walk the audience through the screenshot, pointing at: "this is the claim, this is the evidence, this is the belief, this is the action, this is the outcome." Total time on slide: 60-90 seconds. The visual does the work.
 
@@ -176,10 +176,10 @@ This is the killer screenshot. It should occupy ~80% of the slide.
 
 **Visual**: Four cards in a 2x2 grid, each with a name and one-line description:
 
-| **Orrery Guard** | **Orrery Trace** |
+| **Lodestar Guard** | **Lodestar Trace** |
 | Wraps tool calls. Records the chain. | Reads the event log. Produces audit reports. |
 
-| **Orrery Memory Firewall** | **Orrery Harness** |
+| **Lodestar Memory Firewall** | **Lodestar Harness** |
 | Governs memory promotion and retrieval. Works with mem0, Letta, Zep. | Probes, sentinels, calibrators. The marketplace surface. |
 
 **Headline**: One architecture, four packages.
@@ -245,7 +245,7 @@ Right column ("Future commercial offering"):
 
 **Body**:
 - Nothing in the commercial layer gates the developer-adoption workflow.
-- A solo developer using Orrery gets a complete trust layer.
+- A solo developer using Lodestar gets a complete trust layer.
 - Hosted features add team operations and compliance reporting on top.
 
 **Footer**: Model is Langfuse-style open core.
@@ -263,7 +263,7 @@ Right column ("Future commercial offering"):
 **Body** (a small terminal-flavored block):
 
 ```
-git clone github.com/qmilab/orrery
+git clone github.com/qmilab/lodestar
 bun install
 bun run probes:all
 bun run example:telenotes
@@ -283,7 +283,7 @@ Below: "Pull requests welcome. First three external probe packs will be co-autho
 
 **Body**:
 - **Research collaboration** — co-author a probe pack, contribute to the threat model, join the calibration framework working group. Anchor at QMI Lab.
-- **Commercial pilot** — early-access to hosted Orrery features through Machinise once available. Reach out to discuss.
+- **Commercial pilot** — early-access to hosted Lodestar features through Machinise once available. Reach out to discuss.
 - **Ecosystem partnership** — build an adapter for your agent runtime or memory layer. Get featured in the first-party adapter set.
 
 **Speaker note**: Use this version only when the audience includes partnership/investment intent. Default to slide 12a for dev-heavy rooms.

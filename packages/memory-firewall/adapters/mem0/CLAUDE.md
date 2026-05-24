@@ -1,4 +1,4 @@
-# @orrery/memory-firewall-mem0 — CLAUDE.md
+# @qmilab/lodestar-memory-firewall-mem0 — CLAUDE.md
 
 A stub-level adapter for mem0. `importMemories` is the one method
 that works end-to-end in v0.2; the others throw.
@@ -25,7 +25,7 @@ that works end-to-end in v0.2; the others throw.
 ## When you change this adapter
 
 - The Letta and Zep adapters share the `AdapterImportOptions` /
-  `AdapterImportResult` contracts in `@orrery/memory-firewall`. If you
+  `AdapterImportResult` contracts in `@qmilab/lodestar-memory-firewall`. If you
   change those contracts, update all three.
 - Imports must remain external_document — do not "improve" the adapter
   by raising evidence quality. Self-promoting an imported memory is the

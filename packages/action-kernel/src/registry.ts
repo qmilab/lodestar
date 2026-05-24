@@ -4,7 +4,7 @@ import type {
   Observation,
   Reversibility,
   TrustLevel,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 
 /**
  * Sandbox profiles available to tools.

@@ -1,8 +1,8 @@
 # coding-agent-greenfield
 
-A minimal home-grown coding-agent loop wrapped with `@orrery/guard`. The
+A minimal home-grown coding-agent loop wrapped with `@qmilab/lodestar-guard`. The
 agent observes the repo, reads a couple of files, makes a decision, and
-finishes. Every step is recorded; `orrery report` (or the trace library
+finishes. Every step is recorded; `lodestar report` (or the trace library
 used inline at the end of the script) renders a markdown trust report
 from the resulting log.
 
@@ -31,7 +31,7 @@ bun run examples/coding-agent-greenfield/index.ts --simulate-denied-tool
 - `decision.made` events emitted via the escape hatch on
   `GuardContext.emit`, kept in the same log alongside actions and
   beliefs.
-- `@orrery/trace` projecting the resulting event log into the
+- `@qmilab/lodestar-trace` projecting the resulting event log into the
   epistemic chain and rendering a markdown trust report.
 
 ## What it does not demonstrate

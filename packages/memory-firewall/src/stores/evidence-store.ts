@@ -1,4 +1,4 @@
-import type { EvidenceItem, EvidenceSet } from "@orrery/core"
+import type { EvidenceItem, EvidenceSet } from "@qmilab/lodestar-core"
 
 /**
  * Storage for evidence sets. Append-only: an evidence set's items are

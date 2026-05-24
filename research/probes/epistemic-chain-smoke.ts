@@ -17,21 +17,21 @@
  * - Adopted beliefs are in retrieval_status='restricted' (not 'normal' — no auto-promote to retrievable).
  */
 
-import { registry } from "@orrery/core"
+import { registry } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   EvidenceLinker,
   ExplanationGenerator,
   InMemoryWorldModel,
   registerBuiltInExtractors,
-} from "@orrery/cognitive-core"
-import { GitStatusOutputSchema } from "@orrery/adapter-git"
+} from "@qmilab/lodestar-cognitive-core"
+import { GitStatusOutputSchema } from "@qmilab/lodestar-adapter-git"
 
 // Ensure git.status@1 schema is registered (the adapter does this on import).
 void GitStatusOutputSchema

@@ -1,4 +1,4 @@
-import type { ResourceScope } from "@orrery/core"
+import type { ResourceScope } from "@qmilab/lodestar-core"
 
 /**
  * The world model is the agent's running picture of the environment.

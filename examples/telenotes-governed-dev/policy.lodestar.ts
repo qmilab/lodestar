@@ -2,14 +2,14 @@
  * Telenotes governance policy.
  *
  * This file lives in `examples/`, not in `packages/`. The trust ladder
- * and contract types come from `@orrery/core`; the Telenotes-specific
+ * and contract types come from `@qmilab/lodestar-core`; the Telenotes-specific
  * defaults below are example configuration.
  *
  * Week 1: stub. The real Telenotes policy with full action coverage
  * arrives in week 7.
  */
 
-import type { TrustLevel } from "@orrery/core"
+import type { TrustLevel } from "@qmilab/lodestar-core"
 
 export interface ToolPolicy {
   tool: string

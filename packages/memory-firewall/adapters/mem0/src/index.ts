@@ -4,7 +4,7 @@ import type {
   EvidenceSet,
   Explanation,
   Observation,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 import {
   AdapterImportOptionsSchema,
   notImplementedFor,
@@ -13,7 +13,7 @@ import {
   type EvidenceStore,
   type ExternalMemoryAdapter,
   type MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 import { Mem0EnvelopeSchema, Mem0RecordSchema, type Mem0Record } from "./schema"
 
 export { Mem0ExportSchema, Mem0RecordSchema } from "./schema"

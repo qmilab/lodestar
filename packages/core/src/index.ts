@@ -1,7 +1,7 @@
 /**
- * @orrery/core
+ * @qmilab/lodestar-core
  *
- * Epistemic chain primitives and schemas. Everything else in Orrery
+ * Epistemic chain primitives and schemas. Everything else in Lodestar
  * depends on this package.
  *
  * The chain:

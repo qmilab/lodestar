@@ -1,5 +1,5 @@
 node_modules/
-.orrery/
+.lodestar/
 dist/
 build/
 *.tsbuildinfo

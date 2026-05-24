@@ -1,5 +1,5 @@
-import type { Claim, EvidenceItem, EvidenceSet, Observation } from "@orrery/core"
-import type { BeliefStore, EvidenceStore } from "@orrery/memory-firewall"
+import type { Claim, EvidenceItem, EvidenceSet, Observation } from "@qmilab/lodestar-core"
+import type { BeliefStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 
 /**
  * The EvidenceLinker constructs an EvidenceSet for a newly extracted Claim.

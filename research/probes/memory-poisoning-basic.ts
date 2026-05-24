@@ -22,14 +22,14 @@
  */
 
 import { z } from "zod"
-import type { Claim, EvidenceSet, Explanation, Observation } from "@orrery/core"
-import { registry } from "@orrery/core"
+import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
+import { registry } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 
 // Register a synthetic schema for the probe
 const ProbePayloadSchema = z.object({

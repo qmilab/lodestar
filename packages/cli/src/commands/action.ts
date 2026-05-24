@@ -1,7 +1,7 @@
-import { listTools, lookupTool } from "@orrery/action-kernel"
+import { listTools, lookupTool } from "@qmilab/lodestar-action-kernel"
 
 /**
- * `orrery action list`
+ * `lodestar action list`
  *
  * Lists registered tools with their trust level, sandbox, and
  * declared permissions.
@@ -28,7 +28,7 @@ export function actionListCommand(): number {
 }
 
 /**
- * `orrery action describe <action-id>`
+ * `lodestar action describe <action-id>`
  *
  * Describes one registered tool by name (the CLI uses "action-id" for
  * the tool's namespace.name key).
@@ -36,13 +36,13 @@ export function actionListCommand(): number {
 export function actionDescribeCommand(argv: string[]): number {
   const name = argv[0]
   if (!name) {
-    process.stderr.write("usage: orrery action describe <action-id>\n")
+    process.stderr.write("usage: lodestar action describe <action-id>\n")
     return 2
   }
   const tool = lookupTool(name)
   if (!tool) {
     process.stderr.write(
-      `unknown action '${name}'. run 'orrery action list' to see what is registered.\n`,
+      `unknown action '${name}'. run 'lodestar action list' to see what is registered.\n`,
     )
     return 3
   }

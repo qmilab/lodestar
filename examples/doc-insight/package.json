@@ -1,5 +1,5 @@
 {
-  "name": "@orrery-examples/doc-insight",
+  "name": "@qmilab-examples/doc-insight",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,10 +9,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/event-log": "workspace:*",
-    "@orrery/memory-firewall": "workspace:*",
-    "@orrery/cognitive-core": "workspace:*",
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-event-log": "workspace:*",
+    "@qmilab/lodestar-memory-firewall": "workspace:*",
+    "@qmilab/lodestar-cognitive-core": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -1,4 +1,4 @@
-import type { Claim, ClaimStatus, ResourceScope } from "@orrery/core"
+import type { Claim, ClaimStatus, ResourceScope } from "@qmilab/lodestar-core"
 
 /**
  * Storage for claims. v0 ships an in-memory implementation;

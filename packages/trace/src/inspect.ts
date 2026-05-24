@@ -1,9 +1,9 @@
-import type { EventEnvelope } from "@orrery/core"
+import type { EventEnvelope } from "@qmilab/lodestar-core"
 
 /**
  * Debug-grade inspection of a single event envelope.
  *
- * Returns a pretty-printed JSON description meant for `orrery trace
+ * Returns a pretty-printed JSON description meant for `lodestar trace
  * inspect`. This is intentionally not the user-facing report — it's for
  * developers who already understand the schema.
  */

@@ -7,7 +7,7 @@ import type {
   RetrievalStatus,
   SecurityStatus,
   TruthStatus,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 import type { BeliefStore, LifecycleAxis } from "./stores/belief-store"
 import type { ClaimStore } from "./stores/claim-store"
 import type { EvidenceStore } from "./stores/evidence-store"
@@ -22,7 +22,7 @@ import {
  * on claims and beliefs.
  *
  * It does NOT:
- * - extract claims (that's @orrery/cognitive-core)
+ * - extract claims (that's @qmilab/lodestar-cognitive-core)
  * - decide retrieval results (see retrieval.ts in this package)
  * - generate explanations (the caller supplies an Explanation id)
  *

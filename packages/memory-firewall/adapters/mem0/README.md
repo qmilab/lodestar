@@ -1,7 +1,7 @@
-# @orrery/memory-firewall-mem0
+# @qmilab/lodestar-memory-firewall-mem0
 
 Adapter that imports memories from [mem0](https://github.com/mem0ai/mem0)
-into the Orrery memory firewall.
+into the Lodestar memory firewall.
 
 ## v0.2 scope (Batch 2 deliverable)
 
@@ -21,8 +21,8 @@ import {
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import { Mem0Adapter } from "@orrery/memory-firewall-mem0"
+} from "@qmilab/lodestar-memory-firewall"
+import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
 
 const claims = new InMemoryClaimStore()
 const beliefs = new InMemoryBeliefStore()
@@ -66,7 +66,7 @@ retrieval.
 - Real mem0 SDK integration (HTTP calls, vector search, etc.). The
   adapter operates on an exported JSON structure, not against a live
   mem0 instance.
-- Bidirectional sync (writing Orrery beliefs back into mem0).
+- Bidirectional sync (writing Lodestar beliefs back into mem0).
 - Schema evolution. The export shape is captured against the v0
   upstream format; future mem0 versions will need a separate adapter
   pack.

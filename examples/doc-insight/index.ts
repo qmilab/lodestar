@@ -1,5 +1,5 @@
 /**
- * Doc Insight — a tiny Orrery demo.
+ * Doc Insight — a tiny Lodestar demo.
  *
  * Reads a markdown file, extracts two kinds of claims:
  *
@@ -35,20 +35,20 @@ import type {
   Observation,
   ResourceScope,
   Sensitivity,
-} from "@orrery/core"
-import { registry } from "@orrery/core"
+} from "@qmilab/lodestar-core"
+import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import type { EvidenceItem, EvidenceSet } from "@orrery/core"
+} from "@qmilab/lodestar-memory-firewall"
+import type { EvidenceItem, EvidenceSet } from "@qmilab/lodestar-core"
 import {
   ExplanationGenerator,
   InMemoryWorldModel,
-} from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-cognitive-core"
 
 // -----------------------------------------------------------------------------
 // Register the doc.parse@1 schema
@@ -302,7 +302,7 @@ function renderReport(
   blockedClaims: Claim[],
 ): string {
   const lines: string[] = []
-  lines.push("# Orrery trust report — Doc Insight")
+  lines.push("# Lodestar trust report — Doc Insight")
   lines.push("")
   lines.push(`**Document**: \`${doc.path}\``)
   lines.push(

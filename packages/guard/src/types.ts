@@ -4,9 +4,9 @@ import type {
   Observation,
   ResourceScope,
   Sensitivity,
-} from "@orrery/core"
-import type { PolicyGate, PreconditionChecker } from "@orrery/action-kernel"
-import type { IngestResult } from "@orrery/cognitive-core"
+} from "@qmilab/lodestar-core"
+import type { PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
+import type { IngestResult } from "@qmilab/lodestar-cognitive-core"
 
 /**
  * Configuration for a guarded session.
@@ -15,9 +15,9 @@ import type { IngestResult } from "@orrery/cognitive-core"
  * the caller must explicitly supply `project_id`, `actor_id`, and the
  * `default_sensitivity` / `default_scope` it wants observations to inherit.
  *
- * `log_root` defaults to `.orrery/events` under the current working
+ * `log_root` defaults to `.lodestar/events` under the current working
  * directory. Override it to write the log somewhere else, but the
- * convention exists so `orrery report` can find logs without flags.
+ * convention exists so `lodestar report` can find logs without flags.
  *
  * `policy_gate` and `precondition_checker` are required. Guard
  * deliberately does not provide auto-approve defaults — the trust
@@ -32,7 +32,7 @@ export interface GuardConfig {
   /** Override the session_id; defaults to `session-${Date.now()}`. */
   session_id?: string
 
-  /** Where event NDJSON files are written. Defaults to `<cwd>/.orrery/events`. */
+  /** Where event NDJSON files are written. Defaults to `<cwd>/.lodestar/events`. */
   log_root?: string
 
   policy_gate: PolicyGate
@@ -119,11 +119,11 @@ export type AgentLoop<T> = (ctx: GuardContext) => Promise<T>
  * `GuardSession` for the example to introspect what was recorded.
  */
 export interface GuardInternals {
-  readonly firewall: import("@orrery/memory-firewall").MemoryFirewall
-  readonly claims: import("@orrery/memory-firewall").InMemoryClaimStore
-  readonly beliefs: import("@orrery/memory-firewall").InMemoryBeliefStore
-  readonly evidence: import("@orrery/memory-firewall").InMemoryEvidenceStore
-  readonly cognitive: import("@orrery/cognitive-core").CognitiveCore
-  readonly worldModel: import("@orrery/cognitive-core").InMemoryWorldModel
-  readonly kernel: import("@orrery/action-kernel").ActionKernel
+  readonly firewall: import("@qmilab/lodestar-memory-firewall").MemoryFirewall
+  readonly claims: import("@qmilab/lodestar-memory-firewall").InMemoryClaimStore
+  readonly beliefs: import("@qmilab/lodestar-memory-firewall").InMemoryBeliefStore
+  readonly evidence: import("@qmilab/lodestar-memory-firewall").InMemoryEvidenceStore
+  readonly cognitive: import("@qmilab/lodestar-cognitive-core").CognitiveCore
+  readonly worldModel: import("@qmilab/lodestar-cognitive-core").InMemoryWorldModel
+  readonly kernel: import("@qmilab/lodestar-action-kernel").ActionKernel
 }

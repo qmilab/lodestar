@@ -11,12 +11,12 @@
  * store. Retrieval must respect the sensitivity ceiling.
  */
 
-import type { Belief, ContextPolicy } from "@orrery/core"
-import { DEFAULT_CONTEXT_POLICY } from "@orrery/core"
+import type { Belief, ContextPolicy } from "@qmilab/lodestar-core"
+import { DEFAULT_CONTEXT_POLICY } from "@qmilab/lodestar-core"
 import {
   GatedRetrieval,
   InMemoryBeliefStore,
-} from "@orrery/memory-firewall"
+} from "@qmilab/lodestar-memory-firewall"
 
 interface ProbeResult {
   passed: boolean

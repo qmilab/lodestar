@@ -1,4 +1,4 @@
-# Orrery — v0.2 Delta
+# Lodestar — v0.2 Delta
 
 *Implementation-readiness revisions over v0.1*
 
@@ -10,7 +10,7 @@ This document captures the seven required revisions from round-4 review. It is a
 
 **Change.** Section 10 of v0.1 ("Telenotes pilot implementation") is renamed to **"Reference demonstration: Telenotes governed development"** and moved out of the core architecture sections into a demonstration appendix.
 
-**Implementation consequence.** No Telenotes-specific types, policies, or assumptions enter `packages/core`. Telenotes-specific code lives in `examples/telenotes-governed-dev/`. The example imports from `@orrery/core` and registers its own adapters, policies, and probes — it does not extend them.
+**Implementation consequence.** No Telenotes-specific types, policies, or assumptions enter `packages/core`. Telenotes-specific code lives in `examples/telenotes-governed-dev/`. The example imports from `@qmilab/lodestar-core` and registers its own adapters, policies, and probes — it does not extend them.
 
 **Why this matters.** v0.1 unintentionally coupled the architecture to Telenotes. Other Playground projects (AstroLLM research workflows, MachineCraft governance, multi-agent adversarial review) need the same primitives without inheriting Nostr-specific or Telenotes-specific assumptions.
 
@@ -139,7 +139,7 @@ These invariants are enforced at the Action Kernel layer, not by tool authors. T
 ## 9. Repo layout (library-first, no premature hosted/)
 
 ```
-orrery/
+lodestar/
 ├── packages/
 │   ├── core/                       # types, schemas, epistemic chain primitives
 │   ├── event-log/                  # envelope, NDJSON writer/reader, snapshots
@@ -149,7 +149,7 @@ orrery/
 │   ├── cognitive-core/             # claim extraction, belief adoption, planner, reflection
 │   ├── harness/                    # probes, sentinels, calibrators, replay-lite
 │   ├── otel-exporter/              # OTel GenAI semantic conventions bridge
-│   ├── cli/                        # orrery command-line interface
+│   ├── cli/                        # lodestar command-line interface
 │   └── adapters/
 │       ├── git/
 │       ├── github/
@@ -158,7 +158,7 @@ orrery/
 │       └── nostr/
 ├── examples/
 │   └── telenotes-governed-dev/
-│       ├── policy.orrery.ts
+│       ├── policy.lodestar.ts
 │       ├── probes/
 │       └── README.md
 ├── docs/
@@ -179,7 +179,7 @@ orrery/
 └── biome.json
 ```
 
-No `hosted/` package. If a commercial hosted control plane is ever built, it lives in a separate private repository that imports from `@orrery/core` and the other public packages.
+No `hosted/` package. If a commercial hosted control plane is ever built, it lives in a separate private repository that imports from `@qmilab/lodestar-core` and the other public packages.
 
 ---
 
@@ -318,10 +318,10 @@ The conclusion, captured in `docs/positioning.md`:
 - **External voice changes**, internal voice stays. "Epistemic governance framework" remains the correct technical phrase in this memo and in research artifacts. The homepage and developer-facing surfaces use "trust layer for AI agents" because it is concretely actionable.
 
 - **Architecture stays as-is**, but the surface is re-presented through four developer-facing packages:
-  - `@orrery/guard` — wraps tool calls (write side)
-  - `@orrery/trace` — produces audit reports (read side)
-  - `@orrery/memory-firewall` — works alongside mem0/Letta/Zep (horizontal)
-  - `@orrery/harness` — probes, sentinels, calibrators (marketplace surface)
+  - `@qmilab/lodestar-guard` — wraps tool calls (write side)
+  - `@qmilab/lodestar-trace` — produces audit reports (read side)
+  - `@qmilab/lodestar-memory-firewall` — works alongside mem0/Letta/Zep (horizontal)
+  - `@qmilab/lodestar-harness` — probes, sentinels, calibrators (marketplace surface)
 
 - **Open-source strategy** follows Langfuse's Model A. Apache 2.0 for primitives, Guard, Trace, Memory Firewall, Harness, adapters, and basic replay. Reserved for future commercial offering: hosted dashboard, team approvals, compliance exports, advanced replay UI, enterprise policy packs, managed marketplace.
 
@@ -349,7 +349,7 @@ After Batch 1's positioning docs were sent to ChatGPT alongside the working scaf
 
 3. **Renamed "four open-source surfaces" → "four developer entry points"** in public copy. "Surface" remains internal-architecture vocabulary; user-facing material uses "entry point".
 
-4. **`orrery report` as the primary user-facing CLI command**. The package stays `@orrery/trace`, but the command becomes `orrery report` to avoid the LangSmith/Langfuse "trace" collision and to focus on what users get (explanation) rather than the mechanism (tracing).
+4. **`lodestar report` as the primary user-facing CLI command**. The package stays `@qmilab/lodestar-trace`, but the command becomes `lodestar report` to avoid the LangSmith/Langfuse "trace" collision and to focus on what users get (explanation) rather than the mechanism (tracing).
 
 5. **Reordered Batches 3 and 4**. Original sequence put Harness infrastructure (Batch 3) before MCP proxy (Batch 4). Revised: MCP proxy moves to Batch 3 because the headline use case ("wrap a coding agent") must land before the project spends more time on internal machinery. Harness moves to Batch 4. A minimum-viable probe runner ships with Batch 3 to back the safety story until the full Harness lands.
 
@@ -382,4 +382,31 @@ The architecture itself. The four orthogonal lifecycle axes, the no-self-promoti
 
 ## Bottom line
 
-The project's next regret risk is sequencing, not architecture. The instruction from this round is unambiguous: get to `orrery guard mcp-proxy && claude code && orrery report` as quickly as possible. That moment is when Orrery becomes legible to anyone outside the design conversation.
+The project's next regret risk is sequencing, not architecture. The instruction from this round is unambiguous: get to `lodestar guard mcp-proxy && claude code && lodestar report` as quickly as possible. That moment is when Lodestar becomes legible to anyone outside the design conversation.
+
+---
+
+## Naming history
+
+The project was originally developed under the codename **Orrery**.
+Before public launch, the name was changed to **Lodestar** following
+diligence on GitHub/npm namespace collisions and brand-positioning
+review.
+
+The architecture vocabulary continues to use astronomy-adjacent terms
+where they carry semantic weight:
+
+- **Lodestar** — the product. A guiding star; a fixed reference point
+  for navigation. Externally: the trust layer for AI agents.
+- **Parallax** — the architectural principle that single-source
+  claims (especially LLM judgments) cannot auto-promote to settled
+  beliefs. Belief promotion requires evidence from independent
+  sources, in the same sense that astronomical parallax requires
+  observation from independent vantage points.
+- **Ephemeris** — the conceptual role of the event log. An ephemeris
+  is a table of positions over time; the Lodestar event log records
+  the position of the agent's epistemic state over time, supporting
+  replay and post-hoc audit.
+
+The original codename Orrery is preserved in `docs/review/` and in
+references to early architectural decisions.

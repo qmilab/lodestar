@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ResourceScopeSchema, SensitivitySchema } from "@orrery/core"
+import { ResourceScopeSchema, SensitivitySchema } from "@qmilab/lodestar-core"
 
 /**
  * Common contract for memory-store import/export adapters.
@@ -100,6 +100,6 @@ export interface ExternalMemoryAdapter {
  */
 export function notImplementedFor(adapter: string, method: string): never {
   throw new Error(
-    `@orrery/memory-firewall-${adapter}: '${method}' is not implemented in v0.2 (stub-level adapter)`,
+    `@qmilab/lodestar-memory-firewall-${adapter}: '${method}' is not implemented in v0.2 (stub-level adapter)`,
   )
 }

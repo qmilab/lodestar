@@ -1,5 +1,5 @@
 {
-  "name": "@orrery-examples/telenotes-governed-dev",
+  "name": "@qmilab-examples/telenotes-governed-dev",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,13 +9,13 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/event-log": "workspace:*",
-    "@orrery/action-kernel": "workspace:*",
-    "@orrery/memory-firewall": "workspace:*",
-    "@orrery/cognitive-core": "workspace:*",
-    "@orrery/adapter-filesystem": "workspace:*",
-    "@orrery/adapter-git": "workspace:*",
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-event-log": "workspace:*",
+    "@qmilab/lodestar-action-kernel": "workspace:*",
+    "@qmilab/lodestar-memory-firewall": "workspace:*",
+    "@qmilab/lodestar-cognitive-core": "workspace:*",
+    "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+    "@qmilab/lodestar-adapter-git": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
-import type { Action } from "@orrery/core"
-import type { PolicyDecision, PolicyGate, PreconditionChecker } from "@orrery/action-kernel"
+import type { Action } from "@qmilab/lodestar-core"
+import type { PolicyDecision, PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
 
 /**
  * Policy preset that auto-approves at the configured ceiling and

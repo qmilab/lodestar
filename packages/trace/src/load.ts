@@ -1,8 +1,8 @@
 import { existsSync } from "node:fs"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
-import type { EventEnvelope } from "@orrery/core"
-import { EventLogReader } from "@orrery/event-log"
+import type { EventEnvelope } from "@qmilab/lodestar-core"
+import { EventLogReader } from "@qmilab/lodestar-event-log"
 
 /**
  * Locate the project directory under a log root that contains events
@@ -49,9 +49,9 @@ export async function loadSessionEvents(input: {
 }
 
 /**
- * Default log root: `<cwd>/.orrery/events`. Centralised so the CLI and
+ * Default log root: `<cwd>/.lodestar/events`. Centralised so the CLI and
  * the example use the same convention.
  */
 export function defaultLogRoot(cwd: string = process.cwd()): string {
-  return join(cwd, ".orrery", "events")
+  return join(cwd, ".lodestar", "events")
 }

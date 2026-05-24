@@ -1,8 +1,8 @@
 import { resolve } from "node:path"
 import { spawn } from "node:child_process"
 import { z } from "zod"
-import { registry } from "@orrery/core"
-import { registerTool, type Tool } from "@orrery/action-kernel"
+import { registry } from "@qmilab/lodestar-core"
+import { registerTool, type Tool } from "@qmilab/lodestar-action-kernel"
 
 /**
  * git.status — get the status of a git repository.

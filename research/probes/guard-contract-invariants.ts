@@ -26,27 +26,27 @@
 
 import * as fs from "node:fs/promises"
 import { z } from "zod"
-import { registry } from "@orrery/core"
-import { _resetToolsForTests, registerTool } from "@orrery/action-kernel"
-import { registerBuiltInExtractors } from "@orrery/cognitive-core"
+import { registry } from "@qmilab/lodestar-core"
+import { _resetToolsForTests, registerTool } from "@qmilab/lodestar-action-kernel"
+import { registerBuiltInExtractors } from "@qmilab/lodestar-cognitive-core"
 import {
   EventLogReader,
   EventLogWriter,
   _resetEventLogStateForTests,
-} from "@orrery/event-log"
+} from "@qmilab/lodestar-event-log"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
-} from "@orrery/memory-firewall"
-import { Mem0Adapter } from "@orrery/memory-firewall-mem0"
+} from "@qmilab/lodestar-memory-firewall"
+import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
 import {
   alwaysHoldsChecker,
   autoApprovePolicy,
   runGuarded,
   type PolicyGate,
-} from "@orrery/guard"
+} from "@qmilab/lodestar-guard"
 
 interface ProbeResult {
   passed: boolean
@@ -112,7 +112,7 @@ async function caseA(): Promise<string | undefined> {
     {
       project_id: "probe-contract-A",
       actor_id: "tester",
-      log_root: "/tmp/orrery-probe-contract-A",
+      log_root: "/tmp/lodestar-probe-contract-A",
       default_scope: { level: "project", identifier: "probe-contract-A" },
       default_sensitivity: "internal",
       policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
@@ -168,7 +168,7 @@ async function caseB(): Promise<string | undefined> {
     {
       project_id: "probe-contract-B",
       actor_id: "tester",
-      log_root: "/tmp/orrery-probe-contract-B",
+      log_root: "/tmp/lodestar-probe-contract-B",
       default_scope: { level: "project", identifier: "probe-contract-B" },
       default_sensitivity: "secret",
       policy_gate: recordingPolicy,
@@ -223,7 +223,7 @@ async function caseC(): Promise<string | undefined> {
       {
         project_id: "probe-contract-C",
         actor_id: "tester",
-        log_root: "/tmp/orrery-probe-contract-C",
+        log_root: "/tmp/lodestar-probe-contract-C",
         default_scope: { level: "project", identifier: "probe-contract-C" },
         default_sensitivity: "internal",
         policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
@@ -276,7 +276,7 @@ async function caseD(): Promise<string | undefined> {
     {
       project_id: "probe-contract-D",
       actor_id: "tester",
-      log_root: "/tmp/orrery-probe-contract-D",
+      log_root: "/tmp/lodestar-probe-contract-D",
       default_scope: { level: "project", identifier: "probe-contract-D" },
       default_sensitivity: "secret",
       policy_gate: recordingPolicy,
@@ -301,7 +301,7 @@ async function caseE(): Promise<string | undefined> {
 
   // Kick off N runs in parallel with no session_id supplied. Even
   // millisecond-coincident invocations must end up with distinct ids
-  // (otherwise `orrery report` collapses them into one slice).
+  // (otherwise `lodestar report` collapses them into one slice).
   const N = 10
   const runs = await Promise.all(
     Array.from({ length: N }, (_, i) =>
@@ -310,7 +310,7 @@ async function caseE(): Promise<string | undefined> {
         {
           project_id: `probe-contract-E-${i}`,
           actor_id: "tester",
-          log_root: "/tmp/orrery-probe-contract-E",
+          log_root: "/tmp/lodestar-probe-contract-E",
           default_scope: { level: "project", identifier: `probe-contract-E-${i}` },
           default_sensitivity: "internal",
           policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
@@ -359,7 +359,7 @@ async function caseF(): Promise<string | undefined> {
       project_id: "probe-contract-F",
       actor_id: "tester",
       session_id: "session-probe-F-fixed",
-      log_root: "/tmp/orrery-probe-contract-F",
+      log_root: "/tmp/lodestar-probe-contract-F",
       default_scope: { level: "project", identifier: "probe-contract-F" },
       default_sensitivity: "internal",
       policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
@@ -387,7 +387,7 @@ async function caseG(): Promise<string | undefined> {
   const execs = { count: 0 }
   registerProbeTool(execs)
 
-  const LOG_ROOT = "/tmp/orrery-probe-contract-G"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-G"
   const PROJECT_ID = "probe-contract-G"
   // Start from a clean slate so the assertion is unambiguous.
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -475,11 +475,11 @@ async function caseI(): Promise<string | undefined> {
   // Clean the log dir so we read only this run's events (no chance of
   // matching an `observation.recorded` event written by a previous run
   // when the fix was in place).
-  await fs.rm("/tmp/orrery-probe-contract-I", { recursive: true, force: true }).catch(() => {})
+  await fs.rm("/tmp/lodestar-probe-contract-I", { recursive: true, force: true }).catch(() => {})
 
   await runGuarded(
     async (ctx) => {
-      const externalObs: import("@orrery/core").Observation = {
+      const externalObs: import("@qmilab/lodestar-core").Observation = {
         id: crypto.randomUUID(),
         // Schema doesn't need an extractor for this assertion — we
         // only care about the recorded event, not extracted claims.
@@ -509,7 +509,7 @@ async function caseI(): Promise<string | undefined> {
       project_id: "probe-contract-I",
       actor_id: "tester",
       session_id: "session-probe-I",
-      log_root: "/tmp/orrery-probe-contract-I",
+      log_root: "/tmp/lodestar-probe-contract-I",
       default_scope: { level: "project", identifier: "probe-contract-I" },
       default_sensitivity: "secret",
       policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
@@ -518,7 +518,7 @@ async function caseI(): Promise<string | undefined> {
   )
 
   // Read the event log and inspect the observation.recorded payload.
-  const reader = new EventLogReader("/tmp/orrery-probe-contract-I")
+  const reader = new EventLogReader("/tmp/lodestar-probe-contract-I")
   const events = await reader.readSession("probe-contract-I", "session-probe-I")
   const obsEvent = events.find((e) => e.type === "observation.recorded")
   if (!obsEvent) {
@@ -622,7 +622,7 @@ async function caseK(): Promise<string | undefined> {
     execute: async () => ({ ran: true }),
   })
 
-  const LOG_ROOT = "/tmp/orrery-probe-contract-K"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-K"
   const SESSION = "session-probe-K"
   const PROJECT = "probe-contract-K"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -668,7 +668,7 @@ async function caseK(): Promise<string | undefined> {
   return undefined
 }
 
-// ─── Sub-case L: `orrery probe` works from any working directory ──────────
+// ─── Sub-case L: `lodestar probe` works from any working directory ──────────
 
 async function caseL(): Promise<string | undefined> {
   // Run the CLI from a directory other than the repo root. The probe
@@ -685,7 +685,7 @@ async function caseL(): Promise<string | undefined> {
   if (runFromSubdir.exitCode !== 0) {
     const stderr = runFromSubdir.stderr.toString()
     return (
-      `[L] 'orrery probe chain' failed when invoked from packages/cli ` +
+      `[L] 'lodestar probe chain' failed when invoked from packages/cli ` +
       `(exit ${runFromSubdir.exitCode}). The CLI must resolve the probe directory ` +
       `from its own location, not process.cwd(). stderr: ${stderr.slice(0, 200)}`
     )
@@ -699,7 +699,7 @@ async function caseM(): Promise<string | undefined> {
   // Seed an existing log so a fresh writer needs to hydrate. Without
   // serialised hydration, two concurrent first appends both see an
   // empty seq map and allocate seq=0 — duplicates in the log.
-  const LOG_ROOT = "/tmp/orrery-probe-contract-M"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-M"
   const PROJECT = "probe-contract-M"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
 
@@ -807,7 +807,7 @@ async function caseN(): Promise<string | undefined> {
     {
       project_id: "probe-contract-N",
       actor_id: "tester",
-      log_root: "/tmp/orrery-probe-contract-N",
+      log_root: "/tmp/lodestar-probe-contract-N",
       default_scope: { level: "project", identifier: "probe-contract-N" },
       default_sensitivity: "internal",
       policy_gate: recordingPolicy,
@@ -828,7 +828,7 @@ async function caseN(): Promise<string | undefined> {
 // ─── Sub-case O: concurrent writer instances share seq across sessions ────
 
 async function caseO(): Promise<string | undefined> {
-  const LOG_ROOT = "/tmp/orrery-probe-contract-O"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-O"
   const PROJECT = "probe-contract-O"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
   _resetEventLogStateForTests()
@@ -933,7 +933,7 @@ async function caseP(): Promise<string | undefined> {
     {
       project_id: "probe-contract-P",
       actor_id: "tester",
-      log_root: "/tmp/orrery-probe-contract-P",
+      log_root: "/tmp/lodestar-probe-contract-P",
       default_scope: { level: "project", identifier: "probe-contract-P" },
       default_sensitivity: "internal",
       policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
@@ -970,7 +970,7 @@ async function caseP(): Promise<string | undefined> {
 
 async function caseQ(): Promise<string | undefined> {
   registerProbeTool({ count: 0 })
-  const LOG_ROOT = "/tmp/orrery-probe-contract-Q"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-Q"
   const PROJECT = "probe-contract-Q"
   const SESSION = "session-probe-Q"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -979,8 +979,8 @@ async function caseQ(): Promise<string | undefined> {
   // to produce claims + evidence. The greenfield git.status is the
   // simplest; we use the cleared registry to add fs.read + git.status
   // here.
-  const { registerFsReadTool } = await import("@orrery/adapter-filesystem")
-  const { registerGitStatusTool } = await import("@orrery/adapter-git")
+  const { registerFsReadTool } = await import("@qmilab/lodestar-adapter-filesystem")
+  const { registerGitStatusTool } = await import("@qmilab/lodestar-adapter-git")
   registerFsReadTool(process.cwd())
   registerGitStatusTool(process.cwd())
 
@@ -1012,7 +1012,7 @@ async function caseQ(): Promise<string | undefined> {
   }
 
   // Render and confirm the Evidence section is present.
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, {
     session_id: SESSION,
     project_id: PROJECT,
@@ -1031,7 +1031,7 @@ async function caseQ(): Promise<string | undefined> {
 
 async function caseR(): Promise<string | undefined> {
   registerProbeTool({ count: 0 })
-  const LOG_ROOT = "/tmp/orrery-probe-contract-R"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-R"
   const PROJECT = "probe-contract-R"
   const SESSION = "session-probe-R"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -1060,7 +1060,7 @@ async function caseR(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
   if (projection.decisions.length === 0) {
     return `[R] projectChain returned 0 decisions despite an emitted decision.made event`
@@ -1082,7 +1082,7 @@ async function caseR(): Promise<string | undefined> {
 
 async function caseS(): Promise<string | undefined> {
   registerProbeTool({ count: 0 })
-  const LOG_ROOT = "/tmp/orrery-probe-contract-S"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-S"
   const PROJECT = "probe-contract-S"
   const SESSION = "session-probe-S"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -1115,7 +1115,7 @@ async function caseS(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
   // Outcome was emitted without a preceding action — projectChain should
   // still capture it as a standalone ProjectedAction with outcome only.
@@ -1134,7 +1134,7 @@ async function caseS(): Promise<string | undefined> {
 
 async function caseT(): Promise<string | undefined> {
   registerProbeTool({ count: 0 })
-  const LOG_ROOT = "/tmp/orrery-probe-contract-T"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-T"
   const PROJECT = "probe-contract-T"
   const SESSION = "session-probe-T"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -1188,7 +1188,7 @@ async function caseT(): Promise<string | undefined> {
 
 async function caseU(): Promise<string | undefined> {
   registerProbeTool({ count: 0 })
-  const LOG_ROOT = "/tmp/orrery-probe-contract-U"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-U"
   const PROJECT = "probe-contract-U"
   const SESSION = "session-probe-U"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -1220,7 +1220,7 @@ async function caseU(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
 
   // The malformed action must NOT be in projection.actions — it
@@ -1251,7 +1251,7 @@ async function caseU(): Promise<string | undefined> {
 
 async function caseV(): Promise<string | undefined> {
   registerProbeTool({ count: 0 })
-  const LOG_ROOT = "/tmp/orrery-probe-contract-V"
+  const LOG_ROOT = "/tmp/lodestar-probe-contract-V"
   const PROJECT = "probe-contract-V"
   const SESSION = "session-probe-V"
   await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
@@ -1310,7 +1310,7 @@ async function caseV(): Promise<string | undefined> {
 
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
-  const { projectChain, renderReport } = await import("@orrery/trace")
+  const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
 
   // None of the malformed payloads should be in their respective
@@ -1363,7 +1363,7 @@ async function run(): Promise<ProbeResult> {
     { name: "I: ingestObservation rewrites context + lifts sensitivity", fn: caseI },
     { name: "J: mem0 adapter tolerates malformed records", fn: caseJ },
     { name: "K: execution-time rejections emit action.rejected", fn: caseK },
-    { name: "L: orrery probe works from any working directory", fn: caseL },
+    { name: "L: lodestar probe works from any working directory", fn: caseL },
     { name: "M: writer hydration is race-safe", fn: caseM },
     { name: "N: caller cannot lower contract.reversibility", fn: caseN },
     { name: "O: concurrent writers share seq across instances", fn: caseO },

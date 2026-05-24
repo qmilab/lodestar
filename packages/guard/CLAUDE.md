@@ -1,12 +1,12 @@
-# @orrery/guard — CLAUDE.md
+# @qmilab/lodestar-guard — CLAUDE.md
 
 A meta-package. Mostly re-exports plus one helper (`wrap`).
 
 ## What lives here
 
-- `src/index.ts` — re-exports from `@orrery/event-log`,
-  `@orrery/action-kernel`, `@orrery/memory-firewall`,
-  `@orrery/cognitive-core`, and selected types from `@orrery/core`. Plus
+- `src/index.ts` — re-exports from `@qmilab/lodestar-event-log`,
+  `@qmilab/lodestar-action-kernel`, `@qmilab/lodestar-memory-firewall`,
+  `@qmilab/lodestar-cognitive-core`, and selected types from `@qmilab/lodestar-core`. Plus
   the local helpers below.
 - `src/wrap.ts` — `wrap(loop)` and `runGuarded(loop, config)`. Wires up
   one fresh session per invocation: writer, in-memory stores, firewall,
@@ -32,24 +32,24 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
    in the same `GuardContext` may race on the shared observation-sink
    capture. Multi-process / parallel-tool safety is a Batch 3 concern
    that lands with the MCP proxy.
-4. **No new schemas.** Guard does not extend `@orrery/core`. All
+4. **No new schemas.** Guard does not extend `@qmilab/lodestar-core`. All
    event payloads are existing chain primitives or simple status events
    (`guard.session.started`, `guard.session.ended`,
    `guard.session.failed`).
 
 ## What does not live here
 
-- MCP proxy mode — `@orrery/guard-mcp`, Batch 3.
-- Real policy enforcement — `@orrery/policy-kernel`, Batch 4+.
+- MCP proxy mode — `@qmilab/lodestar-guard-mcp`, Batch 3.
+- Real policy enforcement — `@qmilab/lodestar-policy-kernel`, Batch 4+.
 - Anything that consumes the event log on the read side — that's
-  `@orrery/trace`.
+  `@qmilab/lodestar-trace`.
 
 ## When changing `wrap`
 
 - The shape of `GuardContext` is part of the public API. Add new fields
   before removing or renaming existing ones.
 - Every event written by `wrap` carries the configured `project_id`,
-  `session_id`, and `actor_id`. `orrery report` relies on session_id
+  `session_id`, and `actor_id`. `lodestar report` relies on session_id
   to slice the log.
 - New event types should be additive. Existing consumers (the trace
   package, examples) must keep working with old event types.

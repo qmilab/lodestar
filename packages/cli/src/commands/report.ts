@@ -4,10 +4,10 @@ import {
   loadSessionEvents,
   projectChain,
   renderReport,
-} from "@orrery/trace"
+} from "@qmilab/lodestar-trace"
 
 /**
- * `orrery report <session-id> [--project <id>] [--log-root <path>] [--out <file>]`
+ * `lodestar report <session-id> [--project <id>] [--log-root <path>] [--out <file>]`
  *
  * Headline user-facing command. Loads events for the given session
  * from the log root, projects them into the epistemic chain, and
@@ -40,7 +40,7 @@ export async function reportCommand(argv: string[]): Promise<number> {
 
   if (!session_id) {
     process.stderr.write(
-      "usage: orrery report <session-id> [--project <id>] [--log-root <path>] [--out <file>] [--raw-events <n>]\n",
+      "usage: lodestar report <session-id> [--project <id>] [--log-root <path>] [--out <file>] [--raw-events <n>]\n",
     )
     return 2
   }

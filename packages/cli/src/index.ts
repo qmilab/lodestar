@@ -1,24 +1,24 @@
 #!/usr/bin/env bun
 /**
- * orrery — command-line interface
+ * lodestar — command-line interface
  *
  * Reorganised in Batch 2 around the four developer-facing surfaces
  * (Guard, Trace, Action Kernel, Harness). The headline command is
- * `orrery report <session-id>`; everything else is structured under
+ * `lodestar report <session-id>`; everything else is structured under
  * area prefixes so the help output stays scannable.
  *
  * Usage:
- *   orrery report <session-id> ...           (headline command)
- *   orrery guard wrap --target <module> ...  (programmatic)
- *   orrery action list
- *   orrery action describe <action-id>
- *   orrery trace inspect <event-id> ...      (debug)
- *   orrery probe <name>
- *   orrery help
+ *   lodestar report <session-id> ...           (headline command)
+ *   lodestar guard wrap --target <module> ...  (programmatic)
+ *   lodestar action list
+ *   lodestar action describe <action-id>
+ *   lodestar trace inspect <event-id> ...      (debug)
+ *   lodestar probe <name>
+ *   lodestar help
  */
 
-import { registerFsReadTool } from "@orrery/adapter-filesystem"
-import { registerGitStatusTool } from "@orrery/adapter-git"
+import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
+import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import { actionDescribeCommand, actionListCommand } from "./commands/action"
 import { guardWrapCommand } from "./commands/guard"
 import { HELP_TEXT } from "./commands/help"
@@ -30,9 +30,9 @@ import { traceInspectCommand } from "./commands/trace"
  * Pre-register the v0 built-in tools (fs.read, git.status) bound to
  * the current working directory. Called only by commands that need a
  * populated registry without first running a guarded session — namely
- * `orrery action list` and `orrery action describe`.
+ * `lodestar action list` and `lodestar action describe`.
  *
- * Other commands (notably `orrery guard wrap`) must NOT eagerly
+ * Other commands (notably `lodestar guard wrap`) must NOT eagerly
  * register, because the target module being loaded typically calls
  * the same `registerFsReadTool` / `registerGitStatusTool` itself; the
  * action-kernel registry rejects duplicate names, which would make
@@ -61,19 +61,19 @@ async function dispatch(): Promise<number> {
 
     case "guard":
       if (sub === "wrap") return guardWrapCommand(rest)
-      process.stderr.write("usage: orrery guard wrap --target <module>\n")
+      process.stderr.write("usage: lodestar guard wrap --target <module>\n")
       return 2
 
     case "action":
       registerBuiltinTools()
       if (sub === "list") return actionListCommand()
       if (sub === "describe") return actionDescribeCommand(rest)
-      process.stderr.write("usage: orrery action list | orrery action describe <action-id>\n")
+      process.stderr.write("usage: lodestar action list | lodestar action describe <action-id>\n")
       return 2
 
     case "trace":
       if (sub === "inspect") return traceInspectCommand(rest)
-      process.stderr.write("usage: orrery trace inspect <event-id>\n")
+      process.stderr.write("usage: lodestar trace inspect <event-id>\n")
       return 2
 
     case "probe":

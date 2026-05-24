@@ -2,7 +2,7 @@ import type {
   Explanation,
   ExplanationAudience,
   ExplanationSubject,
-} from "@orrery/core"
+} from "@qmilab/lodestar-core"
 
 /**
  * Generates structured Explanation records.

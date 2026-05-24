@@ -1,4 +1,4 @@
-import type { Belief, ContextPolicy, ResourceScope } from "@orrery/core"
+import type { Belief, ContextPolicy, ResourceScope } from "@qmilab/lodestar-core"
 import type { BeliefStore } from "./stores/belief-store"
 
 /**
@@ -153,7 +153,7 @@ export interface BeliefRejection {
 
 /**
  * Minimal ISO 8601 duration parser for the freshness gate.
- * Supports the subset Orrery actually uses: P<days>D and PT<hours>H<minutes>M<seconds>S.
+ * Supports the subset Lodestar actually uses: P<days>D and PT<hours>H<minutes>M<seconds>S.
  */
 function parseDurationToMs(d: string): number {
   const m = d.match(/^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)?$/)

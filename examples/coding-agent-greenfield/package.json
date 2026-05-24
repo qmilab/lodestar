@@ -1,5 +1,5 @@
 {
-  "name": "@orrery-examples/coding-agent-greenfield",
+  "name": "@qmilab-examples/coding-agent-greenfield",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,11 +9,11 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@orrery/core": "workspace:*",
-    "@orrery/guard": "workspace:*",
-    "@orrery/trace": "workspace:*",
-    "@orrery/adapter-filesystem": "workspace:*",
-    "@orrery/adapter-git": "workspace:*"
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-guard": "workspace:*",
+    "@qmilab/lodestar-trace": "workspace:*",
+    "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+    "@qmilab/lodestar-adapter-git": "workspace:*"
   },
   "devDependencies": {
     "typescript": "5.6.3"
