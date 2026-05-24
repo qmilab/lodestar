@@ -14,23 +14,42 @@ import { type EventEnvelope, EventEnvelopeSchema } from "@orrery/core"
  * - Payload hash is computed by the writer if not supplied; the
  *   serialized payload is hashed canonically (sorted keys).
  *
- * v0: process-local writer with a single in-memory partition state.
- * Multi-process safety is a v0.2 concern (file locking, advisory
- * sequence reservation).
+ * v0: process-local writer with module-scoped partition state. Two
+ * EventLogWriter instances pointing at the same `rootDir`/`project_id`
+ * share the same hydration and seq counter — necessary for
+ * `runGuarded`-per-session use cases where multiple writer instances
+ * live in the same process. Cross-process safety (file locking) is a
+ * Batch 3 concern.
  */
-export class EventLogWriter {
-  private nextSeq: Map<string, number> = new Map()
-  private nextLogicalClock: Map<string, number> = new Map()
-  /**
-   * Per-project hydration promises. Once a project's first `append`
-   * starts scanning disk, every subsequent concurrent append for that
-   * project awaits the same promise — preventing the race where two
-   * appends both observe an empty `nextSeq` map and allocate seq=0.
-   * The entry stays in the map after fulfilment so later appends
-   * resolve immediately without re-scanning.
-   */
-  private hydrations: Map<string, Promise<void>> = new Map()
 
+// ── Process-wide partition state ───────────────────────────────────────────
+// Keyed by `${rootDir}::${project_id}` so writers pointed at different
+// root dirs (e.g. tests with isolated log directories) stay independent
+// while writers sharing the same physical log share their counters.
+
+const sharedHydrations = new Map<string, Promise<void>>()
+const sharedNextSeq = new Map<string, number>()
+const sharedNextLogicalClock = new Map<string, number>()
+
+function partitionKey(rootDir: string, projectId: string): string {
+  return `${rootDir}::${projectId}`
+}
+
+function sessionKey(rootDir: string, sessionId: string): string {
+  return `${rootDir}::${sessionId}`
+}
+
+/**
+ * Reset the module-level writer state. For tests/probes that need
+ * isolation between scenarios. Not part of the public API.
+ */
+export function _resetEventLogStateForTests(): void {
+  sharedHydrations.clear()
+  sharedNextSeq.clear()
+  sharedNextLogicalClock.clear()
+}
+
+export class EventLogWriter {
   constructor(private readonly rootDir: string) {}
 
   async append(input: Omit<EventEnvelope, "seq" | "logical_clock" | "payload_hash"> & {
@@ -88,14 +107,15 @@ export class EventLogWriter {
    * empty, the maps stay at their defaults (seq starts at 0).
    */
   private hydrate(projectId: string): Promise<void> {
-    const existing = this.hydrations.get(projectId)
+    const key = partitionKey(this.rootDir, projectId)
+    const existing = sharedHydrations.get(key)
     if (existing) return existing
-    const promise = this.scanForHydration(projectId)
-    this.hydrations.set(projectId, promise)
+    const promise = this.scanForHydration(projectId, key)
+    sharedHydrations.set(key, promise)
     return promise
   }
 
-  private async scanForHydration(projectId: string): Promise<void> {
+  private async scanForHydration(projectId: string, key: string): Promise<void> {
     const projectDir = join(this.rootDir, projectId)
     if (!existsSync(projectDir)) return
 
@@ -130,23 +150,35 @@ export class EventLogWriter {
       }
     }
 
+    // Only raise the shared counters — never lower them. A concurrent
+    // writer may have already started allocating from a higher base,
+    // and that higher value reflects the true tip of the log.
     if (maxSeq >= 0) {
-      this.nextSeq.set(projectId, maxSeq + 1)
+      const current = sharedNextSeq.get(key) ?? 0
+      if (maxSeq + 1 > current) {
+        sharedNextSeq.set(key, maxSeq + 1)
+      }
     }
     for (const [sessionId, value] of sessionMax.entries()) {
-      this.nextLogicalClock.set(sessionId, value + 1)
+      const sk = sessionKey(this.rootDir, sessionId)
+      const current = sharedNextLogicalClock.get(sk) ?? 0
+      if (value + 1 > current) {
+        sharedNextLogicalClock.set(sk, value + 1)
+      }
     }
   }
 
   private advanceSeq(projectId: string): number {
-    const current = this.nextSeq.get(projectId) ?? 0
-    this.nextSeq.set(projectId, current + 1)
+    const key = partitionKey(this.rootDir, projectId)
+    const current = sharedNextSeq.get(key) ?? 0
+    sharedNextSeq.set(key, current + 1)
     return current
   }
 
   private advanceLogicalClock(sessionId: string): number {
-    const current = this.nextLogicalClock.get(sessionId) ?? 0
-    this.nextLogicalClock.set(sessionId, current + 1)
+    const key = sessionKey(this.rootDir, sessionId)
+    const current = sharedNextLogicalClock.get(key) ?? 0
+    sharedNextLogicalClock.set(key, current + 1)
     return current
   }
 
