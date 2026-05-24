@@ -357,10 +357,21 @@ export async function runGuarded<T>(
 
     captureBox.current = undefined
     const executed = await kernel.execute(arbitrated)
-    await emit(
-      executed.phase === "completed" ? "action.completed" : "action.failed",
-      executed,
-    )
+    // `kernel.execute` can finish in three distinguishable phases:
+    //   completed → tool ran, observation produced
+    //   rejected  → precondition revalidation killed the action
+    //               (a policy decision, not an execution failure)
+    //   failed    → tool.execute threw or the kernel hit a structural error
+    // Consumers filtering the event log by type need to tell these
+    // apart — flattening rejected → failed would conflate TOCTOU
+    // rejections with genuine tool failures.
+    const finalEventType =
+      executed.phase === "completed"
+        ? "action.completed"
+        : executed.phase === "rejected"
+          ? "action.rejected"
+          : "action.failed"
+    await emit(finalEventType, executed)
 
     if (executed.phase !== "completed") {
       const detail = lastFailureDetail(executed) ?? "execution did not complete"
