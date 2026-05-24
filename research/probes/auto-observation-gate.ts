@@ -2,6 +2,12 @@
 /**
  * Probe: auto_observation_evidence_quality_gate
  *
+ * This probe enforces the Parallax principle for the auto-observation
+ * transition authority: a claim sourced from a single piece of
+ * `external_document` or `model_inference` evidence cannot auto-promote
+ * to `truth_status: supported`. Promotion requires either independent
+ * corroboration or explicit reflection authority.
+ *
  * Verifies that the cognitive core's `auto_observation` transition cannot
  * promote a belief to `truth_status: supported` when the strongest
  * evidence is `external_document` or `model_inference`. Such evidence is

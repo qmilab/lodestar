@@ -383,3 +383,30 @@ The architecture itself. The four orthogonal lifecycle axes, the no-self-promoti
 ## Bottom line
 
 The project's next regret risk is sequencing, not architecture. The instruction from this round is unambiguous: get to `lodestar guard mcp-proxy && claude code && lodestar report` as quickly as possible. That moment is when Lodestar becomes legible to anyone outside the design conversation.
+
+---
+
+## Naming history
+
+The project was originally developed under the codename **Orrery**.
+Before public launch, the name was changed to **Lodestar** following
+diligence on GitHub/npm namespace collisions and brand-positioning
+review.
+
+The architecture vocabulary continues to use astronomy-adjacent terms
+where they carry semantic weight:
+
+- **Lodestar** — the product. A guiding star; a fixed reference point
+  for navigation. Externally: the trust layer for AI agents.
+- **Parallax** — the architectural principle that single-source
+  claims (especially LLM judgments) cannot auto-promote to settled
+  beliefs. Belief promotion requires evidence from independent
+  sources, in the same sense that astronomical parallax requires
+  observation from independent vantage points.
+- **Ephemeris** — the conceptual role of the event log. An ephemeris
+  is a table of positions over time; the Lodestar event log records
+  the position of the agent's epistemic state over time, supporting
+  replay and post-hoc audit.
+
+The original codename Orrery is preserved in `docs/review/` and in
+references to early architectural decisions.

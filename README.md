@@ -124,7 +124,7 @@ Future commercial offerings from Machinise will include hosted dashboard, team a
 
 ## Status
 
-**Pre-v0.1 implementation, v0.2 architecture. Batches 1 and 2 complete.**
+**Pre-v0.1 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1 and 2 complete.**
 
 What ships today:
 

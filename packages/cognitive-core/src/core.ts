@@ -96,12 +96,19 @@ export class CognitiveCore {
       // authority is always "observed"; the transition authority varies
       // by evidence strength.
       //
-      // Defensive gate (Round 5 review): auto_observation may NOT promote
-      // beliefs whose strongest evidence is external_document or
-      // model_inference. Those evidence types are too indirect to support
-      // silent auto-promotion to 'supported' status. They downgrade the
-      // transition to 'reflection' (which keeps the belief at 'unverified'
-      // and requires a reflection pass or user to promote further).
+      // The auto-observation gate enforces the Parallax principle:
+      // a claim sourced from a single piece of `model_inference` or
+      // `external_document` evidence cannot auto-promote to
+      // `truth_status: supported`. Promotion requires either independent
+      // corroboration (multiple sources with different
+      // `independence_group` values) or explicit reflection authority.
+      //
+      // When the strongest available evidence is one of those qualities,
+      // the gate downgrades the transition authority from
+      // `auto_observation` to `reflection`, which keeps the belief at
+      // `unverified` until a reflection pass or user promotes it
+      // further. (Originally specified in the Round 5 review under the
+      // codename Orrery; see docs/architecture/v02-delta.md.)
       const strongestQuality = strongestEvidenceQuality(evidence)
       const autoObservationBlocked =
         strongestQuality === "external_document" ||
@@ -208,8 +215,8 @@ function calibrationClassFor(schema: string, claim: Claim): string {
 
 /**
  * Return the quality of the highest-quality supporting evidence item in
- * the set. Used by the auto_observation gate to refuse silent promotion
- * when the strongest evidence is too indirect.
+ * the set. Used by the auto-observation gate (Parallax principle) to
+ * refuse silent promotion when the strongest evidence is too indirect.
  *
  * Order of quality (best to worst):
  *   direct_observation > tool_result > human_assertion >

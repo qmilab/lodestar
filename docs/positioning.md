@@ -12,7 +12,9 @@ Lodestar has two distinct audiences, and the words we use to describe it must di
 
 ### External (developers, adopters, enterprises)
 
-> **Lodestar is the trust layer for AI agents.**
+> **Lodestar is the trust layer for AI agents.** (The project was
+> developed under the codename Orrery; see
+> `docs/architecture/v02-delta.md` for the naming history.)
 >
 > Know what your agent believed, why it acted, and whether it was right.
 
