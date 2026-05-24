@@ -18,4 +18,5 @@ export {
   type PolicyGate,
   type PolicyDecision,
   type PreconditionChecker,
+  type ToolContextResolver,
 } from "./kernel"

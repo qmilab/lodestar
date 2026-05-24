@@ -272,10 +272,15 @@ export async function runGuarded<T>(
     captureBox.current = { observation, ingest }
   }
 
+  // Propagate the guarded session/project ids into every
+  // `tool.execute(inputs, ctx)` call so custom tools that scope side
+  // effects by session_id / project_id (logging, temp dirs, capability
+  // tokens) see the real values rather than the kernel's stubs.
   const kernel = new ActionKernel(
     config.policy_gate,
     config.precondition_checker,
     observationSink,
+    () => ({ session_id, project_id: config.project_id }),
   )
 
   const callTool = async <TOut = unknown>(

@@ -45,11 +45,25 @@ export type PreconditionChecker = (
  * - if a precondition no longer holds, the action is rejected even if
  *   it was previously approved
  */
+/**
+ * Resolve the `session_id` / `project_id` the host wants tools to see
+ * inside their `ToolContext`. Without a resolver, the kernel falls
+ * back to `"session-stub"` / `"project-stub"` placeholders — fine for
+ * unit tests, broken for any tool that scopes side effects by
+ * session or project. Hosts (@orrery/guard, the eventual MCP proxy)
+ * MUST supply a resolver in production.
+ */
+export type ToolContextResolver = () => {
+  session_id: string
+  project_id: string
+}
+
 export class ActionKernel {
   constructor(
     private readonly policyGate: PolicyGate,
     private readonly preconditionChecker: PreconditionChecker,
     private readonly observationSink: (obs: Observation) => Promise<void>,
+    private readonly contextResolver?: ToolContextResolver,
   ) {}
 
   /**
@@ -185,12 +199,21 @@ export class ActionKernel {
       ],
     }
 
+    // Resolve session/project context once per execute call. Hosts
+    // (Guard, the MCP proxy) supply a resolver; tests/probes may rely
+    // on the stub fallback. Capability wiring for secret-handling
+    // tools lives in the policy kernel, not here.
+    const resolved = this.contextResolver?.() ?? {
+      session_id: "session-stub",
+      project_id: "project-stub",
+    }
+    const toolCtxSessionId = resolved.session_id
+    const toolCtxProjectId = resolved.project_id
+
     try {
-      // The kernel constructs an empty ToolContext for v0. Capabilities
-      // are wired in by the policy kernel for secret-handling tools.
       const result = await tool.execute(executing.inputs, {
-        session_id: "session-stub", // wired by the host in real use
-        project_id: "project-stub",
+        session_id: toolCtxSessionId,
+        project_id: toolCtxProjectId,
         actor_id: executing.proposed_by,
         capabilities: new Map(),
       })
@@ -216,8 +239,8 @@ export class ActionKernel {
           captured_at: new Date().toISOString(),
         },
         context: {
-          session_id: "session-stub",
-          project_id: "project-stub",
+          session_id: toolCtxSessionId,
+          project_id: toolCtxProjectId,
           actor_id: executing.proposed_by,
         },
         trust: "validated",
