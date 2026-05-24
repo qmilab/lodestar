@@ -7,6 +7,7 @@ import type {
   Observation,
   Outcome,
 } from "@orrery/core"
+import { ActionSchema } from "@orrery/core"
 
 /**
  * Projection of an event log into the epistemic chain.
@@ -362,15 +363,17 @@ function isBeliefPayload(p: unknown): p is Belief {
   )
 }
 
+/**
+ * Validate a payload against the full Action schema before treating
+ * it as an Action. The renderer reads `action.contract.required_level`
+ * and `action.audit` unconditionally; accepting a partial payload
+ * (e.g. a custom `ctx.emit("action.foo", { id, tool, phase, intent })`
+ * shape) would crash the report at render time. A failed validation
+ * leaves the event in `raw_events` for the optional event-log section
+ * but does not contribute to `actions`.
+ */
 function isActionPayload(p: unknown): p is Action {
-  if (!p || typeof p !== "object") return false
-  const obj = p as Record<string, unknown>
-  return (
-    typeof obj.id === "string" &&
-    typeof obj.tool === "string" &&
-    typeof obj.phase === "string" &&
-    typeof obj.intent === "string"
-  )
+  return ActionSchema.safeParse(p).success
 }
 
 function isOutcomePayload(p: unknown): p is Outcome {
