@@ -3,12 +3,12 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
-**Status**: pre-v0.1 implementation, v0.2 architecture. Six firewall
-probes pass under strict TypeScript. Batch 1 (positioning + docs) is
-complete. Batch 2 (package boundary cleanup) is the current work — see
-`docs/handoffs/batch-2-claude-code-prompt.md`.
+**Status**: pre-v0.1 implementation, v0.2 architecture. Nine probes pass
+under strict TypeScript (six firewall probes plus three guard / contract
+probes). Batches 1 and 2 are complete. Subsequent batches are tracked in
+`docs/roadmap.md`.
 
-This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum at the bottom), then the relevant package's `CLAUDE.md` for implementation details. If you are starting a focused implementation session, the batch handoff prompt in `docs/handoffs/` is the more specific entry point.
+This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
 ## What this project is
 
@@ -79,19 +79,18 @@ docs/
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
   positioning.md       # external voice, four developer entry points
   roadmap.md           # five-batch sequence to v1
-  patterns/            # pattern language
   threat-model/        # memory poisoning analysis
   whitepaper/          # outline + drafts
   pitch-deck/          # 12-slide structure
-  handoffs/            # per-batch Claude Code starter prompts
   review/              # adversarial review history (ChatGPT rounds 1-5)
-  blog/                # blog posts mirrored to nandan.me
 
 research/
-  probes/              # six passing probes (memory-poisoning-basic,
+  probes/              # nine passing probes (memory-poisoning-basic,
                        #   epistemic-chain-smoke, external-document-not-normal,
                        #   quarantined-not-retrievable, sensitivity-ceiling,
-                       #   auto-observation-gate)
+                       #   auto-observation-gate, guard-import-no-self-promote,
+                       #   guard-precondition-revalidation,
+                       #   guard-contract-invariants)
   benchmarks/          # (later) reproducible evaluation
   datasets/            # (later) logged event traces for analysis
 ```
@@ -152,15 +151,13 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Six probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
+- **Nine probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
 
 ## Quick references
 
-- Architecture: `docs/architecture/v02-delta.md` (read the Round 5 addendum at the bottom)
-- Current batch handoff: `docs/handoffs/batch-2-claude-code-prompt.md`
+- Architecture: `docs/architecture/v02-delta.md` (read the Round 5 addendum and the naming-history section at the bottom)
 - Roadmap: `docs/roadmap.md`
 - Positioning: `docs/positioning.md`
-- Pattern language: `docs/patterns/`
 - Threat model: `docs/threat-model/memory-poisoning.md`
 - Examples: `examples/telenotes-governed-dev/` (full pipeline), `examples/doc-insight/` (firewall gate focus)
 - Adversarial review history: `docs/review/` (ChatGPT rounds 1–5)

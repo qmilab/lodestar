@@ -84,9 +84,17 @@ Coverage of LangSmith, Langfuse, Phoenix, Braintrust, Datadog LLM Observability.
 
 ### 2.3 Agent memory systems
 
-Coverage of mem0 (~48–55K stars, $24M raised, 21 framework integrations, April 2026 CVSS 8.1 vulnerability), Letta (formerly MemGPT), Zep, Cognee. They persist information across sessions. They lack a principled governance layer for which memories should be promoted or retrieved.
+Coverage of mem0, Letta (formerly MemGPT), Zep, Cognee. They persist
+information across sessions but lack a principled governance layer for
+which memories should be promoted or retrieved. The gap is one of
+continuity vs governance rather than a security claim about any
+specific implementation.
 
-Cite the April 2026 mem0 vulnerability as a concrete example of the gap.
+(An earlier version of this outline cited a specific mem0 CVSS 8.1
+vulnerability; the Round 5 review retracted that claim because the
+source was secondary and the closest verifiable advisory was for a
+different project. See `docs/architecture/v02-delta.md` Round 5
+section for the retraction.)
 
 ### 2.4 Memory poisoning attacks
 

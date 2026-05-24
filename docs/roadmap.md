@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs six probes end-to-end. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs nine probes end-to-end. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -16,14 +16,19 @@ Concrete state:
 - Two-phase action execution with precondition revalidation
 - Memory firewall with four orthogonal lifecycle axes and per-axis transition tables
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator
-- Six passing probes:
+- Nine passing probes:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
   - quarantined belief not retrievable
   - sensitivity ceiling blocks secret belief
-  - auto-observation evidence-quality gate
+  - auto-observation evidence-quality gate (Parallax principle)
+  - guard import no-self-promote
+  - guard precondition revalidation
+  - guard contract invariants (22 sub-cases A–V)
 - End-to-end example producing an 11-event audit trail
+- `guard.wrap()` driving a homegrown coding-agent loop in
+  `examples/coding-agent-greenfield/`
 
 ---
 
