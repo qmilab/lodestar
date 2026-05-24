@@ -1,6 +1,6 @@
-# CLAUDE.md — Orrery monorepo
+# CLAUDE.md — Lodestar monorepo
 
-Codename `Orrery`. Open epistemic governance framework for AI agents.
+Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
 **Status**: pre-v0.1 implementation, v0.2 architecture. Six firewall
@@ -12,7 +12,7 @@ This file is the entry point for any agent working in this repository. Read this
 
 ## What this project is
 
-Orrery is a TypeScript library and reference framework for governed agentic cognition. It sits above agent runtimes (OpenClaw, Hermes, Claude Code, raw LLMs with tools) and tracks the epistemic chain:
+Lodestar is a TypeScript library and reference framework for governed agentic cognition. It sits above agent runtimes (OpenClaw, Hermes, Claude Code, raw LLMs with tools) and tracks the epistemic chain:
 
 ```
 Observation → Claim → EvidenceSet → Belief → Decision → Action → Outcome → Revision
@@ -28,7 +28,7 @@ Each link is a first-class type. Governance components (Action Kernel, Policy Ke
 
 ## The thesis
 
-An agent cannot safely act unless Orrery can show:
+An agent cannot safely act unless Lodestar can show:
 - what it observed,
 - what it claimed,
 - what it believed,
@@ -58,7 +58,7 @@ packages/
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
   cli/                 # (exists; reorganized in Batch 2)
   guard/               # (Batch 2) meta-package + guard.wrap() helper
-  trace/               # (Batch 2) read side + `orrery report` CLI
+  trace/               # (Batch 2) read side + `lodestar report` CLI
   guard-mcp/           # (Batch 3) MCP proxy mode
   harness/             # (Batch 4) probes, sentinels, calibrators, replay-lite
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
@@ -136,10 +136,10 @@ When refactoring:
 
 `.claude/commands/` defines reusable agent commands:
 
-- `/orrery-report <session_id>` — produce the full epistemic chain report for a session (wraps `orrery report` CLI).
-- `/orrery-probe <probe_name>` — run a specific harness probe.
-- `/orrery-calibrate <calibration_class>` — produce a calibration table (Batch 4+).
-- `/orrery-explain <event_id>` — generate a human-audience Explanation for any governed event.
+- `/lodestar-report <session_id>` — produce the full epistemic chain report for a session (wraps `lodestar report` CLI).
+- `/lodestar-probe <probe_name>` — run a specific harness probe.
+- `/lodestar-calibrate <calibration_class>` — produce a calibration table (Batch 4+).
+- `/lodestar-explain <event_id>` — generate a human-audience Explanation for any governed event.
 
 ## Locked decisions (do not relitigate)
 
@@ -148,7 +148,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Architecture is locked at v0.2 + Round 5 fixes.** Schema in `packages/core/` is not open for change without a separate architectural session.
 - **Four orthogonal memory lifecycle axes**: truth, retrieval, security, freshness. Do not collapse.
 - **Auto-observation gate**: `external_document` and `model_inference` evidence cannot promote a claim to `truth_status: supported` automatically. Round 5 invariant.
-- **CLI naming**: `orrery report <session-id>` is the headline command. Not `orrery trace report`.
+- **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.

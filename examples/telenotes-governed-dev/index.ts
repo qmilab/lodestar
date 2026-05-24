@@ -38,13 +38,13 @@ import {
   InMemoryWorldModel,
   registerBuiltInExtractors,
 } from "@qmilab/lodestar-cognitive-core"
-import { TELENOTES_TOOL_POLICIES } from "./policy.orrery"
+import { TELENOTES_TOOL_POLICIES } from "./policy.lodestar"
 
 const PROJECT_ID = "telenotes-governed-dev"
 const SESSION_ID = `session-${Date.now()}`
 const ACTOR_ID = "agent-demo"
 const PROJECT_ROOT = process.cwd()
-const LOG_DIR = resolve(PROJECT_ROOT, ".orrery", "events")
+const LOG_DIR = resolve(PROJECT_ROOT, ".lodestar", "events")
 
 const writer = new EventLogWriter(LOG_DIR)
 

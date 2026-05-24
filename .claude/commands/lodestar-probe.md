@@ -2,7 +2,7 @@
 description: Run a specific harness probe and report the outcome
 ---
 
-You are operating inside the Orrery monorepo. The user has requested probe execution: `$ARGUMENTS`.
+You are operating inside the Lodestar monorepo. The user has requested probe execution: `$ARGUMENTS`.
 
 Your job is to:
 

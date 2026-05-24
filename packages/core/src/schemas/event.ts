@@ -22,7 +22,7 @@ export const EventVersionsSchema = z.object({
 export type EventVersions = z.infer<typeof EventVersionsSchema>
 
 /**
- * The envelope every event in Orrery is wrapped in.
+ * The envelope every event in Lodestar is wrapped in.
  *
  * Append-only. NDJSON-friendly. Replay-grade.
  *

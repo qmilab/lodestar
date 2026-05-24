@@ -2,11 +2,11 @@
 description: Produce the full epistemic chain report for a session
 ---
 
-You are operating inside the Orrery monorepo. The user has requested a trace report for session `$ARGUMENTS`.
+You are operating inside the Lodestar monorepo. The user has requested a trace report for session `$ARGUMENTS`.
 
 Your job is to:
 
-1. Read the event log files under `.orrery/events/<project_id>/` for the requested session.
+1. Read the event log files under `.lodestar/events/<project_id>/` for the requested session.
 2. Group events by their position in the epistemic chain: Observation → Claim → EvidenceSet → Belief → Decision → Action → Outcome → Revision.
 3. For each link, summarise what happened and reference the relevant event IDs.
 4. Surface any Explanation records associated with governance events (action approvals/rejections, memory promotions/quarantines, confidence downweights, belief revisions).

@@ -4,7 +4,7 @@
 
 Memory poisoning is a class of attacks against agentic systems with persistent memory. An adversary injects malicious content into the agent's memory store, either directly (through queries the agent processes) or indirectly (through external content the agent reads). The poisoned memory persists across sessions and influences later behaviour when retrieved.
 
-Reference attacks Orrery's architecture is designed against:
+Reference attacks Lodestar's architecture is designed against:
 
 - **MINJA (Memory Injection Attack)** — query-only memory injection through bridging steps, indication prompts, and progressive shortening. Published attack rates exceed 95% under idealised conditions; effectiveness drops in realistic deployments with pre-existing legitimate memories.
 - **MemoryGraft** — single-shot indirect memory grafting. Malicious "successful experiences" are planted via benign content (READMEs, emails, webpages) and retrieved later when semantically similar tasks arise.
@@ -26,7 +26,7 @@ A poisoned belief can be flagged `security_status: quarantined` without changing
 
 ### 2. No self-promotion
 
-An agent's own success does not promote a memory. This is the critical rule that defeats MemoryGraft-style attacks: the attacker plants a "successful experience" hoping the agent will later imitate it. Orrery's Memory Firewall does not promote candidate beliefs from a single apparent success — promotion requires user confirmation, probe verification, or narrow auto-promotion policy with logged evidence.
+An agent's own success does not promote a memory. This is the critical rule that defeats MemoryGraft-style attacks: the attacker plants a "successful experience" hoping the agent will later imitate it. Lodestar's Memory Firewall does not promote candidate beliefs from a single apparent success — promotion requires user confirmation, probe verification, or narrow auto-promotion policy with logged evidence.
 
 ### 3. Sentinels for known patterns
 

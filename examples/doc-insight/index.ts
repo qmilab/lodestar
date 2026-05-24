@@ -1,5 +1,5 @@
 /**
- * Doc Insight — a tiny Orrery demo.
+ * Doc Insight — a tiny Lodestar demo.
  *
  * Reads a markdown file, extracts two kinds of claims:
  *
@@ -302,7 +302,7 @@ function renderReport(
   blockedClaims: Claim[],
 ): string {
   const lines: string[] = []
-  lines.push("# Orrery trust report — Doc Insight")
+  lines.push("# Lodestar trust report — Doc Insight")
   lines.push("")
   lines.push(`**Document**: \`${doc.path}\``)
   lines.push(

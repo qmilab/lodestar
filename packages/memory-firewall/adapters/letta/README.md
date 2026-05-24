@@ -1,7 +1,7 @@
 # @qmilab/lodestar-memory-firewall-letta
 
 Adapter that imports memory blocks from [Letta](https://github.com/letta-ai/letta)
-(formerly MemGPT) into the Orrery memory firewall.
+(formerly MemGPT) into the Lodestar memory firewall.
 
 Same shape as `@qmilab/lodestar-memory-firewall-mem0` — see that package's
 README for the broader narrative around why imports cannot

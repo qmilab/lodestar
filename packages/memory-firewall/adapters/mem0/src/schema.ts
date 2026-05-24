@@ -5,7 +5,7 @@ import { z } from "zod"
  *
  * mem0 stores per-user memories with a free-text body and optional
  * structured metadata. This schema captures the v0 (early-2026) fields
- * that are stable enough to map into Orrery claims. Fields not listed
+ * that are stable enough to map into Lodestar claims. Fields not listed
  * here pass through into `metadata` so the adapter can surface them
  * in evidence notes without throwing on unknown keys.
  *

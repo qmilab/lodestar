@@ -1,4 +1,4 @@
-# Orrery — Roadmap
+# Lodestar — Roadmap
 
 This roadmap defines the sequence from the current pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). It complements `docs/positioning.md`.
 
@@ -54,11 +54,11 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 
 **Deliverables** (all landed):
 - ✅ `packages/guard/` — meta-package re-exporting action-kernel + event-log + cognitive-core + memory-firewall, with `wrap()` / `runGuarded()` helpers and minimal `autoApprovePolicy` / `alwaysHoldsChecker` presets
-- ✅ `packages/trace/` — read side of the event log; `orrery report <session-id>` renders a markdown trust report enriched with the full epistemic chain
+- ✅ `packages/trace/` — read side of the event log; `lodestar report <session-id>` renders a markdown trust report enriched with the full epistemic chain
 - ✅ `packages/memory-firewall/adapters/mem0/` — adapter for mem0 (stub-level: `importMemories` implemented, other methods throw with TODO)
 - ✅ `packages/memory-firewall/adapters/letta/` — adapter for Letta (same shape)
 - ✅ `packages/memory-firewall/adapters/zep/` — adapter for Zep (same shape)
-- ✅ Reorganised CLI: `orrery report` is the headline command; niche commands under `guard`, `action`, `trace`, `probe` prefixes
+- ✅ Reorganised CLI: `lodestar report` is the headline command; niche commands under `guard`, `action`, `trace`, `probe` prefixes
 - ✅ `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown agent loop, producing a useful trust report
 - ✅ New probe `research/probes/guard-import-no-self-promote.ts` — enforces that adapter-imported memories cannot land at `truth_status: supported`
 
@@ -68,7 +68,7 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 
 ### Batch 3 — Thin MCP proxy vertical slice
 
-**Goal**: the headline use case. Wrap an existing coding agent (Claude Code, Cursor, Aider, any MCP client) without requiring it to be rewritten on top of Orrery. Get to `orrery guard mcp-proxy --target ... && claude code ... && orrery report latest` as quickly as possible.
+**Goal**: the headline use case. Wrap an existing coding agent (Claude Code, Cursor, Aider, any MCP client) without requiring it to be rewritten on top of Lodestar. Get to `lodestar guard mcp-proxy --target ... && claude code ... && lodestar report latest` as quickly as possible.
 
 This batch moves *before* the full Harness because the public promise is "wrap your coding agent." Until that path works, time spent perfecting internal machinery is time the project's adoption story is hypothetical.
 
@@ -76,10 +76,10 @@ This batch moves *before* the full Harness because the public promise is "wrap y
 - `packages/guard-mcp/` package implementing an MCP proxy server
 - Every tool call from the client passes through the Action Kernel; outputs go through the Cognitive Core
 - The proxy advertises the same tools as the underlying MCP server but adds policy and audit
-- `orrery guard mcp-proxy --target <url> --policy <policy.ts>` CLI command
+- `lodestar guard mcp-proxy --target <url> --policy <policy.ts>` CLI command
 - Event log single-writer enforcement (file lock or single-process invariant — must land before MCP because the proxy introduces concurrency)
 - Kernel context fix: real `session_id`/`project_id` propagation from the proxy into observations (currently stubbed)
-- Worked example: Claude Code talking to a filesystem MCP server proxied by Orrery, producing a trace report
+- Worked example: Claude Code talking to a filesystem MCP server proxied by Lodestar, producing a trace report
 - Integration guide for one MCP client (Claude Code first; Cursor/Aider follow in Batch 5 prep)
 
 **Minimum-viable safety scaffolding (must ship with this batch)**:
@@ -99,8 +99,8 @@ This batch moves *before* the full Harness because the public promise is "wrap y
   - `Probe` base class and execution runner (formalized from Batch 3's minimum-viable runner)
   - `Sentinel` base class with hooks into the firewall transition stream
   - `Calibrator` that consumes the event log and produces per-class accuracy tables (ECE, Brier score)
-  - Probe pack format (`orrery.probe-pack.json` manifest + probe files)
-  - `orrery harness run --pack <name>` CLI command
+  - Probe pack format (`lodestar.probe-pack.json` manifest + probe files)
+  - `lodestar harness run --pack <name>` CLI command
 - Repackage existing probes into the new format
 - Three additional probes:
   - Prompt-injection probe (observation contains injected instructions)
@@ -121,15 +121,15 @@ This batch moves *before* the full Harness because the public promise is "wrap y
 
 ### Batch 5 — Week-8 thesis demo + second proving ground
 
-**Goal**: a complete worked example demonstrating that Orrery's value proposition holds end-to-end. Telenotes is the first proving ground; a documentation-agent example is the second, lower-cost proving ground that exercises claim/evidence beyond schema-bound extractors.
+**Goal**: a complete worked example demonstrating that Lodestar's value proposition holds end-to-end. Telenotes is the first proving ground; a documentation-agent example is the second, lower-cost proving ground that exercises claim/evidence beyond schema-bound extractors.
 
 **Deliverables**:
 
 *Primary proving ground (Telenotes)*:
 - A coding agent (Claude Code, wrapped via the MCP proxy from Batch 3) is asked to add a feature to Telenotes
 - The agent observes the codebase, forms beliefs about the existing architecture, makes a plan, edits files, runs tests, commits
-- Orrery records the full epistemic chain
-- At the end, `orrery report` produces a structured markdown report explaining:
+- Lodestar records the full epistemic chain
+- At the end, `lodestar report` produces a structured markdown report explaining:
   - What the agent observed
   - What claims it extracted from those observations
   - Which beliefs it adopted and at what confidence
@@ -141,8 +141,8 @@ This batch moves *before* the full Harness because the public promise is "wrap y
 *Secondary proving ground (documentation agent)*:
 - A small agent reads `README.md`, `package.json`, and existing docs
 - The agent updates a docstring or README section based on what it read
-- Orrery records claims (e.g., "this function takes parameter X") with evidence linked to the source files
-- `orrery report` shows which source supported each documentation claim
+- Lodestar records claims (e.g., "this function takes parameter X") with evidence linked to the source files
+- `lodestar report` shows which source supported each documentation claim
 - This validates the claim/evidence chain beyond `git.status` and code editing, with very low engineering cost
 
 - Blog post / video walkthrough of both demos (publishable artifact)
@@ -197,13 +197,13 @@ These are real items, but they belong later than v1:
 - **Compliance exports** (SOC 2, GDPR DSR) — v2+. Requires legal review.
 - **Non-MCP runtime adapters** (Hermes, OpenClaw, LangGraph, CrewAI) — v1.5+. Each adapter is its own work item; do not block v1.
 - **Advanced replay UI** — v2.
-- **Quantum world-model integration** — separate research arc under QMI Lab Pillar III. Not Orrery's path.
+- **Quantum world-model integration** — separate research arc under QMI Lab Pillar III. Not Lodestar's path.
 
 ---
 
 ## Research arc (parallel)
 
-Independent of the implementation roadmap, the research outputs from Orrery flow into QMI Lab's publication pipeline. Most of these are *outlines* in 2026, not papers — empirical claims need accumulated session data and failure analysis before they go to publication. The exception is the position paper, which is design contribution and can be drafted ahead of large-scale empirical work.
+Independent of the implementation roadmap, the research outputs from Lodestar flow into QMI Lab's publication pipeline. Most of these are *outlines* in 2026, not papers — empirical claims need accumulated session data and failure analysis before they go to publication. The exception is the position paper, which is design contribution and can be drafted ahead of large-scale empirical work.
 
 **Reasonable to draft now (outline + position-paper voice)**:
 
@@ -213,8 +213,8 @@ Independent of the implementation roadmap, the research outputs from Orrery flow
 
 **Premature in 2026, target 2027+**:
 
-4. **Empirical memory-poisoning paper** — needs deployed Orrery instances and real attack traces. Not before late 2027.
+4. **Empirical memory-poisoning paper** — needs deployed Lodestar instances and real attack traces. Not before late 2027.
 5. **Calibration framework for agent beliefs** — needs accumulated session data showing calibration before-and-after. Not before mid-2027.
 6. **Evaluation methodology for trust-aware agent systems** — needs comparison baselines and benchmark workloads that don't exist yet. Not before late 2027.
 
-Each paper draws on Orrery's implementation but does not block it. The implementation roadmap and the research arc are coupled but independent. The right discipline: outline now, publish only when the data is there.
+Each paper draws on Lodestar's implementation but does not block it. The implementation roadmap and the research arc are coupled but independent. The right discipline: outline now, publish only when the data is there.

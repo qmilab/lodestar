@@ -89,7 +89,7 @@ async function run(): Promise<ProbeResult> {
     {
       project_id: "probe-precond",
       actor_id: "probe-tester",
-      log_root: "/tmp/orrery-probe-precond-log",
+      log_root: "/tmp/lodestar-probe-precond-log",
       default_scope: { level: "project", identifier: "probe-precond" },
       default_sensitivity: "internal",
       policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "policy" }),

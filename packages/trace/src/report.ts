@@ -14,7 +14,7 @@ import type { ChainProjection, FirewallTransition, ProjectedAction } from "./cha
  * compact reports.
  */
 export interface RenderOptions {
-  /** Title used at the top of the report. Defaults to "Orrery trust report". */
+  /** Title used at the top of the report. Defaults to "Lodestar trust report". */
   title?: string
   /**
    * Maximum number of raw events to list verbatim in the "Event log"
@@ -27,7 +27,7 @@ export function renderReport(
   projection: ChainProjection,
   options: RenderOptions = {},
 ): string {
-  const title = options.title ?? "Orrery trust report"
+  const title = options.title ?? "Lodestar trust report"
   const lines: string[] = []
 
   lines.push(`# ${title}`)

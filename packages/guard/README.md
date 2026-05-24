@@ -35,7 +35,7 @@ const { result, session_id, log_root } = await run({
 ```
 
 The event log lands at `<log_root>/<project_id>/<YYYY-MM-DD>.ndjson`.
-Render it later with `orrery report <session-id>`.
+Render it later with `lodestar report <session-id>`.
 
 ## What `wrap()` actually does
 

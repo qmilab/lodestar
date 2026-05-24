@@ -49,9 +49,9 @@ export async function loadSessionEvents(input: {
 }
 
 /**
- * Default log root: `<cwd>/.orrery/events`. Centralised so the CLI and
+ * Default log root: `<cwd>/.lodestar/events`. Centralised so the CLI and
  * the example use the same convention.
  */
 export function defaultLogRoot(cwd: string = process.cwd()): string {
-  return join(cwd, ".orrery", "events")
+  return join(cwd, ".lodestar", "events")
 }

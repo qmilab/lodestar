@@ -5,7 +5,7 @@
  * primitives (Observation → Claim → EvidenceSet → Belief → Decision →
  * Action → Outcome → Revision), then renders a markdown trust report.
  *
- * The CLI entry point is `orrery report <session-id>`. The library
+ * The CLI entry point is `lodestar report <session-id>`. The library
  * surface (`projectChain`, `renderReport`) is exported for callers that
  * want to render reports in their own pipelines.
  */

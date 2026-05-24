@@ -9,13 +9,13 @@ import {
 import { defaultLogRoot } from "@qmilab/lodestar-trace"
 
 /**
- * `orrery guard wrap --target <module> [--project <id>] [--actor <id>] [--log-root <path>]`
+ * `lodestar guard wrap --target <module> [--project <id>] [--actor <id>] [--log-root <path>]`
  *
  * Programmatic surface for experimentation: import a JS/TS module that
  * default-exports an {@link AgentLoop}, then run it under a guarded
  * session with a starter policy preset. The session_id is printed so
  * the caller can immediately render the report with
- * `orrery report <session-id>`.
+ * `lodestar report <session-id>`.
  *
  * The target module is expected to:
  *
@@ -28,7 +28,7 @@ import { defaultLogRoot } from "@qmilab/lodestar-trace"
  */
 export async function guardWrapCommand(argv: string[]): Promise<number> {
   let target: string | undefined
-  let project_id = "orrery-guard-cli"
+  let project_id = "lodestar-guard-cli"
   let actor_id = "guard-cli"
   let log_root = defaultLogRoot()
   let auto_approve_up_to = 2
@@ -62,7 +62,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
 
   if (!target) {
     process.stderr.write(
-      "usage: orrery guard wrap --target <module> [--project <id>] [--actor <id>]\n" +
+      "usage: lodestar guard wrap --target <module> [--project <id>] [--actor <id>]\n" +
         "       [--log-root <path>] [--auto-approve-up-to <0..5>]\n",
     )
     return 2
@@ -95,7 +95,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
     default_sensitivity: "internal",
     policy_gate: autoApprovePolicy({
       auto_approve_up_to: auto_approve_up_to as 0 | 1 | 2 | 3 | 4,
-      approver_id: "orrery-cli-policy",
+      approver_id: "lodestar-cli-policy",
     }),
     precondition_checker: alwaysHoldsChecker,
   }
@@ -105,7 +105,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
     process.stderr.write(`[guard] session ${run.session_id}\n`)
     process.stderr.write(`[guard] log root ${run.log_root}\n`)
     process.stdout.write(`${JSON.stringify(run.result, null, 2)}\n`)
-    process.stderr.write(`[guard] render with: orrery report ${run.session_id}\n`)
+    process.stderr.write(`[guard] render with: lodestar report ${run.session_id}\n`)
     return 0
   } catch (err) {
     process.stderr.write(

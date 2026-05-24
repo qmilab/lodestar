@@ -1,6 +1,6 @@
-# Orrery — Positioning
+# Lodestar — Positioning
 
-This document captures the strategic framing decisions for Orrery: what it is, who it's for, where it sits among existing tools, and how the open-source/commercial boundary is drawn. It complements but does not replace the architecture memos in `docs/architecture/`.
+This document captures the strategic framing decisions for Lodestar: what it is, who it's for, where it sits among existing tools, and how the open-source/commercial boundary is drawn. It complements but does not replace the architecture memos in `docs/architecture/`.
 
 Last updated: v0.2 (post-strategy review with ChatGPT).
 
@@ -8,11 +8,11 @@ Last updated: v0.2 (post-strategy review with ChatGPT).
 
 ## 1. Two-layer positioning
 
-Orrery has two distinct audiences, and the words we use to describe it must differ for each.
+Lodestar has two distinct audiences, and the words we use to describe it must differ for each.
 
 ### External (developers, adopters, enterprises)
 
-> **Orrery is the trust layer for AI agents.**
+> **Lodestar is the trust layer for AI agents.**
 >
 > Know what your agent believed, why it acted, and whether it was right.
 
@@ -20,11 +20,11 @@ This is the homepage voice. It uses concrete words that map to existing develope
 
 Slightly longer for landing pages:
 
-> Orrery wraps your agent so every tool call leaves an audit trail of what the agent observed, what it came to believe, and which beliefs informed which actions. Risky actions go through policy. Memory is governed. Outcomes are tracked.
+> Lodestar wraps your agent so every tool call leaves an audit trail of what the agent observed, what it came to believe, and which beliefs informed which actions. Risky actions go through policy. Memory is governed. Outcomes are tracked.
 
 ### Internal (research, whitepapers, academic citations)
 
-> **Orrery is an epistemic governance framework for agentic systems.**
+> **Lodestar is an epistemic governance framework for agentic systems.**
 
 This phrase is accurate and load-bearing in the research arc. It captures the architecture's actual claim: governance applies not only to actions, but to the epistemic state — claims, evidence, beliefs, decisions, revisions — that produces those actions. It belongs in the whitepaper, citations, and conversations with people who already think in this vocabulary.
 
@@ -36,23 +36,23 @@ A category-defining product needs an outside voice that is easy to adopt and an 
 
 ## 2. The category
 
-Orrery is in a category that is being assembled in real time. It overlaps with — but is not — observability, memory management, agent runtime, or governance tooling. The cleanest framing is **trust infrastructure for agent systems**: the layer that makes the other layers' behavior accountable.
+Lodestar is in a category that is being assembled in real time. It overlaps with — but is not — observability, memory management, agent runtime, or governance tooling. The cleanest framing is **trust infrastructure for agent systems**: the layer that makes the other layers' behavior accountable.
 
-| Category | Examples (early 2026) | Their value | Orrery's relationship |
+| Category | Examples (early 2026) | Their value | Lodestar's relationship |
 | --- | --- | --- | --- |
-| **Agent runtime** | OpenClaw, Hermes, CrewAI, LangGraph, Claude Code, Mastra | Agents act and use tools | Orrery wraps and governs their actions |
-| **Memory** | mem0 (~48K stars), Letta/MemGPT, Zep, Cognee | Agents remember | Orrery governs what is safe to remember and retrieve |
-| **Observability** | LangSmith, Langfuse, Phoenix, Braintrust, Datadog | Teams debug and evaluate agents | Orrery exports traces and adds epistemic semantics |
-| **Governance / security** | MS Agent Governance Toolkit, MCP gateways, scanning tools | Gate tools and enforce policy | Orrery extends governance to beliefs, memory, skills, confidence |
-| **Skills / plugins** | Claude Skills, MCP servers, plugin marketplaces | Reusable capabilities | Orrery verifies, signs, scores, and policy-wraps them |
+| **Agent runtime** | OpenClaw, Hermes, CrewAI, LangGraph, Claude Code, Mastra | Agents act and use tools | Lodestar wraps and governs their actions |
+| **Memory** | mem0 (~48K stars), Letta/MemGPT, Zep, Cognee | Agents remember | Lodestar governs what is safe to remember and retrieve |
+| **Observability** | LangSmith, Langfuse, Phoenix, Braintrust, Datadog | Teams debug and evaluate agents | Lodestar exports traces and adds epistemic semantics |
+| **Governance / security** | MS Agent Governance Toolkit, MCP gateways, scanning tools | Gate tools and enforce policy | Lodestar extends governance to beliefs, memory, skills, confidence |
+| **Skills / plugins** | Claude Skills, MCP servers, plugin marketplaces | Reusable capabilities | Lodestar verifies, signs, scores, and policy-wraps them |
 
 The market positioning is **complementary**, not replacement:
 
-- *Use LangSmith to see traces. Use Orrery to know whether the agent was allowed to believe and do what it did.*
-- *Use mem0 for memory. Use Orrery to govern memory promotion and retrieval.*
-- *Use Claude Code or OpenClaw to run the agent. Use Orrery to make its actions and memories trustworthy.*
+- *Use LangSmith to see traces. Use Lodestar to know whether the agent was allowed to believe and do what it did.*
+- *Use mem0 for memory. Use Lodestar to govern memory promotion and retrieval.*
+- *Use Claude Code or OpenClaw to run the agent. Use Lodestar to make its actions and memories trustworthy.*
 
-This framing matters because attempting to displace LangSmith, mem0, or any major agent runtime would be a losing battle in 2026. The space is consolidating around proven leaders in each category. Orrery's leverage is the *missing* category — trust — and the integrations that connect it to the existing ones.
+This framing matters because attempting to displace LangSmith, mem0, or any major agent runtime would be a losing battle in 2026. The space is consolidating around proven leaders in each category. Lodestar's leverage is the *missing* category — trust — and the integrations that connect it to the existing ones.
 
 ---
 
@@ -60,25 +60,25 @@ This framing matters because attempting to displace LangSmith, mem0, or any majo
 
 The architecture exposes itself through four developer-facing packages. Each can be adopted independently; together they form the full stack.
 
-### Orrery Guard — the write side
+### Lodestar Guard — the write side
 
 Wraps agent tool calls. Captures observations. Records claims/beliefs/decisions. Gates risky actions. This is the first thing most developers will adopt because it solves a visible pain (debug-by-staring-at-logs) without requiring a rewrite of the agent runtime.
 
-**Adoption shape**: library integration (`guard.wrap()`) for greenfield agents; CLI wrapper (`orrery guard run -- claude code`) and MCP proxy for existing agents.
+**Adoption shape**: library integration (`guard.wrap()`) for greenfield agents; CLI wrapper (`lodestar guard run -- claude code`) and MCP proxy for existing agents.
 
-### Orrery Trace — the read side
+### Lodestar Trace — the read side
 
-Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. Same data as Guard; different command. The package name is `@qmilab/lodestar-trace`; the user-facing CLI command is `orrery report` (explanation-focused, not tracing-tool-collision).
+Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. Same data as Guard; different command. The package name is `@qmilab/lodestar-trace`; the user-facing CLI command is `lodestar report` (explanation-focused, not tracing-tool-collision).
 
-**Adoption shape**: CLI command (`orrery report`), web viewer, OTel exporter.
+**Adoption shape**: CLI command (`lodestar report`), web viewer, OTel exporter.
 
-### Orrery Memory Firewall — the memory governance entry point
+### Lodestar Memory Firewall — the memory governance entry point
 
 A horizontal package that governs which beliefs are adopted, retrieved, quarantined, or blocked. Plugs into existing memory layers (mem0, Letta, Zep) without replacing them. Persistent memory layers improve continuity, but they do not by themselves answer the separate governance question: which memories should be trusted, retrieved, quarantined, or blocked. The Memory Firewall fills that gap.
 
 **Adoption shape**: library integration with adapter for each memory backend. Can be adopted standalone by teams who keep their existing memory layer but want a firewall in front.
 
-### Orrery Harness — the test side
+### Lodestar Harness — the test side
 
 Probes, sentinels, and calibrators. Safety tests, runtime monitors, and confidence-vs-outcome measurement. Designed to be the marketplace entry point (see §5).
 
@@ -88,10 +88,10 @@ Probes, sentinels, and calibrators. Safety tests, runtime monitors, and confiden
 
 ## 4. Open-source strategy (Model A: Langfuse-style)
 
-There are three viable open-source patterns in the agent/LLMOps space. Orrery follows **Model A** (Langfuse).
+There are three viable open-source patterns in the agent/LLMOps space. Lodestar follows **Model A** (Langfuse).
 
 ### Model A — Open core with hosted product (Langfuse)
-Open-source primary, self-hostable, with hosted/team/compliance features as commercial offerings. Open source drives adoption and trust; hosted features monetize. **Best fit for Orrery** because trust products require inspectability, and the research arc requires legitimacy.
+Open-source primary, self-hostable, with hosted/team/compliance features as commercial offerings. Open source drives adoption and trust; hosted features monetize. **Best fit for Lodestar** because trust products require inspectability, and the research arc requires legitimacy.
 
 ### Model B — Mostly hosted / commercial control plane (LangSmith)
 Platform-first with self-hosted as a secondary option. Requires existing category pull. Not the right starting point for a new category like trust.
@@ -120,15 +120,15 @@ Open code, hosted convenience. Similar to Model A but with less emphasis on insp
 - Org-wide knowledge governance dashboards
 - Multi-project control plane
 
-**Critical constraint**: nothing in the commercial layer gates the developer-adoption workflow. A solo developer using Orrery's open-source surfaces gets a complete, working trust layer. The commercial layer adds team operations and compliance reporting on top.
+**Critical constraint**: nothing in the commercial layer gates the developer-adoption workflow. A solo developer using Lodestar's open-source surfaces gets a complete, working trust layer. The commercial layer adds team operations and compliance reporting on top.
 
 ---
 
 ## 5. Marketplace strategy: trust packs, not skill packs
 
-A skill marketplace would put Orrery into a crowded and risky category (Claude Skills, Cursor rules, GPT actions, MCP plugin registries). Worse, skill marketplaces inherit supply-chain risk — every skill is executable capability with unknown effects. The compromised state of various plugin registries (most prominently the ClawHub supply-chain incident) is a cautionary precedent.
+A skill marketplace would put Lodestar into a crowded and risky category (Claude Skills, Cursor rules, GPT actions, MCP plugin registries). Worse, skill marketplaces inherit supply-chain risk — every skill is executable capability with unknown effects. The compromised state of various plugin registries (most prominently the ClawHub supply-chain incident) is a cautionary precedent.
 
-Orrery's marketplace is **trust artifacts**, not capability artifacts.
+Lodestar's marketplace is **trust artifacts**, not capability artifacts.
 
 ### Marketplace categories
 
@@ -154,9 +154,9 @@ Orrery's marketplace is **trust artifacts**, not capability artifacts.
 
 ## 6. First-user persona and headline use case
 
-The first wide use case Orrery solves is **coding-agent safety**.
+The first wide use case Lodestar solves is **coding-agent safety**.
 
-> Use Orrery Guard with your coding agent (Claude Code, Cursor, Aider, OpenClaw, Codex) to know what it believed, why it acted, and whether it was right.
+> Use Lodestar Guard with your coding agent (Claude Code, Cursor, Aider, OpenClaw, Codex) to know what it believed, why it acted, and whether it was right.
 
 Why coding agents:
 - The pain is visible and immediate (agents writing wrong code, dropping commits, breaking CI, deploying to wrong environment)
@@ -165,21 +165,21 @@ Why coding agents:
 - Memory-poisoning attacks on coding agents are an active research area
 - Existing coding agents do not have a trust layer — there is a gap to fill
 
-Telenotes — Nandan's anonymous Nostr publishing platform — is the first non-trivial proving ground for Orrery. The headline framing is "wrap a coding agent"; the concrete demo *is* a coding agent building Telenotes. Same demo, told to the right audience.
+Telenotes — Nandan's anonymous Nostr publishing platform — is the first non-trivial proving ground for Lodestar. The headline framing is "wrap a coding agent"; the concrete demo *is* a coding agent building Telenotes. Same demo, told to the right audience.
 
 ---
 
 ## 7. Organizational home
 
-**QMI Lab is the primary home** for Orrery. The repo lives at `github.com/qmilab/orrery`. The whitepaper lives at `qmilab.com/orrery`. Academic publications carry the QMI Lab byline.
+**QMI Lab is the primary home** for Lodestar. The repo lives at `github.com/qmilab/lodestar`. The whitepaper lives at `qmilab.com/lodestar`. Academic publications carry the QMI Lab byline.
 
 Rationale:
-- Orrery's architecture is research-driven (epistemic governance, calibration, threat modeling, replay-grade audit). The voice matches QMI Lab's existing pillars.
+- Lodestar's architecture is research-driven (epistemic governance, calibration, threat modeling, replay-grade audit). The voice matches QMI Lab's existing pillars.
 - The research arc produces publishable artifacts (memory poisoning paper, calibration paper, evaluation methodology paper). QMI Lab is built for this.
 - Research lab branding builds initial credibility in a trust-heavy category. Enterprise commercial branding muddies the message in 2026.
 
 **Machinise will own commercial extensions** later in the arc. Specifically:
-- Hosted Orrery (dashboard, team approvals, compliance)
+- Hosted Lodestar (dashboard, team approvals, compliance)
 - Enterprise policy/probe packs
 - SOC 2-ready managed deployments
 - Integration with Machinova as an internal governance layer for collaborative AI workspaces
@@ -194,7 +194,7 @@ These positioning decisions shape the implementation roadmap (`docs/roadmap.md`)
 
 - **Batch 1** (current): write positioning, README, roadmap. No code changes.
 - **Batch 2**: repackage existing code into the four developer-facing surfaces (Guard meta-package, Trace CLI, Memory Firewall adapters for mem0/Letta/Zep). Light code work, mostly re-exports and adapters.
-- **Batch 3**: build the MCP proxy mode for wrapping existing agents like Claude Code. This is the headline-use-case implementation — the point at which Orrery becomes legible outside this design conversation.
+- **Batch 3**: build the MCP proxy mode for wrapping existing agents like Claude Code. This is the headline-use-case implementation — the point at which Lodestar becomes legible outside this design conversation.
 - **Batch 4**: build the Harness infrastructure that makes the marketplace possible. Sentinel base class, calibrator, probe pack format. New code.
 - **Batch 5**: assemble the week-8 thesis demo. A coding agent governed end-to-end, producing a trust report.
 

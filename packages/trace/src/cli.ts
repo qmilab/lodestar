@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 /**
- * `orrery-report` — standalone CLI binary for `@qmilab/lodestar-trace`.
+ * `lodestar-report` — standalone CLI binary for `@qmilab/lodestar-trace`.
  *
- * Typically invoked via `orrery report <session-id>` (the unified CLI
+ * Typically invoked via `lodestar report <session-id>` (the unified CLI
  * in `@qmilab/lodestar-cli` dispatches here). Provided as its own bin so the
  * trace package is self-contained.
  *
  * Usage:
- *   orrery-report <session-id> [--project <id>] [--log-root <path>] [--out <file>]
+ *   lodestar-report <session-id> [--project <id>] [--log-root <path>] [--out <file>]
  *
  * Exit codes:
  *   0 — report written
@@ -57,7 +57,7 @@ async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2))
   if (!args.session_id) {
     process.stderr.write(
-      "usage: orrery-report <session-id> [--project <id>] [--log-root <path>] [--out <file>] [--raw-events <n>]\n",
+      "usage: lodestar-report <session-id> [--project <id>] [--log-root <path>] [--out <file>] [--raw-events <n>]\n",
     )
     return 2
   }

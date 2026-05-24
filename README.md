@@ -1,4 +1,4 @@
-# Orrery
+# Lodestar
 
 **The trust layer for AI agents.**
 
@@ -14,48 +14,48 @@ Agents are becoming powerful enough to change code, call APIs, deploy systems, a
 - Was the belief verified?
 - Did the agent learn the right lesson afterward?
 
-Orrery gives agents a trust layer: claims, evidence, decisions, approvals, memory governance, and outcome tracking. Every action the agent takes leaves an audit trail that can be replayed, explained, and graded.
+Lodestar gives agents a trust layer: claims, evidence, decisions, approvals, memory governance, and outcome tracking. Every action the agent takes leaves an audit trail that can be replayed, explained, and graded.
 
-Orrery is a research project of [QMI Lab](https://qmilab.com). Commercial offerings will follow from [Machinise](https://machinise.com).
+Lodestar is a research project of [QMI Lab](https://qmilab.com). Commercial offerings will follow from [Machinise](https://machinise.com).
 
 ---
 
 ## What it does
 
-Orrery wraps an agent so that:
+Lodestar wraps an agent so that:
 
 1. **Tool calls are mediated.** Every action the agent attempts passes through a typed contract, a policy check, and (if needed) an approval step before it executes.
 2. **Observations become claims.** When a tool returns, its output is extracted into structured claims — propositions the agent might come to believe.
 3. **Claims need evidence.** A claim becomes a belief only after the firewall has weighed the evidence behind it, including evidence from prior beliefs.
 4. **Memory is governed.** Beliefs move through four orthogonal lifecycle axes (truth, retrieval, security, freshness) under explicit transition rules. No belief silently promotes itself just because the agent succeeded once.
 5. **Everything is auditable.** A complete, replay-grade event log records every claim, belief, decision, action, and revision — with payload hashes and monotonic sequence numbers.
-6. **Why-did-it-do-this reports.** Given a session, Orrery produces a human-readable trace that explains what the agent believed, what evidence it had, and which beliefs informed which actions.
+6. **Why-did-it-do-this reports.** Given a session, Lodestar produces a human-readable trace that explains what the agent believed, what evidence it had, and which beliefs informed which actions.
 
 ---
 
 ## Where it fits among existing tools
 
-| You use… | Orrery's role |
+| You use… | Lodestar's role |
 | --- | --- |
-| **Claude Code, Cursor, OpenClaw, Hermes, LangGraph, CrewAI** for agent runtime | Orrery wraps and governs their actions |
-| **mem0, Letta, Zep, vector DBs** for memory | Orrery governs what is safe to remember and retrieve |
-| **LangSmith, Langfuse, Phoenix, Braintrust** for observability | Orrery exports traces and adds epistemic semantics on top |
-| **MS Agent Governance Toolkit, MCP gateways** for policy | Orrery extends governance to beliefs, memory, skills, and confidence |
-| **Claude Skills, MCP servers, plugin marketplaces** for capabilities | Orrery verifies, signs, scores, and policy-wraps them |
+| **Claude Code, Cursor, OpenClaw, Hermes, LangGraph, CrewAI** for agent runtime | Lodestar wraps and governs their actions |
+| **mem0, Letta, Zep, vector DBs** for memory | Lodestar governs what is safe to remember and retrieve |
+| **LangSmith, Langfuse, Phoenix, Braintrust** for observability | Lodestar exports traces and adds epistemic semantics on top |
+| **MS Agent Governance Toolkit, MCP gateways** for policy | Lodestar extends governance to beliefs, memory, skills, and confidence |
+| **Claude Skills, MCP servers, plugin marketplaces** for capabilities | Lodestar verifies, signs, scores, and policy-wraps them |
 
-Use LangSmith to see traces. Use Orrery to see which claims became beliefs, which beliefs drove actions, and whether policy allowed those actions.
+Use LangSmith to see traces. Use Lodestar to see which claims became beliefs, which beliefs drove actions, and whether policy allowed those actions.
 
-Use mem0 for memory. Use Orrery to govern memory promotion and retrieval.
+Use mem0 for memory. Use Lodestar to govern memory promotion and retrieval.
 
-Use Claude Code or OpenClaw to run the agent. Use Orrery to make its actions and memories trustworthy.
+Use Claude Code or OpenClaw to run the agent. Use Lodestar to make its actions and memories trustworthy.
 
-**Orrery does not replace your agent runtime, your memory store, or your observability platform.** It adds a governance layer over the epistemic chain that those systems do not model directly.
+**Lodestar does not replace your agent runtime, your memory store, or your observability platform.** It adds a governance layer over the epistemic chain that those systems do not model directly.
 
 ---
 
 ## The four developer entry points
 
-Orrery is one architecture, exposed through four developer-facing packages:
+Lodestar is one architecture, exposed through four developer-facing packages:
 
 ### `@qmilab/lodestar-guard`
 The **write side**. Wraps agent tool calls, captures observations, gates risky actions, records the epistemic chain. This is the first thing most developers adopt.
@@ -65,7 +65,7 @@ import { guard } from "@qmilab/lodestar-guard"
 const agent = guard.wrap({
   tools,
   memory,
-  policy: "./orrery.policy.ts",
+  policy: "./lodestar.policy.ts",
   traceTo: "langfuse",
 })
 ```
@@ -73,15 +73,15 @@ const agent = guard.wrap({
 Or as a CLI wrapping any coding agent:
 
 ```
-orrery init
-orrery guard run -- claude code "fix the failing test"
+lodestar init
+lodestar guard run -- claude code "fix the failing test"
 ```
 
 ### `@qmilab/lodestar-trace`
-The **read side**. Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. The package is `@qmilab/lodestar-trace`; the user-facing CLI command is `orrery report`.
+The **read side**. Consumes the event log and produces "why did the agent do this?" reports. Markdown, HTML, or piped exports to LangSmith / Langfuse / Phoenix. The package is `@qmilab/lodestar-trace`; the user-facing CLI command is `lodestar report`.
 
 ```
-orrery report <session-id>
+lodestar report <session-id>
 ```
 
 ### `@qmilab/lodestar-memory-firewall`
@@ -97,7 +97,7 @@ const firewall = new MemoryFirewall({ adapter: mem0Adapter(mem0Client) })
 **Probes, sentinels, and calibrators.** Safety tests, runtime monitors, and confidence-vs-outcome measurement. The natural surface for community-shared trust packs.
 
 ```
-orrery harness run --pack memory-poisoning
+lodestar harness run --pack memory-poisoning
 ```
 
 ---
@@ -134,9 +134,9 @@ What ships today:
 - ✅ Memory firewall with four orthogonal lifecycle axes and per-axis transition tables
 - ✅ Cognitive core: claim extractors, evidence linker, world model, ingestion orchestrator
 - ✅ `@qmilab/lodestar-guard` — `wrap()` helper that drives an agent loop through the full trust layer
-- ✅ `@qmilab/lodestar-trace` — `orrery report <session-id>` renders a markdown trust report from any event log
+- ✅ `@qmilab/lodestar-trace` — `lodestar report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
-- ✅ Reorganised CLI: `orrery report`, `orrery guard wrap`, `orrery action list/describe`, `orrery trace inspect`, `orrery probe <name>`
+- ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`
 - ✅ Seven passing probes (six pre-existing plus a new `guard-import-no-self-promote` probe enforcing that adapter imports cannot self-promote)
 - ✅ End-to-end examples:
   - `examples/telenotes-governed-dev/` — full pipeline producing an 11-event audit trail
@@ -168,7 +168,7 @@ All six probes will pass. The Telenotes example produces an 11-event audit trail
 
 ## Research arc
 
-Orrery's deeper architecture is described in academic voice in [`docs/architecture/`](./docs/architecture/). The framing there is "epistemic governance for agentic systems" — that phrase belongs in the whitepaper and citations, not on the homepage.
+Lodestar's deeper architecture is described in academic voice in [`docs/architecture/`](./docs/architecture/). The framing there is "epistemic governance for agentic systems" — that phrase belongs in the whitepaper and citations, not on the homepage.
 
 Planned research outputs:
 

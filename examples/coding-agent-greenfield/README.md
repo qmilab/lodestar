@@ -2,7 +2,7 @@
 
 A minimal home-grown coding-agent loop wrapped with `@qmilab/lodestar-guard`. The
 agent observes the repo, reads a couple of files, makes a decision, and
-finishes. Every step is recorded; `orrery report` (or the trace library
+finishes. Every step is recorded; `lodestar report` (or the trace library
 used inline at the end of the script) renders a markdown trust report
 from the resulting log.
 

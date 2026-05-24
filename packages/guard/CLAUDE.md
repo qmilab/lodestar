@@ -49,7 +49,7 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
 - The shape of `GuardContext` is part of the public API. Add new fields
   before removing or renaming existing ones.
 - Every event written by `wrap` carries the configured `project_id`,
-  `session_id`, and `actor_id`. `orrery report` relies on session_id
+  `session_id`, and `actor_id`. `lodestar report` relies on session_id
   to slice the log.
 - New event types should be additive. Existing consumers (the trace
   package, examples) must keep working with old event types.

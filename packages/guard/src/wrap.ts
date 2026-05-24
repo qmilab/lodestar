@@ -157,7 +157,7 @@ function clampReversibility(
 }
 
 /**
- * Wrap a user-supplied agent loop with the Orrery trust layer.
+ * Wrap a user-supplied agent loop with the Lodestar trust layer.
  *
  * The returned function accepts a {@link GuardConfig} and runs the
  * original loop with a {@link GuardContext} that routes:
@@ -185,7 +185,7 @@ export function wrap<T>(
 export interface GuardRunResult<T> {
   /** Whatever the agent loop returned. */
   result: T
-  /** The session_id used; matches what `orrery report` expects. */
+  /** The session_id used; matches what `lodestar report` expects. */
   session_id: string
   /** Where the event log was written, e.g. `<log_root>/<project_id>/<day>.ndjson`. */
   log_root: string
@@ -204,11 +204,11 @@ export async function runGuarded<T>(
 
   // Default session_id uses randomUUID(), not Date.now() — `Date.now()`
   // can return the same millisecond value across rapid or concurrent
-  // `runGuarded` calls, and since `orrery report` slices the event log
+  // `runGuarded` calls, and since `lodestar report` slices the event log
   // by session_id only, collisions would merge two distinct guarded
   // runs into the same report.
   const session_id = config.session_id ?? `session-${randomUUID()}`
-  const log_root = config.log_root ?? resolve(process.cwd(), ".orrery", "events")
+  const log_root = config.log_root ?? resolve(process.cwd(), ".lodestar", "events")
   const writer = new EventLogWriter(log_root)
 
   const claims = new InMemoryClaimStore()

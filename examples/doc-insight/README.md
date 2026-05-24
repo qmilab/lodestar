@@ -1,6 +1,6 @@
-# Doc Insight — a tiny Orrery demo
+# Doc Insight — a tiny Lodestar demo
 
-A 350-line example that shows Orrery's memory firewall distinguishing
+A 350-line example that shows Lodestar's memory firewall distinguishing
 between **what a document objectively contains** and **what an agent
 thinks the document means**.
 
@@ -40,7 +40,7 @@ truth. They aren't.
 The parser produces the same heading count for the same file every
 time. An LLM's topic judgment, by contrast, can shift with prompt
 phrasing, model version, or adversarial framing of the document
-itself. Orrery's firewall encodes this difference structurally: model
+itself. Lodestar's firewall encodes this difference structurally: model
 output can become a *claim* the agent reasons over, but it cannot
 become a *settled belief* without something stronger backing it up.
 
@@ -64,7 +64,7 @@ bun run examples/doc-insight/index.ts path/to/your/doc.md
 ## Expected output
 
 ```
-# Orrery trust report — Doc Insight
+# Lodestar trust report — Doc Insight
 
 **Document**: `examples/doc-insight/sample.md`
 **Observed**: 6 heading(s), 3 code block(s), 0 link(s), 116 words, 832 bytes

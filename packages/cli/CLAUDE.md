@@ -1,6 +1,6 @@
 # @qmilab/lodestar-cli — CLAUDE.md
 
-The `orrery` binary. Dispatches to `@qmilab/lodestar-trace` for the report and
+The `lodestar` binary. Dispatches to `@qmilab/lodestar-trace` for the report and
 to `@qmilab/lodestar-guard` for guarded runs; the package itself owns the
 command shape and the help text.
 
@@ -11,21 +11,21 @@ src/
 ├── index.ts                  # main dispatcher
 └── commands/
     ├── help.ts               # help text
-    ├── report.ts             # `orrery report`
-    ├── guard.ts              # `orrery guard wrap`
-    ├── action.ts             # `orrery action list/describe`
-    ├── trace.ts              # `orrery trace inspect`
-    └── probe.ts              # `orrery probe <name>`
+    ├── report.ts             # `lodestar report`
+    ├── guard.ts              # `lodestar guard wrap`
+    ├── action.ts             # `lodestar action list/describe`
+    ├── trace.ts              # `lodestar trace inspect`
+    └── probe.ts              # `lodestar probe <name>`
 ```
 
 ## Invariants
 
-1. **`orrery report` is the headline surface.** It must produce output
+1. **`lodestar report` is the headline surface.** It must produce output
    someone is willing to paste into a GitHub issue or a Slack message.
    When in doubt, polish there before polishing anywhere else.
 2. **Other commands have explicit prefixes.** No bare top-level
-   commands besides `report`. `orrery trace` is for debug; the
-   user-facing read path is always `orrery report`.
+   commands besides `report`. `lodestar trace` is for debug; the
+   user-facing read path is always `lodestar report`.
 3. **The CLI registers `fs.read` and `git.status` at startup.** This
    keeps `action list` useful out of the box. Adapters that need
    host-side configuration (network egress, secret-signing) must
@@ -47,5 +47,5 @@ src/
 
 - Any business logic. Commands are thin shells that parse args and
   hand off to the relevant package.
-- Probe execution. `orrery probe <name>` shells out to `bun run
+- Probe execution. `lodestar probe <name>` shells out to `bun run
   research/probes/<name>.ts` — the probes are the source of truth.

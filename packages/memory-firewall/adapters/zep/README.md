@@ -1,7 +1,7 @@
 # @qmilab/lodestar-memory-firewall-zep
 
 Adapter that imports facts from [Zep](https://github.com/getzep/zep)
-into the Orrery memory firewall.
+into the Lodestar memory firewall.
 
 Same shape as the mem0 and Letta adapters — see
 `@qmilab/lodestar-memory-firewall-mem0` for the broader narrative. The

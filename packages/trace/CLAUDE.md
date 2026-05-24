@@ -12,8 +12,8 @@ projects it into the epistemic chain, then renders markdown.
 - `src/load.ts` — convenience wrappers around `EventLogReader` for the
   CLI; finds project directories and the default log root.
 - `src/inspect.ts` — `describeEvent()` / `findEventById()` for the
-  `orrery trace inspect` debug surface.
-- `src/cli.ts` — `orrery-report` bin. The unified CLI dispatches into
+  `lodestar trace inspect` debug surface.
+- `src/cli.ts` — `lodestar-report` bin. The unified CLI dispatches into
   this.
 
 ## Invariants
@@ -29,7 +29,7 @@ projects it into the epistemic chain, then renders markdown.
    only carries IDs), the projection records the transition but does
    not attempt to fill in fields it doesn't have. The rendered report
    shows what is actually in the log.
-4. **`orrery report` is the headline surface.** Polish it. Other
+4. **`lodestar report` is the headline surface.** Polish it. Other
    exports (`describeEvent`, `findEventById`, `loadSessionEvents`) can
    be sharper-edged.
 

@@ -1,4 +1,4 @@
-# Orrery — v0.2 Delta
+# Lodestar — v0.2 Delta
 
 *Implementation-readiness revisions over v0.1*
 
@@ -139,7 +139,7 @@ These invariants are enforced at the Action Kernel layer, not by tool authors. T
 ## 9. Repo layout (library-first, no premature hosted/)
 
 ```
-orrery/
+lodestar/
 ├── packages/
 │   ├── core/                       # types, schemas, epistemic chain primitives
 │   ├── event-log/                  # envelope, NDJSON writer/reader, snapshots
@@ -149,7 +149,7 @@ orrery/
 │   ├── cognitive-core/             # claim extraction, belief adoption, planner, reflection
 │   ├── harness/                    # probes, sentinels, calibrators, replay-lite
 │   ├── otel-exporter/              # OTel GenAI semantic conventions bridge
-│   ├── cli/                        # orrery command-line interface
+│   ├── cli/                        # lodestar command-line interface
 │   └── adapters/
 │       ├── git/
 │       ├── github/
@@ -158,7 +158,7 @@ orrery/
 │       └── nostr/
 ├── examples/
 │   └── telenotes-governed-dev/
-│       ├── policy.orrery.ts
+│       ├── policy.lodestar.ts
 │       ├── probes/
 │       └── README.md
 ├── docs/
@@ -349,7 +349,7 @@ After Batch 1's positioning docs were sent to ChatGPT alongside the working scaf
 
 3. **Renamed "four open-source surfaces" → "four developer entry points"** in public copy. "Surface" remains internal-architecture vocabulary; user-facing material uses "entry point".
 
-4. **`orrery report` as the primary user-facing CLI command**. The package stays `@qmilab/lodestar-trace`, but the command becomes `orrery report` to avoid the LangSmith/Langfuse "trace" collision and to focus on what users get (explanation) rather than the mechanism (tracing).
+4. **`lodestar report` as the primary user-facing CLI command**. The package stays `@qmilab/lodestar-trace`, but the command becomes `lodestar report` to avoid the LangSmith/Langfuse "trace" collision and to focus on what users get (explanation) rather than the mechanism (tracing).
 
 5. **Reordered Batches 3 and 4**. Original sequence put Harness infrastructure (Batch 3) before MCP proxy (Batch 4). Revised: MCP proxy moves to Batch 3 because the headline use case ("wrap a coding agent") must land before the project spends more time on internal machinery. Harness moves to Batch 4. A minimum-viable probe runner ships with Batch 3 to back the safety story until the full Harness lands.
 
@@ -382,4 +382,4 @@ The architecture itself. The four orthogonal lifecycle axes, the no-self-promoti
 
 ## Bottom line
 
-The project's next regret risk is sequencing, not architecture. The instruction from this round is unambiguous: get to `orrery guard mcp-proxy && claude code && orrery report` as quickly as possible. That moment is when Orrery becomes legible to anyone outside the design conversation.
+The project's next regret risk is sequencing, not architecture. The instruction from this round is unambiguous: get to `lodestar guard mcp-proxy && claude code && lodestar report` as quickly as possible. That moment is when Lodestar becomes legible to anyone outside the design conversation.

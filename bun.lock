@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "orrery",
+      "name": "lodestar",
       "devDependencies": {
         "@biomejs/biome": "1.9.4",
         "@qmilab/lodestar-action-kernel": "workspace:*",
@@ -108,7 +108,7 @@
       "name": "@qmilab/lodestar-cli",
       "version": "0.1.0",
       "bin": {
-        "orrery": "./src/index.ts",
+        "lodestar": "./src/index.ts",
       },
       "dependencies": {
         "@qmilab/lodestar-action-kernel": "workspace:*",
@@ -225,7 +225,7 @@
       "name": "@qmilab/lodestar-trace",
       "version": "0.1.0",
       "bin": {
-        "orrery-report": "./src/cli.ts",
+        "lodestar-report": "./src/cli.ts",
       },
       "dependencies": {
         "@qmilab/lodestar-core": "workspace:*",

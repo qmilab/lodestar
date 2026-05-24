@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url"
 import { spawn } from "node:child_process"
 
 /**
- * `orrery probe <name>`
+ * `lodestar probe <name>`
  *
  * Convenience for the research probes in `research/probes/`. The
  * probes ship as standalone TypeScript scripts and are this batch's
@@ -17,7 +17,7 @@ import { spawn } from "node:child_process"
 /**
  * Locate `research/probes/` by walking up from this file's location.
  * Resolving against `process.cwd()` would only work when the CLI is
- * invoked from the repo root — `orrery probe …` called from any
+ * invoked from the repo root — `lodestar probe …` called from any
  * subdirectory (or from an installed CLI) needs to find the probes
  * relative to the package, not the caller.
  */
@@ -57,7 +57,7 @@ export async function probeCommand(argv: string[]): Promise<number> {
   const name = argv[0]
   if (!name) {
     process.stderr.write(
-      `usage: orrery probe <name>\nknown: ${Object.keys(PROBE_ALIASES).sort().join(", ")}\n`,
+      `usage: lodestar probe <name>\nknown: ${Object.keys(PROBE_ALIASES).sort().join(", ")}\n`,
     )
     return 2
   }

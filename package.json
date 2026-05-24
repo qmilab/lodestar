@@ -1,5 +1,5 @@
 {
-  "name": "orrery",
+  "name": "lodestar",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -26,7 +26,7 @@
     "probe:guard-precond": "bun run research/probes/guard-precondition-revalidation.ts",
     "probe:guard-contract": "bun run research/probes/guard-contract-invariants.ts",
     "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract",
-    "orrery": "bun run packages/cli/src/index.ts"
+    "lodestar": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",

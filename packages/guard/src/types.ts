@@ -15,9 +15,9 @@ import type { IngestResult } from "@qmilab/lodestar-cognitive-core"
  * the caller must explicitly supply `project_id`, `actor_id`, and the
  * `default_sensitivity` / `default_scope` it wants observations to inherit.
  *
- * `log_root` defaults to `.orrery/events` under the current working
+ * `log_root` defaults to `.lodestar/events` under the current working
  * directory. Override it to write the log somewhere else, but the
- * convention exists so `orrery report` can find logs without flags.
+ * convention exists so `lodestar report` can find logs without flags.
  *
  * `policy_gate` and `precondition_checker` are required. Guard
  * deliberately does not provide auto-approve defaults — the trust
@@ -32,7 +32,7 @@ export interface GuardConfig {
   /** Override the session_id; defaults to `session-${Date.now()}`. */
   session_id?: string
 
-  /** Where event NDJSON files are written. Defaults to `<cwd>/.orrery/events`. */
+  /** Where event NDJSON files are written. Defaults to `<cwd>/.lodestar/events`. */
   log_root?: string
 
   policy_gate: PolicyGate

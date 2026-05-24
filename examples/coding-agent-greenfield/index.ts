@@ -6,7 +6,7 @@
  * project state, reads a couple of files, forms beliefs, makes a
  * decision, and finishes — without taking any side-effectful action.
  *
- * Every step lands in the event log. After the run, `orrery report
+ * Every step lands in the event log. After the run, `lodestar report
  * <session-id>` (or the trace library used inline below) renders a
  * markdown trust report explaining what the agent did and why.
  *
@@ -156,5 +156,5 @@ process.stdout.write(
 
 process.stdout.write(
   `\n[greenfield] event log: ${resolve(LOG_ROOT, PROJECT_ID)}\n` +
-    `[greenfield] re-render later with: orrery report ${session_id}\n`,
+    `[greenfield] re-render later with: lodestar report ${session_id}\n`,
 )
