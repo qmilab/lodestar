@@ -295,6 +295,21 @@ export async function runGuarded<T>(
     for (const claim of ingest.claims) {
       await emit("claim.extracted", claim)
     }
+    // Emit the evidence set(s) the cognitive core just produced — one
+    // emit per evidence id, deduped because the same set can show up
+    // for multiple beliefs that share a claim. Without this the trust
+    // report has no way to audit why a belief was adopted: the firewall
+    // checks evidence against in-memory stores that disappear after
+    // the session ends.
+    const emittedEvidenceIds = new Set<string>()
+    for (const belief of ingest.beliefs) {
+      const sets = await evidence.forClaim(belief.claim_id)
+      for (const set of sets) {
+        if (emittedEvidenceIds.has(set.id)) continue
+        emittedEvidenceIds.add(set.id)
+        await emit("evidence.assessed", set)
+      }
+    }
     for (const belief of ingest.beliefs) {
       await emit("belief.adopted", belief)
     }
@@ -447,6 +462,17 @@ export async function runGuarded<T>(
       })
       for (const claim of result.claims) {
         await emit("claim.extracted", claim)
+      }
+      // Emit evidence sets alongside beliefs (deduped) — see the
+      // observation sink above for the rationale.
+      const seenEvidenceIds = new Set<string>()
+      for (const belief of result.beliefs) {
+        const sets = await evidence.forClaim(belief.claim_id)
+        for (const set of sets) {
+          if (seenEvidenceIds.has(set.id)) continue
+          seenEvidenceIds.add(set.id)
+          await emit("evidence.assessed", set)
+        }
       }
       for (const belief of result.beliefs) {
         await emit("belief.adopted", belief)
