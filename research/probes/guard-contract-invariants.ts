@@ -586,6 +586,109 @@ async function caseJ(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case K: execution-time rejections emit action.rejected ────────────
+
+async function caseK(): Promise<string | undefined> {
+  _resetToolsForTests()
+
+  const OUT = "probe.k_out@1"
+  if (!registry.has(OUT)) {
+    registry.register(OUT, z.object({ ran: z.boolean() }))
+  }
+
+  // Tool publishes a precondition that the host checker will say
+  // "no longer holds" → kernel.execute returns phase='rejected'.
+  registerTool({
+    name: "probe.k_revalidation_tool",
+    inputs: z.object({ token: z.string() }),
+    output_schema_key: OUT,
+    effects: [],
+    reversibility: "reversible",
+    permissions: [],
+    required_trust_level: 0,
+    sandbox: "read",
+    preconditions: (inputs) => [
+      {
+        check_id: "probe.k_token_unchanged",
+        parameters: { token: inputs.token },
+        expected_at_approval: inputs.token,
+        must_revalidate_at_execution: true,
+      },
+    ],
+    execute: async () => ({ ran: true }),
+  })
+
+  const LOG_ROOT = "/tmp/orrery-probe-contract-K"
+  const SESSION = "session-probe-K"
+  const PROJECT = "probe-contract-K"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  await runGuarded(
+    async (ctx) => {
+      try {
+        await ctx.callTool("probe.k_revalidation_tool", { token: "abc" })
+      } catch {
+        // Expected — the kernel rejects on revalidation.
+      }
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: async (check) => ({
+        holds: check.check_id !== "probe.k_token_unchanged",
+        observed: "changed-value",
+      }),
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+  const finalAction = events
+    .filter((e) => e.type.startsWith("action.") && e.type !== "action.proposed" && e.type !== "action.approved")
+    .pop()
+  if (!finalAction) {
+    return "[K] no terminal action.* event was written"
+  }
+  if (finalAction.type !== "action.rejected") {
+    return (
+      `[K] execution-time precondition rejection landed as event type '${finalAction.type}'; ` +
+      `expected 'action.rejected'. Consumers filtering by event type would conflate ` +
+      `TOCTOU rejections with tool failures.`
+    )
+  }
+  return undefined
+}
+
+// ─── Sub-case L: `orrery probe` works from any working directory ──────────
+
+async function caseL(): Promise<string | undefined> {
+  // Run the CLI from a directory other than the repo root. The probe
+  // file lookup must be relative to the CLI package location, not the
+  // caller's CWD.
+  const repoRoot = process.cwd()
+  const cliEntry = `${repoRoot}/packages/cli/src/index.ts`
+  const runFromSubdir = Bun.spawnSync({
+    cmd: ["bun", "run", cliEntry, "probe", "chain"],
+    cwd: `${repoRoot}/packages/cli`,
+    stdout: "pipe",
+    stderr: "pipe",
+  })
+  if (runFromSubdir.exitCode !== 0) {
+    const stderr = runFromSubdir.stderr.toString()
+    return (
+      `[L] 'orrery probe chain' failed when invoked from packages/cli ` +
+      `(exit ${runFromSubdir.exitCode}). The CLI must resolve the probe directory ` +
+      `from its own location, not process.cwd(). stderr: ${stderr.slice(0, 200)}`
+    )
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -598,6 +701,8 @@ async function run(): Promise<ProbeResult> {
     { name: "H: autoApprovePolicy rejects out-of-range ceilings", fn: caseH },
     { name: "I: ingestObservation rewrites context + lifts sensitivity", fn: caseI },
     { name: "J: mem0 adapter tolerates malformed records", fn: caseJ },
+    { name: "K: execution-time rejections emit action.rejected", fn: caseK },
+    { name: "L: orrery probe works from any working directory", fn: caseL },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
