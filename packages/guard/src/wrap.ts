@@ -16,7 +16,12 @@ import {
   registerBuiltInExtractors,
 } from "@orrery/cognitive-core"
 import type { IngestResult } from "@orrery/cognitive-core"
-import type { Action, ActionContract, Observation } from "@orrery/core"
+import type {
+  Action,
+  ActionContract,
+  Observation,
+  Sensitivity,
+} from "@orrery/core"
 import type {
   AgentLoop,
   CallToolOptions,
@@ -32,6 +37,35 @@ function ensureExtractors(): void {
   if (extractorsRegistered) return
   registerBuiltInExtractors()
   extractorsRegistered = true
+}
+
+/**
+ * Map a session-level {@link Sensitivity} to the narrower
+ * {@link import("@orrery/core").DataSensitivityForAction} alphabet
+ * the Action Contract accepts.
+ *
+ *   public        → public
+ *   internal      → private
+ *   confidential  → private
+ *   secret        → secret
+ *
+ * `secret` MUST round-trip — otherwise a guarded session that the
+ * caller declared secret silently emits actions labelled "private",
+ * and policy gates that gate on `data_sensitivity === "secret"` never
+ * fire.
+ */
+function actionSensitivityFor(
+  sensitivity: Sensitivity,
+): "public" | "private" | "secret" {
+  switch (sensitivity) {
+    case "public":
+      return "public"
+    case "secret":
+      return "secret"
+    case "internal":
+    case "confidential":
+      return "private"
+  }
 }
 
 /**
@@ -199,12 +233,21 @@ export async function runGuarded<T>(
       ? tool.preconditions(validatedInputs)
       : []
     const callerPreconditions = overrides.preconditions ?? []
+
+    // The action contract's `data_sensitivity` alphabet is narrower
+    // than session-level Sensitivity. Map deliberately so a `secret`
+    // session does not silently emit `private` actions; policy gates
+    // gating on secret data must see the secret classification.
+    const defaultActionSensitivity = actionSensitivityFor(
+      config.default_sensitivity,
+    )
+
     const contract: ActionContract = {
       required_level: overrides.required_level ?? tool.required_trust_level,
       blast_radius: overrides.blast_radius ?? "self",
       reversibility: overrides.reversibility ?? tool.reversibility,
       scope: overrides.scope ?? config.default_scope,
-      data_sensitivity: overrides.data_sensitivity ?? "private",
+      data_sensitivity: overrides.data_sensitivity ?? defaultActionSensitivity,
       preconditions: [...declaredPreconditions, ...callerPreconditions],
     }
 
