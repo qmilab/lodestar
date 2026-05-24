@@ -45,11 +45,25 @@ export type PreconditionChecker = (
  * - if a precondition no longer holds, the action is rejected even if
  *   it was previously approved
  */
+/**
+ * Resolve the `session_id` / `project_id` the host wants tools to see
+ * inside their `ToolContext`. Without a resolver, the kernel falls
+ * back to `"session-stub"` / `"project-stub"` placeholders — fine for
+ * unit tests, broken for any tool that scopes side effects by
+ * session or project. Hosts (@orrery/guard, the eventual MCP proxy)
+ * MUST supply a resolver in production.
+ */
+export type ToolContextResolver = () => {
+  session_id: string
+  project_id: string
+}
+
 export class ActionKernel {
   constructor(
     private readonly policyGate: PolicyGate,
     private readonly preconditionChecker: PreconditionChecker,
     private readonly observationSink: (obs: Observation) => Promise<void>,
+    private readonly contextResolver?: ToolContextResolver,
   ) {}
 
   /**
@@ -72,6 +86,11 @@ export class ActionKernel {
 
     // Validate inputs against the tool schema at propose time.
     // The kernel refuses to even queue an action with malformed inputs.
+    // Inputs are parsed exactly once here; callers must not re-parse
+    // them before reaching propose() — Zod schemas with `.transform`
+    // or `.preprocess` are not necessarily idempotent under repeated
+    // parse, so a double-parse can shift the value the tool actually
+    // executes against what its preconditions saw.
     const parsedInputs = tool.inputs.parse(input.inputs)
 
     // Tool's required trust level is a floor on the contract's required level.
@@ -81,13 +100,26 @@ export class ActionKernel {
       )
     }
 
+    // Merge tool-declared preconditions with the caller's contract.
+    // Tool-declared preconditions go first and can never be removed by
+    // the caller — overrides are additive only. The kernel owns this
+    // merge so callers don't have to (and so they can't get it wrong
+    // by double-parsing inputs to compute declared preconditions).
+    const declaredPreconditions = tool.preconditions
+      ? tool.preconditions(parsedInputs)
+      : []
+    const mergedContract: ActionContract = {
+      ...input.contract,
+      preconditions: [...declaredPreconditions, ...input.contract.preconditions],
+    }
+
     const action: Action = {
       id: randomUUID(),
       decision_id: input.decision_id,
       intent: input.intent,
       tool: input.tool,
       inputs: parsedInputs,
-      contract: input.contract,
+      contract: mergedContract,
       phase: "proposed",
       audit: [
         {
@@ -185,12 +217,21 @@ export class ActionKernel {
       ],
     }
 
+    // Resolve session/project context once per execute call. Hosts
+    // (Guard, the MCP proxy) supply a resolver; tests/probes may rely
+    // on the stub fallback. Capability wiring for secret-handling
+    // tools lives in the policy kernel, not here.
+    const resolved = this.contextResolver?.() ?? {
+      session_id: "session-stub",
+      project_id: "project-stub",
+    }
+    const toolCtxSessionId = resolved.session_id
+    const toolCtxProjectId = resolved.project_id
+
     try {
-      // The kernel constructs an empty ToolContext for v0. Capabilities
-      // are wired in by the policy kernel for secret-handling tools.
       const result = await tool.execute(executing.inputs, {
-        session_id: "session-stub", // wired by the host in real use
-        project_id: "project-stub",
+        session_id: toolCtxSessionId,
+        project_id: toolCtxProjectId,
         actor_id: executing.proposed_by,
         capabilities: new Map(),
       })
@@ -206,6 +247,12 @@ export class ActionKernel {
       const validatedOutput = outputSchema.parse(result)
 
       // Construct the observation and route it to the cognitive core.
+      // Sensitivity is derived from the action contract's
+      // `data_sensitivity` so a per-call override (e.g. caller raised
+      // an L0 tool's classification to 'secret' for this one
+      // invocation) propagates into the observation, the claims it
+      // extracts, and the resulting log entry — not just the policy
+      // gate. Hosts can still lift further (see @orrery/guard).
       const obs: Observation = {
         id: randomUUID(),
         schema: tool.output_schema_key,
@@ -216,12 +263,12 @@ export class ActionKernel {
           captured_at: new Date().toISOString(),
         },
         context: {
-          session_id: "session-stub",
-          project_id: "project-stub",
+          session_id: toolCtxSessionId,
+          project_id: toolCtxProjectId,
           actor_id: executing.proposed_by,
         },
         trust: "validated",
-        sensitivity: "internal", // default; tool can override via contract metadata in later versions
+        sensitivity: sensitivityForContract(executing.contract.data_sensitivity),
       }
       await this.observationSink(obs)
 
@@ -249,6 +296,26 @@ export class ActionKernel {
         ],
       }
     }
+  }
+}
+
+/**
+ * Map the action contract's narrow `data_sensitivity` alphabet back
+ * to the broader Observation `sensitivity`. The reverse mapping is
+ * intentionally conservative — "private" round-trips through
+ * "internal" (the next-strictest Sensitivity value), so an observation
+ * derived from a private action carries at least Internal handling.
+ */
+function sensitivityForContract(
+  ds: "public" | "private" | "secret",
+): "public" | "internal" | "confidential" | "secret" {
+  switch (ds) {
+    case "public":
+      return "public"
+    case "secret":
+      return "secret"
+    case "private":
+      return "internal"
   }
 }
 

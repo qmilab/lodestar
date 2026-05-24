@@ -44,24 +44,27 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 
 **Out of scope**: any code changes.
 
-**Status**: in progress.
+**Status**: done.
 
 ### Batch 2 — Package boundary cleanup
 
+**Status**: done.
+
 **Goal**: expose the existing code through the four developer-facing surfaces (Guard, Trace, Memory Firewall adapters). Mostly re-exports and thin adapters.
 
-**Deliverables**:
-- `packages/guard/` — meta-package that re-exports the developer-facing API from action-kernel + event-log + cognitive-core, with a `guard.wrap()` helper
-- `packages/trace/` — package with `orrery report <session-id>` CLI command that consumes the event log and produces markdown/HTML trust reports
-- `packages/memory-firewall/adapters/mem0/` — adapter for mem0 (design stub + minimal implementation)
-- `packages/memory-firewall/adapters/letta/` — adapter for Letta (design stub)
-- `packages/memory-firewall/adapters/zep/` — adapter for Zep (design stub)
-- Reorganized CLI: `orrery report` is the headline command (consumes the event log and renders a trust report). Niche commands live under area prefixes: `orrery guard <subcommand>`, `orrery harness <subcommand>`, `orrery action <subcommand>`. The `orrery trace` namespace is deprecated; the package keeps the name `@orrery/trace` but exposes commands under `orrery report` (the primary user-facing one) and `orrery trace inspect` (for internal/debug use).
-- New `examples/coding-agent-greenfield/` — minimal example showing `guard.wrap()` on a homegrown agent
+**Deliverables** (all landed):
+- ✅ `packages/guard/` — meta-package re-exporting action-kernel + event-log + cognitive-core + memory-firewall, with `wrap()` / `runGuarded()` helpers and minimal `autoApprovePolicy` / `alwaysHoldsChecker` presets
+- ✅ `packages/trace/` — read side of the event log; `orrery report <session-id>` renders a markdown trust report enriched with the full epistemic chain
+- ✅ `packages/memory-firewall/adapters/mem0/` — adapter for mem0 (stub-level: `importMemories` implemented, other methods throw with TODO)
+- ✅ `packages/memory-firewall/adapters/letta/` — adapter for Letta (same shape)
+- ✅ `packages/memory-firewall/adapters/zep/` — adapter for Zep (same shape)
+- ✅ Reorganised CLI: `orrery report` is the headline command; niche commands under `guard`, `action`, `trace`, `probe` prefixes
+- ✅ `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown agent loop, producing a useful trust report
+- ✅ New probe `research/probes/guard-import-no-self-promote.ts` — enforces that adapter-imported memories cannot land at `truth_status: supported`
 
-**Out of scope**: Harness infrastructure (that's Batch 3), MCP wrapper (Batch 4), real memory-layer integrations beyond stubs (later).
+**Out of scope**: Harness infrastructure (that's Batch 4), MCP wrapper (Batch 3), real memory-layer integrations beyond stubs (later).
 
-**Effort**: ~1 week of focused work. Most of this is re-export and packaging.
+**Effort**: ~1 week of focused work. Most of this was re-export and packaging.
 
 ### Batch 3 — Thin MCP proxy vertical slice
 

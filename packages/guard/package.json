@@ -1,12 +1,9 @@
 {
-  "name": "@orrery/cli",
+  "name": "@orrery/guard",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
-  "bin": {
-    "orrery": "./src/index.ts"
-  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit"
@@ -15,10 +12,8 @@
     "@orrery/core": "workspace:*",
     "@orrery/event-log": "workspace:*",
     "@orrery/action-kernel": "workspace:*",
-    "@orrery/guard": "workspace:*",
-    "@orrery/trace": "workspace:*",
-    "@orrery/adapter-filesystem": "workspace:*",
-    "@orrery/adapter-git": "workspace:*",
+    "@orrery/memory-firewall": "workspace:*",
+    "@orrery/cognitive-core": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

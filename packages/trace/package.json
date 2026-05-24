@@ -1,11 +1,11 @@
 {
-  "name": "@orrery/cli",
+  "name": "@orrery/trace",
   "version": "0.1.0",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "bin": {
-    "orrery": "./src/index.ts"
+    "orrery-report": "./src/cli.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -14,11 +14,6 @@
   "dependencies": {
     "@orrery/core": "workspace:*",
     "@orrery/event-log": "workspace:*",
-    "@orrery/action-kernel": "workspace:*",
-    "@orrery/guard": "workspace:*",
-    "@orrery/trace": "workspace:*",
-    "@orrery/adapter-filesystem": "workspace:*",
-    "@orrery/adapter-git": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {
