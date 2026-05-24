@@ -167,7 +167,7 @@ Why coding agents:
 - Memory-poisoning attacks on coding agents are an active research area
 - Existing coding agents do not have a trust layer — there is a gap to fill
 
-Telenotes — Nandan's anonymous Nostr publishing platform — is the first non-trivial proving ground for Lodestar. The headline framing is "wrap a coding agent"; the concrete demo *is* a coding agent building Telenotes. Same demo, told to the right audience.
+Telenotes — a Nostr publishing platform — is the first non-trivial proving ground for Lodestar. The headline framing is "wrap a coding agent"; the concrete demo *is* a coding agent building Telenotes. Same demo, told to the right audience.
 
 ---
 
