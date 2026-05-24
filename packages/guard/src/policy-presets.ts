@@ -7,13 +7,30 @@ import type { PolicyDecision, PolicyGate, PreconditionChecker } from "@orrery/ac
  * substitute for the Policy Kernel (Batch 4+).
  *
  * No silent default — callers must pass an explicit `auto_approve_up_to`.
+ *
+ * L5 is "prohibited" in the trust ladder: it can never run in this
+ * context. The preset rejects it unconditionally, even when the
+ * caller writes `auto_approve_up_to: 5`. Constraining the type to
+ * `0..4` would surface this at compile time too, but the runtime
+ * check is the load-bearing one — typed callers can still pass a
+ * widened number through `unknown`.
  */
 export function autoApprovePolicy(input: {
-  auto_approve_up_to: 0 | 1 | 2 | 3 | 4 | 5
+  auto_approve_up_to: 0 | 1 | 2 | 3 | 4
   approver_id: string
 }): PolicyGate {
   return async (action: Action): Promise<PolicyDecision> => {
     const level = action.contract.required_level
+
+    // L5 is prohibited in the trust ladder. Never approve it.
+    if (level >= 5) {
+      return {
+        approved: false,
+        reason: `L${level} is prohibited and cannot run under any auto-approve ceiling`,
+        approver_id: input.approver_id,
+      }
+    }
+
     if (level <= input.auto_approve_up_to) {
       return {
         approved: true,

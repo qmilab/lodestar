@@ -49,9 +49,10 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
     } else if (arg === "--auto-approve-up-to") {
       const next = argv[++i]
       const parsed = next ? Number.parseInt(next, 10) : Number.NaN
-      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 5) {
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 4) {
         process.stderr.write(
-          `--auto-approve-up-to must be an integer in [0,5]; got '${next}'.\n`,
+          `--auto-approve-up-to must be an integer in [0,4]; got '${next}'. ` +
+            `L5 is prohibited and cannot be auto-approved.\n`,
         )
         return 2
       }
@@ -93,7 +94,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
     default_scope: { level: "project", identifier: project_id },
     default_sensitivity: "internal",
     policy_gate: autoApprovePolicy({
-      auto_approve_up_to: auto_approve_up_to as 0 | 1 | 2 | 3 | 4 | 5,
+      auto_approve_up_to: auto_approve_up_to as 0 | 1 | 2 | 3 | 4,
       approver_id: "orrery-cli-policy",
     }),
     precondition_checker: alwaysHoldsChecker,
