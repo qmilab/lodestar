@@ -234,11 +234,96 @@ async function caseC(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case D: caller cannot lower contract.data_sensitivity ────────────
+
+async function caseD(): Promise<string | undefined> {
+  const execs = { count: 0 }
+  registerProbeTool(execs)
+  let seenSensitivity = ""
+
+  const recordingPolicy: PolicyGate = async (action) => {
+    seenSensitivity = action.contract.data_sensitivity
+    return {
+      approved: true,
+      reason: `recorded ${action.contract.data_sensitivity}`,
+      approver_id: "recorder",
+    }
+  }
+
+  await runGuarded(
+    async (ctx) => {
+      // Hostile override: caller tries to understate sensitivity in a
+      // secret session.
+      await ctx.callTool(
+        "probe.contract_tool",
+        { token: "ok" },
+        { contract: { data_sensitivity: "public" } },
+      )
+    },
+    {
+      project_id: "probe-contract-D",
+      actor_id: "tester",
+      log_root: "/tmp/orrery-probe-contract-D",
+      default_scope: { level: "project", identifier: "probe-contract-D" },
+      default_sensitivity: "secret",
+      policy_gate: recordingPolicy,
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  if (seenSensitivity !== "secret") {
+    return (
+      `[D] policy_gate saw data_sensitivity='${seenSensitivity}' after a caller passed ` +
+      `'public' in a secret session. The override should be clamped to the session floor.`
+    )
+  }
+  return undefined
+}
+
+// ─── Sub-case E: rapid successive runGuarded → distinct session_ids ───────
+
+async function caseE(): Promise<string | undefined> {
+  const execs = { count: 0 }
+  registerProbeTool(execs)
+
+  // Kick off N runs in parallel with no session_id supplied. Even
+  // millisecond-coincident invocations must end up with distinct ids
+  // (otherwise `orrery report` collapses them into one slice).
+  const N = 10
+  const runs = await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      runGuarded(
+        async (ctx) => ctx.session_id,
+        {
+          project_id: `probe-contract-E-${i}`,
+          actor_id: "tester",
+          log_root: "/tmp/orrery-probe-contract-E",
+          default_scope: { level: "project", identifier: `probe-contract-E-${i}` },
+          default_sensitivity: "internal",
+          policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+          precondition_checker: alwaysHoldsChecker,
+        },
+      ),
+    ),
+  )
+
+  const ids = new Set(runs.map((r) => r.session_id))
+  if (ids.size !== N) {
+    return (
+      `[E] ${N} concurrent runGuarded calls produced only ${ids.size} distinct ` +
+      `session_id(s). Date.now()-based defaults can collide; use a UUID.`
+    )
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
     { name: "B: secret session → secret action sensitivity", fn: caseB },
     { name: "C: built-in extractor registration is idempotent", fn: caseC },
+    { name: "D: caller cannot lower contract.data_sensitivity", fn: caseD },
+    { name: "E: default session_ids are collision-resistant", fn: caseE },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
@@ -253,7 +338,7 @@ async function run(): Promise<ProbeResult> {
   }
   return {
     passed: true,
-    details: `All three sub-cases passed:\n  - ${passed.join("\n  - ")}`,
+    details: `All ${passed.length} sub-cases passed:\n  - ${passed.join("\n  - ")}`,
   }
 }
 
