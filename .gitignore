@@ -3,3 +3,8 @@ node_modules/
 dist/
 build/
 *.tsbuildinfo
+
+# Claude Code / agent-tool per-machine settings — keep `.claude/` tracked
+# for the agent guidance and slash commands, but never commit the
+# per-machine bash-permission allowlists.
+.claude/settings.local.json
