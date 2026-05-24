@@ -1,4 +1,4 @@
-import { mkdir, appendFile } from "node:fs/promises"
+import { mkdir, appendFile, readdir, readFile } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
@@ -21,6 +21,8 @@ import { type EventEnvelope, EventEnvelopeSchema } from "@orrery/core"
 export class EventLogWriter {
   private nextSeq: Map<string, number> = new Map()
   private nextLogicalClock: Map<string, number> = new Map()
+  /** Project ids whose on-disk state has been scanned into the seq map. */
+  private hydrated: Set<string> = new Set()
 
   constructor(private readonly rootDir: string) {}
 
@@ -29,6 +31,17 @@ export class EventLogWriter {
     logical_clock?: number
     payload_hash?: string
   }): Promise<EventEnvelope> {
+    // Hydrate the per-project sequence + per-session logical clock from
+    // disk the first time we see a project_id in this process. Without
+    // this, a second `EventLogWriter` instance writing to a project
+    // whose NDJSON files already contain `seq: 0, 1, …` would restart
+    // at 0 and produce duplicate sequence numbers, breaking
+    // `EventLogReader.readAll`'s monotonic ordering invariant. Two
+    // common ways to land here:
+    //  - long-running process that creates a new writer per session
+    //  - `runGuarded` / `runGuarded` chained for the same project_id
+    await this.hydrate(input.project_id)
+
     const seq = input.seq ?? this.advanceSeq(input.project_id)
     const logical_clock = input.logical_clock ?? this.advanceLogicalClock(input.session_id)
     const payload_hash = input.payload_hash ?? canonicalHash(input.payload)
@@ -50,6 +63,62 @@ export class EventLogWriter {
     await appendFile(path, `${JSON.stringify(validated)}\n`, "utf8")
 
     return validated
+  }
+
+  /**
+   * Scan existing NDJSON files for a project and seed `nextSeq` /
+   * `nextLogicalClock` from the highest values found. Runs at most
+   * once per project per writer instance.
+   *
+   * Tolerant: malformed lines are skipped. The goal is not to validate
+   * the log (the reader does that) — only to find a safe starting
+   * sequence number. If the project directory doesn't exist or is
+   * empty, the maps stay at their defaults (seq starts at 0).
+   */
+  private async hydrate(projectId: string): Promise<void> {
+    if (this.hydrated.has(projectId)) return
+    this.hydrated.add(projectId)
+
+    const projectDir = join(this.rootDir, projectId)
+    if (!existsSync(projectDir)) return
+
+    let maxSeq = -1
+    const sessionMax = new Map<string, number>()
+
+    const files = (await readdir(projectDir))
+      .filter((f) => f.endsWith(".ndjson"))
+      .sort()
+    for (const file of files) {
+      const content = await readFile(join(projectDir, file), "utf8")
+      for (const line of content.split("\n")) {
+        if (!line.trim()) continue
+        let parsed: { seq?: unknown; logical_clock?: unknown; session_id?: unknown }
+        try {
+          parsed = JSON.parse(line)
+        } catch {
+          continue
+        }
+        if (typeof parsed.seq === "number" && parsed.seq > maxSeq) {
+          maxSeq = parsed.seq
+        }
+        if (
+          typeof parsed.session_id === "string" &&
+          typeof parsed.logical_clock === "number"
+        ) {
+          const current = sessionMax.get(parsed.session_id) ?? -1
+          if (parsed.logical_clock > current) {
+            sessionMax.set(parsed.session_id, parsed.logical_clock)
+          }
+        }
+      }
+    }
+
+    if (maxSeq >= 0) {
+      this.nextSeq.set(projectId, maxSeq + 1)
+    }
+    for (const [sessionId, value] of sessionMax.entries()) {
+      this.nextLogicalClock.set(sessionId, value + 1)
+    }
   }
 
   private advanceSeq(projectId: string): number {
