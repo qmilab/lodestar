@@ -87,6 +87,23 @@ function actionSensitivityFor(
 }
 
 /**
+ * Return the stricter of two {@link Sensitivity} values.
+ *
+ * Used to lift an observation's sensitivity to at least the guarded
+ * session's `default_sensitivity`. Never downgrades — if a tool
+ * already produced an observation tagged `secret`, that label stays.
+ */
+function liftSensitivity(observed: Sensitivity, floor: Sensitivity): Sensitivity {
+  const order: Record<Sensitivity, number> = {
+    public: 0,
+    internal: 1,
+    confidential: 2,
+    secret: 3,
+  }
+  return order[observed] >= order[floor] ? observed : floor
+}
+
+/**
  * Wrap a user-supplied agent loop with the Orrery trust layer.
  *
  * The returned function accepts a {@link GuardConfig} and runs the
@@ -179,10 +196,18 @@ export async function runGuarded<T>(
   const captureBox: { current: Capture | undefined } = { current: undefined }
   const observationSink = async (raw: Observation): Promise<void> => {
     // The Action Kernel constructs observations with hardcoded
-    // session-stub / project-stub context in v0 (the real context
-    // propagation patch lands with the MCP proxy in Batch 3). Rewrite
-    // the context here so every consumer sees the real guarded session
-    // — both the event log and the value handed back via callTool.
+    // session-stub / project-stub context AND a hardcoded
+    // `sensitivity: "internal"` in v0 (the real propagation patch
+    // lands with the MCP proxy in Batch 3). Rewrite both here so the
+    // emitted event and the value returned via callTool reflect the
+    // guarded session.
+    //
+    // Sensitivity must lift to the session's `default_sensitivity`
+    // when it's stricter than the kernel's default — otherwise a
+    // `secret` or `confidential` session would log/return its tool
+    // observations as plain `internal` and bypass sensitivity-based
+    // downstream handling (redaction, OTel export filtering, final
+    // reports).
     const observation: Observation = {
       ...raw,
       context: {
@@ -190,6 +215,7 @@ export async function runGuarded<T>(
         project_id: config.project_id,
         actor_id: config.actor_id,
       },
+      sensitivity: liftSensitivity(raw.sensitivity, config.default_sensitivity),
     }
     await emit("observation.recorded", observation)
     const ingest = await cognitive.ingest({

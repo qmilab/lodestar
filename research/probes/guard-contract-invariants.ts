@@ -131,7 +131,8 @@ async function caseA(): Promise<string | undefined> {
   return undefined
 }
 
-// ─── Sub-case B: secret session → secret action data_sensitivity ────────
+// ─── Sub-case B: secret session → secret action sensitivity AND
+//                 secret observation sensitivity ───────────────────────
 
 async function caseB(): Promise<string | undefined> {
   const execs = { count: 0 }
@@ -147,9 +148,9 @@ async function caseB(): Promise<string | undefined> {
     }
   }
 
-  await runGuarded(
+  const run = await runGuarded(
     async (ctx) => {
-      await ctx.callTool("probe.contract_tool", { token: "ok" })
+      return ctx.callTool("probe.contract_tool", { token: "ok" })
     },
     {
       project_id: "probe-contract-B",
@@ -166,6 +167,19 @@ async function caseB(): Promise<string | undefined> {
     return (
       `[B] policy_gate saw data_sensitivity='${seenSensitivity}'; expected 'secret'. ` +
       `Guard is silently downgrading a secret session to a private action.`
+    )
+  }
+
+  // The kernel hardcodes observation.sensitivity to 'internal'; Guard
+  // must lift it to at least the session's default_sensitivity, or a
+  // secret session's tool observations leak into the event log
+  // labelled 'internal'.
+  const observationSensitivity = (run.result as { observation: { sensitivity: string } })
+    .observation.sensitivity
+  if (observationSensitivity !== "secret") {
+    return (
+      `[B] callTool returned observation.sensitivity='${observationSensitivity}'; expected 'secret'. ` +
+      `Guard is not lifting sensitive observations from the kernel's default 'internal'.`
     )
   }
   return undefined
