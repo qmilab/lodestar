@@ -1130,6 +1130,122 @@ async function caseS(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case T: per-call data_sensitivity propagates into obs/claim ──────
+
+async function caseT(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 })
+  const LOG_ROOT = "/tmp/orrery-probe-contract-T"
+  const PROJECT = "probe-contract-T"
+  const SESSION = "session-probe-T"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  // Internal session, but one specific call raises sensitivity to
+  // 'secret' via the contract override. The resulting observation
+  // (and the claims/beliefs it extracts) must land at 'secret', not
+  // at the session default 'internal'.
+  await runGuarded(
+    async (ctx) => {
+      await ctx.callTool(
+        "probe.contract_tool",
+        { token: "ok" },
+        { contract: { data_sensitivity: "secret" } },
+      )
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+
+  const obsEvent = events.find((e) => e.type === "observation.recorded")
+  if (!obsEvent) return "[T] no observation.recorded event"
+  const obsPayload = obsEvent.payload as { sensitivity?: string }
+  if (obsPayload.sensitivity !== "secret") {
+    return (
+      `[T] per-call override 'secret' did not propagate into the observation ` +
+      `(sensitivity='${obsPayload.sensitivity}'). The kernel must derive ` +
+      `obs.sensitivity from contract.data_sensitivity, not hardcode 'internal'.`
+    )
+  }
+
+  // The probe.contract_tool's output schema isn't bound to an
+  // extractor, so no claims will be produced — that's expected. We
+  // assert the observation is the bound for downstream sensitivity,
+  // which is what the report and OTel exporters consume.
+  return undefined
+}
+
+// ─── Sub-case U: malformed action.* event doesn't crash report rendering ──
+
+async function caseU(): Promise<string | undefined> {
+  registerProbeTool({ count: 0 })
+  const LOG_ROOT = "/tmp/orrery-probe-contract-U"
+  const PROJECT = "probe-contract-U"
+  const SESSION = "session-probe-U"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  // Emit a malformed action event via ctx.emit — has the keys
+  // isActionPayload used to check but is missing `contract` and
+  // `audit` which the renderer reads. Before the safeParse fix this
+  // would land in projection.actions and crash renderActions.
+  await runGuarded(
+    async (ctx) => {
+      await ctx.emit("action.partial", {
+        id: "partial-1",
+        tool: "fake.tool",
+        phase: "completed",
+        intent: "malformed action",
+      })
+    },
+    {
+      project_id: PROJECT,
+      actor_id: "tester",
+      session_id: SESSION,
+      log_root: LOG_ROOT,
+      default_scope: { level: "project", identifier: PROJECT },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readSession(PROJECT, SESSION)
+  const { projectChain, renderReport } = await import("@orrery/trace")
+  const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
+
+  // The malformed action must NOT be in projection.actions — it
+  // failed schema validation, so it's only available in raw_events.
+  const projected = projection.actions.find((a) => a.action?.id === "partial-1")
+  if (projected) {
+    return (
+      `[U] projection accepted a malformed action.* payload as a full Action. ` +
+      `Schema validation must reject it before it reaches the renderer.`
+    )
+  }
+
+  // Rendering must not throw. We don't need any specific output —
+  // just that calling renderReport completes without an exception.
+  try {
+    renderReport(projection)
+  } catch (err) {
+    return (
+      `[U] renderReport threw on a session that included a malformed action.* event: ` +
+      `${err instanceof Error ? err.message : String(err)}`
+    )
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -1151,6 +1267,8 @@ async function run(): Promise<ProbeResult> {
     { name: "Q: evidence persists in event log + renders in report", fn: caseQ },
     { name: "R: decision.made events render in the trust report", fn: caseR },
     { name: "S: outcome.observed events project + render", fn: caseS },
+    { name: "T: per-call data_sensitivity propagates into observations", fn: caseT },
+    { name: "U: malformed action.* events don't crash the report", fn: caseU },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
