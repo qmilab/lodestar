@@ -188,21 +188,24 @@ export async function runGuarded<T>(
     const validatedInputs = tool.inputs.parse(inputs)
 
     // The tool's `preconditions` factory produces the contract entries
-    // the kernel will re-check at execution time (the TOCTOU defense).
-    // If the caller did not explicitly override the contract's
-    // preconditions, pull from the tool — otherwise the kernel would
-    // skip revalidation entirely for tools that publish preconditions.
+    // the kernel re-checks at execution time (the TOCTOU defense).
+    // Tool-declared preconditions are NEVER discarded — even when the
+    // caller passes their own override list, we prepend the tool's
+    // declarations so a guarded call can only add to, not remove from,
+    // what the tool author published. (Without this, an agent could
+    // bypass revalidation by passing `contract: { preconditions: [] }`.)
     const overrides = options?.contract ?? {}
     const declaredPreconditions = tool.preconditions
       ? tool.preconditions(validatedInputs)
       : []
+    const callerPreconditions = overrides.preconditions ?? []
     const contract: ActionContract = {
       required_level: overrides.required_level ?? tool.required_trust_level,
       blast_radius: overrides.blast_radius ?? "self",
       reversibility: overrides.reversibility ?? tool.reversibility,
       scope: overrides.scope ?? config.default_scope,
       data_sensitivity: overrides.data_sensitivity ?? "private",
-      preconditions: overrides.preconditions ?? declaredPreconditions,
+      preconditions: [...declaredPreconditions, ...callerPreconditions],
     }
 
     const proposed = kernel.propose({
