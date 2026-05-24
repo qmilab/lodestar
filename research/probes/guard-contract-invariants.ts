@@ -29,7 +29,7 @@ import { z } from "zod"
 import { registry } from "@orrery/core"
 import { _resetToolsForTests, registerTool } from "@orrery/action-kernel"
 import { registerBuiltInExtractors } from "@orrery/cognitive-core"
-import { EventLogReader } from "@orrery/event-log"
+import { EventLogReader, EventLogWriter } from "@orrery/event-log"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
@@ -689,6 +689,75 @@ async function caseL(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case M: hydrate is race-safe under concurrent first appends ──────
+
+async function caseM(): Promise<string | undefined> {
+  // Seed an existing log so a fresh writer needs to hydrate. Without
+  // serialised hydration, two concurrent first appends both see an
+  // empty seq map and allocate seq=0 — duplicates in the log.
+  const LOG_ROOT = "/tmp/orrery-probe-contract-M"
+  const PROJECT = "probe-contract-M"
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  // Pre-populate the log: write 5 events with a first writer so the
+  // directory exists with `seq: 0..4`.
+  const seeder = new EventLogWriter(LOG_ROOT)
+  for (let i = 0; i < 5; i++) {
+    await seeder.append({
+      id: crypto.randomUUID(),
+      type: "probe.seed",
+      schema_version: "0.1.0",
+      project_id: PROJECT,
+      session_id: "seed-session",
+      actor_id: "seeder",
+      timestamp: new Date().toISOString(),
+      causal_parent_ids: [],
+      payload: { i },
+      versions: {},
+    })
+  }
+
+  // Fresh writer (mimics what `runGuarded` constructs per session).
+  // Fire N concurrent first appends — they must all hydrate against
+  // the seeded log before any of them allocates a seq number.
+  const writer = new EventLogWriter(LOG_ROOT)
+  const N = 8
+  await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      writer.append({
+        id: crypto.randomUUID(),
+        type: "probe.concurrent",
+        schema_version: "0.1.0",
+        project_id: PROJECT,
+        session_id: `session-${i}`,
+        actor_id: "tester",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload: { i },
+        versions: {},
+      }),
+    ),
+  )
+
+  // Read everything back and assert no duplicate seq values.
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readAll(PROJECT)
+  const seen = new Map<number, number>()
+  for (const e of events) {
+    seen.set(e.seq, (seen.get(e.seq) ?? 0) + 1)
+  }
+  const duplicates = [...seen.entries()].filter(([_, c]) => c > 1)
+  if (duplicates.length > 0) {
+    const sample = duplicates.slice(0, 3).map(([s, c]) => `seq=${s}×${c}`).join(", ")
+    return (
+      `[M] concurrent first appends produced duplicate seq values: ${sample}. ` +
+      `EventLogWriter.hydrate must serialise — a Set marker that fires before the ` +
+      `async scan completes lets a second append skip hydration and allocate seq=0.`
+    )
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -703,6 +772,7 @@ async function run(): Promise<ProbeResult> {
     { name: "J: mem0 adapter tolerates malformed records", fn: caseJ },
     { name: "K: execution-time rejections emit action.rejected", fn: caseK },
     { name: "L: orrery probe works from any working directory", fn: caseL },
+    { name: "M: writer hydration is race-safe", fn: caseM },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
