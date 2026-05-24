@@ -24,10 +24,12 @@
  * first violation.
  */
 
+import * as fs from "node:fs/promises"
 import { z } from "zod"
 import { registry } from "@orrery/core"
 import { _resetToolsForTests, registerTool } from "@orrery/action-kernel"
 import { registerBuiltInExtractors } from "@orrery/cognitive-core"
+import { EventLogReader } from "@orrery/event-log"
 import {
   alwaysHoldsChecker,
   autoApprovePolicy,
@@ -317,6 +319,114 @@ async function caseE(): Promise<string | undefined> {
   return undefined
 }
 
+// ─── Sub-case F: tool.execute receives the guarded session/project ─────────
+
+async function caseF(): Promise<string | undefined> {
+  _resetToolsForTests()
+
+  let captured: { session_id?: string; project_id?: string } = {}
+  registerTool({
+    name: "probe.context_capture",
+    inputs: z.object({}),
+    output_schema_key: OUT_KEY,
+    effects: [],
+    reversibility: "reversible",
+    permissions: [],
+    required_trust_level: 0,
+    sandbox: "read",
+    execute: async (_inputs, ctx) => {
+      captured = { session_id: ctx.session_id, project_id: ctx.project_id }
+      return { ran: true }
+    },
+  })
+
+  await runGuarded(
+    async (ctx) => {
+      await ctx.callTool("probe.context_capture", {})
+    },
+    {
+      project_id: "probe-contract-F",
+      actor_id: "tester",
+      session_id: "session-probe-F-fixed",
+      log_root: "/tmp/orrery-probe-contract-F",
+      default_scope: { level: "project", identifier: "probe-contract-F" },
+      default_sensitivity: "internal",
+      policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+      precondition_checker: alwaysHoldsChecker,
+    },
+  )
+
+  if (captured.session_id !== "session-probe-F-fixed") {
+    return (
+      `[F] tool.execute saw ctx.session_id='${captured.session_id}'; ` +
+      `expected 'session-probe-F-fixed'. The kernel is still handing tools its stub context.`
+    )
+  }
+  if (captured.project_id !== "probe-contract-F") {
+    return (
+      `[F] tool.execute saw ctx.project_id='${captured.project_id}'; expected 'probe-contract-F'.`
+    )
+  }
+  return undefined
+}
+
+// ─── Sub-case G: event-log seq is monotonic across runGuarded calls ────────
+
+async function caseG(): Promise<string | undefined> {
+  const execs = { count: 0 }
+  registerProbeTool(execs)
+
+  const LOG_ROOT = "/tmp/orrery-probe-contract-G"
+  const PROJECT_ID = "probe-contract-G"
+  // Start from a clean slate so the assertion is unambiguous.
+  await fs.rm(LOG_ROOT, { recursive: true, force: true }).catch(() => {})
+
+  const sharedConfig = {
+    project_id: PROJECT_ID,
+    actor_id: "tester",
+    log_root: LOG_ROOT,
+    default_scope: { level: "project" as const, identifier: PROJECT_ID },
+    default_sensitivity: "internal" as const,
+    policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+    precondition_checker: alwaysHoldsChecker,
+  }
+
+  // Two sequential runGuarded calls for the same project. Each starts
+  // a fresh writer; without the hydrate fix the second one would
+  // restart at seq=0 and overwrite the first session's sequence range.
+  await runGuarded(async (ctx) => {
+    await ctx.callTool("probe.contract_tool", { token: "ok" })
+  }, sharedConfig)
+  await runGuarded(async (ctx) => {
+    await ctx.callTool("probe.contract_tool", { token: "ok" })
+  }, sharedConfig)
+
+  // Read the combined log and assert all seq values are distinct.
+  const reader = new EventLogReader(LOG_ROOT)
+  const events = await reader.readAll(PROJECT_ID)
+  const seen = new Map<number, number>()
+  for (const e of events) {
+    seen.set(e.seq, (seen.get(e.seq) ?? 0) + 1)
+  }
+  const duplicates = [...seen.entries()].filter(([_, c]) => c > 1)
+  if (duplicates.length > 0) {
+    const sample = duplicates.slice(0, 3).map(([s, c]) => `seq=${s}×${c}`).join(", ")
+    return (
+      `[G] event log has duplicate seq values across runGuarded calls: ${sample}. ` +
+      `EventLogWriter must hydrate from existing log before writing.`
+    )
+  }
+  // Also sanity-check monotonic increasing order in read result.
+  for (let i = 1; i < events.length; i++) {
+    const prev = events[i - 1]
+    const curr = events[i]
+    if (prev && curr && prev.seq >= curr.seq) {
+      return `[G] events out of seq order: ${prev.seq} >= ${curr.seq} at index ${i}`
+    }
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const cases: Array<{ name: string; fn: () => Promise<string | undefined> }> = [
     { name: "A: caller cannot drop tool preconditions", fn: caseA },
@@ -324,6 +434,8 @@ async function run(): Promise<ProbeResult> {
     { name: "C: built-in extractor registration is idempotent", fn: caseC },
     { name: "D: caller cannot lower contract.data_sensitivity", fn: caseD },
     { name: "E: default session_ids are collision-resistant", fn: caseE },
+    { name: "F: tool.execute receives the guarded session/project", fn: caseF },
+    { name: "G: event log seq is monotonic across runGuarded calls", fn: caseG },
   ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
