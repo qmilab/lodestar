@@ -23,6 +23,7 @@ import type {
   Action,
   ActionContract,
   Observation,
+  Reversibility,
   Sensitivity,
 } from "@orrery/core"
 import type {
@@ -122,6 +123,34 @@ function clampActionSensitivity(
     public: 0,
     private: 1,
     secret: 2,
+  }
+  if (override === undefined) return floor
+  return order[override] >= order[floor] ? override : floor
+}
+
+/**
+ * Return the stricter (higher-risk) of two {@link Reversibility} values.
+ *
+ * The tool author publishes a reversibility classification at
+ * registration time; the caller can RAISE the risk (e.g. claim that
+ * one specific invocation should be treated as irreversible) but may
+ * not LOWER it. Without this clamp, a hostile loop could pass
+ * `contract: { reversibility: "reversible" }` for an irreversible
+ * tool and bypass policies that gate on reversibility.
+ *
+ * Risk ordering:
+ *   reversible  (lowest risk — can be undone)
+ *   compensable (medium — needs a compensating action to undo)
+ *   irreversible (highest risk — cannot be undone)
+ */
+function clampReversibility(
+  floor: Reversibility,
+  override: Reversibility | undefined,
+): Reversibility {
+  const order: Record<Reversibility, number> = {
+    reversible: 0,
+    compensable: 1,
+    irreversible: 2,
   }
   if (override === undefined) return floor
   return order[override] >= order[floor] ? override : floor
@@ -323,7 +352,7 @@ export async function runGuarded<T>(
     const contract: ActionContract = {
       required_level: overrides.required_level ?? tool.required_trust_level,
       blast_radius: overrides.blast_radius ?? "self",
-      reversibility: overrides.reversibility ?? tool.reversibility,
+      reversibility: clampReversibility(tool.reversibility, overrides.reversibility),
       scope: overrides.scope ?? config.default_scope,
       data_sensitivity: clampActionSensitivity(
         defaultActionSensitivity,
