@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-memory-firewall",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Lifecycle gates for claims and beliefs — four orthogonal axes (truth, retrieval, security, freshness) with per-axis transition rules. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
