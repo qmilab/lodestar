@@ -15,6 +15,7 @@ export {
 
 export {
   ActionKernel,
+  type KernelContext,
   type PolicyGate,
   type PolicyDecision,
   type PreconditionChecker,

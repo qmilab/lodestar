@@ -47,24 +47,58 @@ export type PreconditionChecker = (
  */
 /**
  * Resolve the `session_id` / `project_id` the host wants tools to see
- * inside their `ToolContext`. Without a resolver, the kernel falls
- * back to `"session-stub"` / `"project-stub"` placeholders — fine for
- * unit tests, broken for any tool that scopes side effects by
- * session or project. Hosts (@qmilab/lodestar-guard, the eventual MCP proxy)
- * MUST supply a resolver in production.
+ * inside their `ToolContext`. A resolver is the right shape for hosts
+ * that need a per-call lookup — the MCP proxy will use this to pick up
+ * the session/project from the incoming MCP request.
  */
 export type ToolContextResolver = () => {
   session_id: string
   project_id: string
 }
 
+/**
+ * What the kernel uses to populate `session_id` / `project_id` in tool
+ * contexts and observations.
+ *
+ * Round 5 fix (pre-Batch 3): the kernel used to silently fall back to
+ * `"session-stub"` / `"project-stub"` placeholders when no resolver was
+ * supplied. That made it impossible to tie event-log entries back to a
+ * real session reliably — and the MCP proxy in Batch 3 will introduce
+ * real sessions from MCP clients that MUST flow through. Production
+ * callers now pass either a resolver function or a static
+ * `{ session_id, project_id }` pair; the stubs are reachable only by
+ * explicit `{ useStubsForTests: true }`.
+ */
+export type KernelContext =
+  | ToolContextResolver
+  | { session_id: string; project_id: string }
+  | { useStubsForTests: true }
+
+const STUB_CONTEXT = {
+  session_id: "session-stub",
+  project_id: "project-stub",
+} as const
+
+function normalizeContext(context: KernelContext): ToolContextResolver {
+  if (typeof context === "function") return context
+  if ("useStubsForTests" in context) return () => STUB_CONTEXT
+  return () => ({ session_id: context.session_id, project_id: context.project_id })
+}
+
 export class ActionKernel {
+  private readonly contextResolver: ToolContextResolver
+
   constructor(
     private readonly policyGate: PolicyGate,
     private readonly preconditionChecker: PreconditionChecker,
     private readonly observationSink: (obs: Observation) => Promise<void>,
-    private readonly contextResolver?: ToolContextResolver,
-  ) {}
+    context: KernelContext,
+  ) {
+    // The kernel will not start up with an implicit stub fallback. Hosts
+    // (Guard, the eventual MCP proxy) MUST supply a real context; tests
+    // may opt in via `{ useStubsForTests: true }`.
+    this.contextResolver = normalizeContext(context)
+  }
 
   /**
    * Propose an action. Returns the action in `proposed` phase, without
@@ -217,14 +251,12 @@ export class ActionKernel {
       ],
     }
 
-    // Resolve session/project context once per execute call. Hosts
-    // (Guard, the MCP proxy) supply a resolver; tests/probes may rely
-    // on the stub fallback. Capability wiring for secret-handling
-    // tools lives in the policy kernel, not here.
-    const resolved = this.contextResolver?.() ?? {
-      session_id: "session-stub",
-      project_id: "project-stub",
-    }
+    // Resolve session/project context once per execute call. The
+    // resolver is always set after construction (host supplied a
+    // function, static pair, or `{ useStubsForTests: true }`).
+    // Capability wiring for secret-handling tools lives in the policy
+    // kernel, not here.
+    const resolved = this.contextResolver()
     const toolCtxSessionId = resolved.session_id
     const toolCtxProjectId = resolved.project_id
 
