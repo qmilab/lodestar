@@ -1,14 +1,14 @@
 export {
   MemoryFirewall,
   type FirewallAuditEvent,
-} from "./firewall"
+} from "./firewall.js"
 
 export {
   GatedRetrieval,
   type RetrievalQuery,
   type RetrievalResult,
   type BeliefRejection,
-} from "./retrieval"
+} from "./retrieval.js"
 
 export {
   type ClaimStore,
@@ -16,7 +16,7 @@ export {
   type ClaimTransition,
   type ClaimTransitionInput,
   InMemoryClaimStore,
-} from "./stores/claim-store"
+} from "./stores/claim-store.js"
 
 export {
   type BeliefStore,
@@ -25,20 +25,20 @@ export {
   type BeliefAxisTransitionInput,
   type LifecycleAxis,
   InMemoryBeliefStore,
-} from "./stores/belief-store"
+} from "./stores/belief-store.js"
 
 export {
   type EvidenceStore,
   InMemoryEvidenceStore,
   aggregateStrength,
-} from "./stores/evidence-store"
+} from "./stores/evidence-store.js"
 
 export {
   type TransitionAuthority,
   type Transition,
   isTransitionAllowed,
   authoritiesFor,
-} from "./transitions"
+} from "./transitions.js"
 
 export {
   AdapterImportOptionsSchema,
@@ -47,4 +47,4 @@ export {
   type AdapterImportOptions,
   type AdapterImportResult,
   type ExternalMemoryAdapter,
-} from "./adapter-contract"
+} from "./adapter-contract.js"

@@ -19,12 +19,12 @@
 
 import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
 import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
-import { actionDescribeCommand, actionListCommand } from "./commands/action"
-import { guardWrapCommand } from "./commands/guard"
-import { HELP_TEXT } from "./commands/help"
-import { probeCommand } from "./commands/probe"
-import { reportCommand } from "./commands/report"
-import { traceInspectCommand } from "./commands/trace"
+import { actionDescribeCommand, actionListCommand } from "./commands/action.js"
+import { guardWrapCommand } from "./commands/guard.js"
+import { HELP_TEXT } from "./commands/help.js"
+import { probeCommand } from "./commands/probe.js"
+import { reportCommand } from "./commands/report.js"
+import { traceInspectCommand } from "./commands/trace.js"
 
 /**
  * Pre-register the v0 built-in tools (fs.read, git.status) bound to

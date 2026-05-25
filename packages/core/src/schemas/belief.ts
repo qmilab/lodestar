@@ -4,7 +4,7 @@ import {
   ResourceScopeSchema,
   SensitivitySchema,
   TimestampSchema,
-} from "./common"
+} from "./common.js"
 
 // -----------------------------------------------------------------------------
 // Orthogonal lifecycle axes

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { type Action, type ActionContract, type ActionPrecondition, type Observation, registry } from "@qmilab/lodestar-core"
-import { lookupTool, type Tool } from "./registry"
+import { lookupTool, type Tool } from "./registry.js"
 
 /**
  * The policy gate interface. The action kernel does not implement policy

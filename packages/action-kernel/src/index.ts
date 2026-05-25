@@ -11,7 +11,7 @@ export {
   type CapabilityHandle,
   type ObservationFactory,
   type PreconditionFactory,
-} from "./registry"
+} from "./registry.js"
 
 export {
   ActionKernel,
@@ -19,4 +19,4 @@ export {
   type PolicyDecision,
   type PreconditionChecker,
   type ToolContextResolver,
-} from "./kernel"
+} from "./kernel.js"

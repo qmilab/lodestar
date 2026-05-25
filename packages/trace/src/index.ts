@@ -10,21 +10,21 @@
  * want to render reports in their own pipelines.
  */
 
-export { projectChain } from "./chain"
+export { projectChain } from "./chain.js"
 export type {
   ChainProjection,
   CognitiveSummary,
   ProjectedDecision,
   FirewallTransition,
   ProjectedAction,
-} from "./chain"
+} from "./chain.js"
 
-export { renderReport } from "./report"
-export type { RenderOptions } from "./report"
+export { renderReport } from "./report.js"
+export type { RenderOptions } from "./report.js"
 
-export { describeEvent, findEventById } from "./inspect"
+export { describeEvent, findEventById } from "./inspect.js"
 export {
   defaultLogRoot,
   findProjectForSession,
   loadSessionEvents,
-} from "./load"
+} from "./load.js"

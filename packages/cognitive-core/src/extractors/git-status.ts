@@ -1,5 +1,5 @@
 import type { Claim } from "@qmilab/lodestar-core"
-import type { ClaimExtractor, ExtractionInput } from "./base"
+import type { ClaimExtractor, ExtractionInput } from "./base.js"
 
 /**
  * Schema-bound extractor for git.status@1 observations.

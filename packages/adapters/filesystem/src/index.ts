@@ -1,1 +1,1 @@
-export { makeFsReadTool, registerFsReadTool, FsReadOutputSchema } from "./read"
+export { makeFsReadTool, registerFsReadTool, FsReadOutputSchema } from "./read.js"

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { PredicateSchema, ResourceScopeSchema, SensitivitySchema, TimestampSchema } from "./common"
+import { PredicateSchema, ResourceScopeSchema, SensitivitySchema, TimestampSchema } from "./common.js"
 
 /**
  * How a claim was extracted from observation(s).

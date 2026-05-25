@@ -16,9 +16,9 @@
  */
 
 import { writeFile } from "node:fs/promises"
-import { defaultLogRoot, loadSessionEvents } from "./load"
-import { projectChain } from "./chain"
-import { renderReport } from "./report"
+import { defaultLogRoot, loadSessionEvents } from "./load.js"
+import { projectChain } from "./chain.js"
+import { renderReport } from "./report.js"
 
 interface ParsedArgs {
   session_id?: string

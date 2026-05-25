@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { TimestampSchema } from "./common"
+import { TimestampSchema } from "./common.js"
 
 /**
  * Update to a claim, belief, or decision when evidence shifts.

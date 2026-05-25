@@ -33,7 +33,7 @@ import type {
   GuardConfig,
   GuardContext,
   GuardInternals,
-} from "./types"
+} from "./types.js"
 
 /**
  * Register the built-in extractors if they are not already in the

@@ -14,10 +14,10 @@ import {
   type ExternalMemoryAdapter,
   type MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import { LettaBlockSchema, LettaEnvelopeSchema, type LettaBlock } from "./schema"
+import { LettaBlockSchema, LettaEnvelopeSchema, type LettaBlock } from "./schema.js"
 
-export { LettaExportSchema, LettaBlockSchema } from "./schema"
-export type { LettaExport, LettaBlock } from "./schema"
+export { LettaExportSchema, LettaBlockSchema } from "./schema.js"
+export type { LettaExport, LettaBlock } from "./schema.js"
 
 const ADAPTER_NAME = "letta"
 
