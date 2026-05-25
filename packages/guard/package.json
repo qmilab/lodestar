@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-guard",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "The write-side trust layer — wrap an agent loop and route every tool call through the Action Kernel, every observation through the Cognitive Core. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
