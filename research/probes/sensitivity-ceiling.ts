@@ -16,6 +16,7 @@ import { DEFAULT_CONTEXT_POLICY } from "@qmilab/lodestar-core"
 import {
   GatedRetrieval,
   InMemoryBeliefStore,
+  InMemoryClaimStore,
 } from "@qmilab/lodestar-memory-firewall"
 
 interface ProbeResult {
@@ -25,7 +26,8 @@ interface ProbeResult {
 
 async function run(): Promise<ProbeResult> {
   const beliefStore = new InMemoryBeliefStore()
-  const retrieval = new GatedRetrieval(beliefStore)
+  const claimStore = new InMemoryClaimStore()
+  const retrieval = new GatedRetrieval(beliefStore, claimStore)
 
   const scope = { level: "project" as const, identifier: "probe-project" }
   const now = new Date().toISOString()
