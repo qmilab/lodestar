@@ -1,0 +1,93 @@
+name: Publish to npm
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write   # required for trusted publishing OIDC
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production   # matches the trusted-publisher config on npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Run probes
+        run: bun run probes:all
+
+      - name: Setup Node (for npm publish)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      # Derive the version from the tag (refs/tags/v0.2.0 -> 0.2.0) and
+      # verify every publishable package already declares that version.
+      # Failing here keeps a half-published release from happening — the
+      # workflow won't push *any* package to npm if the versions are not
+      # all aligned with the tag.
+      - name: Verify package versions match the release tag
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          echo "Release tag implies version: $tag"
+          mismatched=0
+          while IFS= read -r pkg; do
+            v=$(node -p "require('./$pkg').version")
+            name=$(node -p "require('./$pkg').name")
+            private=$(node -p "require('./$pkg').private === true")
+            if [ "$private" = "true" ]; then
+              continue
+            fi
+            if [ "$v" != "$tag" ]; then
+              echo "::error::$name is at version $v but the tag is v$tag"
+              mismatched=$((mismatched + 1))
+            else
+              echo "ok: $name @ $v"
+            fi
+          done < <(find packages -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*')
+          if [ "$mismatched" -gt 0 ]; then
+            echo "::error::$mismatched package(s) out of sync with the tag — aborting before any publish"
+            exit 1
+          fi
+
+      # Publish every non-private package found under packages/, including
+      # the two-level-deep ones (packages/adapters/*, packages/memory-firewall/adapters/*).
+      # The draft's `packages/*/package.json` glob silently skipped 5 of 13
+      # publishable packages on this repo.
+      #
+      # Failures are NOT swallowed. If a single publish fails (auth, version
+      # conflict, network), the workflow exits non-zero so the release shows
+      # red and the maintainer can investigate before the tag looks "done".
+      - name: Publish all packages
+        run: |
+          set -euo pipefail
+          while IFS= read -r pkg; do
+            dir=$(dirname "$pkg")
+            name=$(node -p "require('./$pkg').name")
+            private=$(node -p "require('./$pkg').private === true")
+            if [ "$private" = "true" ]; then
+              echo "skip (private): $name"
+              continue
+            fi
+            echo "::group::publish $name"
+            (cd "$dir" && npm publish --provenance --access public)
+            echo "::endgroup::"
+          done < <(find packages -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*')
