@@ -31,6 +31,27 @@ const sharedHydrations = new Map<string, Promise<void>>()
 const sharedNextSeq = new Map<string, number>()
 const sharedNextLogicalClock = new Map<string, number>()
 
+// Single-writer enforcement (Round 5 fix, pre-Batch 3):
+//
+// Multiple EventLogWriter instances pointing at the same partition share
+// the seq counter via `sharedNextSeq`. That makes seq numbers unique
+// across instances, but it does NOT serialize the actual `appendFile`
+// system calls — two concurrent appends with payloads larger than
+// PIPE_BUF (4 KiB on Linux) can interleave on disk and produce torn
+// writes, breaking the NDJSON one-event-per-line invariant.
+//
+// `sharedAppendLocks` is a per-partition async mutex chain. Every
+// `append` for partition K awaits the previous append for K, runs its
+// own critical section, then releases. Across N concurrent writer
+// instances pointing at the same partition, all appends serialize
+// through one logical queue.
+//
+// Cross-process safety is intentionally NOT addressed here — the MCP
+// proxy (Batch 3) is single-process per the roadmap. If/when a multi-
+// process consumer appears, a file-lock-based layer can be added on
+// top without changing this interface.
+const sharedAppendLocks = new Map<string, Promise<void>>()
+
 function partitionKey(rootDir: string, projectId: string): string {
   return `${rootDir}::${projectId}`
 }
@@ -47,6 +68,7 @@ export function _resetEventLogStateForTests(): void {
   sharedHydrations.clear()
   sharedNextSeq.clear()
   sharedNextLogicalClock.clear()
+  sharedAppendLocks.clear()
 }
 
 export class EventLogWriter {
@@ -68,27 +90,46 @@ export class EventLogWriter {
     //  - `runGuarded` / `runGuarded` chained for the same project_id
     await this.hydrate(input.project_id)
 
-    const seq = input.seq ?? this.advanceSeq(input.project_id)
-    const logical_clock = input.logical_clock ?? this.advanceLogicalClock(input.session_id)
-    const payload_hash = input.payload_hash ?? canonicalHash(input.payload)
+    // Single-writer enforcement: chain this append onto the partition's
+    // mutex so concurrent `append()` calls (within or across instances)
+    // serialize through one critical section. See header comment near
+    // `sharedAppendLocks` for the rationale.
+    const lockKey = partitionKey(this.rootDir, input.project_id)
+    const previous = sharedAppendLocks.get(lockKey) ?? Promise.resolve()
+    let releaseSelf!: () => void
+    const self = new Promise<void>((resolve) => {
+      releaseSelf = resolve
+    })
+    // Install the new tail BEFORE awaiting the predecessor so any
+    // concurrent caller observes us at the end of the chain.
+    sharedAppendLocks.set(lockKey, previous.then(() => self))
+    await previous
 
-    const envelope: EventEnvelope = {
-      ...input,
-      seq,
-      logical_clock,
-      payload_hash,
+    try {
+      const seq = input.seq ?? this.advanceSeq(input.project_id)
+      const logical_clock = input.logical_clock ?? this.advanceLogicalClock(input.session_id)
+      const payload_hash = input.payload_hash ?? canonicalHash(input.payload)
+
+      const envelope: EventEnvelope = {
+        ...input,
+        seq,
+        logical_clock,
+        payload_hash,
+      }
+
+      // Validate before write — never write malformed events
+      const validated = EventEnvelopeSchema.parse(envelope)
+
+      const path = this.filePathFor(validated)
+      if (!existsSync(dirname(path))) {
+        await mkdir(dirname(path), { recursive: true })
+      }
+      await appendFile(path, `${JSON.stringify(validated)}\n`, "utf8")
+
+      return validated
+    } finally {
+      releaseSelf()
     }
-
-    // Validate before write — never write malformed events
-    const validated = EventEnvelopeSchema.parse(envelope)
-
-    const path = this.filePathFor(validated)
-    if (!existsSync(dirname(path))) {
-      await mkdir(dirname(path), { recursive: true })
-    }
-    await appendFile(path, `${JSON.stringify(validated)}\n`, "utf8")
-
-    return validated
   }
 
   /**

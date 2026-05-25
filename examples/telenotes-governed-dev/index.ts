@@ -119,25 +119,33 @@ const cognitive = new CognitiveCore(firewall, linker, explanations, worldModel)
 registerBuiltInExtractors()
 
 // Observation sink: send observations to the cognitive core, then emit the result.
-const kernel = new ActionKernel(policyGate, preconditionStub, async (obs: Observation) => {
-  await emit("observation.recorded", obs)
-  const result = await cognitive.ingest({
-    observation: obs,
-    context: {
-      actor_id: ACTOR_ID,
-      project_id: PROJECT_ID,
-      session_id: SESSION_ID,
-      default_scope: { level: "project", identifier: PROJECT_ID },
-      default_sensitivity: "internal",
-    },
-  })
-  await emit("cognitive.ingested", {
-    observation_id: result.observation_id,
-    claim_count: result.claims.length,
-    belief_count: result.beliefs.length,
-    world_model_keys: result.worldModelUpdates,
-  })
-})
+const kernel = new ActionKernel(
+  policyGate,
+  preconditionStub,
+  async (obs: Observation) => {
+    await emit("observation.recorded", obs)
+    const result = await cognitive.ingest({
+      observation: obs,
+      context: {
+        actor_id: ACTOR_ID,
+        project_id: PROJECT_ID,
+        session_id: SESSION_ID,
+        default_scope: { level: "project", identifier: PROJECT_ID },
+        default_sensitivity: "internal",
+      },
+    })
+    await emit("cognitive.ingested", {
+      observation_id: result.observation_id,
+      claim_count: result.claims.length,
+      belief_count: result.beliefs.length,
+      world_model_keys: result.worldModelUpdates,
+    })
+  },
+  // Explicit kernel context — the stubs no longer fall through silently.
+  // Hosts (this example, Guard, the MCP proxy) supply real values so the
+  // event log can tie actions back to a real session.
+  { session_id: SESSION_ID, project_id: PROJECT_ID },
+)
 
 async function main(): Promise<void> {
   console.log(`[telenotes-example] session ${SESSION_ID}`)

@@ -20,6 +20,8 @@ This package governs the lifecycle of claims and beliefs. It is the gate between
 
 5. **Every state transition produces an Explanation.** The firewall does not silently mutate state. Every promotion, demotion, quarantine, or supersession event carries a structured rationale.
 
+6. **Contradiction routing is subject-related (Round 5).** `MemoryFirewall.retrieveContradictions(query, policy)` returns contradicted beliefs whose claim shares the SAME `structured_predicate.{subject, relation}` as one of the accepted-set beliefs the standard retrieval would return under the same policy. Two beliefs are "related" when they assert different objects for the same (subject, relation) pair — e.g. `branch.current = main` vs `branch.current = release/foo`. Matching on subject alone would lump unrelated relations together; the (subject, relation) join is the natural one. Claims without a `structured_predicate` cannot be subject-joined and are intentionally excluded — the channel surfaces only what we can prove related. Sensitivity, scope, security, and retrieval gates still apply.
+
 ## What does not live here
 
 - Claim extraction from observations: see `@qmilab/lodestar-cognitive-core/extractors`.

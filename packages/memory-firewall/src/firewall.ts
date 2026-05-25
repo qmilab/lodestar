@@ -1,6 +1,7 @@
 import type {
   Belief,
   Claim,
+  ContextPolicy,
   EvidenceSet,
   Explanation,
   FreshnessStatus,
@@ -12,6 +13,7 @@ import type { BeliefStore, LifecycleAxis } from "./stores/belief-store.js"
 import type { ClaimStore } from "./stores/claim-store.js"
 import type { EvidenceStore } from "./stores/evidence-store.js"
 import { aggregateStrength } from "./stores/evidence-store.js"
+import type { RetrievalQuery } from "./retrieval.js"
 import {
   type TransitionAuthority,
   isTransitionAllowed,
@@ -226,6 +228,84 @@ export class MemoryFirewall {
     void current
   }
 
+  /**
+   * Retrieve contradicted beliefs related to the standard retrieval set.
+   *
+   * Round 5 fix (pre-Batch 3): the standard `GatedRetrieval.retrieve()`
+   * filters by `policy.allowed_truth_statuses` (default: `["supported"]`),
+   * so contradicted beliefs never reach the planner — including ones that
+   * directly conflict with what the planner is about to act on. This
+   * method is the dedicated "be aware of related contradictions" channel.
+   *
+   * A contradiction is "related" when the contradicted belief's claim and
+   * an accepted belief's claim share the SAME `structured_predicate.subject`
+   * AND `structured_predicate.relation`. The intuition: contradiction is
+   * meaningful when two beliefs assert different objects for the same
+   * (subject, relation) pair — e.g. "branch.current = main" (supported)
+   * vs "branch.current = release/foo" (contradicted). Matching on subject
+   * alone would lump together unrelated relations on the same subject;
+   * matching on (subject, relation) is the natural join.
+   *
+   * Claims without a `structured_predicate` cannot be subject-joined and
+   * are intentionally excluded from this channel — surface only what we
+   * can prove related.
+   *
+   * Sensitivity, scope, security, and retrieval gates still apply. A
+   * contradicted belief that is also `quarantined` or above the
+   * sensitivity ceiling does not surface here.
+   */
+  async retrieveContradictions(
+    query: RetrievalQuery,
+    policy: ContextPolicy,
+  ): Promise<Belief[]> {
+    // 1. Get the accepted-set candidates the standard retrieval would
+    //    return, so we can join contradictions against THEIR subjects.
+    //    We re-derive this here rather than depending on GatedRetrieval
+    //    to avoid the constructor-change cascade in research/probes.
+    const accepted = await this.beliefs.list({
+      scope: query.scope,
+      truth_status: policy.allowed_truth_statuses,
+      retrieval_status: policy.allowed_retrieval_statuses,
+      security_status: policy.allowed_security_statuses,
+      max_sensitivity: policy.sensitivity_ceiling,
+      calibration_class: query.calibration_class,
+    })
+
+    // 2. Build the (subject, relation) set of the accepted candidates.
+    const relatedKeys = new Set<string>()
+    for (const belief of accepted) {
+      const claim = await this.claims.get(belief.claim_id)
+      const pred = claim?.structured_predicate
+      if (pred) relatedKeys.add(predicateKey(pred.subject, pred.relation))
+    }
+    if (relatedKeys.size === 0) return []
+
+    // 3. Pull contradicted beliefs in scope through the same gates as
+    //    accepted retrieval, except the truth_status axis (which we are
+    //    inverting). Sensitivity/retrieval/security ceilings still apply.
+    const contradicted = await this.beliefs.list({
+      scope: query.scope,
+      truth_status: ["contradicted"],
+      retrieval_status: policy.allowed_retrieval_statuses,
+      security_status: policy.allowed_security_statuses,
+      max_sensitivity: policy.sensitivity_ceiling,
+      calibration_class: query.calibration_class,
+    })
+
+    // 4. Filter to those whose claim's (subject, relation) is in the
+    //    accepted-set key set.
+    const related: Belief[] = []
+    for (const belief of contradicted) {
+      const claim = await this.claims.get(belief.claim_id)
+      const pred = claim?.structured_predicate
+      if (!pred) continue
+      if (relatedKeys.has(predicateKey(pred.subject, pred.relation))) {
+        related.push(belief)
+      }
+    }
+    return related
+  }
+
   private assertEvidenceIsRealistic(evidence: EvidenceSet): void {
     if (evidence.items.length === 0) {
       throw new Error("MemoryFirewall: cannot adopt belief from empty EvidenceSet")
@@ -239,6 +319,15 @@ export class MemoryFirewall {
       )
     }
   }
+}
+
+/**
+ * Stable string key for a (subject, relation) pair. Uses a delimiter that
+ * does not appear in either component under the v0 Predicate shape (both
+ * are free-form strings; the `\x00` byte is a safe separator).
+ */
+function predicateKey(subject: string, relation: string): string {
+  return subject + "\x00" + relation
 }
 
 // -----------------------------------------------------------------------------

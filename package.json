@@ -27,7 +27,10 @@
     "probe:guard-import": "bun run research/probes/guard-import-no-self-promote.ts",
     "probe:guard-precond": "bun run research/probes/guard-precondition-revalidation.ts",
     "probe:guard-contract": "bun run research/probes/guard-contract-invariants.ts",
-    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract",
+    "probe:contradiction-routing": "bun run research/probes/context-policy-contradiction-routing.ts",
+    "probe:kernel-context": "bun run research/probes/kernel-context-propagation.ts",
+    "probe:singlewriter": "bun run research/probes/event-log-single-writer.ts",
+    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract && bun run probe:contradiction-routing && bun run probe:kernel-context && bun run probe:singlewriter",
     "lodestar": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
