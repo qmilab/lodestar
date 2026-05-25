@@ -25,7 +25,7 @@ promote on another.
 | Axis | States |
 | --- | --- |
 | `truth_status` | `unverified` → `supported` → `contradicted` |
-| `retrieval_status` | `normal` ↔ `restricted` ↔ `quarantined` |
+| `retrieval_status` | `normal` ↔ `restricted` ↔ `hidden` |
 | `security_status` | `clean` ↔ `quarantined` (one-way without explicit clearance) |
 | `freshness_status` | `fresh` → `stale` → `expired` |
 
@@ -45,26 +45,34 @@ import {
   InMemoryEvidenceStore,
 } from "@qmilab/lodestar-memory-firewall"
 
-const firewall = new MemoryFirewall({
-  claims: new InMemoryClaimStore(),
-  beliefs: new InMemoryBeliefStore(),
-  evidence: new InMemoryEvidenceStore(),
+const claims = new InMemoryClaimStore()
+const beliefs = new InMemoryBeliefStore()
+const evidence = new InMemoryEvidenceStore()
+
+const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
+  // route firewall audit events to your event log
 })
 
-await firewall.transitionClaim({
-  claim_id: claim.id,
+// Promote one axis of an existing belief. The authority is what gives
+// the firewall permission to make the transition; user_confirmation
+// is one of the few authorities allowed to lift truth_status.
+await firewall.transitionAxis({
+  belief_id: belief.id,
   axis: "truth_status",
-  from: "unverified",
-  to: "supported",
-  authority: "user_confirmation",
+  to_value: "supported",
+  by_authority: "user_confirmation",
   reason: "user confirmed in chat",
 })
 
-const retrieval = new GatedRetrieval(firewall)
-const result = await retrieval.query({
-  context_policy: policy,
-  topic: "current branch",
-})
+// Retrieval goes through the gate. It returns four buckets — what
+// was accepted, what was rejected (and why), uncertainties surfaced
+// per policy, and contradictions if the policy allows.
+const retrieval = new GatedRetrieval(beliefs)
+const result = await retrieval.retrieve(
+  { scope: { level: "project", identifier: "my-project" } },
+  contextPolicy,
+)
+// result.accepted, result.rejected, result.contradictions, result.uncertainties
 ```
 
 ## Invariants
@@ -82,8 +90,10 @@ const result = await retrieval.query({
    an explicit clearance event from an authorised actor.
 4. **Retrieval respects ContextPolicy.** No retrieval path silently
    bypasses the policy.
-5. **Every transition produces an Explanation.** No silent state
-   mutation.
+5. **Every transition produces an audit event.** No silent state
+   mutation — the audit sink passed to the constructor receives a
+   structured event for every accepted claim, adopted belief, and
+   axis transition.
 
 ## License
 

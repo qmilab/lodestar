@@ -22,20 +22,32 @@ bun add @qmilab/lodestar-adapter-filesystem
 import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
 import { ActionKernel } from "@qmilab/lodestar-action-kernel"
 
-registerFsReadTool()
+// projectRoot is required — every fs.read input path is resolved
+// relative to it, and reads outside that root are rejected.
+registerFsReadTool(process.cwd())
 
-const kernel = new ActionKernel({ /* ... */ })
-const contract = await kernel.propose("fs.read@1", { path: "README.md" }, ctx)
-const outcome = await kernel.execute(contract, ctx)
+const kernel = new ActionKernel(policyGate, preconditionChecker, observationSink)
+const action = kernel.propose({
+  intent: "read project file",
+  tool: "fs.read",
+  inputs: { path: "README.md" },
+  contract: { /* ... */ },
+  proposed_by: "agent-1",
+})
+const arbitrated = await kernel.arbitrate(action)
+if (arbitrated.phase === "approved") {
+  const executed = await kernel.execute(arbitrated)
+}
 ```
 
 ## What it provides
 
-- `makeFsReadTool()` — constructs the Tool object without registering it.
-- `registerFsReadTool()` — convenience that registers it under the
-  default name (`fs.read@1`).
-- `FsReadOutputSchema` — Zod schema for the tool's output, used by the
-  schema registry in `@qmilab/lodestar-core`.
+- `makeFsReadTool(projectRoot)` — constructs the Tool object without
+  registering it.
+- `registerFsReadTool(projectRoot)` — convenience that registers it
+  under the name `fs.read` with `output_schema_key: "fs.read@1"`.
+- `FsReadOutputSchema` — Zod schema for the tool's output, registered
+  against `fs.read@1` in `@qmilab/lodestar-core`'s schema registry.
 
 ## Invariants
 

@@ -22,20 +22,33 @@ bun add @qmilab/lodestar-adapter-git
 import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import { ActionKernel } from "@qmilab/lodestar-action-kernel"
 
-registerGitStatusTool()
+// projectRoot is required — git status runs inside it.
+registerGitStatusTool(process.cwd())
 
-const kernel = new ActionKernel({ /* ... */ })
-const contract = await kernel.propose("git.status@1", { cwd: "." }, ctx)
-const outcome = await kernel.execute(contract, ctx)
+const kernel = new ActionKernel(policyGate, preconditionChecker, observationSink)
+const action = kernel.propose({
+  intent: "inspect repository state",
+  tool: "git.status",
+  inputs: { repo: "." },
+  contract: { /* ... */ },
+  proposed_by: "agent-1",
+})
+const arbitrated = await kernel.arbitrate(action)
+if (arbitrated.phase === "approved") {
+  const executed = await kernel.execute(arbitrated)
+}
 ```
 
 ## What it provides
 
-- `makeGitStatusTool()` — constructs the Tool object without registering it.
-- `registerGitStatusTool()` — convenience that registers it under the
-  default name (`git.status@1`).
-- `GitStatusOutputSchema` — Zod schema for the tool's output, used by
-  the schema registry in `@qmilab/lodestar-core`.
+- `makeGitStatusTool(projectRoot)` — constructs the Tool object
+  without registering it.
+- `registerGitStatusTool(projectRoot)` — convenience that registers
+  it under the name `git.status` with
+  `output_schema_key: "git.status@1"`.
+- `GitStatusOutputSchema` — Zod schema for the tool's output,
+  registered against `git.status@1` in `@qmilab/lodestar-core`'s
+  schema registry.
 
 ## Invariants
 
