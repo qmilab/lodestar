@@ -1,9 +1,45 @@
 {
   "name": "@qmilab/lodestar-memory-firewall-zep",
   "version": "0.1.0",
+  "description": "Zep fact-import adapter — bring Zep facts through the Lodestar Memory Firewall as external_document evidence at unverified/restricted, never silently promoted (Zep ratings never raise truth status). Part of Lodestar, the trust layer for AI agents.",
+  "license": "Apache-2.0",
+  "author": "QMI Lab <hello@qmilab.com>",
+  "homepage": "https://qmilab.com/lodestar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qmilab/lodestar.git",
+    "directory": "packages/memory-firewall/adapters/zep"
+  },
+  "bugs": {
+    "url": "https://github.com/qmilab/lodestar/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "memory-firewall",
+    "zep",
+    "memory-import",
+    "adapter"
+  ],
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit"

@@ -1,11 +1,47 @@
 {
   "name": "@qmilab/lodestar-trace",
   "version": "0.1.0",
+  "description": "The read side — project the Lodestar event log into the epistemic chain and render a 'why did the agent do this?' report. Part of Lodestar, the trust layer for AI agents.",
+  "license": "Apache-2.0",
+  "author": "QMI Lab <hello@qmilab.com>",
+  "homepage": "https://qmilab.com/lodestar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qmilab/lodestar.git",
+    "directory": "packages/trace"
+  },
+  "bugs": {
+    "url": "https://github.com/qmilab/lodestar/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "trace",
+    "audit-trail",
+    "epistemic-chain",
+    "report"
+  ],
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "lodestar-report": "./src/cli.ts"
+    "lodestar-report": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

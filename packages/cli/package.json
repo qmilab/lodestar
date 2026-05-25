@@ -1,11 +1,46 @@
 {
   "name": "@qmilab/lodestar-cli",
   "version": "0.1.0",
+  "description": "The `lodestar` command-line interface — `lodestar report`, `lodestar guard wrap`, `lodestar action`, `lodestar trace`, `lodestar probe`. Part of Lodestar, the trust layer for AI agents.",
+  "license": "Apache-2.0",
+  "author": "QMI Lab <hello@qmilab.com>",
+  "homepage": "https://qmilab.com/lodestar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qmilab/lodestar.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/qmilab/lodestar/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "cli",
+    "audit",
+    "agent-governance"
+  ],
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "bin": {
-    "lodestar": "./src/index.ts"
+    "lodestar": "./dist/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
