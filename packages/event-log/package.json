@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-event-log",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Append-only NDJSON event log writer and reader for the Lodestar epistemic chain. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

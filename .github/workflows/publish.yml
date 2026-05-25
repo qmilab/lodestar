@@ -38,6 +38,15 @@ jobs:
           node-version: '22'
           registry-url: 'https://registry.npmjs.org'
 
+      # `npm stage publish` was added in npm 11. Node 22 ships with
+      # npm 10.x by default. The trusted-publisher rule on npm requires
+      # `npm stage publish` (not `npm publish`), so we upgrade to npm
+      # latest before publishing.
+      - name: Upgrade npm (for stage publish)
+        run: |
+          npm install -g npm@latest
+          npm --version
+
       # Derive the version from the tag (refs/tags/v0.2.0 -> 0.2.0) and
       # verify every publishable package already declares that version.
       # Failing here keeps a half-published release from happening — the
@@ -222,7 +231,10 @@ jobs:
 
           for pkg in "${PUBLISH_ORDER[@]}"; do
             name=$(node -p "require('./$pkg/package.json').name")
-            echo "::group::publish $name"
-            (cd "$pkg" && npm publish --provenance --access public)
+            echo "::group::stage-publish $name"
+            # `npm stage publish` (npm 11+) uploads to npm's staging area
+            # under the configured trusted-publisher rule. Each stage upload
+            # waits for manual 2FA approval in the npm UI before going live.
+            (cd "$pkg" && npm stage publish --provenance --access public)
             echo "::endgroup::"
           done

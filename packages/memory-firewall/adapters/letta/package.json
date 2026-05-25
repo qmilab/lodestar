@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-memory-firewall-letta",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Letta memory-block import adapter — bring Letta blocks through the Lodestar Memory Firewall as external_document evidence at unverified/restricted, never silently promoted. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
