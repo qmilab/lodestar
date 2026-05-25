@@ -80,7 +80,7 @@ jobs:
       #
       # The rewrite happens in the CI runner only; committed source
       # keeps `workspace:*` so Bun-driven dev keeps working.
-      - name: Rewrite workspace:* to exact version pins
+      - name: "Rewrite workspace:* to exact version pins"
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -113,7 +113,7 @@ jobs:
       # remains in any non-private package.json. Catches future drift
       # to `workspace:^`, `workspace:~`, `workspace:0.1.0`, or any other
       # variant the rewrite loop above doesn't handle.
-      - name: Verify no workspace: strings remain
+      - name: "Verify no workspace: strings remain"
         run: |
           set -euo pipefail
           leftover=$(find packages -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*' \
