@@ -11,7 +11,9 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "tsc -b",
+    "typecheck": "bun run typecheck:packages && bun run typecheck:examples",
+    "typecheck:packages": "tsc -b",
+    "typecheck:examples": "bun run --filter './examples/*' typecheck",
     "test": "bun test",
     "lint": "biome check packages examples research",
     "format": "biome format --write packages examples research",

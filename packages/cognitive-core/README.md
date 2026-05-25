@@ -19,31 +19,31 @@ bun add @qmilab/lodestar-cognitive-core
 ## What it does
 
 - **Claim extractors** — `registerExtractor()` declares how a given
-  observation type produces candidate claims. Two extractors ship
-  built-in: `GitStatusExtractor` and `FsReadExtractor`. Both are
-  pattern-based, not LLM-based — the source of evidence determines
-  trust, not the extractor.
-- **Evidence linker** — binds the candidate claim to the observations
-  that produced it, computes aggregate strength, and labels the
-  evidence kind (`tool_output`, `external_document`,
-  `model_inference`, `user_input`, etc.).
-- **Belief adoption** — proposes the candidate claim through the
-  Memory Firewall. The firewall decides whether it can be adopted, at
-  what truth/retrieval status, and with what initial freshness. The
-  Cognitive Core never promotes a claim itself.
-- **World model** — an in-memory store of currently-adopted beliefs,
-  keyed by topic. The planner uses this as the read side.
-- **Explanation generator** — produces an `Explanation` object for
-  every chain transition, so downstream tracing has a structured
-  rationale to render.
+  observation schema produces candidate claims. Two extractors ship
+  built-in via `registerBuiltInExtractors()`: `GitStatusExtractor` and
+  `FsReadExtractor`. Both are pattern-based, not LLM-based.
+- **Evidence linker** — binds a candidate claim to its source
+  observations and any related prior beliefs, returning an
+  `EvidenceSet` the firewall can evaluate.
+- **Explanation generator** — produces a structured `Explanation`
+  for chain transitions.
+- **World model** — an in-memory key-value store of currently-adopted
+  beliefs, keyed by topic.
+- **Belief adoption** — `core.ingest(observation, context)` runs the
+  end-to-end pass and proposes adoption through the Memory Firewall.
+  The firewall decides whether to adopt, at what truth/retrieval
+  status, and with what freshness. The Cognitive Core never promotes
+  a claim itself.
 
 ## Usage
 
 ```ts
 import {
   CognitiveCore,
-  registerBuiltInExtractors,
+  EvidenceLinker,
+  ExplanationGenerator,
   InMemoryWorldModel,
+  registerBuiltInExtractors,
 } from "@qmilab/lodestar-cognitive-core"
 import {
   MemoryFirewall,
@@ -54,31 +54,42 @@ import {
 
 registerBuiltInExtractors()
 
-const firewall = new MemoryFirewall({
-  claims: new InMemoryClaimStore(),
-  beliefs: new InMemoryBeliefStore(),
-  evidence: new InMemoryEvidenceStore(),
-})
+const claims = new InMemoryClaimStore()
+const beliefs = new InMemoryBeliefStore()
+const evidence = new InMemoryEvidenceStore()
+const firewall = new MemoryFirewall(claims, beliefs, evidence, async () => {})
 
-const core = new CognitiveCore({
+const core = new CognitiveCore(
   firewall,
-  worldModel: new InMemoryWorldModel(),
-})
+  new EvidenceLinker(evidence, beliefs),
+  new ExplanationGenerator("agent-1"),
+  new InMemoryWorldModel(),
+)
 
-await core.ingest({ observation, session_id })
+await core.ingest({
+  observation,
+  context: {
+    actor_id: "agent-1",
+    project_id: "my-project",
+    session_id: "sess-1",
+    default_scope: { level: "project", identifier: "my-project" },
+    default_sensitivity: "internal",
+  },
+})
 ```
 
 ## Invariants
 
 1. **The Cognitive Core does not promote claims.** It proposes; the
    Memory Firewall disposes. The split is intentional.
-2. **Evidence kind is part of the contract.** A claim derived from
-   `external_document` evidence is labeled as such, and the firewall's
-   auto-observation gate will refuse to silently promote it.
-3. **Extractors are deterministic by default.** Built-in extractors
-   are pattern-based. LLM extractors are possible but must declare
-   `extraction_method: "model"` so the firewall can apply the
-   appropriate gate.
+2. **No claim without an observation.** Every Claim references at
+   least one source Observation.
+3. **No belief without evidence.** Adoption is gated by the firewall,
+   which requires an `EvidenceSet` built by the `EvidenceLinker`.
+4. **Evidence kind is part of the contract.** A claim derived from
+   `external_document` or `model_inference` evidence is labeled as
+   such; the firewall's auto-observation gate then refuses to silently
+   promote it to `truth_status: supported`.
 
 ## License
 
