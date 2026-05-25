@@ -10,8 +10,8 @@
     "examples/*"
   ],
   "scripts": {
-    "build": "bun run --filter '*' build",
-    "typecheck": "bun run --filter '*' typecheck",
+    "build": "tsc -b",
+    "typecheck": "tsc -b",
     "test": "bun test",
     "lint": "biome check packages examples research",
     "format": "biome format --write packages examples research",
