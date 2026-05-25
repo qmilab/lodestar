@@ -3,10 +3,12 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
-**Status**: pre-v0.1 implementation, v0.2 architecture. Nine probes pass
-under strict TypeScript (six firewall probes plus three guard / contract
-probes). Batches 1 and 2 are complete. Subsequent batches are tracked in
-`docs/roadmap.md`.
+**Status**: v0.1.5 published to npm (13 packages via CI trusted
+publishing), v0.2 architecture locked. Twelve probes pass under strict
+TypeScript: six firewall probes, three guard / contract probes, and
+the three pre-Batch-3 fixes (contradiction routing, kernel context
+propagation, event-log single-writer). Batches 1 and 2 are complete.
+Subsequent batches are tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
@@ -50,15 +52,15 @@ packages/
   core/                # (exists) types, schemas, epistemic chain primitives
   event-log/           # (exists) envelope, NDJSON writer/reader, snapshots
   action-kernel/       # (exists) tool registry, two-phase execution, sandbox
-  memory-firewall/     # (exists) lifecycle axes, retrieval gates, promotion
+  memory-firewall/     # (exists) lifecycle axes, retrieval gates, promotion, subject-related contradiction routing
     adapters/
-      mem0/            # (Batch 2) design stub for mem0 import path
-      letta/           # (Batch 2) design stub for Letta import path
-      zep/             # (Batch 2) design stub for Zep import path
+      mem0/            # (exists) mem0 import adapter
+      letta/           # (exists) Letta blocks import adapter
+      zep/             # (exists) Zep facts import adapter
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
-  cli/                 # (exists; reorganized in Batch 2)
-  guard/               # (Batch 2) meta-package + guard.wrap() helper
-  trace/               # (Batch 2) read side + `lodestar report` CLI
+  cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
+  guard/               # (exists) meta-package + guard.wrap() helper
+  trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (Batch 3) MCP proxy mode
   harness/             # (Batch 4) probes, sentinels, calibrators, replay-lite
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
@@ -73,7 +75,7 @@ packages/
 examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline
   doc-insight/               # (exists) firewall auto_observation gate demo
-  coding-agent-greenfield/   # (Batch 2) guard.wrap() demo on a homegrown agent
+  coding-agent-greenfield/   # (exists) guard.wrap() demo on a homegrown agent
 
 docs/
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
@@ -85,12 +87,14 @@ docs/
   review/              # adversarial review history (ChatGPT rounds 1-5)
 
 research/
-  probes/              # nine passing probes (memory-poisoning-basic,
+  probes/              # twelve passing probes (memory-poisoning-basic,
                        #   epistemic-chain-smoke, external-document-not-normal,
                        #   quarantined-not-retrievable, sensitivity-ceiling,
                        #   auto-observation-gate, guard-import-no-self-promote,
                        #   guard-precondition-revalidation,
-                       #   guard-contract-invariants)
+                       #   guard-contract-invariants, context-policy-
+                       #   contradiction-routing, kernel-context-propagation,
+                       #   event-log-single-writer)
   benchmarks/          # (later) reproducible evaluation
   datasets/            # (later) logged event traces for analysis
 ```
@@ -151,7 +155,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Nine probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
+- **Twelve probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
 
 ## Quick references
 

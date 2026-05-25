@@ -8,15 +8,15 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs nine probes end-to-end. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs twelve probes end-to-end. v0.1.5 of all 13 packages is on npm via CI trusted publishing. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
-- Append-only NDJSON event log with monotonic sequencing and payload hashes
-- Two-phase action execution with precondition revalidation
-- Memory firewall with four orthogonal lifecycle axes and per-axis transition tables
+- Append-only NDJSON event log with monotonic sequencing, payload hashes, and per-partition append serialization
+- Two-phase action execution with precondition revalidation; required `KernelContext` (no silent stub fallback)
+- Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator
-- Nine passing probes:
+- Twelve passing probes:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -26,6 +26,9 @@ Concrete state:
   - guard import no-self-promote
   - guard precondition revalidation
   - guard contract invariants (22 sub-cases A–V)
+  - context policy contradiction routing (subject-relation join, collision-free keys, gate symmetry)
+  - kernel context propagation (real session/project flow through to event log)
+  - event log single-writer (per-partition mutex, no torn writes under fan-out)
 - End-to-end example producing an 11-event audit trail
 - `guard.wrap()` driving a homegrown coding-agent loop in
   `examples/coding-agent-greenfield/`
@@ -36,7 +39,7 @@ Concrete state:
 
 The work is partitioned into five batches. Each batch is scoped to land cleanly, with the next batch building on it.
 
-### Batch 1 — Positioning (current)
+### Batch 1 — Positioning
 
 **Goal**: lock the public-facing language and roadmap before any further code is written.
 
