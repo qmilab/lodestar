@@ -1,1 +1,1 @@
-export { makeGitStatusTool, registerGitStatusTool, GitStatusOutputSchema } from "./status"
+export { makeGitStatusTool, registerGitStatusTool, GitStatusOutputSchema } from "./status.js"

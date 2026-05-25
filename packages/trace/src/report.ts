@@ -1,5 +1,5 @@
 import type { Action, Belief, Claim, Observation, Outcome } from "@qmilab/lodestar-core"
-import type { ChainProjection, FirewallTransition, ProjectedAction } from "./chain"
+import type { ChainProjection, FirewallTransition, ProjectedAction } from "./chain.js"
 
 /**
  * Render an epistemic chain projection as a markdown trust report.

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ResourceScopeSchema, SensitivitySchema, TimestampSchema } from "./common"
+import { ResourceScopeSchema, SensitivitySchema, TimestampSchema } from "./common.js"
 
 /**
  * Kinds of actor that can produce events in the system.

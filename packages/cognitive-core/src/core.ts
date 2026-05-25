@@ -1,10 +1,10 @@
 import type { Belief, Claim, EvidenceItem, EvidenceSet, Observation, ResourceScope } from "@qmilab/lodestar-core"
 import type { MemoryFirewall } from "@qmilab/lodestar-memory-firewall"
 import { aggregateStrength } from "@qmilab/lodestar-memory-firewall"
-import type { EvidenceLinker } from "./evidence-linker"
-import type { ExplanationGenerator } from "./explanation"
-import { lookupExtractor } from "./extractors/base"
-import type { WorldModel } from "./world-model"
+import type { EvidenceLinker } from "./evidence-linker.js"
+import type { ExplanationGenerator } from "./explanation.js"
+import { lookupExtractor } from "./extractors/base.js"
+import type { WorldModel } from "./world-model/index.js"
 
 /**
  * The CognitiveCore orchestrates the epistemic chain steps:

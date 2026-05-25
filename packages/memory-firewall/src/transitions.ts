@@ -1,5 +1,5 @@
 import type { FreshnessStatus, RetrievalStatus, SecurityStatus, TruthStatus } from "@qmilab/lodestar-core"
-import type { LifecycleAxis } from "./stores/belief-store"
+import type { LifecycleAxis } from "./stores/belief-store.js"
 
 /**
  * Allowed lifecycle transitions, by axis.

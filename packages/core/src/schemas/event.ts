@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { SignatureSchema } from "./actor"
-import { TimestampSchema } from "./common"
+import { SignatureSchema } from "./actor.js"
+import { TimestampSchema } from "./common.js"
 
 /**
  * Version metadata attached to every event.

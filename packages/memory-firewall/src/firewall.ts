@@ -8,14 +8,14 @@ import type {
   SecurityStatus,
   TruthStatus,
 } from "@qmilab/lodestar-core"
-import type { BeliefStore, LifecycleAxis } from "./stores/belief-store"
-import type { ClaimStore } from "./stores/claim-store"
-import type { EvidenceStore } from "./stores/evidence-store"
-import { aggregateStrength } from "./stores/evidence-store"
+import type { BeliefStore, LifecycleAxis } from "./stores/belief-store.js"
+import type { ClaimStore } from "./stores/claim-store.js"
+import type { EvidenceStore } from "./stores/evidence-store.js"
+import { aggregateStrength } from "./stores/evidence-store.js"
 import {
   type TransitionAuthority,
   isTransitionAllowed,
-} from "./transitions"
+} from "./transitions.js"
 
 /**
  * The MemoryFirewall enforces the promotion gates and lifecycle transitions

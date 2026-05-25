@@ -1,9 +1,9 @@
-export { CognitiveCore, type IngestInput, type IngestResult } from "./core"
-export { EvidenceLinker } from "./evidence-linker"
+export { CognitiveCore, type IngestInput, type IngestResult } from "./core.js"
+export { EvidenceLinker } from "./evidence-linker.js"
 export {
   ExplanationGenerator,
   type BuildExplanationInput,
-} from "./explanation"
+} from "./explanation.js"
 export {
   registerBuiltInExtractors,
   registerExtractor,
@@ -12,10 +12,10 @@ export {
   FsReadExtractor,
   type ClaimExtractor,
   type ExtractionInput,
-} from "./extractors"
+} from "./extractors/index.js"
 export {
   type WorldModel,
   type WorldModelEntry,
   type WorldModelSetInput,
   InMemoryWorldModel,
-} from "./world-model"
+} from "./world-model/index.js"

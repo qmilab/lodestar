@@ -20,8 +20,8 @@
  */
 
 // ── Helpers and types defined here ──────────────────────────────────────────
-export { wrap, runGuarded } from "./wrap"
-export type { GuardRunResult } from "./wrap"
+export { wrap, runGuarded } from "./wrap.js"
+export type { GuardRunResult } from "./wrap.js"
 export type {
   AgentLoop,
   CallToolOptions,
@@ -29,8 +29,8 @@ export type {
   GuardConfig,
   GuardContext,
   GuardInternals,
-} from "./types"
-export { autoApprovePolicy, alwaysHoldsChecker } from "./policy-presets"
+} from "./types.js"
+export { autoApprovePolicy, alwaysHoldsChecker } from "./policy-presets.js"
 
 // ── Re-exports from the underlying packages ─────────────────────────────────
 

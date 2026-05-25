@@ -14,10 +14,10 @@ import {
   type ExternalMemoryAdapter,
   type MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import { ZepEnvelopeSchema, ZepFactSchema, type ZepFact } from "./schema"
+import { ZepEnvelopeSchema, ZepFactSchema, type ZepFact } from "./schema.js"
 
-export { ZepExportSchema, ZepFactSchema } from "./schema"
-export type { ZepExport, ZepFact } from "./schema"
+export { ZepExportSchema, ZepFactSchema } from "./schema.js"
+export type { ZepExport, ZepFact } from "./schema.js"
 
 const ADAPTER_NAME = "zep"
 

@@ -38,7 +38,7 @@ import {
   InMemoryWorldModel,
   registerBuiltInExtractors,
 } from "@qmilab/lodestar-cognitive-core"
-import { TELENOTES_TOOL_POLICIES } from "./policy.lodestar"
+import { TELENOTES_TOOL_POLICIES } from "./policy.lodestar.js"
 
 const PROJECT_ID = "telenotes-governed-dev"
 const SESSION_ID = `session-${Date.now()}`

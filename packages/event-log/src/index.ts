@@ -2,5 +2,5 @@ export {
   EventLogWriter,
   canonicalHash,
   _resetEventLogStateForTests,
-} from "./writer"
-export { EventLogReader } from "./reader"
+} from "./writer.js"
+export { EventLogReader } from "./reader.js"

@@ -1,5 +1,5 @@
 import type { Belief, ContextPolicy, ResourceScope } from "@qmilab/lodestar-core"
-import type { BeliefStore } from "./stores/belief-store"
+import type { BeliefStore } from "./stores/belief-store.js"
 
 /**
  * Gated retrieval over the BeliefStore.

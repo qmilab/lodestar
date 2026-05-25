@@ -14,10 +14,10 @@ import {
   type ExternalMemoryAdapter,
   type MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import { Mem0EnvelopeSchema, Mem0RecordSchema, type Mem0Record } from "./schema"
+import { Mem0EnvelopeSchema, Mem0RecordSchema, type Mem0Record } from "./schema.js"
 
-export { Mem0ExportSchema, Mem0RecordSchema } from "./schema"
-export type { Mem0Export, Mem0Record } from "./schema"
+export { Mem0ExportSchema, Mem0RecordSchema } from "./schema.js"
+export type { Mem0Export, Mem0Record } from "./schema.js"
 
 const ADAPTER_NAME = "mem0"
 

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { ResourceScopeSchema, TimestampSchema } from "./common"
+import { ResourceScopeSchema, TimestampSchema } from "./common.js"
 
 // -----------------------------------------------------------------------------
 // Trust ladder

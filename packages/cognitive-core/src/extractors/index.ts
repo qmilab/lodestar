@@ -1,6 +1,6 @@
-import { FsReadExtractor } from "./fs-read"
-import { GitStatusExtractor } from "./git-status"
-import { registerExtractor } from "./base"
+import { FsReadExtractor } from "./fs-read.js"
+import { GitStatusExtractor } from "./git-status.js"
+import { registerExtractor } from "./base.js"
 
 /**
  * Register the built-in extractors. Call once at process start.
@@ -14,4 +14,4 @@ export function registerBuiltInExtractors(): void {
 }
 
 export { GitStatusExtractor, FsReadExtractor }
-export { type ClaimExtractor, type ExtractionInput, registerExtractor, lookupExtractor } from "./base"
+export { type ClaimExtractor, type ExtractionInput, registerExtractor, lookupExtractor } from "./base.js"

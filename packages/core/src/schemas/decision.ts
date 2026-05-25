@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { TimestampSchema } from "./common"
+import { TimestampSchema } from "./common.js"
 
 /**
  * One option in a decision.

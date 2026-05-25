@@ -1,5 +1,5 @@
 import { z } from "zod"
-import { SensitivitySchema, TimestampSchema } from "./common"
+import { SensitivitySchema, TimestampSchema } from "./common.js"
 
 /**
  * Trust level of an observation's source.
