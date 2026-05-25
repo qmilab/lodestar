@@ -68,6 +68,64 @@ jobs:
             exit 1
           fi
 
+      # Rewrite Bun's `workspace:*` protocol to exact semver pins
+      # before publish. npm doesn't auto-rewrite `workspace:*`; a tarball
+      # that ships with the literal string in its dependencies is
+      # uninstallable by external consumers.
+      #
+      # Exact pins (`0.1.0`, not `^0.1.0`) intentionally — lockstep
+      # monorepo releases mean version N of guard was tested against
+      # version N of every internal dep, and we don't want install-time
+      # drift to a patch that wasn't part of that lockstep.
+      #
+      # The rewrite happens in the CI runner only; committed source
+      # keeps `workspace:*` so Bun-driven dev keeps working.
+      - name: Rewrite workspace:* to exact version pins
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${TAG#v}"
+          while IFS= read -r pkg; do
+            PKG="$pkg" VERSION="$version" node -e '
+              const fs = require("fs");
+              const path = process.env.PKG;
+              const ver = process.env.VERSION;
+              const p = JSON.parse(fs.readFileSync(path, "utf8"));
+              let touched = false;
+              for (const block of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+                if (!p[block]) continue;
+                for (const k of Object.keys(p[block])) {
+                  if (p[block][k] === "workspace:*" && k.startsWith("@qmilab/lodestar-")) {
+                    p[block][k] = ver;
+                    touched = true;
+                  }
+                }
+              }
+              if (touched) {
+                fs.writeFileSync(path, JSON.stringify(p, null, 2) + "\n");
+                console.log("rewrote workspace:* in " + path);
+              }
+            '
+          done < <(find packages -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*')
+
+      # Belt-and-braces guard: fail the build if any `workspace:` string
+      # remains in any non-private package.json. Catches future drift
+      # to `workspace:^`, `workspace:~`, `workspace:0.1.0`, or any other
+      # variant the rewrite loop above doesn't handle.
+      - name: Verify no workspace: strings remain
+        run: |
+          set -euo pipefail
+          leftover=$(find packages -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*' \
+            -exec grep -l '"workspace:' {} + || true)
+          if [ -n "$leftover" ]; then
+            echo "::error::workspace: protocol still present in published package.json after rewrite:"
+            echo "$leftover"
+            echo "$leftover" | xargs -I {} sh -c 'echo "--- {}"; grep -n "\"workspace:" "{}"'
+            exit 1
+          fi
+          echo "ok: no workspace: strings remain in any package.json"
+
       # Publish every non-private package found under packages/, including
       # the two-level-deep ones (packages/adapters/*, packages/memory-firewall/adapters/*).
       # The draft's `packages/*/package.json` glob silently skipped 5 of 13
