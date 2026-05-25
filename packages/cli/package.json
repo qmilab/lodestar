@@ -43,8 +43,8 @@
     "provenance": true
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit"
+    "build": "tsc -b",
+    "typecheck": "tsc -b"
   },
   "dependencies": {
     "@qmilab/lodestar-core": "workspace:*",

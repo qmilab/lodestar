@@ -1,0 +1,18 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/event-log" },
+    { "path": "./packages/action-kernel" },
+    { "path": "./packages/memory-firewall" },
+    { "path": "./packages/cognitive-core" },
+    { "path": "./packages/adapters/filesystem" },
+    { "path": "./packages/adapters/git" },
+    { "path": "./packages/guard" },
+    { "path": "./packages/trace" },
+    { "path": "./packages/cli" },
+    { "path": "./packages/memory-firewall/adapters/mem0" },
+    { "path": "./packages/memory-firewall/adapters/letta" },
+    { "path": "./packages/memory-firewall/adapters/zep" }
+  ]
+}
