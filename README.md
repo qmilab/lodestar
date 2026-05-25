@@ -89,8 +89,10 @@ The **memory governance entry point**. Works alongside [mem0](https://github.com
 
 ```ts
 import { MemoryFirewall } from "@qmilab/lodestar-memory-firewall"
-import { mem0Adapter } from "@qmilab/lodestar-memory-firewall/adapters/mem0"
-const firewall = new MemoryFirewall({ adapter: mem0Adapter(mem0Client) })
+// each adapter is a separate npm package so you only install the SDK you use:
+import { importMemories } from "@qmilab/lodestar-memory-firewall-mem0"
+// also available: @qmilab/lodestar-memory-firewall-letta,
+//                 @qmilab/lodestar-memory-firewall-zep
 ```
 
 ### `@qmilab/lodestar-harness`
