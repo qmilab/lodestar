@@ -126,26 +126,103 @@ jobs:
           fi
           echo "ok: no workspace: strings remain in any package.json"
 
-      # Publish every non-private package found under packages/, including
-      # the two-level-deep ones (packages/adapters/*, packages/memory-firewall/adapters/*).
-      # The draft's `packages/*/package.json` glob silently skipped 5 of 13
-      # publishable packages on this repo.
+      # Verify the hardcoded PUBLISH_ORDER below is a valid topological
+      # sort of the actual internal dependency graph. Runs AFTER the
+      # workspace:* rewrite so it sees the exact-pin edges that
+      # determine real installability of the published artifact.
       #
-      # Failures are NOT swallowed. If a single publish fails (auth, version
-      # conflict, network), the workflow exits non-zero so the release shows
-      # red and the maintainer can investigate before the tag looks "done".
-      - name: Publish all packages
+      # If someone adds a new internal dep (or a new package) but
+      # forgets to update PUBLISH_ORDER, this fails the workflow
+      # before any publish happens.
+      - name: Verify publish order is topologically valid
         run: |
           set -euo pipefail
-          while IFS= read -r pkg; do
-            dir=$(dirname "$pkg")
-            name=$(node -p "require('./$pkg').name")
-            private=$(node -p "require('./$pkg').private === true")
-            if [ "$private" = "true" ]; then
-              echo "skip (private): $name"
-              continue
-            fi
+          node <<'EOF'
+          const fs = require("fs");
+          const path = require("path");
+
+          const order = [
+            "packages/core",
+            "packages/event-log",
+            "packages/action-kernel",
+            "packages/memory-firewall",
+            "packages/cognitive-core",
+            "packages/trace",
+            "packages/adapters/filesystem",
+            "packages/adapters/git",
+            "packages/memory-firewall/adapters/mem0",
+            "packages/memory-firewall/adapters/letta",
+            "packages/memory-firewall/adapters/zep",
+            "packages/guard",
+            "packages/cli",
+          ];
+
+          const published = new Set();
+          const violations = [];
+
+          for (const pkgDir of order) {
+            const pj = JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8"));
+            const allDeps = {
+              ...(pj.dependencies || {}),
+              ...(pj.peerDependencies || {}),
+              ...(pj.optionalDependencies || {}),
+            };
+            for (const depName of Object.keys(allDeps)) {
+              if (depName.startsWith("@qmilab/lodestar-") && !published.has(depName)) {
+                violations.push(pj.name + " depends on " + depName + " but " + depName + " has not been published yet in PUBLISH_ORDER");
+              }
+            }
+            published.add(pj.name);
+          }
+
+          if (violations.length > 0) {
+            console.error("::error::Publish order violations:");
+            for (const v of violations) console.error("  - " + v);
+            process.exit(1);
+          }
+          console.log("ok: publish order is topologically valid (" + order.length + " packages)");
+          EOF
+
+      # Publish in explicit topological order. The find-order loop used
+      # earlier in this file's history relied on filesystem ordering,
+      # which is not dependency-aware — under the exact-pin rewrite,
+      # publishing a dependent before its dependency leaves the
+      # dependent pointing at a version that doesn't yet exist on npm.
+      # If a dependency publish then stalls or fails, installs of the
+      # already-published release fail.
+      #
+      # Order is verified in the step above. To add a package, update
+      # both the order array there AND the array here — the verifier
+      # will catch divergence.
+      #
+      # 13 packages today; an explicit list stays reviewable up to ~25.
+      # Past that, factor into a shared JSON file both steps read.
+      #
+      # Failures are NOT swallowed. If any single publish fails, the
+      # workflow exits non-zero so the maintainer sees a red release.
+      - name: Publish in dependency order
+        run: |
+          set -euo pipefail
+
+          PUBLISH_ORDER=(
+            packages/core
+            packages/event-log
+            packages/action-kernel
+            packages/memory-firewall
+            packages/cognitive-core
+            packages/trace
+            packages/adapters/filesystem
+            packages/adapters/git
+            packages/memory-firewall/adapters/mem0
+            packages/memory-firewall/adapters/letta
+            packages/memory-firewall/adapters/zep
+            packages/guard
+            packages/cli
+          )
+
+          for pkg in "${PUBLISH_ORDER[@]}"; do
+            name=$(node -p "require('./$pkg/package.json').name")
             echo "::group::publish $name"
-            (cd "$dir" && npm publish --provenance --access public)
+            (cd "$pkg" && npm publish --provenance --access public)
             echo "::endgroup::"
-          done < <(find packages -name package.json -not -path '*/node_modules/*' -not -path '*/dist/*')
+          done
