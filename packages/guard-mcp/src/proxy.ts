@@ -388,6 +388,12 @@ export class MCPProxy {
       // start() wires the kernel. If we ever reach this branch the
       // proxy is in a broken state and the safer response is a
       // synthetic denial — never a downstream call.
+      await this.emitCallRefused({
+        kind: "proxy_not_initialised",
+        tool_name: req.name,
+        args: req.arguments,
+        reason: "handleCallTool invoked before start() wired the kernel",
+      })
       return buildPolicyDeniedResult({
         tool_name: req.name,
         args: req.arguments,
@@ -405,6 +411,19 @@ export class MCPProxy {
     // proxy's `downstream_servers` / `tool_defaults` and producing
     // results that don't conform to `mcp.tool_result@1`.
     if (!this.registeredToolNames.has(req.name)) {
+      // Audit every refused call — wrapped agents attempting to
+      // invoke tools outside the advertised catalog are
+      // security-relevant `tools/call` requests and need to show
+      // up in the trust report alongside approved/rejected
+      // actions. Without this emit, bypass attempts and stale
+      // calls leave no trace in the event log.
+      await this.emitCallRefused({
+        kind: "tool_not_advertised",
+        tool_name: req.name,
+        args: req.arguments,
+        reason:
+          "tool name is not in this MCPProxy's advertised catalog (registeredToolNames)",
+      })
       return {
         content: [
           {
@@ -433,6 +452,13 @@ export class MCPProxy {
       // (someone called `unregisterTool` between our check and this
       // lookup). Surface as a distinct kind so sentinels can spot
       // the corruption.
+      await this.emitCallRefused({
+        kind: "tool_registration_lost",
+        tool_name: req.name,
+        args: req.arguments,
+        reason:
+          "registeredToolNames includes this name but lookupTool returned undefined",
+      })
       return {
         content: [
           {
@@ -658,6 +684,41 @@ export class MCPProxy {
 
   private async stopDownstreamsQuiet(): Promise<void> {
     await Promise.allSettled(this.downstreams.map((d) => d.stop()))
+  }
+
+  /**
+   * Emit an audit event for a `tools/call` the proxy refused before
+   * reaching the kernel. Covers three classes:
+   *
+   *   - `tool_not_advertised`: name outside this proxy's
+   *     `registeredToolNames` (round-5 gate). A wrapped agent
+   *     attempting to invoke a tool we never advertised — bypass
+   *     attempt or stale call.
+   *   - `tool_registration_lost`: name passed the membership check
+   *     but the kernel registry returned undefined. Should be a
+   *     no-op invariant; logged so sentinels can flag the race.
+   *   - `proxy_not_initialised`: handleCallTool reached before
+   *     `start()` wired the kernel. Defensive — should not happen
+   *     in practice.
+   *
+   * Best-effort: if the event log itself is broken (sub-case P
+   * territory), swallow the secondary error so the synthetic
+   * CallToolResult still reaches the agent.
+   */
+  private async emitCallRefused(input: {
+    kind: "tool_not_advertised" | "tool_registration_lost" | "proxy_not_initialised"
+    tool_name: string
+    args: Record<string, unknown>
+    reason: string
+  }): Promise<void> {
+    try {
+      await this.emit("mcp_proxy.call_refused", {
+        ...input,
+        refused_at: new Date().toISOString(),
+      })
+    } catch {
+      // best-effort
+    }
   }
 
   private async emit(type: string, payload: unknown): Promise<void> {

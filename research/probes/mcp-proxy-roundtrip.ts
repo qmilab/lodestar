@@ -540,6 +540,21 @@ async function run(): Promise<ProbeResult> {
     const subQResult = await subcaseRestartDoesNotAccumulateCatalog(logDir)
     if (!subQResult.passed) return subQResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case R: refused tool calls land in the event log.
+    //
+    // Codex review round 10, P2: pre-fix the
+    // tool_not_advertised / tool_registration_lost /
+    // proxy_not_initialised branches returned synthetic results
+    // WITHOUT emitting anything to the event log. Bypass attempts
+    // and stale calls left no trace in `lodestar report`. The fix
+    // emits `mcp_proxy.call_refused` before each early return.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subRResult = await subcaseRefusedCallAudited(logDir)
+    if (!subRResult.passed) return subRResult
+
     return {
       passed: true,
       details:
@@ -564,10 +579,129 @@ async function run(): Promise<ProbeResult> {
         `Sub-case N (duplicate downstream names rejected): ${subNResult.details}. ` +
         `Sub-case O (task-required tools filtered): ${subOResult.details}. ` +
         `Sub-case P (bad log_root fails cleanly): ${subPResult.details}. ` +
-        `Sub-case Q (restart does not accumulate catalog): ${subQResult.details}.`,
+        `Sub-case Q (restart does not accumulate catalog): ${subQResult.details}. ` +
+        `Sub-case R (refused calls audited): ${subRResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case R: a tools/call for a name the proxy never advertised
+ * lands an `mcp_proxy.call_refused` event in the log.
+ */
+async function subcaseRefusedCallAudited(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "audit"
+  const advertisedName = "echo"
+  const advertisedLodestarName = `mcp.${downstreamName}.${advertisedName}`
+  const tool: MCPTool = {
+    name: advertisedName,
+    description: "Echo",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [tool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return { content: [{ type: "text", text: "ok" }], isError: false }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-refused",
+    actor_id: "agent:probe-roundtrip-refused",
+    session_id: "probe-roundtrip-refused-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-refused" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [advertisedLodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  const NEVER_ADVERTISED = "mcp.audit.never_advertised"
+  try {
+    await proxy.start()
+    const result = await proxy.handleCallTool({
+      name: NEVER_ADVERTISED,
+      arguments: { sneaky: true },
+    })
+    if (!result.isError) {
+      return { passed: false, details: `proxy did not refuse the unadvertised call` }
+    }
+  } finally {
+    await proxy.stop()
+  }
+
+  const reader = new EventLogReader(logDir)
+  const envelopes = await reader.readSession(
+    "probe-roundtrip-refused",
+    "probe-roundtrip-refused-session",
+  )
+  const refused = envelopes.find((e) => e.type === "mcp_proxy.call_refused")
+  if (!refused) {
+    return {
+      passed: false,
+      details:
+        `no mcp_proxy.call_refused envelope in the event log. Pre-fix the proxy returned ` +
+        `the synthetic result silently and the bypass attempt left no trace in lodestar report.`,
+    }
+  }
+  const payload = refused.payload as {
+    kind?: string
+    tool_name?: string
+    args?: Record<string, unknown>
+    reason?: string
+    refused_at?: string
+  }
+  if (payload.kind !== "tool_not_advertised") {
+    return {
+      passed: false,
+      details: `expected kind='tool_not_advertised'; got '${payload.kind}'`,
+    }
+  }
+  if (payload.tool_name !== NEVER_ADVERTISED) {
+    return {
+      passed: false,
+      details: `expected tool_name='${NEVER_ADVERTISED}'; got '${payload.tool_name}'`,
+    }
+  }
+  if (!payload.args || payload.args.sneaky !== true) {
+    return {
+      passed: false,
+      details: `expected refused event to carry the agent's args verbatim`,
+    }
+  }
+  if (typeof payload.refused_at !== "string") {
+    return { passed: false, details: `refused event missing refused_at timestamp` }
+  }
+  return {
+    passed: true,
+    details:
+      "mcp_proxy.call_refused envelope recorded the unadvertised attempt with kind, tool_name, args, reason, and refused_at",
   }
 }
 
