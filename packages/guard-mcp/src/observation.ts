@@ -50,43 +50,58 @@ export const MCPToolResultObservationSchema = z.object({
    * the original block under `raw`.
    */
   content: z.array(
+    // Every variant uses `.catchall(z.unknown())` so forward-compat
+    // fields the MCP spec carries on content blocks — `annotations`
+    // (audience/priority/lastModified), `_meta`, future fields —
+    // round-trip through the observation unchanged. Pre-fix, the
+    // mapper cherry-picked only the documented fields, so an agent
+    // that consumed annotations or `_meta` from a successful tool
+    // call had them silently disappear.
     z.discriminatedUnion("type", [
-      z.object({
-        type: z.literal("text"),
-        text: z.string(),
-      }),
-      z.object({
-        type: z.literal("image"),
-        data: z.string(),
-        mimeType: z.string(),
-      }),
-      z.object({
-        type: z.literal("audio"),
-        data: z.string(),
-        mimeType: z.string(),
-      }),
-      z.object({
-        type: z.literal("resource"),
-        // MCP embedded resources carry payload as EITHER `text` (UTF-8
-        // string) OR `blob` (base64-encoded binary). Both fields are
-        // optional in the schema so the proxy preserves whichever the
-        // downstream sent; the SDK enforces "exactly one" at the wire.
-        // Pre-Codex review the schema dropped `blob` entirely, which
-        // silently corrupted PDFs and other binary embeds.
-        resource: z.object({
-          uri: z.string(),
-          mimeType: z.string().optional(),
-          text: z.string().optional(),
-          blob: z.string().optional(),
-        }),
-      }),
+      z
+        .object({
+          type: z.literal("text"),
+          text: z.string(),
+        })
+        .catchall(z.unknown()),
+      z
+        .object({
+          type: z.literal("image"),
+          data: z.string(),
+          mimeType: z.string(),
+        })
+        .catchall(z.unknown()),
+      z
+        .object({
+          type: z.literal("audio"),
+          data: z.string(),
+          mimeType: z.string(),
+        })
+        .catchall(z.unknown()),
+      z
+        .object({
+          type: z.literal("resource"),
+          // MCP embedded resources carry payload as EITHER `text`
+          // (UTF-8 string) OR `blob` (base64-encoded binary). Both
+          // fields are optional in the schema so the proxy preserves
+          // whichever the downstream sent; the SDK enforces "exactly
+          // one" at the wire. The inner object also uses
+          // `.catchall(z.unknown())` so block-level `_meta` on the
+          // resource (distinct from the outer block's `_meta`) is
+          // preserved.
+          resource: z
+            .object({
+              uri: z.string(),
+              mimeType: z.string().optional(),
+              text: z.string().optional(),
+              blob: z.string().optional(),
+            })
+            .catchall(z.unknown()),
+        })
+        .catchall(z.unknown()),
       // `resource_link` — current-spec MCP content block that points
       // at a resource by URI without inlining its bytes. Distinct from
-      // `resource` (which embeds the payload). Pre-Codex review the
-      // proxy fell through to "unknown" and corrupted these to text
-      // placeholders. The captured fields mirror MCP's
-      // `ResourceLinkSchema`; `.passthrough()` keeps any forward-
-      // compatible additions intact in the event log.
+      // `resource` (which embeds the payload).
       z
         .object({
           type: z.literal("resource_link"),
@@ -97,12 +112,14 @@ export const MCPToolResultObservationSchema = z.object({
           mimeType: z.string().optional(),
           size: z.number().optional(),
         })
-        .passthrough(),
-      z.object({
-        type: z.literal("unknown"),
-        original_type: z.string(),
-        raw: z.unknown(),
-      }),
+        .catchall(z.unknown()),
+      z
+        .object({
+          type: z.literal("unknown"),
+          original_type: z.string(),
+          raw: z.unknown(),
+        })
+        .catchall(z.unknown()),
     ]),
   ),
   /**
@@ -115,6 +132,15 @@ export const MCPToolResultObservationSchema = z.object({
    * Optional, permissive shape — the contents are tool-specific.
    */
   structured_content: z.record(z.string(), z.unknown()).optional(),
+  /**
+   * Result-level `_meta` from the downstream's `CallToolResult`. The
+   * MCP spec uses this for protocol-level metadata (progress tokens,
+   * task associations, server-defined extensions). Pre-fix the
+   * proxy dropped it, so agents that consume `_meta` saw nothing
+   * even when the downstream populated it. Round-tripped to the
+   * upstream as `_meta` by `payloadToCallToolResult`.
+   */
+  meta: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type MCPToolResultObservationPayload = z.infer<

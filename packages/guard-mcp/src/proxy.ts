@@ -279,9 +279,26 @@ export class MCPProxy {
       //   must be removed so a retry doesn't trip the
       //   "tool already registered" guard in
       //   `registerDownstreamToolsWithKernel`;
-      // - downstream child processes that did start must be stopped.
+      // - downstream child processes that did start must be stopped;
+      // - if `start()` got far enough to instantiate the upstream
+      //   before throwing (e.g., the throw came from
+      //   `upstream.start()` itself), close it best-effort.
       this.deregisterTools()
       await this.stopDownstreamsQuiet()
+      if (this.upstream !== undefined) {
+        try {
+          await this.upstream.stop()
+        } catch {
+          // best-effort — upstream may have only partially started
+        }
+        this.upstream = undefined
+      }
+      // Clear `started` so the CLI's catch path (which calls
+      // `proxy.stop()` after we rethrow) does NOT emit a misleading
+      // `guard.session.ended` on top of the `guard.session.failed`
+      // we already emitted. Without this reset the trust report
+      // would show a failed startup as if it closed cleanly.
+      this.started = false
       throw err
     }
   }
@@ -629,43 +646,73 @@ function payloadToCallToolResult(
   payload: MCPToolResultObservationPayload,
 ): CallToolResultLike {
   const content: CallToolContentBlock[] = payload.content.map((block) => {
+    // For every known block kind we copy the documented fields then
+    // pass any preserved extras (annotations, block-level _meta,
+    // future spec additions) through unchanged. The observation
+    // schema's `.catchall(z.unknown())` keeps these extras alive on
+    // the inbound side; this loop ensures the upstream round-trip
+    // emits them too. Pre-Codex review the round-trip cherry-picked
+    // documented fields and silently lost the rest.
     if (block.type === "text") {
-      return { type: "text", text: block.text }
+      const out: Record<string, unknown> = { type: "text", text: block.text }
+      copyBlockExtras(block, out, ["type", "text"])
+      return out as CallToolContentBlock
     }
     if (block.type === "image") {
-      return { type: "image", data: block.data, mimeType: block.mimeType }
+      const out: Record<string, unknown> = {
+        type: "image",
+        data: block.data,
+        mimeType: block.mimeType,
+      }
+      copyBlockExtras(block, out, ["type", "data", "mimeType"])
+      return out as CallToolContentBlock
     }
     if (block.type === "audio") {
-      return { type: "audio", data: block.data, mimeType: block.mimeType }
+      const out: Record<string, unknown> = {
+        type: "audio",
+        data: block.data,
+        mimeType: block.mimeType,
+      }
+      copyBlockExtras(block, out, ["type", "data", "mimeType"])
+      return out as CallToolContentBlock
     }
     if (block.type === "resource") {
-      const resource: { uri: string; mimeType?: string; text?: string; blob?: string } = {
-        uri: block.resource.uri,
-      }
+      const resource: Record<string, unknown> = { uri: block.resource.uri }
       if (block.resource.mimeType !== undefined) resource.mimeType = block.resource.mimeType
       if (block.resource.text !== undefined) resource.text = block.resource.text
-      // Round-trip blob (base64 binary) so PDFs, images-as-resource,
-      // and any other binary embed survive the proxy unchanged.
       if (block.resource.blob !== undefined) resource.blob = block.resource.blob
-      return { type: "resource", resource }
+      copyBlockExtras(
+        block.resource as unknown as Record<string, unknown>,
+        resource,
+        ["uri", "mimeType", "text", "blob"],
+      )
+      const out: Record<string, unknown> = {
+        type: "resource",
+        resource,
+      }
+      copyBlockExtras(block, out, ["type", "resource"])
+      return out as CallToolContentBlock
     }
     if (block.type === "resource_link") {
-      // Round-trip every field the observation schema captured —
-      // including any forward-compat extras the `.passthrough()` on
-      // the schema preserved. Without explicit handling, this block
-      // used to fall through to "unknown" and lose the URI / name /
-      // metadata that's the whole point of a resource_link.
-      const out: CallToolContentBlock = {
+      const out: Record<string, unknown> = {
         type: "resource_link",
         uri: block.uri,
         name: block.name,
       }
-      for (const [key, value] of Object.entries(block as Record<string, unknown>)) {
-        if (key === "type" || key === "uri" || key === "name") continue
-        if (value === undefined) continue
-        ;(out as Record<string, unknown>)[key] = value
-      }
-      return out
+      if (block.title !== undefined) out.title = block.title
+      if (block.description !== undefined) out.description = block.description
+      if (block.mimeType !== undefined) out.mimeType = block.mimeType
+      if (block.size !== undefined) out.size = block.size
+      copyBlockExtras(block, out, [
+        "type",
+        "uri",
+        "name",
+        "title",
+        "description",
+        "mimeType",
+        "size",
+      ])
+      return out as CallToolContentBlock
     }
     // type === "unknown" — Lodestar can't classify this block kind.
     // Surface it as a text descriptor so the agent sees something
@@ -681,12 +728,37 @@ function payloadToCallToolResult(
     isError: payload.is_error,
   }
   // Round-trip `structuredContent` if the downstream supplied it.
-  // Tools with declared output schemas use it to expose typed data;
-  // dropping it here would silently corrupt those tools' responses.
+  // Tools with declared output schemas use it to expose typed data.
   if (payload.structured_content !== undefined) {
     result.structuredContent = payload.structured_content
   }
+  // Round-trip result-level `_meta` (progress tokens, task
+  // associations, server-defined extensions). Pre-Codex review this
+  // was dropped, breaking agents that consume the field.
+  if (payload.meta !== undefined) {
+    result._meta = payload.meta
+  }
   return result
+}
+
+/**
+ * Copy any forward-compatible MCP fields from `block` onto `out`,
+ * skipping the documented keys the caller has already populated.
+ * Mirrors `copyExtras` in tool-adapter.ts but lives in proxy.ts to
+ * keep round-trip-time and capture-time logic close to their
+ * respective entry points.
+ */
+function copyBlockExtras(
+  block: unknown,
+  out: Record<string, unknown>,
+  excluded: string[],
+): void {
+  if (block === null || typeof block !== "object") return
+  const skip = new Set(excluded)
+  for (const key of Object.keys(block as Record<string, unknown>)) {
+    if (skip.has(key)) continue
+    out[key] = (block as Record<string, unknown>)[key]
+  }
 }
 
 function liftSensitivity(

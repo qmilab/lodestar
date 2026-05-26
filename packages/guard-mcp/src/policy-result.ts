@@ -45,31 +45,34 @@ export interface PolicyDeniedDetails {
  * unchanged. Pre-Codex review this was text-only, which silently
  * corrupted image/audio/resource downstream tools — now fixed.
  */
+/**
+ * Each variant carries an `& { [k: string]: unknown }` index signature
+ * so the proxy can round-trip MCP's forward-compatible fields
+ * (`annotations`, block-level `_meta`, future spec additions)
+ * unchanged. Without it, the round-trip path would have no place to
+ * stash those keys and they would be silently dropped — Codex's
+ * concern about transparent wrapping.
+ */
 export type CallToolContentBlock =
-  | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string }
-  | { type: "audio"; data: string; mimeType: string }
-  | {
+  | ({ type: "text"; text: string } & { [k: string]: unknown })
+  | ({ type: "image"; data: string; mimeType: string } & { [k: string]: unknown })
+  | ({ type: "audio"; data: string; mimeType: string } & { [k: string]: unknown })
+  | ({
       type: "resource"
       /**
        * Embedded resource payload. The MCP wire format carries EITHER
        * `text` (UTF-8) OR `blob` (base64). The proxy must preserve
        * whichever the downstream sent; dropping `blob` would silently
-       * corrupt binary embeds (PDFs, images-as-resource, etc.).
+       * corrupt binary embeds (PDFs, images-as-resource, etc.). The
+       * inner index signature carries resource-level `_meta`.
        */
       resource: {
         uri: string
         mimeType?: string
         text?: string
         blob?: string
-      }
-    }
-  /**
-   * Resource link — a pointer to a resource (URI + metadata) without
-   * inlining the payload. Distinct from `resource` (embedded contents).
-   * Carries any forward-compatible MCP fields under an index signature
-   * so the proxy round-trips additions transparently.
-   */
+      } & { [k: string]: unknown }
+    } & { [k: string]: unknown })
   | ({
       type: "resource_link"
       uri: string

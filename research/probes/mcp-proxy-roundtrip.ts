@@ -402,6 +402,36 @@ async function run(): Promise<ProbeResult> {
     const subHResult = await subcaseStructuredContentRoundtrip(logDir)
     if (!subHResult.passed) return subHResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case I: result-level _meta and content-block annotations /
+    // _meta round-trip unchanged.
+    //
+    // Codex review round 4, P2.1: the mapper cherry-picked only the
+    // documented fields from each block and dropped result-level
+    // _meta, content _meta, and annotations. Any downstream MCP
+    // server whose client consumed those fields would see them
+    // silently disappear despite the tool call succeeding.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subIResult = await subcaseMetadataRoundtrip(logDir)
+    if (!subIResult.passed) return subIResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case J: a failed start() does NOT emit guard.session.ended
+    // on top of guard.session.failed.
+    //
+    // Codex review round 4, P2.2: pre-fix, after start() threw the
+    // CLI's catch path called proxy.stop(), which still saw
+    // started=true and emitted guard.session.ended — making a
+    // failed session look cleanly closed. Verify the rollback now
+    // resets started, so a follow-up stop() is a no-op.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subJResult = await subcaseFailedStartNoSpuriousEnd(logDir)
+    if (!subJResult.passed) return subJResult
+
     return {
       passed: true,
       details:
@@ -417,10 +447,233 @@ async function run(): Promise<ProbeResult> {
         `Sub-case E (resource blob round-trip): ${subEResult.details}. ` +
         `Sub-case F (helper rollback): ${subFResult.details}. ` +
         `Sub-case G (resource_link round-trip): ${subGResult.details}. ` +
-        `Sub-case H (structuredContent round-trip): ${subHResult.details}.`,
+        `Sub-case H (structuredContent round-trip): ${subHResult.details}. ` +
+        `Sub-case I (_meta + annotations round-trip): ${subIResult.details}. ` +
+        `Sub-case J (failed start does not emit session.ended): ${subJResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case I: result-level `_meta`, content-block `_meta`, and
+ * `annotations` round-trip unchanged from the downstream through the
+ * proxy to the upstream.
+ */
+async function subcaseMetadataRoundtrip(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "metasrv"
+  const toolName = "annotated_text"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const RESULT_META = { progressToken: "p-xyz-123", "x-server-trace-id": "trace-9001" }
+  const BLOCK_META = { "x-block-id": "blk-abc", custom_field: 42 }
+  const BLOCK_ANNOTATIONS = {
+    audience: ["user", "assistant"],
+    priority: 0.8,
+    lastModified: "2026-05-26T12:00:00Z",
+  }
+  const tool: MCPTool = {
+    name: toolName,
+    description: "Return text with annotations + _meta",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [tool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return {
+        content: [
+          {
+            type: "text",
+            text: "annotated content",
+            annotations: BLOCK_ANNOTATIONS,
+            _meta: BLOCK_META,
+          },
+        ] as unknown as CallToolResult["content"],
+        isError: false,
+        _meta: RESULT_META,
+      } as CallToolResult
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-meta",
+    actor_id: "agent:probe-roundtrip-meta",
+    session_id: "probe-roundtrip-meta-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-meta" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    const result = await proxy.handleCallTool({
+      name: lodestarName,
+      arguments: {},
+    })
+    if (result.isError === true) {
+      return { passed: false, details: `meta-roundtrip result.isError=true` }
+    }
+    // (1) result-level _meta survived
+    if (!result._meta) {
+      return {
+        passed: false,
+        details:
+          `result._meta was undefined; expected to round-trip { progressToken, x-server-trace-id }`,
+      }
+    }
+    if (JSON.stringify(result._meta) !== JSON.stringify(RESULT_META)) {
+      return {
+        passed: false,
+        details: `result._meta did not round-trip exactly: ${JSON.stringify(result._meta)}`,
+      }
+    }
+    // (2) content-block _meta survived
+    const block = result.content[0]
+    if (!block || block.type !== "text") {
+      return { passed: false, details: `expected one text block; got ${block?.type ?? "(none)"}` }
+    }
+    const blockRecord = block as Record<string, unknown>
+    if (JSON.stringify(blockRecord._meta) !== JSON.stringify(BLOCK_META)) {
+      return {
+        passed: false,
+        details:
+          `block._meta did not round-trip. Got: ${JSON.stringify(blockRecord._meta)}. ` +
+          `Pre-fix block-level _meta and annotations were silently dropped.`,
+      }
+    }
+    // (3) content-block annotations survived
+    if (JSON.stringify(blockRecord.annotations) !== JSON.stringify(BLOCK_ANNOTATIONS)) {
+      return {
+        passed: false,
+        details:
+          `block.annotations did not round-trip. Got: ${JSON.stringify(blockRecord.annotations)}`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "result-level _meta, content-block _meta, and content-block annotations all round-tripped intact",
+  }
+}
+
+/**
+ * Sub-case J: when start() fails (e.g., a downstream throws on
+ * connect), the proxy emits guard.session.failed and a follow-up
+ * stop() does NOT emit guard.session.ended.
+ */
+async function subcaseFailedStartNoSpuriousEnd(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "willfail"
+  // A downstream whose start() throws synchronously inside the
+  // proxy's startup. This simulates "downstream command failed to
+  // start" / "transport handshake broke" — both real failure
+  // modes the Codex review called out.
+  const FAILURE_REASON = "synthetic downstream-start failure"
+  const failingDownstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {
+      throw new Error(FAILURE_REASON)
+    }
+    override getTools(): readonly MCPTool[] {
+      return []
+    }
+    override async callTool(): Promise<CallToolResult> {
+      throw new Error("should never be called — start() already failed")
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-failedstart",
+    actor_id: "agent:probe-roundtrip-failedstart",
+    session_id: "probe-roundtrip-failedstart-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-failedstart" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {},
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [failingDownstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  let threw = false
+  try {
+    await proxy.start()
+  } catch {
+    threw = true
+  }
+  if (!threw) {
+    await proxy.stop()
+    return { passed: false, details: `proxy.start() did not throw despite failing downstream` }
+  }
+  // Mirror the CLI's catch path: call stop() after start() threw.
+  // With the round-4 fix, this must NOT emit guard.session.ended.
+  await proxy.stop()
+
+  // Inspect the event log for this session.
+  const reader = new EventLogReader(logDir)
+  const envelopes = await reader.readSession(
+    config.project_id,
+    config.session_id as string,
+  )
+  const types = envelopes.map((e) => e.type)
+  const hasFailed = types.includes("guard.session.failed")
+  const hasEnded = types.includes("guard.session.ended")
+  if (!hasFailed) {
+    return {
+      passed: false,
+      details: `expected guard.session.failed in the log; got [${types.join(", ")}]`,
+    }
+  }
+  if (hasEnded) {
+    return {
+      passed: false,
+      details:
+        `the trust report would show this failed startup as if it closed cleanly. ` +
+        `guard.session.ended found alongside guard.session.failed: [${types.join(", ")}]`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "failed start() emitted guard.session.failed; subsequent stop() did NOT emit guard.session.ended",
   }
 }
 

@@ -163,88 +163,95 @@ function shapeMCPCallToolResultAsObservation(input: {
   args: Record<string, unknown>
   result: CallToolResult
 }): MCPToolResultObservationPayload {
-  const content = input.result.content.map((block) => {
-    // The MCP types are wide unions. Discriminate on `type` and pull
-    // through only the fields our observation schema expects;
-    // anything else is recorded as an `unknown` raw block.
-    if (block.type === "text") {
-      return { type: "text" as const, text: typeof block.text === "string" ? block.text : "" }
-    }
-    if (block.type === "image") {
+  const content: MCPToolResultObservationPayload["content"] = input.result.content.map(
+    (block) => {
+      // The MCP types are wide unions. Each variant copies the
+      // documented fields, then spreads the remaining keys (such as
+      // `annotations`, `_meta`, future spec additions) via
+      // `copyExtras` so the catchall on the observation schema
+      // preserves them. Pre-fix, the mapper cherry-picked only the
+      // documented fields, which silently dropped any block-level
+      // metadata a downstream relied on.
+      if (block.type === "text") {
+        const raw = block as Record<string, unknown>
+        const out: Record<string, unknown> = {
+          type: "text" as const,
+          text: typeof raw.text === "string" ? raw.text : "",
+        }
+        copyExtras(raw, out, ["type", "text"])
+        return out as MCPToolResultObservationPayload["content"][number]
+      }
+      if (block.type === "image") {
+        const raw = block as Record<string, unknown>
+        const out: Record<string, unknown> = {
+          type: "image" as const,
+          data: typeof raw.data === "string" ? raw.data : "",
+          mimeType:
+            typeof raw.mimeType === "string"
+              ? raw.mimeType
+              : "application/octet-stream",
+        }
+        copyExtras(raw, out, ["type", "data", "mimeType"])
+        return out as MCPToolResultObservationPayload["content"][number]
+      }
+      if (block.type === "audio") {
+        const raw = block as Record<string, unknown>
+        const out: Record<string, unknown> = {
+          type: "audio" as const,
+          data: typeof raw.data === "string" ? raw.data : "",
+          mimeType:
+            typeof raw.mimeType === "string"
+              ? raw.mimeType
+              : "application/octet-stream",
+        }
+        copyExtras(raw, out, ["type", "data", "mimeType"])
+        return out as MCPToolResultObservationPayload["content"][number]
+      }
+      if (block.type === "resource") {
+        const raw = block as Record<string, unknown>
+        const rawResource = (raw.resource ?? {}) as Record<string, unknown>
+        const resource: Record<string, unknown> = {
+          uri: typeof rawResource.uri === "string" ? rawResource.uri : "",
+        }
+        if (typeof rawResource.mimeType === "string") resource.mimeType = rawResource.mimeType
+        if (typeof rawResource.text === "string") resource.text = rawResource.text
+        if (typeof rawResource.blob === "string") resource.blob = rawResource.blob
+        // Preserve any extra resource-level fields (e.g. resource._meta).
+        copyExtras(rawResource, resource, ["uri", "mimeType", "text", "blob"])
+        const out: Record<string, unknown> = {
+          type: "resource" as const,
+          resource,
+        }
+        // Preserve any extra block-level fields (annotations, _meta, …).
+        copyExtras(raw, out, ["type", "resource"])
+        return out as MCPToolResultObservationPayload["content"][number]
+      }
+      if (block.type === "resource_link") {
+        const raw = block as Record<string, unknown>
+        const out: Record<string, unknown> = {
+          type: "resource_link" as const,
+          uri: typeof raw.uri === "string" ? raw.uri : "",
+          name: typeof raw.name === "string" ? raw.name : "",
+        }
+        if (typeof raw.title === "string") out.title = raw.title
+        if (typeof raw.description === "string") out.description = raw.description
+        if (typeof raw.mimeType === "string") out.mimeType = raw.mimeType
+        if (typeof raw.size === "number") out.size = raw.size
+        // Preserve any additional fields (annotations, _meta, icons, …).
+        copyExtras(raw, out, ["type", "uri", "name", "title", "description", "mimeType", "size"])
+        return out as MCPToolResultObservationPayload["content"][number]
+      }
+      // Forward-compat: the SDK's TypeScript union is closed at compile
+      // time, but a future SDK release could ship a new content kind
+      // before Lodestar's handlers learn about it. Defend via cast.
+      const fallback = block as { type?: unknown }
       return {
-        type: "image" as const,
-        data: typeof block.data === "string" ? block.data : "",
-        mimeType: typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream",
+        type: "unknown" as const,
+        original_type: String(fallback.type),
+        raw: block,
       }
-    }
-    if (block.type === "audio") {
-      return {
-        type: "audio" as const,
-        data: typeof block.data === "string" ? block.data : "",
-        mimeType: typeof block.mimeType === "string" ? block.mimeType : "application/octet-stream",
-      }
-    }
-    if (block.type === "resource") {
-      const resource =
-        (block as { resource?: { uri?: unknown; mimeType?: unknown; text?: unknown; blob?: unknown } })
-          .resource ?? {}
-      const out: {
-        type: "resource"
-        resource: { uri: string; mimeType?: string; text?: string; blob?: string }
-      } = {
-        type: "resource",
-        resource: { uri: typeof resource.uri === "string" ? resource.uri : "" },
-      }
-      if (typeof resource.mimeType === "string") out.resource.mimeType = resource.mimeType
-      if (typeof resource.text === "string") out.resource.text = resource.text
-      // Preserve `blob` (base64 binary). Dropping it here was the
-      // pre-Codex bug: PDFs, images-as-resources, anything binary
-      // would lose its payload on the way through Lodestar.
-      if (typeof resource.blob === "string") out.resource.blob = resource.blob
-      return out
-    }
-    if (block.type === "resource_link") {
-      // resource_link is a pointer to a resource (URI + metadata)
-      // without inlining the payload. We capture the documented
-      // fields verbatim and pass any forward-compat extras through
-      // the observation schema's `.passthrough()` on this branch.
-      const raw = block as {
-        uri?: unknown
-        name?: unknown
-        title?: unknown
-        description?: unknown
-        mimeType?: unknown
-        size?: unknown
-        [extra: string]: unknown
-      }
-      const out: Record<string, unknown> = {
-        type: "resource_link",
-        uri: typeof raw.uri === "string" ? raw.uri : "",
-        name: typeof raw.name === "string" ? raw.name : "",
-      }
-      if (typeof raw.title === "string") out.title = raw.title
-      if (typeof raw.description === "string") out.description = raw.description
-      if (typeof raw.mimeType === "string") out.mimeType = raw.mimeType
-      if (typeof raw.size === "number") out.size = raw.size
-      // Forward-compat: preserve any additional fields (annotations,
-      // _meta, icons, …) so the proxy can round-trip them upstream.
-      for (const key of Object.keys(raw)) {
-        if (key in out) continue
-        if (key === "type") continue
-        out[key] = (raw as Record<string, unknown>)[key]
-      }
-      return out as unknown as { type: "resource_link"; uri: string; name: string }
-    }
-    // Forward-compat: the SDK's TypeScript union is closed at compile
-    // time, but a future SDK release could ship a new content kind
-    // before Lodestar's handlers learn about it. Defend via cast.
-    const fallback = block as { type?: unknown }
-    return {
-      type: "unknown" as const,
-      original_type: String(fallback.type),
-      raw: block,
-    }
-  })
+    },
+  )
 
   const observation: MCPToolResultObservationPayload = {
     tool_name: input.toolName,
@@ -256,13 +263,36 @@ function shapeMCPCallToolResultAsObservation(input: {
   // Tools that declare an `outputSchema` may emit `structuredContent`
   // alongside the human-readable `content` blocks. Round-trip it
   // unchanged so agents that key off the structured field still see
-  // the typed payload. Dropping it here corrupted any tool that
-  // returned typed output, even though the call succeeded.
+  // the typed payload.
   const structured = (input.result as { structuredContent?: unknown }).structuredContent
   if (structured !== undefined && structured !== null && typeof structured === "object") {
     observation.structured_content = structured as Record<string, unknown>
   }
+  // Round-trip result-level `_meta` (progress tokens, task associations,
+  // server-defined extensions). Pre-Codex review this was dropped.
+  const meta = (input.result as { _meta?: unknown })._meta
+  if (meta !== undefined && meta !== null && typeof meta === "object") {
+    observation.meta = meta as Record<string, unknown>
+  }
   return observation
+}
+
+/**
+ * Copy every key from `src` to `dst` that is not in `excluded`. Used
+ * to preserve forward-compatible MCP fields (annotations, _meta,
+ * icons, etc.) that the proxy doesn't know about but must
+ * round-trip transparently.
+ */
+function copyExtras(
+  src: Record<string, unknown>,
+  dst: Record<string, unknown>,
+  excluded: string[],
+): void {
+  const skip = new Set(excluded)
+  for (const key of Object.keys(src)) {
+    if (skip.has(key)) continue
+    dst[key] = src[key]
+  }
 }
 
 /**
