@@ -398,11 +398,21 @@ function stripDescriptionsDeep(
     // — i.e. NOT when we're currently walking the keys of a
     // `properties` / `patternProperties` map.
     if (!insidePropertiesMap && key === "description") continue
-    // Recurse. When the current key is `properties` (or
-    // `patternProperties`), the next level's keys are property
-    // names; mark accordingly.
+    // Recurse. The key `properties` (or `patternProperties`) is
+    // the JSON Schema keyword whose value is a property map ONLY
+    // when we're at schema level. If we're already inside a
+    // properties map, a child key named `properties` is just a
+    // user-defined property NAME — its value is the property's
+    // schema, not another properties map. Without that guard, a
+    // downstream tool with an input parameter literally named
+    // `properties` would bypass the description scrub: the
+    // walker would treat `inputSchema.properties.properties` as
+    // another properties map, preserve its `description`
+    // annotation, and ship prompt-injection text upstream. The
+    // `!insidePropertiesMap` check closes that bypass.
     const childIsPropertiesMap =
-      key === "properties" || key === "patternProperties"
+      !insidePropertiesMap &&
+      (key === "properties" || key === "patternProperties")
     out[key] = stripDescriptionsDeep(obj[key], childIsPropertiesMap)
   }
   return out
