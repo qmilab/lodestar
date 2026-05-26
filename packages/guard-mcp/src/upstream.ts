@@ -1,3 +1,4 @@
+import type { Readable, Writable } from "node:stream"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
@@ -46,6 +47,8 @@ export class UpstreamServer {
    */
   private closeResolver: () => void = () => {}
   protected readonly closePromise: Promise<void>
+  /** Listener installed on `stdin` so we can detach it in `stop()`. */
+  private stdinEndHandler?: () => void
 
   constructor(
     /** Tool definitions to advertise to the wrapped agent, names already namespaced. */
@@ -54,6 +57,19 @@ export class UpstreamServer {
     private readonly handler: UpstreamCallToolHandler,
     /** Server identity reported in the MCP handshake. */
     private readonly serverInfo: { name: string; version: string },
+    /**
+     * stdin the StdioServerTransport reads from. Defaults to
+     * `process.stdin` (production path). Tests inject a `PassThrough`
+     * so they can drive EOF without touching the real process
+     * stdin, and so multiple proxies can be exercised in one test
+     * process without colliding on the singleton.
+     */
+    private readonly stdin: Readable = process.stdin,
+    /**
+     * stdout the StdioServerTransport writes to. Defaults to
+     * `process.stdout`. Tests inject a `PassThrough`.
+     */
+    private readonly stdout: Writable = process.stdout,
   ) {
     this.closePromise = new Promise<void>((resolve) => {
       this.closeResolver = resolve
@@ -83,12 +99,12 @@ export class UpstreamServer {
       const result = await this.handler({ name: req.params.name, arguments: args })
       return result
     })
-    this.transport = new StdioServerTransport()
+    this.transport = new StdioServerTransport(this.stdin, this.stdout)
     // The SDK's `Server.connect` installs its own `transport.onclose`
     // handler to drive its internal cleanup. If we set
     // `transport.onclose` BEFORE `connect`, the SDK overwrites it and
-    // `waitUntilClosed()` never resolves when stdio closes — which is
-    // exactly the bug Codex flagged. Two-pronged fix:
+    // `waitUntilClosed()` never resolves when stdio closes. Two-
+    // pronged fix:
     //
     //   1. After `connect`, wrap the SDK's `transport.onclose`. The
     //      wrapper runs the SDK's handler first (so its cleanup runs)
@@ -108,6 +124,21 @@ export class UpstreamServer {
       }
     }
     this.server.onclose = () => this.closeResolver()
+    // Codex round 6: the SDK's StdioServerTransport does NOT fire
+    // `onclose` when stdin EOFs naturally — it only fires on
+    // explicit `transport.close()`. When the parent MCP client
+    // (Claude Code, Cursor, Aider) ends its end of the pipe,
+    // `waitUntilClosed()` would hang forever without this listener
+    // and the proxy CLI would never reach `stop()`, leaving every
+    // downstream child process alive after the wrapped agent exits.
+    //
+    // Listen on the same stdin we passed to the transport for both
+    // 'end' (no more data) and 'close' (file descriptor closed).
+    // Resolving our close promise unblocks the CLI's
+    // `await proxy.waitUntilClosed()` so cleanup proceeds.
+    this.stdinEndHandler = () => this.closeResolver()
+    this.stdin.once("end", this.stdinEndHandler)
+    this.stdin.once("close", this.stdinEndHandler)
     this.started = true
   }
 
@@ -136,6 +167,14 @@ export class UpstreamServer {
     try {
       await this.server?.close()
     } finally {
+      // Detach the stdin listeners we installed in start(). Without
+      // this, tests that construct multiple proxies sequentially
+      // would leak handlers on the shared `process.stdin` singleton.
+      if (this.stdinEndHandler !== undefined) {
+        this.stdin.off("end", this.stdinEndHandler)
+        this.stdin.off("close", this.stdinEndHandler)
+        this.stdinEndHandler = undefined
+      }
       this.started = false
       this.server = undefined
       this.transport = undefined

@@ -450,6 +450,22 @@ async function run(): Promise<ProbeResult> {
     const subKResult = await subcaseRejectsUnadvertisedTools(logDir)
     if (!subKResult.passed) return subKResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case L: UpstreamServer resolves waitUntilClosed() when
+    // its stdin EOFs.
+    //
+    // Codex review round 6, P1: the SDK's StdioServerTransport
+    // does NOT fire onclose on stdin EOF — it only fires on
+    // explicit close(). Pre-fix, when the parent MCP client ended
+    // its end of the pipe (Claude Code / Cursor / Aider exits
+    // without SIGTERM), the proxy hung forever and downstream
+    // child processes leaked.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subLResult = await subcaseStdinEofClosesProxy()
+    if (!subLResult.passed) return subLResult
+
     return {
       passed: true,
       details:
@@ -468,10 +484,68 @@ async function run(): Promise<ProbeResult> {
         `Sub-case H (structuredContent round-trip): ${subHResult.details}. ` +
         `Sub-case I (_meta + annotations round-trip): ${subIResult.details}. ` +
         `Sub-case J (failed start does not emit session.ended): ${subJResult.details}. ` +
-        `Sub-case K (rejects unadvertised tools): ${subKResult.details}.`,
+        `Sub-case K (rejects unadvertised tools): ${subKResult.details}. ` +
+        `Sub-case L (stdin EOF closes proxy): ${subLResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case L: a real `UpstreamServer` (not the no-op stub) wired to
+ * PassThrough streams unblocks `waitUntilClosed()` when the writable
+ * side of its stdin is closed.
+ */
+async function subcaseStdinEofClosesProxy(): Promise<ProbeResult> {
+  const { PassThrough } = await import("node:stream")
+  const stdin = new PassThrough()
+  const stdout = new PassThrough()
+  // Drain stdout so backpressure doesn't stall the SDK's writer when
+  // (if) it emits anything during handshake.
+  stdout.resume()
+
+  const upstream = new UpstreamServer(
+    [], // no tools — we don't drive MCP traffic, only the close path
+    async () => {
+      throw new Error("handler must not be invoked in the EOF probe")
+    },
+    { name: "probe-stdin-eof", version: "0.0.0" },
+    stdin,
+    stdout,
+  )
+  await upstream.start()
+
+  // Race: waitUntilClosed should resolve once we end the stdin
+  // PassThrough. Cap at 2s so a regression fails the probe instead
+  // of hanging it forever.
+  const closed = upstream.waitUntilClosed()
+  const timeout = new Promise<"TIMEOUT">((resolve) =>
+    setTimeout(() => resolve("TIMEOUT"), 2000),
+  )
+
+  // Signal EOF on the writable side of the PassThrough. Its
+  // readable side then emits 'end', which our listener picks up.
+  stdin.end()
+
+  const outcome = await Promise.race([
+    closed.then(() => "CLOSED" as const),
+    timeout,
+  ])
+  if (outcome === "TIMEOUT") {
+    await upstream.stop()
+    return {
+      passed: false,
+      details:
+        `UpstreamServer.waitUntilClosed() did not resolve within 2s after stdin EOF. ` +
+        `Pre-fix, the SDK's StdioServerTransport never surfaced stdin EOF; the proxy ` +
+        `would have hung forever and downstream child processes would leak.`,
+    }
+  }
+  await upstream.stop()
+  return {
+    passed: true,
+    details: "stdin EOF unblocked waitUntilClosed() and stop() completed cleanly",
   }
 }
 
