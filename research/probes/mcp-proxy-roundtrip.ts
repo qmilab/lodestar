@@ -299,6 +299,54 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    await proxy.stop()
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case B: image content blocks round-trip unchanged.
+    //
+    // Codex review P2.1: pre-fix, the proxy downgraded image / audio
+    // / resource blocks to text placeholders, silently corrupting
+    // any downstream that returned non-text content. Verify the
+    // upstream receives the original image bytes + mimeType.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subBResult = await subcaseImageRoundtrip(logDir)
+    if (!subBResult.passed) return subBResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case C: two concurrent tools/call invocations do not race.
+    //
+    // Codex review P1.2: pre-fix, `MCPProxy.capture` was a single
+    // slot the observation sink wrote to. Overlapping calls would
+    // overwrite each other's capture, leading the proxy to return
+    // call A's observation for call B's response (or throw "no
+    // observation produced"). The fix keys captures by
+    // invocation_id. Verify that two calls launched in parallel
+    // each receive their own result.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subCResult = await subcaseConcurrentCalls(logDir)
+    if (!subCResult.passed) return subCResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case D: a second MCPProxy in the same process starts
+    // cleanly after the first is stopped.
+    //
+    // Codex review P2.2: pre-fix, tool-adapter silently skipped
+    // re-registration when a name was already present, so a second
+    // proxy would advertise the tool but execute against the prior
+    // (dead) proxy's downstream closure. The fix is twofold:
+    // `unregisterTool` in action-kernel + `MCPProxy.stop()`
+    // deregistering the tools it owns. Verify start → stop → start
+    // cycles cleanly.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subDResult = await subcaseStopThenRestart(logDir)
+    if (!subDResult.passed) return subDResult
+
     return {
       passed: true,
       details:
@@ -307,10 +355,340 @@ async function run(): Promise<ProbeResult> {
         `present; observation.recorded carried schema='${MCP_TOOL_RESULT_SCHEMA_KEY}'; ` +
         `${claims.length} claims extracted with at least one ${MCP_TOOL_INVOCATION_RELATION}; ` +
         `${beliefs.length} beliefs adopted (at least one supported); fake downstream ` +
-        `was called exactly once and the text content round-tripped unchanged.`,
+        `was called exactly once and the text content round-tripped unchanged. ` +
+        `Sub-case B (image round-trip): ${subBResult.details}. ` +
+        `Sub-case C (concurrent calls): ${subCResult.details}. ` +
+        `Sub-case D (stop+restart): ${subDResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case B: image content blocks round-trip unchanged.
+ */
+async function subcaseImageRoundtrip(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "imgsrv"
+  const toolName = "fetch_image"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const imageTool: MCPTool = {
+    name: toolName,
+    description: "Fetch an image",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const IMG_BYTES = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+  const IMG_MIME = "image/png"
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [imageTool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return {
+        content: [{ type: "image", data: IMG_BYTES, mimeType: IMG_MIME }],
+        isError: false,
+      }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-image",
+    actor_id: "agent:probe-roundtrip-image",
+    session_id: "probe-roundtrip-image-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-image" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    const result = await proxy.handleCallTool({
+      name: lodestarName,
+      arguments: {},
+    })
+    if (result.isError === true) {
+      return { passed: false, details: `image-roundtrip result.isError=true; meta=${JSON.stringify(result._meta)}` }
+    }
+    if (result.content.length !== 1) {
+      return {
+        passed: false,
+        details: `expected exactly one content block, got ${result.content.length}`,
+      }
+    }
+    const block = result.content[0]
+    if (!block || block.type !== "image") {
+      return {
+        passed: false,
+        details:
+          `expected the content block to round-trip as type='image'; got ` +
+          `type='${block?.type ?? "(none)"}'. Likely the pre-fix text-placeholder ` +
+          `downgrade regressed.`,
+      }
+    }
+    if (block.data !== IMG_BYTES) {
+      return {
+        passed: false,
+        details: `image bytes did not round-trip unchanged (data mismatch)`,
+      }
+    }
+    if (block.mimeType !== IMG_MIME) {
+      return {
+        passed: false,
+        details: `image mimeType did not round-trip ('${block.mimeType}' vs '${IMG_MIME}')`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return { passed: true, details: "image block round-tripped unchanged (data + mimeType)" }
+}
+
+/**
+ * Sub-case C: two concurrent tools/call invocations do not race on
+ * the proxy's per-invocation capture.
+ */
+async function subcaseConcurrentCalls(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "concsrv"
+  const toolName = "slow_echo"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const echoTool: MCPTool = {
+    name: toolName,
+    description: "Echo with an internal delay so calls interleave",
+    inputSchema: {
+      type: "object",
+      properties: { tag: { type: "string" } },
+      required: ["tag"],
+    },
+  }
+  // Each call defers slightly so the second proposal/arbitration
+  // overlaps with the first. Without per-invocation keying, the
+  // capture slot races.
+  const callTool = async (
+    _name: string,
+    args: Record<string, unknown>,
+  ): Promise<CallToolResult> => {
+    const tag = String(args.tag)
+    await new Promise((r) => setTimeout(r, tag === "first" ? 60 : 5))
+    return {
+      content: [{ type: "text", text: `echo:${tag}` }],
+      isError: false,
+    }
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [echoTool]
+    }
+    override async callTool(
+      name: string,
+      args: Record<string, unknown>,
+    ): Promise<CallToolResult> {
+      return callTool(name, args)
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-concurrent",
+    actor_id: "agent:probe-roundtrip-concurrent",
+    session_id: "probe-roundtrip-concurrent-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-concurrent" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    const [resultFirst, resultSecond] = await Promise.all([
+      proxy.handleCallTool({ name: lodestarName, arguments: { tag: "first" } }),
+      proxy.handleCallTool({ name: lodestarName, arguments: { tag: "second" } }),
+    ])
+    const textFirst =
+      resultFirst.content[0]?.type === "text" ? resultFirst.content[0].text : undefined
+    const textSecond =
+      resultSecond.content[0]?.type === "text" ? resultSecond.content[0].text : undefined
+    if (textFirst !== "echo:first") {
+      return {
+        passed: false,
+        details:
+          `first call (tag=first, slow) round-tripped '${textFirst ?? "(undef)"}' ` +
+          `instead of 'echo:first'. Captures raced — the proxy returned a ` +
+          `different invocation's observation.`,
+      }
+    }
+    if (textSecond !== "echo:second") {
+      return {
+        passed: false,
+        details:
+          `second call (tag=second, fast) round-tripped '${textSecond ?? "(undef)"}' ` +
+          `instead of 'echo:second'. Captures raced.`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "two concurrent handleCallTool invocations each received their own observation",
+  }
+}
+
+/**
+ * Sub-case D: a second MCPProxy starts cleanly after the first stops.
+ */
+async function subcaseStopThenRestart(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "lifecycle"
+  const toolName = "noop"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const noopTool: MCPTool = {
+    name: toolName,
+    description: "No-op",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const fakeCall = async (): Promise<CallToolResult> => ({
+    content: [{ type: "text", text: "ok" }],
+    isError: false,
+  })
+  const buildDownstream = (): DownstreamConnection =>
+    new (class extends DownstreamConnection {
+      constructor() {
+        super(
+          { name: downstreamName, command: "not-spawned", args: [] },
+          { name: "probe", version: "0.0.0" },
+        )
+      }
+      override async start(): Promise<void> {}
+      override getTools(): readonly MCPTool[] {
+        return [noopTool]
+      }
+      override async callTool(): Promise<CallToolResult> {
+        return fakeCall()
+      }
+      override async stop(): Promise<void> {}
+    })()
+
+  const baseConfig: ProxyConfig = {
+    project_id: "probe-roundtrip-lifecycle",
+    actor_id: "agent:probe-roundtrip-lifecycle",
+    session_id: "probe-roundtrip-lifecycle-1",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-lifecycle" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+
+  const first = new MCPProxy(baseConfig, {
+    downstreamFactory: () => [buildDownstream()],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  await first.start()
+  await first.handleCallTool({ name: lodestarName, arguments: {} })
+  await first.stop()
+
+  // The second proxy must register the same lodestarName without
+  // tripping the "already registered" guard in tool-adapter.
+  const second = new MCPProxy(
+    { ...baseConfig, session_id: "probe-roundtrip-lifecycle-2" },
+    {
+      downstreamFactory: () => [buildDownstream()],
+      upstreamFactory: (tools, handler) =>
+        new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+    },
+  )
+  try {
+    await second.start()
+  } catch (err) {
+    return {
+      passed: false,
+      details:
+        `second MCPProxy.start() threw after a clean stop of the first: ` +
+        `${err instanceof Error ? err.message : String(err)}. ` +
+        `Pre-fix this happened because the tool-adapter silently skipped ` +
+        `re-registration, leaving the kernel pointing at the dead closure.`,
+    }
+  }
+  try {
+    const result = await second.handleCallTool({
+      name: lodestarName,
+      arguments: {},
+    })
+    const text =
+      result.content[0]?.type === "text" ? result.content[0].text : undefined
+    if (text !== "ok") {
+      return {
+        passed: false,
+        details:
+          `second proxy executed but the tool returned '${text ?? "(undef)"}'; ` +
+          `expected 'ok'. The kernel may still be routing to the first proxy's ` +
+          `closure (Codex P2.2).`,
+      }
+    }
+  } finally {
+    await second.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "second MCPProxy started and executed cleanly after the first stopped — registrations cycled",
   }
 }
 

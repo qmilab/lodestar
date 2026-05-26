@@ -3,6 +3,7 @@ import { resolve as resolvePath } from "node:path"
 import {
   ActionKernel,
   lookupTool,
+  unregisterTool,
   type PolicyGate,
   type PreconditionChecker,
 } from "@qmilab/lodestar-action-kernel"
@@ -39,6 +40,7 @@ import {
 } from "./observation.js"
 import {
   buildPolicyDeniedResult,
+  type CallToolContentBlock,
   type CallToolResultLike,
 } from "./policy-result.js"
 import {
@@ -114,11 +116,30 @@ export class MCPProxy {
   private kernel?: ActionKernel
   private upstream?: UpstreamServer
   private namespacedTools: MCPTool[] = []
-  // Capture box mirrors the `wrap.ts` pattern: the kernel's
-  // observation sink writes the latest tool's observation +
-  // ingest result here so handleCallTool can pick it up after
-  // execute() returns.
-  private capture: { observation: Observation; ingest: IngestResult } | undefined
+  /**
+   * Captures keyed by the kernel action's `id` (which the kernel
+   * also uses as `observation.source.invocation_id`). Concurrent
+   * `tools/call` requests would have raced on a single-slot capture
+   * box — the observation sink for call A could overwrite the slot
+   * before call B's `handleCallTool` read it, leaking A's
+   * observation into B's response or throwing
+   * "completed without producing an observation". Per-invocation
+   * keying makes each call atomic with respect to the others.
+   */
+  private readonly captures = new Map<
+    string,
+    { observation: Observation; ingest: IngestResult }
+  >()
+  /**
+   * Names this proxy registered with the action-kernel tool
+   * registry. Tracked so `stop()` can deregister them and let the
+   * process recycle the names cleanly for a subsequent `MCPProxy`.
+   * Without this, a second proxy in the same process would either
+   * fail to register (registry rejects duplicates) or, worse,
+   * silently route through a stale closure bound to a dead child
+   * process — the bug Codex flagged.
+   */
+  private readonly registeredToolNames: string[] = []
   private started = false
 
   constructor(public readonly config: ProxyConfig, overrides?: MCPProxyOverrides) {
@@ -218,6 +239,9 @@ export class MCPProxy {
 
       // 5. Register every downstream tool in the action-kernel
       //    registry. Build the upstream catalog at the same time.
+      //    Track every name we register so `stop()` can deregister
+      //    them; without that, two proxies in the same process leak
+      //    stale closures bound to the prior downstream connection.
       const defaultsByTool: Record<string, ToolContractDefaults> = this.config.tool_defaults
       for (const downstream of this.downstreams) {
         const registered = registerDownstreamToolsWithKernel({
@@ -227,6 +251,7 @@ export class MCPProxy {
         })
         for (const { lodestarName, mcpTool } of registered) {
           this.namespacedTools.push({ ...mcpTool, name: lodestarName })
+          this.registeredToolNames.push(lodestarName)
         }
       }
 
@@ -249,9 +274,28 @@ export class MCPProxy {
         reason: message,
         at: new Date().toISOString(),
       })
+      // Roll back the partial side effects of start():
+      // - any tools the proxy managed to register before the failure
+      //   must be removed so a retry doesn't trip the
+      //   "tool already registered" guard in
+      //   `registerDownstreamToolsWithKernel`;
+      // - downstream child processes that did start must be stopped.
+      this.deregisterTools()
       await this.stopDownstreamsQuiet()
       throw err
     }
+  }
+
+  /**
+   * Resolves when the upstream transport closes (because the wrapped
+   * agent disconnected) or when `stop()` is called. The CLI awaits
+   * this after `start()` so the process stays alive as long as the
+   * wrapped agent is connected; in-process callers (probes, the
+   * `claude-code-wrapped` example) can ignore it.
+   */
+  async waitUntilClosed(): Promise<void> {
+    if (this.upstream === undefined) return
+    await this.upstream.waitUntilClosed()
   }
 
   /**
@@ -342,7 +386,9 @@ export class MCPProxy {
     }
     await this.emit("action.approved", arbitrated)
 
-    this.capture = undefined
+    // Capture slot is keyed by action id (== invocation_id on the
+    // emitted Observation). Don't pre-clear a global slot — that
+    // would race with overlapping calls.
     const executed = await this.kernel.execute(arbitrated)
     if (executed.phase === "completed") {
       await this.emit("action.completed", executed)
@@ -387,10 +433,10 @@ export class MCPProxy {
     }
 
     // The observation sink stashed the captured Observation +
-    // IngestResult before completion was emitted. Reconstruct the
+    // IngestResult under the action's id. Reconstruct the
     // CallToolResult from the observation payload so the wrapped
     // agent sees the faithful downstream output.
-    const captured = this.takeCapture(req.name)
+    const captured = this.takeCapture(executed.id, req.name)
     const payload = captured.observation.payload as MCPToolResultObservationPayload
     return payloadToCallToolResult(payload)
   }
@@ -454,7 +500,9 @@ export class MCPProxy {
     for (const belief of ingest.beliefs) {
       await this.emit("belief.adopted", belief)
     }
-    this.capture = { observation, ingest }
+    // Key by invocation_id (== kernel action.id). Overlapping
+    // tools/call requests each land in their own slot; no race.
+    this.captures.set(observation.source.invocation_id, { observation, ingest })
   }
 
   /**
@@ -476,6 +524,13 @@ export class MCPProxy {
         // have already closed its side.
       }
       await this.stopDownstreamsQuiet()
+      // Drop every action-kernel registration this proxy installed
+      // so a subsequent MCPProxy in the same process can register
+      // overlapping names cleanly. Without this, the second proxy
+      // would either fail to register (registry rejects duplicates)
+      // or — worse, pre-Codex-review — silently route through this
+      // proxy's now-dead closure.
+      this.deregisterTools()
       this.started = false
     }
   }
@@ -523,59 +578,82 @@ export class MCPProxy {
     }
   }
 
-  private takeCapture(toolName: string): { observation: Observation; ingest: IngestResult } {
-    const captured = this.capture
-    this.capture = undefined
+  private takeCapture(
+    actionId: string,
+    toolName: string,
+  ): { observation: Observation; ingest: IngestResult } {
+    const captured = this.captures.get(actionId)
+    this.captures.delete(actionId)
     if (captured === undefined) {
       throw new Error(
-        `MCPProxy: tool '${toolName}' completed without producing an observation`,
+        `MCPProxy: tool '${toolName}' (action ${actionId}) completed without producing an observation`,
       )
     }
     return captured
   }
+
+  /**
+   * Drop every action-kernel registration this proxy made at
+   * `start()`. Idempotent: callable from both `stop()` and the
+   * start-error rollback path without double-unregistering.
+   */
+  private deregisterTools(): void {
+    while (this.registeredToolNames.length > 0) {
+      const name = this.registeredToolNames.pop()
+      if (name !== undefined) unregisterTool(name)
+    }
+  }
 }
 
 /**
- * Reconstruct an MCP CallToolResult-shaped object from the observation
- * payload. Faithful for text/image/audio/resource content blocks; an
- * unknown block (`{ type, raw }`) is rehydrated by returning the
- * original `raw` value verbatim so wire compatibility is preserved
- * even when Lodestar's schema doesn't model the block kind.
+ * Reconstruct an MCP `CallToolResult`-shaped object from the
+ * observation payload, faithful to what the downstream returned.
+ *
+ * Text, image, audio, and resource blocks pass through unchanged
+ * (the upstream MCP transport accepts the same union). For an
+ * `"unknown"` block — recorded when a downstream emits a content
+ * kind Lodestar's schema doesn't model yet — we surface the
+ * original wire bytes as a text descriptor; the agent loses the
+ * non-textual payload in that path, but only for content kinds the
+ * SDK itself doesn't yet recognise, which is a much narrower
+ * failure than the pre-fix behavior (text-only round-trip for
+ * everything).
+ *
+ * Pre-Codex review this function downgraded image/audio/resource
+ * blocks to text placeholders, which silently corrupted any
+ * downstream tool that returned non-text content. The widened
+ * `CallToolContentBlock` union (see `policy-result.ts`) is what
+ * makes the typed round-trip below possible.
  */
 function payloadToCallToolResult(
   payload: MCPToolResultObservationPayload,
 ): CallToolResultLike {
-  const content = payload.content.map((block): { type: "text"; text: string } => {
-    // The upstream MCP transport accepts the full content union. For
-    // v0 the proxy round-trips only text blocks back to the agent;
-    // image/audio/resource blocks are represented as text descriptors
-    // so the agent always sees something it can reason about.
-    //
-    // A later batch should round-trip non-text blocks unchanged. The
-    // cleanest way to do that is to widen CallToolResultLike's content
-    // union, but doing it here would make the v0 trust report
-    // harder to render. Deferred.
+  const content: CallToolContentBlock[] = payload.content.map((block) => {
     if (block.type === "text") {
       return { type: "text", text: block.text }
     }
     if (block.type === "image") {
-      return {
-        type: "text",
-        text: `[image content ${block.mimeType} ${block.data.length} bytes base64]`,
-      }
+      return { type: "image", data: block.data, mimeType: block.mimeType }
     }
     if (block.type === "audio") {
-      return {
-        type: "text",
-        text: `[audio content ${block.mimeType} ${block.data.length} bytes base64]`,
-      }
+      return { type: "audio", data: block.data, mimeType: block.mimeType }
     }
     if (block.type === "resource") {
-      const text = block.resource.text ?? `[resource uri=${block.resource.uri}]`
-      return { type: "text", text }
+      const resource: { uri: string; mimeType?: string; text?: string } = {
+        uri: block.resource.uri,
+      }
+      if (block.resource.mimeType !== undefined) resource.mimeType = block.resource.mimeType
+      if (block.resource.text !== undefined) resource.text = block.resource.text
+      return { type: "resource", resource }
     }
-    // type === "unknown"
-    return { type: "text", text: `[unknown block original_type=${block.original_type}]` }
+    // type === "unknown" — Lodestar can't classify this block kind.
+    // Surface it as a text descriptor so the agent sees something
+    // rather than silently dropping it; the raw block is still in
+    // the observation payload for audit.
+    return {
+      type: "text",
+      text: `[Lodestar proxy: downstream returned a content block of kind '${block.original_type}' that Lodestar does not yet model. The raw block is preserved in the event log.]`,
+    }
   })
   return {
     content,

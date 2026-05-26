@@ -2,6 +2,7 @@ export {
   registerTool,
   lookupTool,
   listTools,
+  unregisterTool,
   _resetToolsForTests,
   type Tool,
   type SandboxProfile,

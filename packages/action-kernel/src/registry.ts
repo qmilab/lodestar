@@ -132,6 +132,27 @@ export function listTools(): string[] {
 }
 
 /**
+ * Remove a previously-registered tool from the registry.
+ *
+ * Returns `true` if a tool was removed, `false` if no tool with that
+ * name was registered. The function is intentionally permissive on
+ * `false` so callers can use it as part of idempotent cleanup paths
+ * (e.g., `MCPProxy.stop()` deregistering the downstream tools it
+ * registered at `start()`).
+ *
+ * **TOCTOU note.** The registry is process-wide. A tool deregistered
+ * mid-call — between `propose` and `execute` of an in-flight action
+ * — would not affect that action (the kernel already holds a Tool
+ * reference via `lookupTool` at propose time). New `propose` calls
+ * after deregistration will fail because the name is no longer
+ * present. Callers that need to drain in-flight actions before
+ * deregistering must do so themselves; this function does not wait.
+ */
+export function unregisterTool(name: string): boolean {
+  return tools.delete(name)
+}
+
+/**
  * For tests only. Do NOT call from production code.
  */
 export function _resetToolsForTests(): void {

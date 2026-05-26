@@ -35,10 +35,24 @@ export interface PolicyDeniedDetails {
   action_id?: string
 }
 
-export interface CallToolContentBlock {
-  type: "text"
-  text: string
-}
+/**
+ * Content block kinds the proxy can emit upstream.
+ *
+ * Mirrors the MCP `CallToolResult` content union (as of protocol
+ * version 2025-03-26): text, image, audio, and embedded resource.
+ * Synthetic results (policy_denied, kernel-level errors) emit text;
+ * forwarded results from a downstream server pass each block through
+ * unchanged. Pre-Codex review this was text-only, which silently
+ * corrupted image/audio/resource downstream tools — now fixed.
+ */
+export type CallToolContentBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+  | { type: "audio"; data: string; mimeType: string }
+  | {
+      type: "resource"
+      resource: { uri: string; mimeType?: string; text?: string }
+    }
 
 export interface CallToolResultLike {
   content: CallToolContentBlock[]

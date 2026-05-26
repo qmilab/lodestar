@@ -206,13 +206,21 @@ function shapeMCPCallToolResultAsObservation(input: {
 }
 
 /**
- * Register one Lodestar tool per downstream MCP tool. Idempotent: if
- * a previous proxy run (or a parallel test) already registered the
- * same name, the existing registration is left in place.
+ * Register one Lodestar tool per downstream MCP tool, returning the
+ * list of namespaced Lodestar names that the caller now owns.
  *
- * Returns the list of namespaced Lodestar names that were registered
- * (or pre-existed). The proxy uses this to build the upstream tool
- * catalog.
+ * The function is **not** idempotent on collision. If `lookupTool`
+ * already returns a tool for a given namespaced name, this is treated
+ * as an error: a prior `MCPProxy` either failed to clean up (didn't
+ * call `stop()` / didn't unregister) or two proxies are trying to
+ * coexist in the same process for overlapping downstream tool names.
+ * In either case, silently keeping the prior registration would route
+ * future calls through a stale closure bound to a dead child process
+ * or to a different proxy's policy defaults, which is worse than
+ * failing loudly at startup.
+ *
+ * Callers (`MCPProxy.start`) catch this and surface it as a
+ * startup failure that includes the offending tool name.
  */
 export function registerDownstreamToolsWithKernel(args: {
   downstream: DownstreamConnection
@@ -226,18 +234,26 @@ export function registerDownstreamToolsWithKernel(args: {
       args.downstream.config.name,
       mcpTool.name,
     )
-    const defaults = args.defaultsByTool[lodestarName] ?? fallback
-    if (lookupTool(lodestarName) === undefined) {
-      registerTool(
-        buildLodestarToolForMCP({
-          lodestarName,
-          downstreamName: args.downstream.config.name,
-          downstream: args.downstream,
-          mcpTool,
-          defaults,
-        }),
+    if (lookupTool(lodestarName) !== undefined) {
+      throw new Error(
+        `mcp-proxy: tool '${lodestarName}' is already registered in the ` +
+          `action-kernel. This usually means a prior MCPProxy instance ` +
+          `did not call stop() (which deregisters its tools), or two ` +
+          `proxies are coexisting in the same process for the same ` +
+          `downstream name. Stop the prior proxy or rename the ` +
+          `downstream server in your config.`,
       )
     }
+    const defaults = args.defaultsByTool[lodestarName] ?? fallback
+    registerTool(
+      buildLodestarToolForMCP({
+        lodestarName,
+        downstreamName: args.downstream.config.name,
+        downstream: args.downstream,
+        mcpTool,
+        defaults,
+      }),
+    )
     registered.push({ lodestarName, mcpTool })
   }
   return registered

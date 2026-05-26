@@ -82,6 +82,14 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
 
   try {
     await proxy.start()
+    // `proxy.start()` returns as soon as the stdio listeners are
+    // wired; the process must stay alive until the wrapped agent
+    // closes its end of stdin/stdout (or SIGINT/SIGTERM fires).
+    // The CLI dispatcher calls `process.exit(code)` as soon as this
+    // function returns, so without the wait below the process would
+    // exit before the wrapped agent could so much as list a tool.
+    await proxy.waitUntilClosed()
+    await proxy.stop()
     return 0
   } catch (err) {
     process.stderr.write(
