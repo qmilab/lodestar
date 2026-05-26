@@ -158,9 +158,16 @@ export class UpstreamServer {
   }
 
   async stop(): Promise<void> {
-    if (!this.started) {
-      // Even if we never started, resolve the close promise so any
-      // caller awaiting it does not hang. Idempotent across repeats.
+    // Cleanup is gated on the existence of underlying resources
+    // rather than the `started` flag. If `server.connect()` rejects
+    // after `this.server` / `this.transport` have been assigned but
+    // before we flipped `started`, the proxy's startup rollback
+    // would otherwise see `!started`, early-return, and leak the
+    // partially-opened transport + listeners + the Server's request
+    // handlers. Gating on resources catches that partial-start
+    // case while staying idempotent (subsequent calls see all
+    // fields undefined and resolve the close promise).
+    if (this.server === undefined && this.transport === undefined) {
       this.closeResolver()
       return
     }

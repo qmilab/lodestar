@@ -288,8 +288,16 @@ export class MCPProxy {
           defaultsByTool,
           conservativeDefaults: CONSERVATIVE_TOOL_DEFAULTS,
           onTaskRequiredSkipped: (info) => {
+            // `lodestarName` is undefined when the skip happened
+            // before name validation (the downstream's native
+            // name didn't match the action-kernel regex). Show
+            // whichever we have; either case is useful operator
+            // signal.
+            const display =
+              info.lodestarName ??
+              `mcp.${info.downstreamName}.<${info.toolName}>`
             process.stderr.write(
-              `[mcp-proxy] skipping task-required tool '${info.lodestarName}' ` +
+              `[mcp-proxy] skipping task-required tool '${display}' ` +
                 `(downstream '${info.downstreamName}', native name '${info.toolName}'). ` +
                 `The v0 proxy forwards synchronous CallTool only; task forwarding ` +
                 `is deferred to a later batch.\n`,

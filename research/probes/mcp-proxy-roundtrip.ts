@@ -682,6 +682,34 @@ async function run(): Promise<ProbeResult> {
     const subAAResult = subcaseTitleAndCommentAnnotationsScrubbed()
     if (!subAAResult.passed) return subAAResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case BB: a task-required tool whose native name doesn't
+    // satisfy Lodestar's registry regex no longer tanks startup
+    // for its sibling sync tools.
+    //
+    // Codex review round 19, P2: pre-fix the helper ran
+    // `namespacedToolName` BEFORE checking `taskSupport`, so a
+    // hyphenated task-required tool (e.g. `long-running`) made
+    // the entire downstream's catalog fail to register.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subBBResult = await subcaseHyphenatedTaskRequiredSkipped(logDir)
+    if (!subBBResult.passed) return subBBResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case CC: UpstreamServer.stop() is idempotent and resolves
+    // waitUntilClosed() even when start() was never called.
+    //
+    // Codex review round 19, P3: pre-fix stop() gated cleanup on
+    // the `started` flag. If start() partially populated `server`
+    // / `transport` and then threw, stop() would early-return and
+    // leak the handles. The fix gates on resource existence; this
+    // probe verifies the no-start path resolves the close promise.
+    // ─────────────────────────────────────────────────────────────
+    const subCCResult = await subcaseUpstreamStopWithoutStart()
+    if (!subCCResult.passed) return subCCResult
+
     return {
       passed: true,
       details:
@@ -716,10 +744,179 @@ async function run(): Promise<ProbeResult> {
         `Sub-case X (optional taskSupport → forbidden): ${subXResult.details}. ` +
         `Sub-case Y (description property preserved): ${subYResult.details}. ` +
         `Sub-case Z (properties-as-property-name closed): ${subZResult.details}. ` +
-        `Sub-case AA (title + $comment scrubbed): ${subAAResult.details}.`,
+        `Sub-case AA (title + $comment scrubbed): ${subAAResult.details}. ` +
+        `Sub-case BB (hyphenated task-required tool skipped): ${subBBResult.details}. ` +
+        `Sub-case CC (upstream stop without start): ${subCCResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case BB: a downstream advertises both a hyphenated task-
+ * required tool (which can't form a valid `mcp.<server>.<tool>`
+ * name) and a regular sync tool. The proxy must skip the task-
+ * required tool gracefully and still register the sibling sync
+ * tool. Pre-fix, `namespacedToolName` ran first and threw on the
+ * hyphen, breaking the entire downstream.
+ */
+async function subcaseHyphenatedTaskRequiredSkipped(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "mixed"
+  const syncToolName = "echo"
+  const syncLodestarName = `mcp.${downstreamName}.${syncToolName}`
+  const syncTool: MCPTool = {
+    name: syncToolName,
+    description: "Sync echo",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  // Hyphenated NAME (`long-running`) — `namespacedToolName` would
+  // reject. AND taskSupport: "required". Round-19 ensures the
+  // task-required check runs FIRST so this tool is skipped
+  // without ever running the name through the regex.
+  const taskOnlyTool = {
+    name: "long-running",
+    description: "Long-running task; requires the tasks API",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    execution: { taskSupport: "required" as const },
+  } as unknown as MCPTool
+
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [syncTool, taskOnlyTool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return { content: [{ type: "text", text: "ok" }], isError: false }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-bb",
+    actor_id: "agent:probe-roundtrip-bb",
+    session_id: "probe-roundtrip-bb-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-bb" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [syncLodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+
+  let advertised: MCPTool[] = []
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) => {
+      advertised = tools
+      return new NoOpUpstreamServer(tools, handler, {
+        name: "probe",
+        version: "0.0.0",
+      })
+    },
+  })
+  let startThrew = false
+  try {
+    await proxy.start()
+  } catch (err) {
+    startThrew = true
+    return {
+      passed: false,
+      details:
+        `proxy.start() threw because of the hyphenated task-required tool: ` +
+        `${err instanceof Error ? err.message : String(err)}. The fix should ` +
+        `skip task-required tools BEFORE running their names through ` +
+        `namespacedToolName.`,
+    }
+  }
+  void startThrew
+  try {
+    if (advertised.length !== 1) {
+      return {
+        passed: false,
+        details:
+          `expected 1 advertised tool (the sync one); got ${advertised.length}: ` +
+          `[${advertised.map((t) => t.name).join(", ")}]`,
+      }
+    }
+    if (advertised[0]?.name !== syncLodestarName) {
+      return {
+        passed: false,
+        details: `advertised tool was '${advertised[0]?.name}'; expected '${syncLodestarName}'`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "hyphenated task-required tool ('long-running') was skipped before name validation; sibling sync 'echo' tool registered and advertised normally",
+  }
+}
+
+/**
+ * Sub-case CC: `UpstreamServer.stop()` is idempotent and resolves
+ * `waitUntilClosed()` even when `start()` was never called. The
+ * pre-fix code early-returned on `!started` and left a hanging
+ * `waitUntilClosed()` promise; the fix gates cleanup on
+ * resource existence.
+ */
+async function subcaseUpstreamStopWithoutStart(): Promise<ProbeResult> {
+  const upstream = new UpstreamServer(
+    [],
+    async () => {
+      throw new Error("never invoked in this probe")
+    },
+    { name: "probe", version: "0.0.0" },
+  )
+  // Stop without ever starting. The close promise must resolve
+  // cleanly so a caller awaiting waitUntilClosed() doesn't hang.
+  const closed = upstream.waitUntilClosed()
+  await upstream.stop()
+  const settled = await Promise.race([
+    closed.then(() => "resolved" as const),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 1000)),
+  ])
+  if (settled !== "resolved") {
+    return {
+      passed: false,
+      details:
+        `waitUntilClosed() did not resolve within 1s of stop() being called on an unstarted UpstreamServer`,
+    }
+  }
+  // Second stop must be a no-op (no throw).
+  let secondThrew = false
+  try {
+    await upstream.stop()
+  } catch {
+    secondThrew = true
+  }
+  if (secondThrew) {
+    return {
+      passed: false,
+      details: `second stop() call threw; must be idempotent`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "stop() on an unstarted UpstreamServer resolved waitUntilClosed() within 1s; second stop() is idempotent",
   }
 }
 
