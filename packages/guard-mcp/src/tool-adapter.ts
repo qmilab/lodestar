@@ -358,21 +358,52 @@ export function sanitizeAdvertisedTool(args: {
 }
 
 /**
- * Recursively replace every `description` field inside an object
- * tree with `undefined` (i.e. drop it). Used to scrub free-text
- * descriptions out of MCP tool `inputSchema` / `outputSchema`
- * blocks before advertising upstream — property names and types
- * stay so the model can still construct calls correctly, but the
- * descriptions (an injection vector) are gone.
+ * Recursively scrub the JSON Schema annotation `description` from
+ * an object tree without disturbing property NAMES that happen to
+ * be called `description`.
+ *
+ * The distinction matters because in JSON Schema the same string
+ * `"description"` is both an annotation field (free text — injection
+ * vector) and a perfectly valid property name. Issue-tracker and
+ * task-creation tools commonly declare an input like
+ *
+ *   inputSchema: { type: "object",
+ *     properties: { description: { type: "string" } },
+ *     required: ["description"] }
+ *
+ * Pre-Codex-round-16, the scrubber stripped that property entirely
+ * while leaving the `required` array referencing it, so the
+ * advertised schema became internally inconsistent and clients had
+ * no way to know how to supply the required argument.
+ *
+ * The fix tracks whether the walker is currently visiting the value
+ * of a `properties` (or `patternProperties`) key. Inside those
+ * maps, the keys are property names — leave them alone. Anywhere
+ * else, `description` is the annotation field and gets dropped.
  */
-function stripDescriptionsDeep(value: unknown): unknown {
+function stripDescriptionsDeep(
+  value: unknown,
+  insidePropertiesMap = false,
+): unknown {
   if (value === null || typeof value !== "object") return value
-  if (Array.isArray(value)) return value.map(stripDescriptionsDeep)
+  if (Array.isArray(value)) {
+    // Array entries are never inside a properties-map by name —
+    // reset the flag when we step through an array.
+    return value.map((v) => stripDescriptionsDeep(v, false))
+  }
   const obj = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(obj)) {
-    if (key === "description") continue
-    out[key] = stripDescriptionsDeep(obj[key])
+    // Only drop `description` when it's a JSON Schema annotation
+    // — i.e. NOT when we're currently walking the keys of a
+    // `properties` / `patternProperties` map.
+    if (!insidePropertiesMap && key === "description") continue
+    // Recurse. When the current key is `properties` (or
+    // `patternProperties`), the next level's keys are property
+    // names; mark accordingly.
+    const childIsPropertiesMap =
+      key === "properties" || key === "patternProperties"
+    out[key] = stripDescriptionsDeep(obj[key], childIsPropertiesMap)
   }
   return out
 }
