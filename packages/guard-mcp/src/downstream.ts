@@ -1,5 +1,8 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
-import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
+import {
+  getDefaultEnvironment,
+  StdioClientTransport,
+} from "@modelcontextprotocol/sdk/client/stdio.js"
 import type {
   CallToolResult,
   Tool as MCPTool,
@@ -40,10 +43,18 @@ export class DownstreamConnection {
     if (this.started) {
       throw new Error(`DownstreamConnection '${this.config.name}': already started`)
     }
+    // When the operator supplies env vars, merge them on top of the
+    // SDK's default safe-inherited env (PATH/HOME/...). Pre-Codex,
+    // `env: this.config.env` REPLACED the entire child environment,
+    // so `command: "npx"` (and any tool needing PATH or HOME) would
+    // fail the moment an operator added a single env var. When env
+    // is omitted, leave the SDK to apply its own default — same
+    // behavior as before.
+    const mergedEnv = mergeDownstreamEnv(this.config.env)
     this.transport = new StdioClientTransport({
       command: this.config.command,
       args: this.config.args,
-      ...(this.config.env !== undefined ? { env: this.config.env } : {}),
+      ...(mergedEnv !== undefined ? { env: mergedEnv } : {}),
       ...(this.config.cwd !== undefined ? { cwd: this.config.cwd } : {}),
     })
     this.client = new Client(this.clientInfo)
@@ -118,6 +129,30 @@ export class DownstreamConnection {
       this.transport = undefined
     }
   }
+}
+
+/**
+ * Compose the env that gets handed to `StdioClientTransport` for a
+ * downstream child process.
+ *
+ *   - `configEnv === undefined` → returns undefined; the SDK applies
+ *     `getDefaultEnvironment()` (PATH, HOME, …) automatically.
+ *   - `configEnv !== undefined` → returns the SDK's default env with
+ *     the operator-supplied entries overlaid on top. Operator keys
+ *     win on collision, so secrets and per-server overrides take
+ *     precedence over inherited values.
+ *
+ * Exposed so probes can verify the merge without spawning a real
+ * subprocess. Without this merge, an operator that adds a single
+ * env var (e.g. an API key) replaces the entire safe-inherited
+ * env — and the child fails to find `npx`, `bunx`, `/bin/sh`, or
+ * its home directory.
+ */
+export function mergeDownstreamEnv(
+  configEnv: Record<string, string> | undefined,
+): Record<string, string> | undefined {
+  if (configEnv === undefined) return undefined
+  return { ...getDefaultEnvironment(), ...configEnv }
 }
 
 /**

@@ -48,6 +48,7 @@ import {
   MCPProxy,
   MCP_TOOL_INVOCATION_RELATION,
   MCP_TOOL_RESULT_SCHEMA_KEY,
+  mergeDownstreamEnv,
   type ProxyConfig,
   ProxyConfigSchema,
   UpstreamServer,
@@ -595,6 +596,19 @@ async function run(): Promise<ProbeResult> {
     const subUResult = await subcasePaginationCapEdge()
     if (!subUResult.passed) return subUResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case V: downstream env merges with the SDK's safe-
+    // inherited defaults instead of replacing them.
+    //
+    // Codex review round 14, P2: pre-fix, supplying any env var on
+    // a downstream config wholesale replaced the child env, so
+    // PATH / HOME / etc. were lost and `command: "npx"` (or any
+    // tool needing PATH) silently broke the moment an operator
+    // added an API key.
+    // ─────────────────────────────────────────────────────────────
+    const subVResult = subcaseDownstreamEnvMerged()
+    if (!subVResult.passed) return subVResult
+
     return {
       passed: true,
       details:
@@ -623,10 +637,69 @@ async function run(): Promise<ProbeResult> {
         `Sub-case R (refused calls audited): ${subRResult.details}. ` +
         `Sub-case S (paginated tools/list drained): ${subSResult.details}. ` +
         `Sub-case T (unknown-block _lodestar stripped): ${subTResult.details}. ` +
-        `Sub-case U (pagination cap edge): ${subUResult.details}.`,
+        `Sub-case U (pagination cap edge): ${subUResult.details}. ` +
+        `Sub-case V (downstream env merged with defaults): ${subVResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case V: `mergeDownstreamEnv` overlays operator env on top of
+ * the SDK's default safe-inherited environment instead of replacing
+ * it. Sanity-checks both branches (undefined → undefined; defined
+ * → merged map with PATH preserved and operator keys winning on
+ * collision).
+ */
+function subcaseDownstreamEnvMerged(): ProbeResult {
+  // (1) undefined config env → returns undefined, so the SDK
+  //     applies its own getDefaultEnvironment() at spawn time.
+  const passthrough = mergeDownstreamEnv(undefined)
+  if (passthrough !== undefined) {
+    return {
+      passed: false,
+      details:
+        `mergeDownstreamEnv(undefined) returned a defined object; expected undefined so the SDK applies its default`,
+    }
+  }
+  // (2) defined config env → must include PATH from the SDK's
+  //     default AND the operator-supplied key.
+  const merged = mergeDownstreamEnv({ CUSTOM_API_KEY: "abc-123" })
+  if (merged === undefined) {
+    return { passed: false, details: `mergeDownstreamEnv returned undefined for a defined config` }
+  }
+  if (merged.CUSTOM_API_KEY !== "abc-123") {
+    return {
+      passed: false,
+      details: `operator key dropped during the merge: ${JSON.stringify(merged)}`,
+    }
+  }
+  // PATH is in every getDefaultEnvironment() result on the
+  // supported platforms (mac, linux, windows). HOME is on POSIX
+  // only — guard the assertion to PATH which is universal.
+  if (typeof merged.PATH !== "string" || merged.PATH.length === 0) {
+    return {
+      passed: false,
+      details:
+        `merged env is missing PATH from the SDK's default. Operator-supplied env wholesale replaced ` +
+        `the safe-inherited environment. merged keys: [${Object.keys(merged).join(", ")}]`,
+    }
+  }
+  // (3) Operator value wins on collision with the default env.
+  //     Pick a key that's almost always inherited (PATH) and
+  //     override it explicitly.
+  const overridden = mergeDownstreamEnv({ PATH: "/operator/override" })
+  if (overridden?.PATH !== "/operator/override") {
+    return {
+      passed: false,
+      details: `operator PATH override did not win; got '${overridden?.PATH}'`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "passthrough on undefined; operator keys merged on top of SDK default env; PATH retained when not overridden; operator wins on collision",
   }
 }
 

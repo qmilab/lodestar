@@ -76,9 +76,12 @@ async function main(): Promise<void> {
         name: "fs",
         // Local-install path: the package is in this workspace as a
         // dev dep; `bunx` resolves the bin from the workspace's
-        // node_modules without needing the network.
+        // node_modules without needing the network. (Don't pass
+        // `-y` here — that flag is an `npx`-ism; bunx interprets
+        // it as a package name and the spawn fails before the
+        // proxy ever lists tools.)
         command: "bunx",
-        args: ["-y", "@modelcontextprotocol/server-filesystem", WORKSPACE_DIR],
+        args: ["@modelcontextprotocol/server-filesystem", WORKSPACE_DIR],
       },
     ],
     tool_defaults: {

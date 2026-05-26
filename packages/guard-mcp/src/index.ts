@@ -11,6 +11,7 @@ export {
 export {
   collectPaginatedTools,
   DownstreamConnection,
+  mergeDownstreamEnv,
 } from "./downstream.js"
 
 export {
