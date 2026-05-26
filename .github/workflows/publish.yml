@@ -163,6 +163,13 @@ jobs:
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
             "packages/guard",
+            // guard-mcp depends on core/event-log/action-kernel/
+            // memory-firewall/cognitive-core/guard; lives after
+            // `guard` and before `cli` (which now depends on it).
+            // First-time publish needs the manual trusted-publisher
+            // mini-marathon described in the Batch 3 release notes
+            // before CI can stage-publish it through this path.
+            "packages/guard-mcp",
             "packages/cli",
           ];
 
@@ -204,7 +211,7 @@ jobs:
       # both the order array there AND the array here — the verifier
       # will catch divergence.
       #
-      # 13 packages today; an explicit list stays reviewable up to ~25.
+      # 14 packages today; an explicit list stays reviewable up to ~25.
       # Past that, factor into a shared JSON file both steps read.
       #
       # Failures are NOT swallowed. If any single publish fails, the
@@ -226,6 +233,11 @@ jobs:
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep
             packages/guard
+            # First publish of guard-mcp requires the manual
+            # bootstrap (one `npm publish` + trusted-publisher rule
+            # configured on npm) before this stage-publish step can
+            # succeed — see docs/roadmap.md "Batch 3 follow-ups."
+            packages/guard-mcp
             packages/cli
           )
 
