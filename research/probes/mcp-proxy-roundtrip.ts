@@ -347,6 +347,34 @@ async function run(): Promise<ProbeResult> {
     const subDResult = await subcaseStopThenRestart(logDir)
     if (!subDResult.passed) return subDResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case E: embedded resource `blob` round-trips unchanged.
+    //
+    // Codex review round 2, P2.1: the resource branch dropped the
+    // base64 `blob` field (preserved only uri/mimeType/text).
+    // Verifies a downstream returning a binary-payload resource
+    // (PDF, etc.) survives the proxy with its bytes intact.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subEResult = await subcaseResourceBlobRoundtrip(logDir)
+    if (!subEResult.passed) return subEResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case F: registerDownstreamToolsWithKernel is transactional.
+    //
+    // Codex review round 2, P2.3: when the helper throws partway
+    // through a downstream's tool list (e.g., a name collision on
+    // the fifth tool), the earlier four registrations stranded in
+    // the process-wide kernel registry. Verify the helper rolls
+    // back its own partial work AND a subsequent proxy.start()
+    // works cleanly.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subFResult = await subcaseHelperRollback(logDir)
+    if (!subFResult.passed) return subFResult
+
     return {
       passed: true,
       details:
@@ -358,10 +386,273 @@ async function run(): Promise<ProbeResult> {
         `was called exactly once and the text content round-tripped unchanged. ` +
         `Sub-case B (image round-trip): ${subBResult.details}. ` +
         `Sub-case C (concurrent calls): ${subCResult.details}. ` +
-        `Sub-case D (stop+restart): ${subDResult.details}.`,
+        `Sub-case D (stop+restart): ${subDResult.details}. ` +
+        `Sub-case E (resource blob round-trip): ${subEResult.details}. ` +
+        `Sub-case F (helper rollback): ${subFResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case E: a resource block with binary `blob` payload round-trips
+ * unchanged.
+ */
+async function subcaseResourceBlobRoundtrip(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "blobsrv"
+  const toolName = "fetch_pdf"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const PDF_BYTES_B64 = "JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9MZW5ndGggNiAwIFI+PgpzdHJlYW0KQlQKRVQKZW5kc3RyZWFtCmVuZG9iago="
+  const PDF_MIME = "application/pdf"
+  const PDF_URI = "file:///tmp/example.pdf"
+  const tool: MCPTool = {
+    name: toolName,
+    description: "Fetch a binary resource",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [tool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return {
+        content: [
+          {
+            type: "resource",
+            resource: {
+              uri: PDF_URI,
+              mimeType: PDF_MIME,
+              blob: PDF_BYTES_B64,
+            },
+          },
+        ],
+        isError: false,
+      }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-blob",
+    actor_id: "agent:probe-roundtrip-blob",
+    session_id: "probe-roundtrip-blob-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-blob" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    const result = await proxy.handleCallTool({
+      name: lodestarName,
+      arguments: {},
+    })
+    if (result.isError === true) {
+      return { passed: false, details: `blob-roundtrip result.isError=true` }
+    }
+    const block = result.content[0]
+    if (!block || block.type !== "resource") {
+      return {
+        passed: false,
+        details:
+          `expected the content block to round-trip as type='resource'; got ` +
+          `type='${block?.type ?? "(none)"}'`,
+      }
+    }
+    if (block.resource.uri !== PDF_URI) {
+      return {
+        passed: false,
+        details: `resource.uri did not round-trip ('${block.resource.uri}' vs '${PDF_URI}')`,
+      }
+    }
+    if (block.resource.mimeType !== PDF_MIME) {
+      return {
+        passed: false,
+        details: `resource.mimeType did not round-trip`,
+      }
+    }
+    if (block.resource.blob !== PDF_BYTES_B64) {
+      return {
+        passed: false,
+        details:
+          `resource.blob did not round-trip. Got: ${block.resource.blob ?? "(undefined)"}. ` +
+          `Pre-fix this dropped the binary payload entirely — PDFs, images-as-resource, ` +
+          `anything not text would lose its bytes on the way through the proxy.`,
+      }
+    }
+    if (block.resource.text !== undefined) {
+      return {
+        passed: false,
+        details:
+          `resource.text was '${block.resource.text}', expected undefined ` +
+          `(downstream sent blob only)`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "resource block with binary blob (uri + mimeType + base64 blob) round-tripped unchanged",
+  }
+}
+
+/**
+ * Sub-case F: when the tool-registration helper throws partway
+ * through a downstream's tool list, the helper rolls back its own
+ * earlier registrations from the same call so a retry sees a clean
+ * registry.
+ */
+async function subcaseHelperRollback(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "rollback"
+  const okToolName = "ok_tool"
+  const collidingToolName = "colliding_tool"
+  const okLodestarName = `mcp.${downstreamName}.${okToolName}`
+  const collidingLodestarName = `mcp.${downstreamName}.${collidingToolName}`
+  const okTool: MCPTool = {
+    name: okToolName,
+    description: "OK",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const collidingTool: MCPTool = {
+    name: collidingToolName,
+    description: "Will collide",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstreamBuilder = (): DownstreamConnection =>
+    new (class extends DownstreamConnection {
+      constructor() {
+        super(
+          { name: downstreamName, command: "not-spawned", args: [] },
+          { name: "probe", version: "0.0.0" },
+        )
+      }
+      override async start(): Promise<void> {}
+      override getTools(): readonly MCPTool[] {
+        return [okTool, collidingTool]
+      }
+      override async callTool(): Promise<CallToolResult> {
+        return { content: [{ type: "text", text: "ok" }], isError: false }
+      }
+      override async stop(): Promise<void> {}
+    })()
+
+  const cfg: ProxyConfig = {
+    project_id: "probe-roundtrip-rollback",
+    actor_id: "agent:probe-roundtrip-rollback",
+    session_id: "probe-roundtrip-rollback-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-rollback" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [okLodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+      [collidingLodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+
+  // Prime the kernel registry with a pre-existing tool that has the
+  // same name as the SECOND tool the downstream advertises. This
+  // forces the helper to throw on its second iteration, after it has
+  // already registered the FIRST tool. Pre-fix the first
+  // registration stayed in the registry.
+  const {
+    _resetToolsForTests: _reset,
+    registerTool: registerToolFn,
+  } = await import("@qmilab/lodestar-action-kernel")
+  void _reset
+  registerToolFn({
+    name: collidingLodestarName,
+    inputs: (await import("zod")).z.record((await import("zod")).z.unknown()),
+    output_schema_key: "fs.read@1", // doesn't matter; never executed
+    effects: [],
+    reversibility: "reversible",
+    permissions: [],
+    required_trust_level: 0,
+    sandbox: "read",
+    preconditions: () => [],
+    execute: async () => {
+      throw new Error("squatter — never called")
+    },
+  })
+
+  const proxy = new MCPProxy(cfg, {
+    downstreamFactory: () => [downstreamBuilder()],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  let threw = false
+  try {
+    await proxy.start()
+  } catch (err) {
+    threw = true
+    void err
+  }
+  if (!threw) {
+    await proxy.stop()
+    return {
+      passed: false,
+      details: `proxy.start() did not throw despite a pre-existing colliding tool registration`,
+    }
+  }
+
+  // The squatter is still registered (we didn't deregister it), but
+  // crucially the helper's partial work (the `ok_tool` registration)
+  // must have been rolled back. lookupTool of the OK name should
+  // return undefined now.
+  const { lookupTool } = await import("@qmilab/lodestar-action-kernel")
+  if (lookupTool(okLodestarName) !== undefined) {
+    return {
+      passed: false,
+      details:
+        `${okLodestarName} is still registered after the helper threw. ` +
+        `The transactional rollback failed; earlier registrations were ` +
+        `stranded in the process-wide registry.`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "helper threw on the second tool's name collision and rolled back the first tool's registration cleanly",
   }
 }
 

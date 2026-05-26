@@ -84,14 +84,30 @@ export class UpstreamServer {
       return result
     })
     this.transport = new StdioServerTransport()
-    // Wire the transport's close signal to our resolver so callers
-    // awaiting `waitUntilClosed()` unblock when the wrapped agent
-    // hangs up its end of stdin/stdout. The Protocol base class
-    // (which `Server` extends) also exposes its own `onclose`; we
-    // attach to the transport directly so we capture the signal
-    // even if the SDK's internal handler chain changes.
-    this.transport.onclose = () => this.closeResolver()
+    // The SDK's `Server.connect` installs its own `transport.onclose`
+    // handler to drive its internal cleanup. If we set
+    // `transport.onclose` BEFORE `connect`, the SDK overwrites it and
+    // `waitUntilClosed()` never resolves when stdio closes — which is
+    // exactly the bug Codex flagged. Two-pronged fix:
+    //
+    //   1. After `connect`, wrap the SDK's `transport.onclose`. The
+    //      wrapper runs the SDK's handler first (so its cleanup runs)
+    //      and then resolves our close promise.
+    //   2. Also set `server.onclose` (the Protocol base class's
+    //      documented hook). On most SDK versions this is the path
+    //      the transport handler ends up calling; on the rest, the
+    //      wrapped transport handler covers us. Both paths resolve
+    //      the same idempotent promise, so double-resolve is fine.
     await this.server.connect(this.transport)
+    const sdkInstalledOnClose = this.transport.onclose
+    this.transport.onclose = () => {
+      try {
+        sdkInstalledOnClose?.()
+      } finally {
+        this.closeResolver()
+      }
+    }
+    this.server.onclose = () => this.closeResolver()
     this.started = true
   }
 

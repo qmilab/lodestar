@@ -639,11 +639,14 @@ function payloadToCallToolResult(
       return { type: "audio", data: block.data, mimeType: block.mimeType }
     }
     if (block.type === "resource") {
-      const resource: { uri: string; mimeType?: string; text?: string } = {
+      const resource: { uri: string; mimeType?: string; text?: string; blob?: string } = {
         uri: block.resource.uri,
       }
       if (block.resource.mimeType !== undefined) resource.mimeType = block.resource.mimeType
       if (block.resource.text !== undefined) resource.text = block.resource.text
+      // Round-trip blob (base64 binary) so PDFs, images-as-resource,
+      // and any other binary embed survive the proxy unchanged.
+      if (block.resource.blob !== undefined) resource.blob = block.resource.blob
       return { type: "resource", resource }
     }
     // type === "unknown" — Lodestar can't classify this block kind.

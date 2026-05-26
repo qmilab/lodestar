@@ -51,7 +51,18 @@ export type CallToolContentBlock =
   | { type: "audio"; data: string; mimeType: string }
   | {
       type: "resource"
-      resource: { uri: string; mimeType?: string; text?: string }
+      /**
+       * Embedded resource payload. The MCP wire format carries EITHER
+       * `text` (UTF-8) OR `blob` (base64). The proxy must preserve
+       * whichever the downstream sent; dropping `blob` would silently
+       * corrupt binary embeds (PDFs, images-as-resource, etc.).
+       */
+      resource: {
+        uri: string
+        mimeType?: string
+        text?: string
+        blob?: string
+      }
     }
 
 export interface CallToolResultLike {

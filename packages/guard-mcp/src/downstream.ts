@@ -82,11 +82,19 @@ export class DownstreamConnection {
 
   /**
    * Close the transport and let the child process exit. Idempotent.
+   *
+   * Gates on `this.transport` rather than `this.started` so we still
+   * clean up after a partial-start failure: e.g., `client.connect()`
+   * succeeded (the child process is alive and the transport is wired)
+   * but `client.listTools()` threw before we could flip `started =
+   * true`. Pre-Codex this branch returned early and the child
+   * downstream MCP server stayed running indefinitely after the
+   * proxy's startup rollback called us.
    */
   async stop(): Promise<void> {
-    if (!this.started) return
+    if (this.transport === undefined) return
     try {
-      await this.transport?.close()
+      await this.transport.close()
     } finally {
       this.started = false
       this.client = undefined

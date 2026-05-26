@@ -67,10 +67,17 @@ export const MCPToolResultObservationSchema = z.object({
       }),
       z.object({
         type: z.literal("resource"),
+        // MCP embedded resources carry payload as EITHER `text` (UTF-8
+        // string) OR `blob` (base64-encoded binary). Both fields are
+        // optional in the schema so the proxy preserves whichever the
+        // downstream sent; the SDK enforces "exactly one" at the wire.
+        // Pre-Codex review the schema dropped `blob` entirely, which
+        // silently corrupted PDFs and other binary embeds.
         resource: z.object({
           uri: z.string(),
           mimeType: z.string().optional(),
           text: z.string().optional(),
+          blob: z.string().optional(),
         }),
       }),
       z.object({

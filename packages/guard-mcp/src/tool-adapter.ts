@@ -5,6 +5,7 @@ import {
   type Tool as LodestarTool,
   registerTool,
   lookupTool,
+  unregisterTool,
 } from "@qmilab/lodestar-action-kernel"
 import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import type { ToolContractDefaults } from "./config.js"
@@ -184,13 +185,22 @@ function shapeMCPCallToolResultAsObservation(input: {
       }
     }
     if (block.type === "resource") {
-      const resource = (block as { resource?: { uri?: unknown; mimeType?: unknown; text?: unknown } }).resource ?? {}
-      const out: { type: "resource"; resource: { uri: string; mimeType?: string; text?: string } } = {
+      const resource =
+        (block as { resource?: { uri?: unknown; mimeType?: unknown; text?: unknown; blob?: unknown } })
+          .resource ?? {}
+      const out: {
+        type: "resource"
+        resource: { uri: string; mimeType?: string; text?: string; blob?: string }
+      } = {
         type: "resource",
         resource: { uri: typeof resource.uri === "string" ? resource.uri : "" },
       }
       if (typeof resource.mimeType === "string") out.resource.mimeType = resource.mimeType
       if (typeof resource.text === "string") out.resource.text = resource.text
+      // Preserve `blob` (base64 binary). Dropping it here was the
+      // pre-Codex bug: PDFs, images-as-resources, anything binary
+      // would lose its payload on the way through Lodestar.
+      if (typeof resource.blob === "string") out.resource.blob = resource.blob
       return out
     }
     return { type: "unknown" as const, original_type: String(block.type), raw: block }
@@ -219,8 +229,20 @@ function shapeMCPCallToolResultAsObservation(input: {
  * or to a different proxy's policy defaults, which is worse than
  * failing loudly at startup.
  *
+ * **Transactional.** If the loop throws partway through (e.g., the
+ * fifth tool's name is already registered), this function rolls back
+ * its own earlier registrations from the same call before
+ * re-throwing. Pre-Codex review, partial success would strand the
+ * earlier registrations: the caller's tracker only learned about
+ * registrations once the helper returned successfully, so the
+ * startup rollback path couldn't see them. Now the helper either
+ * registers all of the downstream's tools or none.
+ *
  * Callers (`MCPProxy.start`) catch this and surface it as a
- * startup failure that includes the offending tool name.
+ * startup failure that includes the offending tool name. They are
+ * still responsible for unregistering registrations from PRIOR
+ * helper calls (e.g., from downstream #1 when downstream #2's call
+ * to this helper failed).
  */
 export function registerDownstreamToolsWithKernel(args: {
   downstream: DownstreamConnection
@@ -229,32 +251,43 @@ export function registerDownstreamToolsWithKernel(args: {
 }): Array<{ lodestarName: string; mcpTool: MCPTool }> {
   const registered: Array<{ lodestarName: string; mcpTool: MCPTool }> = []
   const fallback = args.conservativeDefaults ?? CONSERVATIVE_TOOL_DEFAULTS
-  for (const mcpTool of args.downstream.getTools()) {
-    const lodestarName = namespacedToolName(
-      args.downstream.config.name,
-      mcpTool.name,
-    )
-    if (lookupTool(lodestarName) !== undefined) {
-      throw new Error(
-        `mcp-proxy: tool '${lodestarName}' is already registered in the ` +
-          `action-kernel. This usually means a prior MCPProxy instance ` +
-          `did not call stop() (which deregisters its tools), or two ` +
-          `proxies are coexisting in the same process for the same ` +
-          `downstream name. Stop the prior proxy or rename the ` +
-          `downstream server in your config.`,
+  try {
+    for (const mcpTool of args.downstream.getTools()) {
+      const lodestarName = namespacedToolName(
+        args.downstream.config.name,
+        mcpTool.name,
       )
+      if (lookupTool(lodestarName) !== undefined) {
+        throw new Error(
+          `mcp-proxy: tool '${lodestarName}' is already registered in the ` +
+            `action-kernel. This usually means a prior MCPProxy instance ` +
+            `did not call stop() (which deregisters its tools), or two ` +
+            `proxies are coexisting in the same process for the same ` +
+            `downstream name. Stop the prior proxy or rename the ` +
+            `downstream server in your config.`,
+        )
+      }
+      const defaults = args.defaultsByTool[lodestarName] ?? fallback
+      registerTool(
+        buildLodestarToolForMCP({
+          lodestarName,
+          downstreamName: args.downstream.config.name,
+          downstream: args.downstream,
+          mcpTool,
+          defaults,
+        }),
+      )
+      registered.push({ lodestarName, mcpTool })
     }
-    const defaults = args.defaultsByTool[lodestarName] ?? fallback
-    registerTool(
-      buildLodestarToolForMCP({
-        lodestarName,
-        downstreamName: args.downstream.config.name,
-        downstream: args.downstream,
-        mcpTool,
-        defaults,
-      }),
-    )
-    registered.push({ lodestarName, mcpTool })
+  } catch (err) {
+    // Roll back our own partial work — every `lodestarName` we
+    // successfully registered before the throw must come out of the
+    // process-wide registry. `unregisterTool` is idempotent on
+    // missing names, so a double-rollback from the caller is harmless.
+    for (const { lodestarName } of registered) {
+      unregisterTool(lodestarName)
+    }
+    throw err
   }
   return registered
 }
