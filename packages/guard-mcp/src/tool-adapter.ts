@@ -360,24 +360,39 @@ export function sanitizeAdvertisedTool(args: {
 }
 
 /**
- * Free-text JSON Schema annotation fields that the proxy refuses to
- * forward upstream. Each one shows up in tool-list payloads that
- * agent runtimes pipe into the model prompt, so any of them is a
+ * JSON Schema annotation fields that the proxy refuses to forward
+ * upstream. Each one shows up in tool-list payloads that agent
+ * runtimes pipe into the model prompt, so any of them is a
  * potential prompt-injection channel when the downstream is
  * untrusted.
  *
- * NOT in this set (intentionally):
- *   - `default` / `examples` / `enum` / `const` — these are values,
- *     not free text. Models do see them, but they're the tool's
- *     declared call shape; scrubbing them would break tool
- *     invocation.
- *   - `format` / `pattern` / `minLength` / `maxLength` / etc. —
- *     structural constraints, not free text.
+ * `default` and `examples` are included even though they appear to
+ * be "value fields": they're advisory annotations, not constraints
+ * the server actually enforces. Models do not need them to
+ * construct a valid call (every required field is identified by
+ * `required` and `properties.<name>.type`); MCP servers don't rely
+ * on the client to surface a tool's defaults either, since
+ * defaults are applied server-side. Treating them as free-text
+ * channels and dropping them costs documentation context but
+ * closes a clean injection path. (Codex round 20 caught the
+ * earlier round-18 reasoning that left these in.)
+ *
+ * NOT in this set:
+ *   - `enum` / `const` — narrow the accepted value set; the model
+ *     MUST honour them to construct a valid call. Removing them
+ *     would break tool invocation outright.
+ *   - `format` / `pattern` / `minLength` / `maxLength` / `minimum`
+ *     / `maximum` etc. — structural constraints, not free text.
+ *   - `type` / `items` / `properties` / `required` / `additional
+ *     Properties` etc. — schema-shape fields the model needs to
+ *     call the tool.
  */
 const SCHEMA_ANNOTATION_KEYS_TO_STRIP: ReadonlySet<string> = new Set([
   "description",
   "title",
   "$comment",
+  "default",
+  "examples",
 ])
 
 /**
