@@ -47,6 +47,7 @@ import {
   CONSERVATIVE_TOOL_DEFAULTS,
   namespacedToolName,
   registerDownstreamToolsWithKernel,
+  sanitizeAdvertisedTool,
 } from "./tool-adapter.js"
 import { UpstreamServer } from "./upstream.js"
 
@@ -296,8 +297,35 @@ export class MCPProxy {
           },
         })
         for (const { lodestarName, mcpTool } of registered) {
-          this.namespacedTools.push({ ...mcpTool, name: lodestarName })
+          // Build the sanitised version we advertise upstream
+          // (description replaced, annotations/_meta/icons
+          // dropped, schema descriptions scrubbed,
+          // execution.taskSupport forced to "forbidden"). The
+          // original tool metadata is captured in an audit event
+          // below so operators can still see what the downstream
+          // claimed when they inspect the trust report.
+          const safe = sanitizeAdvertisedTool({
+            mcpTool,
+            lodestarName,
+            downstreamName: downstream.config.name,
+          })
+          this.namespacedTools.push(safe)
           this.registeredToolNames.add(lodestarName)
+          // Best-effort emit — if the log is broken (sub-case P
+          // path), we still want the proxy to advertise the
+          // sanitised tool so the wrapped agent can function.
+          try {
+            await this.emit("mcp_proxy.tool_advertised", {
+              lodestar_name: lodestarName,
+              downstream_name: downstream.config.name,
+              downstream_tool_name: mcpTool.name,
+              original_tool: mcpTool,
+              advertised_tool: safe,
+              advertised_at: new Date().toISOString(),
+            })
+          } catch {
+            // best-effort
+          }
         }
       }
 

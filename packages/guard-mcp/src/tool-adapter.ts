@@ -295,6 +295,89 @@ function shapeMCPCallToolResultAsObservation(input: {
 
 
 /**
+ * Build a sanitised version of a downstream MCP tool that is safe to
+ * advertise upstream. The wrapped agent's runtime almost always
+ * pipes `description`, `annotations.title`, and schema `description`
+ * fields into the model prompt — so prompt-injection text embedded
+ * in any of those reaches the model before any `tools/call` /
+ * `mcp.tool_result@1` defense fires. The MCP spec explicitly marks
+ * `annotations` as untrusted unless the server is itself trusted;
+ * the same caution applies to `description` and to every nested
+ * description inside `inputSchema`/`outputSchema`.
+ *
+ * v0 sanitisation strategy: replace `description` with a Lodestar-
+ * issued safe summary that names the proxy + the tool, drop
+ * `annotations`/`_meta`/`icons`, recursively strip `description`
+ * fields from input/output schemas, and force
+ * `execution.taskSupport` to `"forbidden"` so MCP clients that
+ * support the experimental tasks API don't send task-augmented
+ * calls the v0 proxy can't forward.
+ *
+ * The original tool metadata is captured via the
+ * `mcp_proxy.tool_advertised` audit event the proxy emits at
+ * startup, so operators investigating a denial still have the
+ * downstream's verbatim catalog text in the event log.
+ *
+ * The lodestar-namespaced `name` and the `inputSchema`'s property
+ * names + types ride through unchanged — the model needs them to
+ * call the tool correctly.
+ */
+export function sanitizeAdvertisedTool(args: {
+  mcpTool: MCPTool
+  lodestarName: string
+  downstreamName: string
+}): MCPTool {
+  const safeDescription =
+    `Tool '${args.lodestarName}' (proxied from downstream '${args.downstreamName}'). ` +
+    `The original description is recorded in the Lodestar event log; it is not ` +
+    `forwarded to the wrapped agent's prompt to prevent prompt-injection text in ` +
+    `downstream tool metadata from reaching the model.`
+  const inputSchema = stripDescriptionsDeep(args.mcpTool.inputSchema) as MCPTool["inputSchema"]
+  const out: Record<string, unknown> = {
+    name: args.lodestarName,
+    description: safeDescription,
+    inputSchema,
+  }
+  // outputSchema is optional in MCP; if present, scrub it the same
+  // way so a hostile downstream can't push prompt content via its
+  // schema description.
+  const outputSchema = (args.mcpTool as { outputSchema?: unknown }).outputSchema
+  if (outputSchema !== undefined) {
+    out.outputSchema = stripDescriptionsDeep(outputSchema)
+  }
+  // execution.taskSupport: forbidden. Any MCP client supporting the
+  // experimental tasks API will see "this tool is sync only" and
+  // not try to invoke it via createTask/pollTask, which v0 doesn't
+  // forward. Tools that originally said "required" never reach
+  // here — `registerDownstreamToolsWithKernel` already dropped them.
+  out.execution = { taskSupport: "forbidden" as const }
+  // Deliberately NOT forwarded: annotations, _meta, icons, title.
+  // Each is untrusted free text in a place the wrapped agent's
+  // runtime may surface to the model.
+  return out as MCPTool
+}
+
+/**
+ * Recursively replace every `description` field inside an object
+ * tree with `undefined` (i.e. drop it). Used to scrub free-text
+ * descriptions out of MCP tool `inputSchema` / `outputSchema`
+ * blocks before advertising upstream — property names and types
+ * stay so the model can still construct calls correctly, but the
+ * descriptions (an injection vector) are gone.
+ */
+function stripDescriptionsDeep(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(stripDescriptionsDeep)
+  const obj = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    if (key === "description") continue
+    out[key] = stripDescriptionsDeep(obj[key])
+  }
+  return out
+}
+
+/**
  * Recursively strip the reserved `_lodestar` key from every `_meta`
  * object reachable from `value`. Used to sanitise the verbatim
  * payload captured for `unknown`-type content blocks before storing

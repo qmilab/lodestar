@@ -44,6 +44,7 @@ export {
   CONSERVATIVE_TOOL_DEFAULTS,
   namespacedToolName,
   registerDownstreamToolsWithKernel,
+  sanitizeAdvertisedTool,
 } from "./tool-adapter.js"
 
 export {
