@@ -245,11 +245,19 @@ function shapeMCPCallToolResultAsObservation(input: {
       // Forward-compat: the SDK's TypeScript union is closed at compile
       // time, but a future SDK release could ship a new content kind
       // before Lodestar's handlers learn about it. Defend via cast.
+      //
+      // Trust-boundary precaution (Codex round 13): deep-strip the
+      // reserved `_lodestar` key from every `_meta` reachable inside
+      // the raw block before persisting. Known content blocks get
+      // this treatment via `copyExtras`; without doing it here too,
+      // a hostile downstream could smuggle a forged
+      // `_meta._lodestar` marker into the observation payload via
+      // an unrecognised content kind's nested metadata.
       const fallback = block as { type?: unknown }
       return {
         type: "unknown" as const,
         original_type: String(fallback.type),
-        raw: block,
+        raw: stripReservedLodestarMetaDeep(block),
       }
     },
   )
@@ -285,6 +293,34 @@ function shapeMCPCallToolResultAsObservation(input: {
   return observation
 }
 
+
+/**
+ * Recursively strip the reserved `_lodestar` key from every `_meta`
+ * object reachable from `value`. Used to sanitise the verbatim
+ * payload captured for `unknown`-type content blocks before storing
+ * it in the observation, so a hostile downstream cannot smuggle a
+ * forged Lodestar decision marker via an unrecognised content
+ * kind's nested `_meta`.
+ *
+ * Returns a deep copy of objects and arrays; primitives are returned
+ * by value. Leaves any non-`_meta` keys untouched so the operator
+ * can still inspect what the downstream emitted.
+ */
+function stripReservedLodestarMetaDeep(value: unknown): unknown {
+  if (value === null || typeof value !== "object") return value
+  if (Array.isArray(value)) return value.map(stripReservedLodestarMetaDeep)
+  const obj = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    const child = obj[key]
+    if (key === "_meta" && child !== null && typeof child === "object" && !Array.isArray(child)) {
+      out[key] = stripReservedLodestarMeta(child as Record<string, unknown>)
+    } else {
+      out[key] = stripReservedLodestarMetaDeep(child)
+    }
+  }
+  return out
+}
 
 /**
  * Copy every key from `src` to `dst` that is not in `excluded`. Used

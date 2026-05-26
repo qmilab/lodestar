@@ -151,10 +151,15 @@ export async function collectPaginatedTools(
     allTools.push(...page.tools)
     cursor = page.nextCursor
     pages += 1
-    if (pages >= maxPages) {
+    // Only abort when the page limit is reached AND the downstream
+    // still says there are more pages. Without the cursor check, a
+    // downstream that legitimately exhausts pagination on exactly
+    // `maxPages` would be rejected as if it were looping forever —
+    // an off-by-one that bit `maxPages = 1` single-page catalogs.
+    if (pages >= maxPages && cursor !== undefined) {
       throw new Error(
         `DownstreamConnection '${downstreamLabel}': tools/list returned ` +
-          `${maxPages} pages without exhausting nextCursor; aborting to ` +
+          `${maxPages} pages and still reports a nextCursor; aborting to ` +
           `avoid an infinite loop. The downstream is likely misbehaving.`,
       )
     }
