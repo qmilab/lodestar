@@ -386,6 +386,161 @@ The project's next regret risk is sequencing, not architecture. The instruction 
 
 ---
 
+## Batch 3 — MCP proxy threat model
+
+The Batch 3 MCP proxy (`@qmilab/lodestar-guard-mcp`) introduces a
+new trust boundary: between the wrapped agent's MCP client and the
+downstream MCP servers it talks to. This section documents the
+threat model the v0 proxy explicitly covers and the threats deferred
+to later batches.
+
+### Trust topology
+
+```
+       (wrapped agent)        (proxy)            (downstream server)
+            client  ── stdio ──▶ server ─ stdio ─▶ server
+                                  │
+                                  ▼
+                           Lodestar Action Kernel
+                           Lodestar Cognitive Core
+                           Append-only event log
+```
+
+The proxy is single-process per session. There is exactly one
+wrapped agent, one Action Kernel, one Memory Firewall, one event log
+per proxy lifetime. Multi-tenancy is intentionally out of scope; a
+hosted multi-tenant control plane would sit above the open-source
+core, not inside it.
+
+### Trust boundaries
+
+| Boundary | What crosses it | Trust posture |
+| --- | --- | --- |
+| Agent ↔ proxy | `tools/call` requests; `CallToolResult` responses | The agent's tool requests are inputs to be governed; the proxy's responses are the proxy's own statement about what was allowed and what the downstream returned. |
+| Proxy ↔ kernel | Proposed actions; arbitration decisions; precondition revalidation | Internal to Lodestar; not a security boundary, but Round 5 invariants still apply (real session/project IDs, no stub fallback, two-phase execution). |
+| Proxy ↔ downstream | `tools/call` requests; `CallToolResult` responses | The downstream is **untrusted**. Its tool annotations are not honoured by the proxy's policy gate; its result contents are recorded as `external_document` evidence quality. |
+| Proxy ↔ disk | Event log NDJSON writes | Internal; per-partition append serialization (PR #2) protects against torn writes within the process. |
+
+### Threats the v0 proxy covers
+
+1. **Memory poisoning via tool result content.** The downstream
+   returns text containing prompt-injection payloads (fake "[SYSTEM]"
+   directives, planted instructions, hostile suggestions). The
+   `MCPToolResultExtractor` separates the tool-call envelope claim
+   (`tool_result` quality) from per-text-block content claims
+   (`external_document` quality). The `MCPAwareEvidenceLinker` flags
+   the content claim's source evidence as `external_document`,
+   tripping the Round 5 auto-observation gate. The poisoned content
+   stays at `truth_status: unverified` regardless of apparent
+   strength. Probe: `mcp-proxy-injection-defense`.
+
+2. **Untrusted tool annotations.** The MCP spec marks tool
+   annotations (e.g., `destructive_hint`, `read_only_hint`) as
+   untrusted unless from a trusted server. The proxy ignores them
+   entirely. Action-contract values (reversibility, blast radius,
+   sandbox profile, required trust level) come from operator-
+   controlled `tool_defaults` or from a conservative fallback
+   (irreversible, controlled-shell sandbox, L3 trust). The bias is
+   toward "refuse unless explicitly approved" rather than "approve
+   unless caught."
+
+3. **Stub-session leak.** PR #2 removed the `session-stub` /
+   `project-stub` defaults from `ActionKernel`; the proxy enforces
+   that real session/project IDs propagate to every observation,
+   claim, belief, action, and event-log envelope. Probes:
+   `kernel-context-propagation`, `mcp-proxy-roundtrip`.
+
+4. **Concurrent writers tearing the log.** PR #2's per-partition
+   `sharedAppendLocks` mutex serialises concurrent appends to the
+   same `${rootDir, project_id}` partition. The proxy adds no new
+   concurrency mechanism; it hooks into the existing writer. Probe:
+   `event-log-single-writer`.
+
+5. **Unknown content block kinds.** The MCP spec is evolving; new
+   content block types (beyond text/image/audio/resource) may appear
+   in future protocol versions. The proxy records unknown kinds
+   under a `{ type: "unknown", original_type, raw }` discriminated
+   variant rather than crashing on parse — the audit trail
+   preserves verbatim what arrived even when Lodestar's schema can't
+   classify it.
+
+6. **Policy denial without aborting the agent.** When the policy
+   gate refuses a tool call, the proxy returns a synthetic
+   `CallToolResult` with `isError: true` and a structured
+   `_meta._lodestar` payload, instead of an MCP-level protocol
+   error. The wrapped agent reads the denial as a normal tool
+   response and can revise its plan, rather than treating the
+   denial as a transport-level failure that aborts the session.
+
+### Threats deferred to later batches
+
+These are real attack surfaces the v0 proxy does NOT cover. Each
+ships with the explicit acknowledgement that operators relying on
+the proxy in production should know what's missing.
+
+- **Sandbox enforcement at the OS level.** The proxy declares
+  `sandbox: SandboxProfile` in each tool's action contract, but the
+  declaration is informational — no namespace/cgroup/container layer
+  enforces it in v0. A compromised downstream that the operator
+  intended to confine to `read` could still issue `fs.write` or
+  `shell.exec` calls; Lodestar would record them faithfully but not
+  prevent them. Real sandbox enforcement lands with the Policy
+  Kernel (Batch 4+).
+
+- **Multi-process event-log coordination.** The per-partition mutex
+  serialises appends within a single process. Two proxies pointed
+  at the same log root would race. The MCP proxy is documented as
+  single-process per session; a file-lock layer on top of the
+  existing interface would add multi-process safety without
+  changing the writer API.
+
+- **Subscription to downstream `tools/list_changed` notifications.**
+  The proxy snapshots the downstream tool catalog at startup and
+  does not refresh it. A downstream that adds or removes tools at
+  runtime would not be picked up until proxy restart. Capability
+  is declared off (`listChanged: false`) on the upstream face so
+  agents do not expect change notifications.
+
+- **HTTP/SSE upstream transport.** v0 is stdio only. HTTP/SSE
+  enables more sophisticated deployment patterns (multiple agents
+  sharing a proxy, remote operation) but expands the surface
+  meaningfully. Deferred.
+
+- **Reflection authority promoting `external_document` content
+  claims.** The auto-observation gate downgrades to `reflection`
+  authority for these claims; reflection itself is not yet
+  implemented (`@qmilab/lodestar-cognitive-core/reflection` is a
+  stub). Until reflection lands (Batch 4), content claims stay at
+  `truth_status: unverified` permanently unless a user explicitly
+  promotes them.
+
+- **Cross-session contradiction propagation.** Contradiction
+  routing within a single session is wired (PR #2's
+  subject-relation join). Contradictions across sessions — e.g., an
+  earlier session adopted belief X, the current session sees
+  evidence against X — require a persistent belief store that v0's
+  in-memory stores don't provide. Postgres-backed stores land in a
+  later batch.
+
+### Operator guidance
+
+Until the deferred items land, operators wrapping a coding agent
+with the v0 MCP proxy should:
+
+- Treat `auto_approve_ceiling` as the real policy. There is no
+  approval UI in v0; everything above the ceiling is denied
+  outright (with a synthetic policy_denied response).
+- Be explicit in `tool_defaults`. Every downstream tool that should
+  run at trust level < L3 needs a per-tool override; otherwise the
+  conservative default refuses to auto-approve.
+- Run downstream MCP servers inside an OS-level sandbox of your
+  own (chroot, container, restricted user). Lodestar's `sandbox`
+  declaration is *intent*, not *enforcement*, in v0.
+- Pipe the event log to durable storage. `.ndjson` works locally;
+  for any non-throwaway session, tail to a real log store.
+
+---
+
 ## Naming history
 
 The project was originally developed under the codename **Orrery**.

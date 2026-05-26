@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["./*.ts"],
+  "references": [
+    { "path": "../../packages/core" },
+    { "path": "../../packages/event-log" },
+    { "path": "../../packages/guard-mcp" },
+    { "path": "../../packages/trace" }
+  ]
+}

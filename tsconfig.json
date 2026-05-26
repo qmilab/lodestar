@@ -9,6 +9,7 @@
     { "path": "./packages/adapters/filesystem" },
     { "path": "./packages/adapters/git" },
     { "path": "./packages/guard" },
+    { "path": "./packages/guard-mcp" },
     { "path": "./packages/trace" },
     { "path": "./packages/cli" },
     { "path": "./packages/memory-firewall/adapters/mem0" },

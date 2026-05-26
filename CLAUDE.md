@@ -4,10 +4,13 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Twelve probes pass under strict
-TypeScript: six firewall probes, three guard / contract probes, and
-the three pre-Batch-3 fixes (contradiction routing, kernel context
-propagation, event-log single-writer). Batches 1 and 2 are complete.
+publishing), v0.2 architecture locked. Fourteen probes pass under
+strict TypeScript: six firewall probes, three guard / contract
+probes, the three pre-Batch-3 fixes (contradiction routing, kernel
+context propagation, event-log single-writer), and two new Batch 3
+MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`).
+Batches 1, 2, and 3 are complete; `@qmilab/lodestar-guard-mcp` lives
+in this repo and will publish to npm in a follow-up mini-marathon.
 Subsequent batches are tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
@@ -61,7 +64,7 @@ packages/
   cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
   guard/               # (exists) meta-package + guard.wrap() helper
   trace/               # (exists) read side + `lodestar report` CLI
-  guard-mcp/           # (Batch 3) MCP proxy mode
+  guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
   harness/             # (Batch 4) probes, sentinels, calibrators, replay-lite
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
   otel-exporter/       # (Batch 5+) OTel GenAI semantic conventions bridge
@@ -76,6 +79,7 @@ examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline
   doc-insight/               # (exists) firewall auto_observation gate demo
   coding-agent-greenfield/   # (exists) guard.wrap() demo on a homegrown agent
+  claude-code-wrapped/       # (exists, Batch 3) MCP proxy wrapping a stand-in agent
 
 docs/
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
@@ -87,14 +91,15 @@ docs/
   review/              # adversarial review history (ChatGPT rounds 1-5)
 
 research/
-  probes/              # twelve passing probes (memory-poisoning-basic,
+  probes/              # fourteen passing probes (memory-poisoning-basic,
                        #   epistemic-chain-smoke, external-document-not-normal,
                        #   quarantined-not-retrievable, sensitivity-ceiling,
                        #   auto-observation-gate, guard-import-no-self-promote,
                        #   guard-precondition-revalidation,
                        #   guard-contract-invariants, context-policy-
                        #   contradiction-routing, kernel-context-propagation,
-                       #   event-log-single-writer)
+                       #   event-log-single-writer, mcp-proxy-roundtrip,
+                       #   mcp-proxy-injection-defense)
   benchmarks/          # (later) reproducible evaluation
   datasets/            # (later) logged event traces for analysis
 ```
@@ -155,7 +160,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Twelve probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
+- **Fourteen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
 
 ## Quick references
 

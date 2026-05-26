@@ -129,28 +129,29 @@ Future commercial offerings from Machinise will include hosted dashboard, team a
 
 ## Status
 
-**Pre-v0.1 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1 and 2 complete.**
+**v0.1.5 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1, 2, and 3 complete.**
 
 What ships today:
 
 - ✅ Full schema layer for the epistemic chain (Observation, Claim, Evidence, Belief, Decision, Action, Outcome, Revision, Explanation)
-- ✅ Append-only NDJSON event log with monotonic sequence numbers and payload hashes
-- ✅ Two-phase action execution with precondition revalidation
-- ✅ Memory firewall with four orthogonal lifecycle axes and per-axis transition tables
-- ✅ Cognitive core: claim extractors, evidence linker, world model, ingestion orchestrator
-- ✅ `@qmilab/lodestar-guard` — `wrap()` helper that drives an agent loop through the full trust layer
+- ✅ Append-only NDJSON event log with monotonic sequence numbers, payload hashes, and per-partition append serialization
+- ✅ Two-phase action execution with precondition revalidation and required `KernelContext` (no silent stub fallback)
+- ✅ Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
+- ✅ Cognitive core: claim extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
+- ✅ `@qmilab/lodestar-guard` — `wrap()` helper that drives a homegrown agent loop through the full trust layer
+- ✅ `@qmilab/lodestar-guard-mcp` — **stdio MCP proxy** that wraps any MCP-speaking agent (Claude Code, Cursor, Aider) without code changes to the agent. Every `tools/call` runs through the Action Kernel; every result through the Cognitive Core. (Batch 3.)
 - ✅ `@qmilab/lodestar-trace` — `lodestar report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
-- ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`
-- ✅ Seven passing probes (six pre-existing plus a new `guard-import-no-self-promote` probe enforcing that adapter imports cannot self-promote)
+- ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`
+- ✅ **Fourteen** passing probes under strict TypeScript: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), plus two new MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the injection-defense probe is the centerpiece of Batch 3)
 - ✅ End-to-end examples:
   - `examples/telenotes-governed-dev/` — full pipeline producing an 11-event audit trail
   - `examples/doc-insight/` — auto-observation gate demo
   - `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown coding-agent loop
+  - `examples/claude-code-wrapped/` — MCP proxy wrapping a stand-in agent that talks to `@modelcontextprotocol/server-filesystem`; produces a demo-quality trust report
 
-What's coming in the next three batches:
+What's coming in the next two batches:
 
-- **Batch 3** — Thin MCP proxy: wrap an existing coding agent (e.g., Claude Code) and route its tool calls through the Action Kernel
 - **Batch 4** — Harness infrastructure (sentinel base, calibrator, probe pack format)
 - **Batch 5** — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
 
@@ -163,11 +164,12 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning
 ```sh
 # Install Bun if needed: https://bun.sh
 bun install
-bun run example:telenotes   # full end-to-end demo
-bun run probes:all          # memory poisoning + epistemic chain probes
+bun run example:telenotes                            # homegrown agent pipeline
+bun run examples/claude-code-wrapped/index.ts        # MCP proxy wrap-an-agent demo
+bun run probes:all                                   # all 14 probes
 ```
 
-All six probes will pass. The Telenotes example produces an 11-event audit trail with full causality, payload hashes, and a printed trace of the epistemic chain.
+All fourteen probes pass. The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
 
 ---
 
