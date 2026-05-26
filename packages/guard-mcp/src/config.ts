@@ -111,7 +111,18 @@ export const ProxyConfigSchema = z.object({
    * here to fail at config-load time instead.
    */
   auto_approve_ceiling: z.number().int().min(0).max(4).default(2),
-  downstream_servers: z.array(DownstreamServerConfigSchema).min(1),
+  downstream_servers: z
+    .array(DownstreamServerConfigSchema)
+    .min(1)
+    .refine(
+      (servers) => new Set(servers.map((s) => s.name)).size === servers.length,
+      {
+        message:
+          "downstream_servers[*].name must be unique; two entries with the same " +
+          "name would map their tools to the same `mcp.<name>.<tool>` namespace " +
+          "and make tool_defaults ownership + audit trail ambiguous",
+      },
+    ),
   tool_defaults: z.record(ToolContractDefaultsSchema).default({}),
 })
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>

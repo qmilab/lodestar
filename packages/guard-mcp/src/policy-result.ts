@@ -1,4 +1,47 @@
 /**
+ * Reserved key inside an MCP `_meta` object. Carries Lodestar-
+ * authored markers (`kind`, `tool_name`, `reason`, `action_id`,
+ * `args`, `denied_at`) that probes, sentinels, and clients use to
+ * recognise proxy-emitted control results — specifically the
+ * `policy_denied` / `tool_not_advertised` / `tool_registration_lost`
+ * / `execution_failed` / `precondition_failed` decisions the proxy
+ * makes.
+ *
+ * The proxy MUST strip this key from any downstream-supplied `_meta`
+ * before forwarding upstream and before persisting in an
+ * observation; otherwise a hostile or compromised downstream server
+ * could spoof a `_lodestar.kind: "policy_denied"` marker on its own
+ * result and trick `isPolicyDeniedResult` (and any sentinel that
+ * pattern-matches on the marker) into misclassifying a real tool
+ * result as a Lodestar decision.
+ */
+export const LODESTAR_META_KEY = "_lodestar"
+
+/**
+ * Return a shallow copy of `meta` with the reserved Lodestar key
+ * removed. Used by both the capture path
+ * (`shapeMCPCallToolResultAsObservation`) and the round-trip path
+ * (`payloadToCallToolResult`) — belt-and-braces against any
+ * intermediate code that doesn't filter on its own.
+ *
+ * Pass-through if `meta` does not contain the reserved key, or if
+ * `meta` is null/undefined.
+ */
+export function stripReservedLodestarMeta<T extends Record<string, unknown> | undefined>(
+  meta: T,
+): T {
+  if (meta === undefined) return meta
+  if (meta === null) return meta
+  if (!(LODESTAR_META_KEY in meta)) return meta
+  const filtered: Record<string, unknown> = {}
+  for (const key of Object.keys(meta)) {
+    if (key === LODESTAR_META_KEY) continue
+    filtered[key] = (meta as Record<string, unknown>)[key]
+  }
+  return filtered as T
+}
+
+/**
  * Synthetic MCP CallToolResult constructed when the Action Kernel
  * denies a forwarded tool call. The wrapped agent receives a
  * structured tool result — NOT an MCP-level protocol error — so it

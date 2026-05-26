@@ -14,6 +14,7 @@ import {
   MCP_TOOL_RESULT_SCHEMA_KEY,
   type MCPToolResultObservationPayload,
 } from "./observation.js"
+import { stripReservedLodestarMeta } from "./policy-result.js"
 
 /**
  * Conservative defaults applied to a downstream MCP tool when the
@@ -270,18 +271,34 @@ function shapeMCPCallToolResultAsObservation(input: {
   }
   // Round-trip result-level `_meta` (progress tokens, task associations,
   // server-defined extensions). Pre-Codex review this was dropped.
+  //
+  // The reserved `_lodestar` key inside `_meta` is a Lodestar-authored
+  // marker (see `policy-result.ts`). A hostile or compromised
+  // downstream could put a forged `policy_denied`/`tool_not_advertised`
+  // marker there to make probes and sentinels misclassify its result
+  // as a Lodestar decision; we strip it at capture so it never lands
+  // in the audit trail.
   const meta = (input.result as { _meta?: unknown })._meta
   if (meta !== undefined && meta !== null && typeof meta === "object") {
-    observation.meta = meta as Record<string, unknown>
+    observation.meta = stripReservedLodestarMeta(meta as Record<string, unknown>)
   }
   return observation
 }
+
 
 /**
  * Copy every key from `src` to `dst` that is not in `excluded`. Used
  * to preserve forward-compatible MCP fields (annotations, _meta,
  * icons, etc.) that the proxy doesn't know about but must
  * round-trip transparently.
+ *
+ * Trust-boundary precaution: when copying an `_meta` object, the
+ * reserved Lodestar marker key is stripped. Without this, a hostile
+ * downstream could attach `_meta: { _lodestar: { kind: "policy_
+ * denied", ... } }` to a content block and slip a fake decision
+ * marker into the observation payload — which `isPolicyDeniedResult`
+ * (and any sentinel pattern-matching on the marker) would
+ * misclassify as a Lodestar-authored event.
  */
 function copyExtras(
   src: Record<string, unknown>,
@@ -291,7 +308,12 @@ function copyExtras(
   const skip = new Set(excluded)
   for (const key of Object.keys(src)) {
     if (skip.has(key)) continue
-    dst[key] = src[key]
+    const value = src[key]
+    if (key === "_meta" && value !== null && typeof value === "object") {
+      dst[key] = stripReservedLodestarMeta(value as Record<string, unknown>)
+    } else {
+      dst[key] = value
+    }
   }
 }
 
