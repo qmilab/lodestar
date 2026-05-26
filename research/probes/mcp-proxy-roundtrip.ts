@@ -432,6 +432,24 @@ async function run(): Promise<ProbeResult> {
     const subJResult = await subcaseFailedStartNoSpuriousEnd(logDir)
     if (!subJResult.passed) return subJResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case K: handleCallTool refuses tools the proxy itself
+    // didn't advertise, even if they're registered in the
+    // process-wide action-kernel registry.
+    //
+    // Codex review round 5: pre-fix, the proxy looked up tools
+    // via the global registry. A wrapped agent could thus invoke
+    // tools any other part of the host had registered (a sibling
+    // MCPProxy, an in-process library consumer registering
+    // `fs.read`, …) — a security gap, and a correctness gap
+    // because a non-MCP tool's output won't conform to
+    // `mcp.tool_result@1`.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subKResult = await subcaseRejectsUnadvertisedTools(logDir)
+    if (!subKResult.passed) return subKResult
+
     return {
       passed: true,
       details:
@@ -449,10 +467,158 @@ async function run(): Promise<ProbeResult> {
         `Sub-case G (resource_link round-trip): ${subGResult.details}. ` +
         `Sub-case H (structuredContent round-trip): ${subHResult.details}. ` +
         `Sub-case I (_meta + annotations round-trip): ${subIResult.details}. ` +
-        `Sub-case J (failed start does not emit session.ended): ${subJResult.details}.`,
+        `Sub-case J (failed start does not emit session.ended): ${subJResult.details}. ` +
+        `Sub-case K (rejects unadvertised tools): ${subKResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case K: a tool registered elsewhere in the process — not by
+ * this proxy — must NOT be callable through the proxy's
+ * `handleCallTool` pathway, even though it lives in the process-
+ * wide action-kernel registry.
+ */
+async function subcaseRejectsUnadvertisedTools(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "advsrv"
+  const advertisedToolName = "echo"
+  const advertisedLodestarName = `mcp.${downstreamName}.${advertisedToolName}`
+  // The tool the wrapped agent will try to sneak through. Not
+  // advertised by this MCPProxy — a separate library consumer in
+  // the same process registers it.
+  const FOREIGN_TOOL_NAME = "foreign.exec"
+  let foreignExecuted = false
+  const z = await import("zod")
+  const {
+    registerTool: kernelRegisterTool,
+  } = await import("@qmilab/lodestar-action-kernel")
+  // Register a foreign output schema so this tool is structurally
+  // valid; the proxy must still refuse to invoke it.
+  registry.register(
+    "foreign.exec@1",
+    z.z.object({ executed: z.z.boolean() }).describe("foreign tool output"),
+  )
+  kernelRegisterTool({
+    name: FOREIGN_TOOL_NAME,
+    inputs: z.z.record(z.z.unknown()),
+    output_schema_key: "foreign.exec@1",
+    effects: [],
+    reversibility: "reversible",
+    permissions: [],
+    required_trust_level: 0,
+    sandbox: "read",
+    preconditions: () => [],
+    execute: async () => {
+      foreignExecuted = true
+      return { executed: true }
+    },
+  })
+
+  const echoTool: MCPTool = {
+    name: advertisedToolName,
+    description: "Echo",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [echoTool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return { content: [{ type: "text", text: "ok" }], isError: false }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-gate",
+    actor_id: "agent:probe-roundtrip-gate",
+    session_id: "probe-roundtrip-gate-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-gate" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [advertisedLodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    // 1) The advertised tool works (sanity check on the gate).
+    const ok = await proxy.handleCallTool({
+      name: advertisedLodestarName,
+      arguments: {},
+    })
+    if (ok.isError === true) {
+      return {
+        passed: false,
+        details: `the proxy's own advertised tool was incorrectly refused by the gate`,
+      }
+    }
+    // 2) The foreign tool is in the process-wide registry but NOT
+    // in this proxy's advertised set. The proxy must refuse to
+    // invoke it.
+    const blocked = await proxy.handleCallTool({
+      name: FOREIGN_TOOL_NAME,
+      arguments: { hostile: true },
+    })
+    if (!blocked.isError) {
+      return {
+        passed: false,
+        details:
+          `the proxy executed a foreign tool ('${FOREIGN_TOOL_NAME}') that it did NOT advertise. ` +
+          `Wrapped agents could invoke any tool the host registers. (foreignExecuted=${foreignExecuted})`,
+      }
+    }
+    if (foreignExecuted) {
+      return {
+        passed: false,
+        details:
+          `the proxy rejected the foreign call but the tool already executed — gate ran AFTER ` +
+          `kernel propose/execute. The gate must precede any kernel interaction.`,
+      }
+    }
+    // The denial must surface as the new "tool_not_advertised" kind
+    // (not "tool_not_registered") so sentinels can distinguish
+    // "agent asked for a tool the proxy never advertised" from
+    // "tool was advertised but kernel registration disappeared".
+    const meta = blocked._meta as { _lodestar?: { kind?: string } } | undefined
+    const kind = meta?._lodestar?.kind
+    if (kind !== "tool_not_advertised") {
+      return {
+        passed: false,
+        details:
+          `expected _meta._lodestar.kind='tool_not_advertised'; got '${kind ?? "(none)"}'`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "advertised tool executes; foreign tool registered elsewhere in the process was refused at the gate (kind='tool_not_advertised'), never executed",
   }
 }
 

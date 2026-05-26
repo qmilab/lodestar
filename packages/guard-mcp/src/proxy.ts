@@ -132,14 +132,29 @@ export class MCPProxy {
   >()
   /**
    * Names this proxy registered with the action-kernel tool
-   * registry. Tracked so `stop()` can deregister them and let the
-   * process recycle the names cleanly for a subsequent `MCPProxy`.
-   * Without this, a second proxy in the same process would either
-   * fail to register (registry rejects duplicates) or, worse,
-   * silently route through a stale closure bound to a dead child
-   * process — the bug Codex flagged.
+   * registry. Tracked for two reasons:
+   *
+   *   1. `stop()` deregisters every entry so the process can recycle
+   *      the names cleanly for a subsequent `MCPProxy`. Without
+   *      this, a second proxy in the same process would either fail
+   *      to register (registry rejects duplicates) or, worse,
+   *      silently route through a stale closure bound to a dead
+   *      child process.
+   *
+   *   2. `handleCallTool` gates on membership here BEFORE consulting
+   *      `lookupTool`. The action-kernel registry is process-wide,
+   *      so without this gate a wrapped agent connected to one
+   *      proxy could invoke tools any other part of the host had
+   *      registered (another in-process proxy, a library consumer
+   *      that pre-registered `fs.read`, …) and trigger an execution
+   *      that wouldn't conform to `mcp.tool_result@1`. Codex round 5
+   *      flagged this as a security + correctness gap.
+   *
+   * `Set` for O(1) membership checks. Insertion-order iteration on
+   * deregister is sufficient — the action-kernel registry doesn't
+   * care about order.
    */
-  private readonly registeredToolNames: string[] = []
+  private readonly registeredToolNames: Set<string> = new Set()
   private started = false
 
   constructor(public readonly config: ProxyConfig, overrides?: MCPProxyOverrides) {
@@ -251,7 +266,7 @@ export class MCPProxy {
         })
         for (const { lodestarName, mcpTool } of registered) {
           this.namespacedTools.push({ ...mcpTool, name: lodestarName })
-          this.registeredToolNames.push(lodestarName)
+          this.registeredToolNames.add(lodestarName)
         }
       }
 
@@ -337,13 +352,15 @@ export class MCPProxy {
       })
     }
 
-    const tool = lookupTool(req.name)
-    if (tool === undefined) {
-      // The wrapped agent is asking for a tool the proxy never
-      // advertised. This is not a policy denial — it's a malformed
-      // request. Synthesize an MCP-style tool error rather than a
-      // policy_denied payload so sentinels watching for denials
-      // don't confuse the two.
+    // Gate on THIS proxy's advertised catalog, NOT on the process-
+    // wide action-kernel registry. The wrapped agent must only be
+    // able to invoke tools we explicitly mapped from a configured
+    // downstream — otherwise it could call any other tool the host
+    // happens to have registered (a sibling MCPProxy, a library
+    // consumer pre-registering `fs.read`, …), bypassing this
+    // proxy's `downstream_servers` / `tool_defaults` and producing
+    // results that don't conform to `mcp.tool_result@1`.
+    if (!this.registeredToolNames.has(req.name)) {
       return {
         content: [
           {
@@ -356,9 +373,38 @@ export class MCPProxy {
         isError: true,
         _meta: {
           _lodestar: {
-            kind: "tool_not_registered",
+            kind: "tool_not_advertised",
             tool_name: req.name,
-            reason: "lookupTool returned undefined",
+            reason:
+              "tool name is not in this MCPProxy's advertised catalog (registeredToolNames)",
+            args: req.arguments,
+          },
+        },
+      }
+    }
+    const tool = lookupTool(req.name)
+    if (tool === undefined) {
+      // Belt-and-braces: the name passed our membership check but
+      // the kernel doesn't have it. Should only fire under a race
+      // (someone called `unregisterTool` between our check and this
+      // lookup). Surface as a distinct kind so sentinels can spot
+      // the corruption.
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              `Tool '${req.name}' is advertised by this proxy but the action-kernel registry ` +
+              `no longer recognises it. This indicates an out-of-band deregistration race.`,
+          },
+        ],
+        isError: true,
+        _meta: {
+          _lodestar: {
+            kind: "tool_registration_lost",
+            tool_name: req.name,
+            reason:
+              "registeredToolNames includes this name but lookupTool returned undefined",
             args: req.arguments,
           },
         },
@@ -615,10 +661,10 @@ export class MCPProxy {
    * start-error rollback path without double-unregistering.
    */
   private deregisterTools(): void {
-    while (this.registeredToolNames.length > 0) {
-      const name = this.registeredToolNames.pop()
-      if (name !== undefined) unregisterTool(name)
+    for (const name of this.registeredToolNames) {
+      unregisterTool(name)
     }
+    this.registeredToolNames.clear()
   }
 }
 
