@@ -332,7 +332,9 @@ export function sanitizeAdvertisedTool(args: {
     `The original description is recorded in the Lodestar event log; it is not ` +
     `forwarded to the wrapped agent's prompt to prevent prompt-injection text in ` +
     `downstream tool metadata from reaching the model.`
-  const inputSchema = stripDescriptionsDeep(args.mcpTool.inputSchema) as MCPTool["inputSchema"]
+  const inputSchema = stripSchemaAnnotationsDeep(
+    args.mcpTool.inputSchema,
+  ) as MCPTool["inputSchema"]
   const out: Record<string, unknown> = {
     name: args.lodestarName,
     description: safeDescription,
@@ -340,10 +342,10 @@ export function sanitizeAdvertisedTool(args: {
   }
   // outputSchema is optional in MCP; if present, scrub it the same
   // way so a hostile downstream can't push prompt content via its
-  // schema description.
+  // schema annotations.
   const outputSchema = (args.mcpTool as { outputSchema?: unknown }).outputSchema
   if (outputSchema !== undefined) {
-    out.outputSchema = stripDescriptionsDeep(outputSchema)
+    out.outputSchema = stripSchemaAnnotationsDeep(outputSchema)
   }
   // execution.taskSupport: forbidden. Any MCP client supporting the
   // experimental tasks API will see "this tool is sync only" and
@@ -358,30 +360,55 @@ export function sanitizeAdvertisedTool(args: {
 }
 
 /**
- * Recursively scrub the JSON Schema annotation `description` from
- * an object tree without disturbing property NAMES that happen to
- * be called `description`.
+ * Free-text JSON Schema annotation fields that the proxy refuses to
+ * forward upstream. Each one shows up in tool-list payloads that
+ * agent runtimes pipe into the model prompt, so any of them is a
+ * potential prompt-injection channel when the downstream is
+ * untrusted.
+ *
+ * NOT in this set (intentionally):
+ *   - `default` / `examples` / `enum` / `const` — these are values,
+ *     not free text. Models do see them, but they're the tool's
+ *     declared call shape; scrubbing them would break tool
+ *     invocation.
+ *   - `format` / `pattern` / `minLength` / `maxLength` / etc. —
+ *     structural constraints, not free text.
+ */
+const SCHEMA_ANNOTATION_KEYS_TO_STRIP: ReadonlySet<string> = new Set([
+  "description",
+  "title",
+  "$comment",
+])
+
+/**
+ * Recursively scrub the free-text JSON Schema annotation fields
+ * listed in `SCHEMA_ANNOTATION_KEYS_TO_STRIP` from an object tree
+ * without disturbing property NAMES that happen to use the same
+ * strings.
  *
  * The distinction matters because in JSON Schema the same string
- * `"description"` is both an annotation field (free text — injection
- * vector) and a perfectly valid property name. Issue-tracker and
- * task-creation tools commonly declare an input like
+ * (`"description"`, `"title"`, …) is both an annotation field (free
+ * text → injection vector) and a perfectly valid property name.
+ * Issue-tracker and task-creation tools commonly declare an input
+ * like
  *
  *   inputSchema: { type: "object",
  *     properties: { description: { type: "string" } },
  *     required: ["description"] }
  *
- * Pre-Codex-round-16, the scrubber stripped that property entirely
- * while leaving the `required` array referencing it, so the
- * advertised schema became internally inconsistent and clients had
- * no way to know how to supply the required argument.
+ * A naive scrubber would drop the `description` property entirely
+ * while leaving the `required` array referencing it.
  *
- * The fix tracks whether the walker is currently visiting the value
- * of a `properties` (or `patternProperties`) key. Inside those
- * maps, the keys are property names — leave them alone. Anywhere
- * else, `description` is the annotation field and gets dropped.
+ * The walker tracks `insidePropertiesMap`: when true, the keys are
+ * property names — leave them alone. When false, the keys are
+ * schema keywords, and the annotation set gets dropped.
+ *
+ * `properties` / `patternProperties` flip the flag to `true` for
+ * one level of recursion, but ONLY at schema level — a child key
+ * literally named `properties` inside a properties map is itself a
+ * property name, not the keyword.
  */
-function stripDescriptionsDeep(
+function stripSchemaAnnotationsDeep(
   value: unknown,
   insidePropertiesMap = false,
 ): unknown {
@@ -389,31 +416,27 @@ function stripDescriptionsDeep(
   if (Array.isArray(value)) {
     // Array entries are never inside a properties-map by name —
     // reset the flag when we step through an array.
-    return value.map((v) => stripDescriptionsDeep(v, false))
+    return value.map((v) => stripSchemaAnnotationsDeep(v, false))
   }
   const obj = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(obj)) {
-    // Only drop `description` when it's a JSON Schema annotation
-    // — i.e. NOT when we're currently walking the keys of a
-    // `properties` / `patternProperties` map.
-    if (!insidePropertiesMap && key === "description") continue
-    // Recurse. The key `properties` (or `patternProperties`) is
-    // the JSON Schema keyword whose value is a property map ONLY
-    // when we're at schema level. If we're already inside a
-    // properties map, a child key named `properties` is just a
-    // user-defined property NAME — its value is the property's
-    // schema, not another properties map. Without that guard, a
-    // downstream tool with an input parameter literally named
-    // `properties` would bypass the description scrub: the
-    // walker would treat `inputSchema.properties.properties` as
-    // another properties map, preserve its `description`
-    // annotation, and ship prompt-injection text upstream. The
-    // `!insidePropertiesMap` check closes that bypass.
+    // Drop annotation keys only at schema level. Inside a
+    // properties map, the same strings are property NAMES the
+    // model needs to construct calls.
+    if (!insidePropertiesMap && SCHEMA_ANNOTATION_KEYS_TO_STRIP.has(key)) {
+      continue
+    }
+    // The keys `properties` / `patternProperties` are JSON Schema
+    // keywords whose value is a property map ONLY at schema level.
+    // Inside a properties map they're just user-defined property
+    // names — recursing with `insidePropertiesMap=true` from there
+    // would let a downstream bypass the scrub via a property
+    // literally named `properties` (round 17).
     const childIsPropertiesMap =
       !insidePropertiesMap &&
       (key === "properties" || key === "patternProperties")
-    out[key] = stripDescriptionsDeep(obj[key], childIsPropertiesMap)
+    out[key] = stripSchemaAnnotationsDeep(obj[key], childIsPropertiesMap)
   }
   return out
 }
