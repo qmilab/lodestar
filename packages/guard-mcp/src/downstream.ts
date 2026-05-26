@@ -48,11 +48,18 @@ export class DownstreamConnection {
     })
     this.client = new Client(this.clientInfo)
     await this.client.connect(this.transport)
-    // List tools and cache. v0 does not subscribe to tools/list_changed
-    // notifications; if a downstream's tool catalog changes after
+    // Drain ALL pages of tools/list. MCP servers can paginate their
+    // tool catalog via `nextCursor`; capturing only the first page
+    // would silently drop tools, which then get refused as
+    // `tool_not_advertised` even though the downstream offers them.
+    // v0 still does not subscribe to tools/list_changed
+    // notifications; if a downstream's catalog changes after
     // startup, the proxy will not pick it up until restart.
-    const list = await this.client.listTools()
-    this.tools = list.tools
+    const client = this.client
+    this.tools = await collectPaginatedTools(
+      (params) => client.listTools(params),
+      this.config.name,
+    )
     this.started = true
   }
 
@@ -81,6 +88,16 @@ export class DownstreamConnection {
   }
 
   /**
+   * Drain all pages of an MCP `tools/list` call. Loops on
+   * `nextCursor` until the downstream stops returning one,
+   * accumulating tools across pages. Exposed so probes can drive
+   * the pagination logic directly with a fake `listTools`
+   * callable rather than spinning up a real subprocess.
+   *
+   * Throws after 1000 pages — a hard ceiling against a misbehaving
+   * downstream that returns a non-empty `nextCursor` forever.
+   */
+  /**
    * Close the transport and let the child process exit. Idempotent.
    *
    * Gates on `this.transport` rather than `this.started` so we still
@@ -101,4 +118,46 @@ export class DownstreamConnection {
       this.transport = undefined
     }
   }
+}
+
+/**
+ * Drain all pages of an MCP `tools/list` call.
+ *
+ * `listToolsFn` is the SDK client's `listTools` method (or any
+ * compatible callable for tests). The function calls it repeatedly
+ * with the previous page's `nextCursor` until the downstream stops
+ * returning one. Tools accumulate across pages in the order they
+ * arrive.
+ *
+ * Throws after `maxPages` (default 1000) — a hard ceiling against a
+ * misbehaving downstream that returns a non-empty `nextCursor`
+ * forever. The cap is well past any real catalog; if a downstream
+ * hits it, the operator wants to hear about it loudly rather than
+ * have the proxy spin.
+ */
+export async function collectPaginatedTools(
+  listToolsFn: (
+    params?: { cursor?: string },
+  ) => Promise<{ tools: MCPTool[]; nextCursor?: string }>,
+  downstreamLabel: string,
+  maxPages = 1000,
+): Promise<MCPTool[]> {
+  const allTools: MCPTool[] = []
+  let cursor: string | undefined
+  let pages = 0
+  do {
+    const params = cursor !== undefined ? { cursor } : undefined
+    const page = await listToolsFn(params)
+    allTools.push(...page.tools)
+    cursor = page.nextCursor
+    pages += 1
+    if (pages >= maxPages) {
+      throw new Error(
+        `DownstreamConnection '${downstreamLabel}': tools/list returned ` +
+          `${maxPages} pages without exhausting nextCursor; aborting to ` +
+          `avoid an infinite loop. The downstream is likely misbehaving.`,
+      )
+    }
+  } while (cursor !== undefined)
+  return allTools
 }

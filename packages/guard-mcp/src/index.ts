@@ -9,6 +9,7 @@ export {
 } from "./config.js"
 
 export {
+  collectPaginatedTools,
   DownstreamConnection,
 } from "./downstream.js"
 

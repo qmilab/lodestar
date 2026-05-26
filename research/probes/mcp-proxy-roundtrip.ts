@@ -42,6 +42,7 @@ import type {
 import { registry } from "@qmilab/lodestar-core"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import {
+  collectPaginatedTools,
   DownstreamConnection,
   isPolicyDeniedResult,
   MCPProxy,
@@ -555,6 +556,18 @@ async function run(): Promise<ProbeResult> {
     const subRResult = await subcaseRefusedCallAudited(logDir)
     if (!subRResult.passed) return subRResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case S: paginated tools/list response is fully drained.
+    //
+    // Codex review round 11, P2: pre-fix, DownstreamConnection
+    // captured only the first page of tools/list. Servers that
+    // paginate with `nextCursor` had every tool past page 1
+    // silently dropped from the proxy's catalog. The fix loops on
+    // `nextCursor` (with a 1000-page hard cap).
+    // ─────────────────────────────────────────────────────────────
+    const subSResult = await subcasePaginatedToolsList()
+    if (!subSResult.passed) return subSResult
+
     return {
       passed: true,
       details:
@@ -580,10 +593,105 @@ async function run(): Promise<ProbeResult> {
         `Sub-case O (task-required tools filtered): ${subOResult.details}. ` +
         `Sub-case P (bad log_root fails cleanly): ${subPResult.details}. ` +
         `Sub-case Q (restart does not accumulate catalog): ${subQResult.details}. ` +
-        `Sub-case R (refused calls audited): ${subRResult.details}.`,
+        `Sub-case R (refused calls audited): ${subRResult.details}. ` +
+        `Sub-case S (paginated tools/list drained): ${subSResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case S: `collectPaginatedTools` follows `nextCursor` until the
+ * downstream stops returning one, and an infinite-pagination
+ * downstream is aborted by the safety cap.
+ */
+async function subcasePaginatedToolsList(): Promise<ProbeResult> {
+  const PAGE_1: MCPTool[] = [
+    { name: "p1_a", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+    { name: "p1_b", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+  ]
+  const PAGE_2: MCPTool[] = [
+    { name: "p2_a", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+  ]
+  const PAGE_3: MCPTool[] = [
+    { name: "p3_a", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+    { name: "p3_b", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+    { name: "p3_c", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+  ]
+
+  // (1) Happy path: three pages drained in order, no leftover cursor.
+  const calls: Array<{ cursor?: string }> = []
+  const happy = async (
+    params?: { cursor?: string },
+  ): Promise<{ tools: MCPTool[]; nextCursor?: string }> => {
+    calls.push({ cursor: params?.cursor })
+    if (params?.cursor === undefined) {
+      return { tools: PAGE_1, nextCursor: "cursor-1" }
+    }
+    if (params.cursor === "cursor-1") {
+      return { tools: PAGE_2, nextCursor: "cursor-2" }
+    }
+    if (params.cursor === "cursor-2") {
+      return { tools: PAGE_3 }
+    }
+    throw new Error(`unexpected cursor: ${params.cursor}`)
+  }
+  const allTools = await collectPaginatedTools(happy, "happy")
+  if (allTools.length !== 6) {
+    return {
+      passed: false,
+      details: `expected 6 tools across 3 pages, got ${allTools.length}: [${allTools.map((t) => t.name).join(", ")}]`,
+    }
+  }
+  const names = allTools.map((t) => t.name)
+  const expected = ["p1_a", "p1_b", "p2_a", "p3_a", "p3_b", "p3_c"]
+  for (let i = 0; i < expected.length; i++) {
+    if (names[i] !== expected[i]) {
+      return {
+        passed: false,
+        details: `expected tools in order [${expected.join(", ")}]; got [${names.join(", ")}]`,
+      }
+    }
+  }
+  if (calls.length !== 3) {
+    return {
+      passed: false,
+      details: `expected listTools to be called 3 times, got ${calls.length}`,
+    }
+  }
+
+  // (2) Safety cap: a misbehaving downstream that returns
+  //     nextCursor forever must abort after maxPages.
+  const infinite = async (
+    _params?: { cursor?: string },
+  ): Promise<{ tools: MCPTool[]; nextCursor?: string }> => ({
+    tools: [],
+    nextCursor: "never-ends",
+  })
+  let capThrew = false
+  try {
+    await collectPaginatedTools(infinite, "infinite", 5)
+  } catch (err) {
+    capThrew = true
+    const message = err instanceof Error ? err.message : String(err)
+    if (!message.includes("infinite") || !message.includes("5")) {
+      return {
+        passed: false,
+        details: `safety cap threw but the message did not identify the downstream / page count: ${message}`,
+      }
+    }
+  }
+  if (!capThrew) {
+    return {
+      passed: false,
+      details: `infinite-pagination downstream did not trigger the safety cap`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "happy path drained 3 pages of tools/list in order (6 tools across cursors); safety cap aborts an infinite-pagination downstream at maxPages=5",
   }
 }
 

@@ -62,8 +62,13 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
   const proxy = new MCPProxy(config)
   process.stderr.write(`[mcp-proxy] session ${proxy.session_id}\n`)
   process.stderr.write(`[mcp-proxy] log root ${proxy.log_root}\n`)
+  // Always include `--project` and `--log-root` in the hint so the
+  // command works regardless of whether the config uses defaults.
+  // Pre-fix, a config that pointed `log_root` anywhere outside the
+  // cwd's default produced a hint that couldn't find the session.
   process.stderr.write(
-    `[mcp-proxy] render with: lodestar report ${proxy.session_id}\n`,
+    `[mcp-proxy] render with: lodestar report ${proxy.session_id} ` +
+      `--project ${config.project_id} --log-root ${proxy.log_root}\n`,
   )
 
   // SIGINT and SIGTERM hand control to a graceful shutdown so the
