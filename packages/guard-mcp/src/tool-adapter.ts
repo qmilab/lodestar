@@ -350,6 +350,18 @@ export function registerDownstreamToolsWithKernel(args: {
   downstream: DownstreamConnection
   defaultsByTool: Record<string, ToolContractDefaults>
   conservativeDefaults?: ToolContractDefaults
+  /**
+   * Optional sink invoked once per downstream tool the helper
+   * declines to register because it requires task-based execution
+   * (`execution.taskSupport === "required"`) and the v0 proxy only
+   * forwards synchronous CallTool requests. The sink lets the caller
+   * surface the skipped tools to operators (typically via stderr).
+   */
+  onTaskRequiredSkipped?: (info: {
+    downstreamName: string
+    toolName: string
+    lodestarName: string
+  }) => void
 }): Array<{ lodestarName: string; mcpTool: MCPTool }> {
   const registered: Array<{ lodestarName: string; mcpTool: MCPTool }> = []
   const fallback = args.conservativeDefaults ?? CONSERVATIVE_TOOL_DEFAULTS
@@ -359,6 +371,25 @@ export function registerDownstreamToolsWithKernel(args: {
         args.downstream.config.name,
         mcpTool.name,
       )
+      // Skip tools that require task-based execution. The MCP spec's
+      // `execution.taskSupport: "required"` says "the client MUST
+      // invoke this via the tasks API." The proxy only knows the
+      // synchronous `callTool` API today; advertising the tool would
+      // mislead spec-compliant clients (they would issue a task call
+      // and get a protocol error) and non-task clients (they would
+      // hit the throw inside the SDK's `callTool`). Drop them at
+      // startup with a visible warning so operators know they can
+      // safely re-add them once Lodestar grows task support.
+      const taskSupport = (mcpTool as { execution?: { taskSupport?: string } })
+        .execution?.taskSupport
+      if (taskSupport === "required") {
+        args.onTaskRequiredSkipped?.({
+          downstreamName: args.downstream.config.name,
+          toolName: mcpTool.name,
+          lodestarName,
+        })
+        continue
+      }
       if (lookupTool(lodestarName) !== undefined) {
         throw new Error(
           `mcp-proxy: tool '${lodestarName}' is already registered in the ` +

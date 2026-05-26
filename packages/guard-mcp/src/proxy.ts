@@ -238,31 +238,51 @@ export class MCPProxy {
       () => ({ session_id: this.sessionId, project_id: this.config.project_id }),
     )
 
-    await this.emit("guard.session.started", {
-      project_id: this.config.project_id,
-      session_id: this.sessionId,
-      actor_id: this.config.actor_id,
-      mode: "mcp-proxy",
-      started_at: new Date().toISOString(),
-    })
-
     try {
-      // 4. Start downstreams in parallel. If any fail, fail the
+      // 4. First I/O: write the session-start envelope. Inside the
+      //    try so a bad `log_root` (unwritable directory, full
+      //    disk, …) routes through the rollback path instead of
+      //    escaping with `started=true` still set — pre-fix that
+      //    left the CLI's follow-up `stop()` trying to write to
+      //    the same broken log.
+      await this.emit("guard.session.started", {
+        project_id: this.config.project_id,
+        session_id: this.sessionId,
+        actor_id: this.config.actor_id,
+        mode: "mcp-proxy",
+        started_at: new Date().toISOString(),
+      })
+
+      // 5. Start downstreams in parallel. If any fail, fail the
       //    whole start: a partially-connected proxy advertises
       //    tools it can't actually call.
       await Promise.all(this.downstreams.map((d) => d.start()))
 
-      // 5. Register every downstream tool in the action-kernel
+      // 6. Register every downstream tool in the action-kernel
       //    registry. Build the upstream catalog at the same time.
       //    Track every name we register so `stop()` can deregister
       //    them; without that, two proxies in the same process leak
       //    stale closures bound to the prior downstream connection.
+      //
+      //    Tools that require task-based execution (`execution.task
+      //    Support === "required"`) are dropped — the helper signals
+      //    them via `onTaskRequiredSkipped`. We surface those to
+      //    stderr so the operator sees which advertised tools the
+      //    v0 proxy is leaving behind.
       const defaultsByTool: Record<string, ToolContractDefaults> = this.config.tool_defaults
       for (const downstream of this.downstreams) {
         const registered = registerDownstreamToolsWithKernel({
           downstream,
           defaultsByTool,
           conservativeDefaults: CONSERVATIVE_TOOL_DEFAULTS,
+          onTaskRequiredSkipped: (info) => {
+            process.stderr.write(
+              `[mcp-proxy] skipping task-required tool '${info.lodestarName}' ` +
+                `(downstream '${info.downstreamName}', native name '${info.toolName}'). ` +
+                `The v0 proxy forwards synchronous CallTool only; task forwarding ` +
+                `is deferred to a later batch.\n`,
+            )
+          },
         })
         for (const { lodestarName, mcpTool } of registered) {
           this.namespacedTools.push({ ...mcpTool, name: lodestarName })
@@ -270,7 +290,7 @@ export class MCPProxy {
         }
       }
 
-      // 6. Start the upstream server with the aggregated catalog and
+      // 7. Start the upstream server with the aggregated catalog and
       //    a handler that drives each call through the kernel.
       this.upstream =
         this.upstreamFactory?.(
@@ -285,10 +305,20 @@ export class MCPProxy {
       await this.upstream.start()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
-      await this.emit("guard.session.failed", {
-        reason: message,
-        at: new Date().toISOString(),
-      })
+      // Best-effort: try to record the failure. If the original
+      // throw came from a bad `log_root`, this emit will fail too —
+      // swallow that secondary error so the caller sees the
+      // primary one. Without the best-effort wrapper, the rethrow
+      // path below would never run when the log itself is the
+      // problem.
+      try {
+        await this.emit("guard.session.failed", {
+          reason: message,
+          at: new Date().toISOString(),
+        })
+      } catch {
+        // best-effort
+      }
       // Roll back the partial side effects of start():
       // - any tools the proxy managed to register before the failure
       //   must be removed so a retry doesn't trip the
@@ -576,9 +606,18 @@ export class MCPProxy {
   async stop(): Promise<void> {
     if (!this.started) return
     try {
-      await this.emit("guard.session.ended", {
-        ended_at: new Date().toISOString(),
-      })
+      // Best-effort: if the log is unwritable (operator broke the
+      // partition mid-session, disk filled up, …), do not let the
+      // failed emit prevent the rest of stop() from running. The
+      // finally block still tears down the upstream + downstreams
+      // + tool registrations.
+      try {
+        await this.emit("guard.session.ended", {
+          ended_at: new Date().toISOString(),
+        })
+      } catch {
+        // best-effort
+      }
     } finally {
       try {
         await this.upstream?.stop()

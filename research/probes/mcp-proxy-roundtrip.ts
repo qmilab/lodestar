@@ -495,6 +495,36 @@ async function run(): Promise<ProbeResult> {
     const subNResult = subcaseDuplicateDownstreamNamesRejected()
     if (!subNResult.passed) return subNResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case O: task-required MCP tools are filtered out of the
+    // advertised catalog at startup.
+    //
+    // Codex review round 8, P2.1: tools declaring
+    // `execution.taskSupport === "required"` need the SDK's task
+    // API. The v0 proxy only forwards synchronous CallTool, so
+    // advertising them would mislead spec-compliant clients. The
+    // fix drops them at startup with a stderr warning.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subOResult = await subcaseTaskRequiredToolsFiltered(logDir)
+    if (!subOResult.passed) return subOResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case P: a bad log_root causes start() to fail cleanly.
+    //
+    // Codex review round 8, P3: the initial guard.session.started
+    // emit ran BEFORE the try/catch. A failing write (bad
+    // log_root) would escape start() with started=true still set;
+    // the CLI's catch path would then call stop(), which would
+    // also try to emit to the same broken log. The fix moves the
+    // emit inside the try and best-efforts subsequent emits.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subPResult = await subcaseBadLogRootFailsCleanly(logDir)
+    if (!subPResult.passed) return subPResult
+
     return {
       passed: true,
       details:
@@ -516,10 +546,232 @@ async function run(): Promise<ProbeResult> {
         `Sub-case K (rejects unadvertised tools): ${subKResult.details}. ` +
         `Sub-case L (stdin EOF closes proxy): ${subLResult.details}. ` +
         `Sub-case M (strips reserved _lodestar from downstream _meta): ${subMResult.details}. ` +
-        `Sub-case N (duplicate downstream names rejected): ${subNResult.details}.`,
+        `Sub-case N (duplicate downstream names rejected): ${subNResult.details}. ` +
+        `Sub-case O (task-required tools filtered): ${subOResult.details}. ` +
+        `Sub-case P (bad log_root fails cleanly): ${subPResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case O: a downstream that advertises both a regular tool and
+ * a `taskSupport: "required"` tool surfaces only the regular tool
+ * in the proxy's advertised catalog.
+ */
+async function subcaseTaskRequiredToolsFiltered(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "tasksrv"
+  const regularName = "regular_echo"
+  const taskOnlyName = "long_running"
+  const regularLodestarName = `mcp.${downstreamName}.${regularName}`
+  const taskOnlyLodestarName = `mcp.${downstreamName}.${taskOnlyName}`
+  const regularTool: MCPTool = {
+    name: regularName,
+    description: "Synchronous echo",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  // Cast the task-required tool into the SDK's Tool shape — the SDK
+  // type may not yet expose `execution.taskSupport` in our checked-in
+  // version even though the runtime schema honors it.
+  const taskOnlyTool = {
+    name: taskOnlyName,
+    description: "Requires the task API; the proxy must NOT advertise this in v0",
+    inputSchema: { type: "object", properties: {}, required: [] },
+    execution: { taskSupport: "required" as const },
+  } as unknown as MCPTool
+
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [regularTool, taskOnlyTool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return { content: [{ type: "text", text: "ok" }], isError: false }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-task",
+    actor_id: "agent:probe-roundtrip-task",
+    session_id: "probe-roundtrip-task-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-task" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [regularLodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  // Capture the upstream catalog by stealing the tools array the
+  // proxy hands its UpstreamServer factory.
+  let advertised: MCPTool[] = []
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) => {
+      advertised = tools
+      return new NoOpUpstreamServer(tools, handler, {
+        name: "probe",
+        version: "0.0.0",
+      })
+    },
+  })
+  try {
+    await proxy.start()
+    // (1) The advertised catalog must include the regular tool …
+    if (!advertised.some((t) => t.name === regularLodestarName)) {
+      return {
+        passed: false,
+        details:
+          `the regular tool was dropped from the catalog (advertised=[${advertised.map((t) => t.name).join(", ")}])`,
+      }
+    }
+    // (2) … but NOT the task-required tool.
+    if (advertised.some((t) => t.name === taskOnlyLodestarName)) {
+      return {
+        passed: false,
+        details:
+          `the task-required tool '${taskOnlyLodestarName}' leaked into the upstream catalog. ` +
+          `Spec-compliant clients that send a task call would get a protocol error.`,
+      }
+    }
+    // (3) The proxy must refuse calls to the task-required tool —
+    // it isn't in registeredToolNames, so the gate from sub-case K
+    // is what enforces this.
+    const blocked = await proxy.handleCallTool({
+      name: taskOnlyLodestarName,
+      arguments: {},
+    })
+    if (!blocked.isError) {
+      return {
+        passed: false,
+        details:
+          `proxy.handleCallTool on the task-required tool did not return isError; ` +
+          `the gate let through a tool we explicitly chose not to advertise`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "task-required tool filtered out of the advertised catalog and rejected at the gate; regular tool stays",
+  }
+}
+
+/**
+ * Sub-case P: a `log_root` that points at an unwritable location
+ * causes `proxy.start()` to throw and `proxy.stop()` to complete
+ * (also throwing harmlessly) without compounding the error.
+ */
+async function subcaseBadLogRootFailsCleanly(_logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "fineserver"
+  const toolName = "noop"
+  const tool: MCPTool = {
+    name: toolName,
+    description: "No-op",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [tool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return { content: [{ type: "text", text: "ok" }], isError: false }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  // Point log_root at a path inside a regular file — every write
+  // resolves to "ENOTDIR" / similar. The actual error message is OS-
+  // dependent; we only care that the proxy reports failure cleanly.
+  const { mkdtemp, writeFile } = await import("node:fs/promises")
+  const { tmpdir } = await import("node:os")
+  const { join } = await import("node:path")
+  const tmp = await mkdtemp(join(tmpdir(), "lodestar-bad-log-"))
+  const filePath = join(tmp, "this-is-a-file-not-a-dir")
+  await writeFile(filePath, "block")
+  const badLogRoot = join(filePath, "subdir-that-cannot-exist")
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-badlog",
+    actor_id: "agent:probe-roundtrip-badlog",
+    session_id: "probe-roundtrip-badlog-session",
+    log_root: badLogRoot,
+    default_scope: { level: "project", identifier: "probe-roundtrip-badlog" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {},
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  let startThrew = false
+  let startError: unknown
+  try {
+    await proxy.start()
+  } catch (err) {
+    startThrew = true
+    startError = err
+  }
+  if (!startThrew) {
+    await proxy.stop()
+    return {
+      passed: false,
+      details: `proxy.start() did not throw despite unwritable log_root '${badLogRoot}'`,
+    }
+  }
+  // Now mimic the CLI's catch path. Pre-fix, the proxy would still
+  // have `started=true` and stop() would attempt another doomed
+  // emit. Post-fix, stop() either no-ops (started=false from the
+  // rollback) or completes via best-effort emits without
+  // compounding the error.
+  let stopThrew = false
+  try {
+    await proxy.stop()
+  } catch {
+    stopThrew = true
+  }
+  if (stopThrew) {
+    return {
+      passed: false,
+      details:
+        `proxy.stop() threw after a clean rollback of proxy.start(). ` +
+        `The CLI catch path would surface a compound error instead of the original ` +
+        `startup failure (${startError instanceof Error ? startError.message : String(startError)}).`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "proxy.start() reported the unwritable log_root failure; proxy.stop() completed without compounding the error",
   }
 }
 
