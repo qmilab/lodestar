@@ -199,6 +199,7 @@
         "@qmilab/lodestar-cognitive-core": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
         "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-guard": "workspace:*",
         "@qmilab/lodestar-memory-firewall": "workspace:*",
         "zod": "^3.23.8",
       },

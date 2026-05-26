@@ -55,6 +55,7 @@
     "@qmilab/lodestar-action-kernel": "workspace:*",
     "@qmilab/lodestar-memory-firewall": "workspace:*",
     "@qmilab/lodestar-cognitive-core": "workspace:*",
+    "@qmilab/lodestar-guard": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^3.23.8"
   },

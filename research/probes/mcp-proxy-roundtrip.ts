@@ -375,6 +375,33 @@ async function run(): Promise<ProbeResult> {
     const subFResult = await subcaseHelperRollback(logDir)
     if (!subFResult.passed) return subFResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case G: resource_link content blocks round-trip with all
+    // metadata preserved.
+    //
+    // Codex review round 3, P2.2: pre-fix resource_link fell into
+    // the "unknown" branch and got corrupted to a text placeholder,
+    // dropping URI / name / mimeType / size for agents that consume
+    // current-spec MCP servers.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subGResult = await subcaseResourceLinkRoundtrip(logDir)
+    if (!subGResult.passed) return subGResult
+
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case H: structuredContent on CallToolResult round-trips.
+    //
+    // Codex review round 3, P2.3: tools that declare an output
+    // schema emit `structuredContent` alongside `content`. Pre-fix
+    // the proxy dropped it, breaking agents that consume the typed
+    // field.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subHResult = await subcaseStructuredContentRoundtrip(logDir)
+    if (!subHResult.passed) return subHResult
+
     return {
       passed: true,
       details:
@@ -388,10 +415,229 @@ async function run(): Promise<ProbeResult> {
         `Sub-case C (concurrent calls): ${subCResult.details}. ` +
         `Sub-case D (stop+restart): ${subDResult.details}. ` +
         `Sub-case E (resource blob round-trip): ${subEResult.details}. ` +
-        `Sub-case F (helper rollback): ${subFResult.details}.`,
+        `Sub-case F (helper rollback): ${subFResult.details}. ` +
+        `Sub-case G (resource_link round-trip): ${subGResult.details}. ` +
+        `Sub-case H (structuredContent round-trip): ${subHResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case G: resource_link block round-trips with metadata intact.
+ */
+async function subcaseResourceLinkRoundtrip(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "linksrv"
+  const toolName = "find_resource"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const LINK_URI = "file:///workspace/docs/design.pdf"
+  const LINK_NAME = "design.pdf"
+  const LINK_DESCRIPTION = "Latest design document"
+  const LINK_MIME = "application/pdf"
+  const LINK_SIZE = 12345
+  const tool: MCPTool = {
+    name: toolName,
+    description: "Find a resource by name",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [tool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      // The SDK's CallToolResult type narrows content blocks; cast
+      // the resource_link variant in since older type definitions
+      // may not yet cover it.
+      return {
+        content: [
+          {
+            type: "resource_link",
+            uri: LINK_URI,
+            name: LINK_NAME,
+            description: LINK_DESCRIPTION,
+            mimeType: LINK_MIME,
+            size: LINK_SIZE,
+          },
+        ] as unknown as CallToolResult["content"],
+        isError: false,
+      }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-link",
+    actor_id: "agent:probe-roundtrip-link",
+    session_id: "probe-roundtrip-link-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-link" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    const result = await proxy.handleCallTool({
+      name: lodestarName,
+      arguments: {},
+    })
+    if (result.isError === true) {
+      return { passed: false, details: `resource_link result.isError=true` }
+    }
+    const block = result.content[0]
+    if (!block || block.type !== "resource_link") {
+      return {
+        passed: false,
+        details:
+          `expected content[0].type='resource_link'; got '${block?.type ?? "(none)"}'. ` +
+          `Pre-fix this block fell through to "unknown" and was downgraded to a text placeholder.`,
+      }
+    }
+    if (block.uri !== LINK_URI || block.name !== LINK_NAME) {
+      return {
+        passed: false,
+        details: `resource_link uri/name did not round-trip (${block.uri} / ${block.name})`,
+      }
+    }
+    if (block.description !== LINK_DESCRIPTION) {
+      return { passed: false, details: `description did not round-trip` }
+    }
+    if (block.mimeType !== LINK_MIME) {
+      return { passed: false, details: `mimeType did not round-trip` }
+    }
+    if (block.size !== LINK_SIZE) {
+      return { passed: false, details: `size did not round-trip` }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "resource_link block round-tripped with uri + name + description + mimeType + size intact",
+  }
+}
+
+/**
+ * Sub-case H: structuredContent on CallToolResult round-trips.
+ */
+async function subcaseStructuredContentRoundtrip(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "typedsrv"
+  const toolName = "query_weather"
+  const lodestarName = `mcp.${downstreamName}.${toolName}`
+  const STRUCTURED = {
+    location: "New York",
+    temperature_f: 72,
+    conditions: "partly cloudy",
+    forecast_days: [
+      { day: "Monday", high: 75, low: 60 },
+      { day: "Tuesday", high: 78, low: 62 },
+    ],
+  }
+  const tool: MCPTool = {
+    name: toolName,
+    description: "Query the weather",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return [tool]
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return {
+        content: [{ type: "text", text: "Weather in New York: 72°F, partly cloudy" }],
+        isError: false,
+        structuredContent: STRUCTURED,
+      } as CallToolResult
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-structured",
+    actor_id: "agent:probe-roundtrip-structured",
+    session_id: "probe-roundtrip-structured-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-structured" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {
+      [lodestarName]: {
+        reversibility: "reversible",
+        permissions: [],
+        sandbox: "read",
+        required_trust_level: 0,
+        blast_radius: "self",
+      },
+    },
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+  try {
+    await proxy.start()
+    const result = await proxy.handleCallTool({
+      name: lodestarName,
+      arguments: {},
+    })
+    if (result.isError === true) {
+      return { passed: false, details: `structuredContent result.isError=true` }
+    }
+    if (result.structuredContent === undefined) {
+      return {
+        passed: false,
+        details:
+          `result.structuredContent was undefined; expected the typed payload to round-trip. ` +
+          `Pre-fix the proxy dropped this field entirely.`,
+      }
+    }
+    if (JSON.stringify(result.structuredContent) !== JSON.stringify(STRUCTURED)) {
+      return {
+        passed: false,
+        details: `structuredContent did not round-trip exactly: ${JSON.stringify(result.structuredContent)}`,
+      }
+    }
+  } finally {
+    await proxy.stop()
+  }
+  return {
+    passed: true,
+    details:
+      "structuredContent round-tripped intact alongside the text content blocks",
   }
 }
 

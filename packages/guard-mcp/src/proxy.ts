@@ -649,6 +649,24 @@ function payloadToCallToolResult(
       if (block.resource.blob !== undefined) resource.blob = block.resource.blob
       return { type: "resource", resource }
     }
+    if (block.type === "resource_link") {
+      // Round-trip every field the observation schema captured —
+      // including any forward-compat extras the `.passthrough()` on
+      // the schema preserved. Without explicit handling, this block
+      // used to fall through to "unknown" and lose the URI / name /
+      // metadata that's the whole point of a resource_link.
+      const out: CallToolContentBlock = {
+        type: "resource_link",
+        uri: block.uri,
+        name: block.name,
+      }
+      for (const [key, value] of Object.entries(block as Record<string, unknown>)) {
+        if (key === "type" || key === "uri" || key === "name") continue
+        if (value === undefined) continue
+        ;(out as Record<string, unknown>)[key] = value
+      }
+      return out
+    }
     // type === "unknown" — Lodestar can't classify this block kind.
     // Surface it as a text descriptor so the agent sees something
     // rather than silently dropping it; the raw block is still in
@@ -658,10 +676,17 @@ function payloadToCallToolResult(
       text: `[Lodestar proxy: downstream returned a content block of kind '${block.original_type}' that Lodestar does not yet model. The raw block is preserved in the event log.]`,
     }
   })
-  return {
+  const result: CallToolResultLike = {
     content,
     isError: payload.is_error,
   }
+  // Round-trip `structuredContent` if the downstream supplied it.
+  // Tools with declared output schemas use it to expose typed data;
+  // dropping it here would silently corrupt those tools' responses.
+  if (payload.structured_content !== undefined) {
+    result.structuredContent = payload.structured_content
+  }
+  return result
 }
 
 function liftSensitivity(

@@ -203,16 +203,66 @@ function shapeMCPCallToolResultAsObservation(input: {
       if (typeof resource.blob === "string") out.resource.blob = resource.blob
       return out
     }
-    return { type: "unknown" as const, original_type: String(block.type), raw: block }
+    if (block.type === "resource_link") {
+      // resource_link is a pointer to a resource (URI + metadata)
+      // without inlining the payload. We capture the documented
+      // fields verbatim and pass any forward-compat extras through
+      // the observation schema's `.passthrough()` on this branch.
+      const raw = block as {
+        uri?: unknown
+        name?: unknown
+        title?: unknown
+        description?: unknown
+        mimeType?: unknown
+        size?: unknown
+        [extra: string]: unknown
+      }
+      const out: Record<string, unknown> = {
+        type: "resource_link",
+        uri: typeof raw.uri === "string" ? raw.uri : "",
+        name: typeof raw.name === "string" ? raw.name : "",
+      }
+      if (typeof raw.title === "string") out.title = raw.title
+      if (typeof raw.description === "string") out.description = raw.description
+      if (typeof raw.mimeType === "string") out.mimeType = raw.mimeType
+      if (typeof raw.size === "number") out.size = raw.size
+      // Forward-compat: preserve any additional fields (annotations,
+      // _meta, icons, …) so the proxy can round-trip them upstream.
+      for (const key of Object.keys(raw)) {
+        if (key in out) continue
+        if (key === "type") continue
+        out[key] = (raw as Record<string, unknown>)[key]
+      }
+      return out as unknown as { type: "resource_link"; uri: string; name: string }
+    }
+    // Forward-compat: the SDK's TypeScript union is closed at compile
+    // time, but a future SDK release could ship a new content kind
+    // before Lodestar's handlers learn about it. Defend via cast.
+    const fallback = block as { type?: unknown }
+    return {
+      type: "unknown" as const,
+      original_type: String(fallback.type),
+      raw: block,
+    }
   })
 
-  return {
+  const observation: MCPToolResultObservationPayload = {
     tool_name: input.toolName,
     args: input.args,
     downstream_server: input.downstreamServer,
     is_error: input.result.isError === true,
     content,
   }
+  // Tools that declare an `outputSchema` may emit `structuredContent`
+  // alongside the human-readable `content` blocks. Round-trip it
+  // unchanged so agents that key off the structured field still see
+  // the typed payload. Dropping it here corrupted any tool that
+  // returned typed output, even though the call succeeded.
+  const structured = (input.result as { structuredContent?: unknown }).structuredContent
+  if (structured !== undefined && structured !== null && typeof structured === "object") {
+    observation.structured_content = structured as Record<string, unknown>
+  }
+  return observation
 }
 
 /**

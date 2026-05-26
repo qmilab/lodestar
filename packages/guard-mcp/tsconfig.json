@@ -10,6 +10,7 @@
     { "path": "../event-log" },
     { "path": "../action-kernel" },
     { "path": "../memory-firewall" },
-    { "path": "../cognitive-core" }
+    { "path": "../cognitive-core" },
+    { "path": "../guard" }
   ]
 }

@@ -64,10 +64,32 @@ export type CallToolContentBlock =
         blob?: string
       }
     }
+  /**
+   * Resource link — a pointer to a resource (URI + metadata) without
+   * inlining the payload. Distinct from `resource` (embedded contents).
+   * Carries any forward-compatible MCP fields under an index signature
+   * so the proxy round-trips additions transparently.
+   */
+  | ({
+      type: "resource_link"
+      uri: string
+      name: string
+      title?: string
+      description?: string
+      mimeType?: string
+      size?: number
+    } & { [extra: string]: unknown })
 
 export interface CallToolResultLike {
   content: CallToolContentBlock[]
   isError: boolean
+  /**
+   * Machine-readable typed output. Tools with a declared output schema
+   * populate this alongside the human-readable `content`. The proxy
+   * must round-trip it unchanged or agents that consume the structured
+   * field break despite the tool call succeeding.
+   */
+  structuredContent?: Record<string, unknown>
   _meta?: Record<string, unknown>
 }
 

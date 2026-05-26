@@ -80,6 +80,24 @@ export const MCPToolResultObservationSchema = z.object({
           blob: z.string().optional(),
         }),
       }),
+      // `resource_link` — current-spec MCP content block that points
+      // at a resource by URI without inlining its bytes. Distinct from
+      // `resource` (which embeds the payload). Pre-Codex review the
+      // proxy fell through to "unknown" and corrupted these to text
+      // placeholders. The captured fields mirror MCP's
+      // `ResourceLinkSchema`; `.passthrough()` keeps any forward-
+      // compatible additions intact in the event log.
+      z
+        .object({
+          type: z.literal("resource_link"),
+          uri: z.string(),
+          name: z.string(),
+          title: z.string().optional(),
+          description: z.string().optional(),
+          mimeType: z.string().optional(),
+          size: z.number().optional(),
+        })
+        .passthrough(),
       z.object({
         type: z.literal("unknown"),
         original_type: z.string(),
@@ -87,6 +105,16 @@ export const MCPToolResultObservationSchema = z.object({
       }),
     ]),
   ),
+  /**
+   * Machine-readable typed output some MCP tools include alongside the
+   * human-readable `content` blocks. Tools that declare an
+   * `outputSchema` typically populate this; the proxy must round-trip
+   * it unchanged or agents that rely on the structured field break
+   * even though the tool call succeeded.
+   *
+   * Optional, permissive shape — the contents are tool-specific.
+   */
+  structured_content: z.record(z.string(), z.unknown()).optional(),
 })
 
 export type MCPToolResultObservationPayload = z.infer<
