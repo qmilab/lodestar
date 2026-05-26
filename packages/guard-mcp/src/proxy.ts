@@ -238,6 +238,17 @@ export class MCPProxy {
       () => ({ session_id: this.sessionId, project_id: this.config.project_id }),
     )
 
+    // Reset the advertised catalog before the registration loop
+    // repopulates it. Without this, a restart of the same
+    // `MCPProxy` instance (or a retry after a startup failure that
+    // landed past the registration loop and the catch reset
+    // `started`) would append a second copy of every tool name and
+    // upstream `tools/list` would advertise duplicates. The kernel
+    // registrations are already cycled correctly by
+    // `deregisterTools()`; this brings the upstream catalog in
+    // sync with that.
+    this.namespacedTools = []
+
     try {
       // 4. First I/O: write the session-start envelope. Inside the
       //    try so a bad `log_root` (unwritable directory, full
@@ -338,6 +349,9 @@ export class MCPProxy {
         }
         this.upstream = undefined
       }
+      // Drop the partial catalog so a retry on the same instance
+      // doesn't compound it with the next start's tools.
+      this.namespacedTools = []
       // Clear `started` so the CLI's catch path (which calls
       // `proxy.stop()` after we rethrow) does NOT emit a misleading
       // `guard.session.ended` on top of the `guard.session.failed`
@@ -633,6 +647,11 @@ export class MCPProxy {
       // or — worse, pre-Codex-review — silently route through this
       // proxy's now-dead closure.
       this.deregisterTools()
+      // Clear the advertised catalog too. If the SAME proxy
+      // instance is later restarted, start() repopulates the
+      // array; leaving the prior contents would let `tools/list`
+      // advertise stale duplicates.
+      this.namespacedTools = []
       this.started = false
     }
   }

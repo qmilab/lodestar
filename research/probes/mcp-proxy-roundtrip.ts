@@ -525,6 +525,21 @@ async function run(): Promise<ProbeResult> {
     const subPResult = await subcaseBadLogRootFailsCleanly(logDir)
     if (!subPResult.passed) return subPResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case Q: restarting the SAME proxy instance does not
+    // accumulate stale advertised tools.
+    //
+    // Codex review round 9, P3: `namespacedTools` persisted across
+    // start/stop/start cycles on the same instance. The second
+    // start would push another copy of every tool, so
+    // `tools/list` would advertise duplicates while the kernel
+    // registry only knew about each name once.
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subQResult = await subcaseRestartDoesNotAccumulateCatalog(logDir)
+    if (!subQResult.passed) return subQResult
+
     return {
       passed: true,
       details:
@@ -548,10 +563,116 @@ async function run(): Promise<ProbeResult> {
         `Sub-case M (strips reserved _lodestar from downstream _meta): ${subMResult.details}. ` +
         `Sub-case N (duplicate downstream names rejected): ${subNResult.details}. ` +
         `Sub-case O (task-required tools filtered): ${subOResult.details}. ` +
-        `Sub-case P (bad log_root fails cleanly): ${subPResult.details}.`,
+        `Sub-case P (bad log_root fails cleanly): ${subPResult.details}. ` +
+        `Sub-case Q (restart does not accumulate catalog): ${subQResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case Q: the same MCPProxy instance can be started, stopped,
+ * and started again; the upstream catalog reflects ONE copy of each
+ * tool on each start, not N×(start count).
+ */
+async function subcaseRestartDoesNotAccumulateCatalog(logDir: string): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "samesrv"
+  const toolA = "echo_a"
+  const toolB = "echo_b"
+  const tools: MCPTool[] = [
+    { name: toolA, description: "A", inputSchema: { type: "object", properties: {}, required: [] } },
+    { name: toolB, description: "B", inputSchema: { type: "object", properties: {}, required: [] } },
+  ]
+  const buildDownstream = (): DownstreamConnection =>
+    new (class extends DownstreamConnection {
+      constructor() {
+        super(
+          { name: downstreamName, command: "not-spawned", args: [] },
+          { name: "probe", version: "0.0.0" },
+        )
+      }
+      override async start(): Promise<void> {}
+      override getTools(): readonly MCPTool[] {
+        return tools
+      }
+      override async callTool(): Promise<CallToolResult> {
+        return { content: [{ type: "text", text: "ok" }], isError: false }
+      }
+      override async stop(): Promise<void> {}
+    })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-restart-catalog",
+    actor_id: "agent:probe-roundtrip-restart-catalog",
+    session_id: "probe-roundtrip-restart-catalog-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-restart-catalog" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {},
+  }
+
+  let firstCatalogSize = -1
+  let secondCatalogSize = -1
+  let secondCatalogNames: string[] = []
+  // Use a single MCPProxy across two start/stop cycles to actually
+  // exercise the pre-fix accumulation. (Sub-case D uses two
+  // separate instances, which doesn't cover this bug.)
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [buildDownstream()],
+    upstreamFactory: (tools, handler) => {
+      if (firstCatalogSize === -1) {
+        firstCatalogSize = tools.length
+      } else {
+        secondCatalogSize = tools.length
+        secondCatalogNames = tools.map((t) => t.name)
+      }
+      return new NoOpUpstreamServer(tools, handler, {
+        name: "probe",
+        version: "0.0.0",
+      })
+    },
+  })
+  try {
+    await proxy.start()
+    await proxy.stop()
+    await proxy.start()
+  } finally {
+    await proxy.stop()
+  }
+
+  if (firstCatalogSize !== 2) {
+    return {
+      passed: false,
+      details: `first start advertised ${firstCatalogSize} tool(s); expected 2`,
+    }
+  }
+  if (secondCatalogSize !== 2) {
+    return {
+      passed: false,
+      details:
+        `second start advertised ${secondCatalogSize} tool(s); expected 2. ` +
+        `Pre-fix the catalog would have grown to 4 (accumulated copies of each tool).` +
+        ` Names: [${secondCatalogNames.join(", ")}]`,
+    }
+  }
+  // Also assert names are distinct — guards against any future
+  // accumulation that masquerades as the right length.
+  const uniqueNames = new Set(secondCatalogNames)
+  if (uniqueNames.size !== secondCatalogSize) {
+    return {
+      passed: false,
+      details:
+        `second start advertised duplicate names: [${secondCatalogNames.join(", ")}]`,
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "same MCPProxy started twice; catalog stayed at 2 tools each cycle, names distinct",
   }
 }
 
