@@ -332,20 +332,18 @@ export function sanitizeAdvertisedTool(args: {
     `The original description is recorded in the Lodestar event log; it is not ` +
     `forwarded to the wrapped agent's prompt to prevent prompt-injection text in ` +
     `downstream tool metadata from reaching the model.`
-  const inputSchema = stripSchemaAnnotationsDeep(
-    args.mcpTool.inputSchema,
-  ) as MCPTool["inputSchema"]
+  const inputSchema = sanitizeSchema(args.mcpTool.inputSchema) as MCPTool["inputSchema"]
   const out: Record<string, unknown> = {
     name: args.lodestarName,
     description: safeDescription,
     inputSchema,
   }
-  // outputSchema is optional in MCP; if present, scrub it the same
-  // way so a hostile downstream can't push prompt content via its
-  // schema annotations.
+  // outputSchema is optional in MCP; if present, sanitise it the
+  // same way so a hostile downstream can't push prompt content
+  // via its schema annotations or extension keys.
   const outputSchema = (args.mcpTool as { outputSchema?: unknown }).outputSchema
   if (outputSchema !== undefined) {
-    out.outputSchema = stripSchemaAnnotationsDeep(outputSchema)
+    out.outputSchema = sanitizeSchema(outputSchema)
   }
   // execution.taskSupport: forbidden. Any MCP client supporting the
   // experimental tasks API will see "this tool is sync only" and
@@ -360,98 +358,194 @@ export function sanitizeAdvertisedTool(args: {
 }
 
 /**
- * JSON Schema annotation fields that the proxy refuses to forward
- * upstream. Each one shows up in tool-list payloads that agent
- * runtimes pipe into the model prompt, so any of them is a
- * potential prompt-injection channel when the downstream is
- * untrusted.
+ * Allowlist of JSON Schema structural keywords the proxy will copy
+ * verbatim into an advertised tool's schema. Anything not in this
+ * set is dropped at schema level.
  *
- * `default` and `examples` are included even though they appear to
- * be "value fields": they're advisory annotations, not constraints
- * the server actually enforces. Models do not need them to
- * construct a valid call (every required field is identified by
- * `required` and `properties.<name>.type`); MCP servers don't rely
- * on the client to surface a tool's defaults either, since
- * defaults are applied server-side. Treating them as free-text
- * channels and dropping them costs documentation context but
- * closes a clean injection path. (Codex round 20 caught the
- * earlier round-18 reasoning that left these in.)
+ * The allowlist closes prompt-injection channels through:
+ *   - Annotation fields (`description`, `title`, `$comment`,
+ *     `default`, `examples`) — the round-15..20 denylist already
+ *     covered these, but a denylist can't catch...
+ *   - Arbitrary extension keys (`x-instructions`, `x-system`,
+ *     `x-anything-else`) — a hostile downstream can put prompt text
+ *     in any key whose name they invent. Codex round 21 flagged
+ *     this as the remaining bypass. The fix flips polarity:
+ *     ALLOW only the structural keywords below; DROP everything
+ *     else.
  *
- * NOT in this set:
- *   - `enum` / `const` — narrow the accepted value set; the model
- *     MUST honour them to construct a valid call. Removing them
- *     would break tool invocation outright.
- *   - `format` / `pattern` / `minLength` / `maxLength` / `minimum`
- *     / `maximum` etc. — structural constraints, not free text.
- *   - `type` / `items` / `properties` / `required` / `additional
- *     Properties` etc. — schema-shape fields the model needs to
- *     call the tool.
+ * The allowlist covers JSON Schema Draft 2020-12 structural
+ * keywords. Reasoning per group:
+ *
+ *   • `type` / `enum` / `const` — value constraints the model
+ *     MUST honour to construct valid calls. Removing them breaks
+ *     tool invocation.
+ *   • String / number / object / array constraints — declare
+ *     valid value shapes; same reason.
+ *   • `properties` / `patternProperties` / `propertyNames` /
+ *     `dependentSchemas` / `$defs` / `definitions` — maps from
+ *     property names → schemas. Their KEYS are property names
+ *     (preserved via `sanitizePropertyMap`); their VALUES are
+ *     schemas (recursively sanitised).
+ *   • `items` / `prefixItems` / `additionalItems` / `additional
+ *     Properties` / `contains` / `if` / `then` / `else` / `not`
+ *     / `allOf` / `anyOf` / `oneOf` — values are schemas (or
+ *     arrays of schemas) and recurse through `sanitizeSchema`.
+ *   • `required` / `dependentRequired` — arrays of property
+ *     names; pass through (strings, not schemas).
+ *   • `$ref` — JSON pointer string. Pass through; the SDK
+ *     resolves it client-side and won't render a long URI into
+ *     the model prompt the way it renders descriptions.
  */
-const SCHEMA_ANNOTATION_KEYS_TO_STRIP: ReadonlySet<string> = new Set([
-  "description",
-  "title",
-  "$comment",
-  "default",
-  "examples",
+const ALLOWED_SCHEMA_KEYS: ReadonlySet<string> = new Set([
+  // Core type system
+  "type",
+  // Numeric constraints
+  "minimum",
+  "maximum",
+  "exclusiveMinimum",
+  "exclusiveMaximum",
+  "multipleOf",
+  // String constraints
+  "minLength",
+  "maxLength",
+  "pattern",
+  "format",
+  // Object size / shape
+  "minProperties",
+  "maxProperties",
+  "properties",
+  "patternProperties",
+  "propertyNames",
+  "additionalProperties",
+  "required",
+  "dependentRequired",
+  "dependentSchemas",
+  // Array size / shape
+  "items",
+  "prefixItems",
+  "additionalItems",
+  "minItems",
+  "maxItems",
+  "uniqueItems",
+  "contains",
+  "minContains",
+  "maxContains",
+  // Logical composition
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "not",
+  "if",
+  "then",
+  "else",
+  // Value enumeration
+  "enum",
+  "const",
+  // Schema references
+  "$ref",
+  "$defs",
+  "definitions",
 ])
 
 /**
- * Recursively scrub the free-text JSON Schema annotation fields
- * listed in `SCHEMA_ANNOTATION_KEYS_TO_STRIP` from an object tree
- * without disturbing property NAMES that happen to use the same
- * strings.
- *
- * The distinction matters because in JSON Schema the same string
- * (`"description"`, `"title"`, …) is both an annotation field (free
- * text → injection vector) and a perfectly valid property name.
- * Issue-tracker and task-creation tools commonly declare an input
- * like
- *
- *   inputSchema: { type: "object",
- *     properties: { description: { type: "string" } },
- *     required: ["description"] }
- *
- * A naive scrubber would drop the `description` property entirely
- * while leaving the `required` array referencing it.
- *
- * The walker tracks `insidePropertiesMap`: when true, the keys are
- * property names — leave them alone. When false, the keys are
- * schema keywords, and the annotation set gets dropped.
- *
- * `properties` / `patternProperties` flip the flag to `true` for
- * one level of recursion, but ONLY at schema level — a child key
- * literally named `properties` inside a properties map is itself a
- * property name, not the keyword.
+ * Allowed schema keys whose value is a map of property name →
+ * schema. Property NAMES at the next level pass through unchanged
+ * (the model needs them to call the tool); each value is then
+ * recursively `sanitizeSchema`d.
  */
-function stripSchemaAnnotationsDeep(
-  value: unknown,
-  insidePropertiesMap = false,
-): unknown {
+const SCHEMA_KEYS_AS_PROPERTY_MAP: ReadonlySet<string> = new Set([
+  "properties",
+  "patternProperties",
+  "dependentSchemas",
+  "$defs",
+  "definitions",
+])
+
+/**
+ * Allowed schema keys whose value is itself a schema (or, in the
+ * case of `allOf` / `anyOf` / `oneOf` / `prefixItems`, an array of
+ * schemas) that must be recursively sanitised.
+ */
+const SCHEMA_KEYS_AS_NESTED_SCHEMA: ReadonlySet<string> = new Set([
+  "items",
+  "prefixItems",
+  "additionalItems",
+  "additionalProperties",
+  "propertyNames",
+  "contains",
+  "if",
+  "then",
+  "else",
+  "not",
+  "allOf",
+  "anyOf",
+  "oneOf",
+])
+
+/**
+ * Allowlist-based sanitiser for a JSON Schema fragment. Drops every
+ * key not in `ALLOWED_SCHEMA_KEYS`; recurses through nested schemas
+ * and property maps; leaves value-position keys (`enum`, `const`,
+ * `type`, numeric/string constraints, `required` arrays) verbatim.
+ *
+ * Pre-Codex-round-21 the sanitiser used a denylist that only knew
+ * about specific annotation keys. Custom extension keys
+ * (`x-instructions`, `x-system`, anything not on the denylist)
+ * survived into the advertised catalog and could be rendered into
+ * the model prompt by clients that include the full schema. The
+ * allowlist closes that channel categorically.
+ */
+function sanitizeSchema(value: unknown): unknown {
   if (value === null || typeof value !== "object") return value
+  // A schema can also be a boolean (`additionalProperties: true`)
+  // or appear inside an array of schemas (`allOf: [s1, s2]`).
   if (Array.isArray(value)) {
-    // Array entries are never inside a properties-map by name —
-    // reset the flag when we step through an array.
-    return value.map((v) => stripSchemaAnnotationsDeep(v, false))
+    return value.map(sanitizeSchema)
   }
   const obj = value as Record<string, unknown>
   const out: Record<string, unknown> = {}
   for (const key of Object.keys(obj)) {
-    // Drop annotation keys only at schema level. Inside a
-    // properties map, the same strings are property NAMES the
-    // model needs to construct calls.
-    if (!insidePropertiesMap && SCHEMA_ANNOTATION_KEYS_TO_STRIP.has(key)) {
+    if (!ALLOWED_SCHEMA_KEYS.has(key)) {
+      // Drops every key the allowlist doesn't recognise. Includes:
+      // every annotation field (description / title / $comment /
+      // default / examples), every extension key (x-*), every
+      // legacy or future schema key Lodestar hasn't whitelisted.
+      // Dropping is the safe default.
       continue
     }
-    // The keys `properties` / `patternProperties` are JSON Schema
-    // keywords whose value is a property map ONLY at schema level.
-    // Inside a properties map they're just user-defined property
-    // names — recursing with `insidePropertiesMap=true` from there
-    // would let a downstream bypass the scrub via a property
-    // literally named `properties` (round 17).
-    const childIsPropertiesMap =
-      !insidePropertiesMap &&
-      (key === "properties" || key === "patternProperties")
-    out[key] = stripSchemaAnnotationsDeep(obj[key], childIsPropertiesMap)
+    const v = obj[key]
+    if (SCHEMA_KEYS_AS_PROPERTY_MAP.has(key)) {
+      out[key] = sanitizePropertyMap(v)
+    } else if (SCHEMA_KEYS_AS_NESTED_SCHEMA.has(key)) {
+      out[key] = sanitizeSchema(v)
+    } else {
+      // Value-position keys (enum / const / required / type /
+      // numeric constraints / format / $ref / etc.) pass through
+      // verbatim. enum/const values can be arbitrary JSON; they
+      // are the legitimate value set the API expects, not free
+      // text annotations, so we keep them as-is.
+      out[key] = v
+    }
+  }
+  return out
+}
+
+/**
+ * Sanitise the value of a schema key that maps property name →
+ * schema (such as `properties` or `patternProperties`). KEYS at
+ * this level are property names — preserve every one (the model
+ * needs them to call the tool, even when they collide with
+ * schema-keyword strings like `description`). Each VALUE is a
+ * schema that gets recursively sanitised by `sanitizeSchema`.
+ */
+function sanitizePropertyMap(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return value
+  }
+  const obj = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(obj)) {
+    out[key] = sanitizeSchema(obj[key])
   }
   return out
 }
