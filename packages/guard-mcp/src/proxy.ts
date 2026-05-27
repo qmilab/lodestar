@@ -304,6 +304,18 @@ export class MCPProxy {
             )
           },
         })
+        // Track EVERY name the helper returned in
+        // `registeredToolNames` BEFORE any further per-tool work
+        // (sanitisation, audit emit). The helper has already put
+        // each of these into the process-wide action-kernel
+        // registry; if `sanitizeAdvertisedTool` later throws on
+        // the Nth tool (e.g. an extremely deeply nested schema
+        // that overflows the recursive sanitiser), the rollback's
+        // `deregisterTools()` must see ALL of them, not just the
+        // 1..N-1 we managed to process.
+        for (const { lodestarName } of registered) {
+          this.registeredToolNames.add(lodestarName)
+        }
         for (const { lodestarName, mcpTool } of registered) {
           // Build the sanitised version we advertise upstream
           // (description replaced, annotations/_meta/icons
@@ -318,7 +330,6 @@ export class MCPProxy {
             downstreamName: downstream.config.name,
           })
           this.namespacedTools.push(safe)
-          this.registeredToolNames.add(lodestarName)
           // Best-effort emit — if the log is broken (sub-case P
           // path), we still want the proxy to advertise the
           // sanitised tool so the wrapped agent can function.

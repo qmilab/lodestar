@@ -739,6 +739,24 @@ async function run(): Promise<ProbeResult> {
     const subEEResult = subcaseExtensionKeysDropped()
     if (!subEEResult.passed) return subEEResult
 
+    // ─────────────────────────────────────────────────────────────
+    // Sub-case FF: sanitisation failure mid-loop rolls back ALL
+    // of the downstream's kernel registrations, not just the
+    // ones the proxy already processed.
+    //
+    // Codex review round 22, P2: pre-fix the proxy tracked names
+    // AFTER sanitising each tool. If sanitisation threw on the
+    // Nth tool, items 1..N-1 were tracked, items N..end were
+    // already in the kernel registry but NOT in
+    // `registeredToolNames`. The rollback's `deregisterTools()`
+    // only saw items 1..N-1, leaking the rest. Retries in the
+    // same process would fail with "already registered".
+    // ─────────────────────────────────────────────────────────────
+    _resetToolsForTests()
+    _resetEventLogStateForTests()
+    const subFFResult = await subcaseSanitiseFailureRollsBackAllRegistrations(logDir)
+    if (!subFFResult.passed) return subFFResult
+
     return {
       passed: true,
       details:
@@ -777,10 +795,138 @@ async function run(): Promise<ProbeResult> {
         `Sub-case BB (hyphenated task-required tool skipped): ${subBBResult.details}. ` +
         `Sub-case CC (upstream stop without start): ${subCCResult.details}. ` +
         `Sub-case DD (default + examples scrubbed): ${subDDResult.details}. ` +
-        `Sub-case EE (extension keys dropped): ${subEEResult.details}.`,
+        `Sub-case EE (extension keys dropped): ${subEEResult.details}. ` +
+        `Sub-case FF (sanitise failure rolls back all registrations): ${subFFResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Sub-case FF: if `sanitizeAdvertisedTool` throws on the Nth tool
+ * during `MCPProxy.start()`'s advertisement loop, the rollback
+ * must deregister ALL of the downstream's tools — including the
+ * ones the proxy hadn't yet processed when the throw fired.
+ *
+ * The probe induces a sanitisation failure via a getter that
+ * throws when the sanitiser reads the tool's `inputSchema`. After
+ * the failed start, every namespaced tool name from the downstream
+ * must be absent from the process-wide kernel registry, so a
+ * retry — or a sibling `MCPProxy` in the same process — sees a
+ * clean state.
+ */
+async function subcaseSanitiseFailureRollsBackAllRegistrations(
+  logDir: string,
+): Promise<ProbeResult> {
+  registry._resetForTests()
+  const downstreamName = "saniterr"
+  const goodATool: MCPTool = {
+    name: "good_a",
+    description: "First good tool",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  // Poisoned tool: reading `inputSchema` throws. sanitiseAdvertised
+  // Tool dereferences `args.mcpTool.inputSchema`, so the throw
+  // happens DURING the sanitisation loop — exactly the failure
+  // mode Codex flagged.
+  const poisonTool = {
+    name: "poisoned",
+    description: "Sanitisation will throw on this one",
+    get inputSchema() {
+      throw new Error("synthetic sanitisation failure")
+    },
+  } as unknown as MCPTool
+  const goodBTool: MCPTool = {
+    name: "good_b",
+    description: "Last good tool — must also be rolled back",
+    inputSchema: { type: "object", properties: {}, required: [] },
+  }
+  // Order matters: goodA before poison, poison before goodB. The
+  // bug was: goodA gets tracked, poison throws, goodB never gets
+  // tracked but IS in the kernel. Rollback must reach goodB.
+  const tools: MCPTool[] = [goodATool, poisonTool, goodBTool]
+
+  const downstream = new (class extends DownstreamConnection {
+    constructor() {
+      super(
+        { name: downstreamName, command: "not-spawned", args: [] },
+        { name: "probe", version: "0.0.0" },
+      )
+    }
+    override async start(): Promise<void> {}
+    override getTools(): readonly MCPTool[] {
+      return tools
+    }
+    override async callTool(): Promise<CallToolResult> {
+      return { content: [{ type: "text", text: "ok" }], isError: false }
+    }
+    override async stop(): Promise<void> {}
+  })()
+
+  const config: ProxyConfig = {
+    project_id: "probe-roundtrip-ff",
+    actor_id: "agent:probe-roundtrip-ff",
+    session_id: "probe-roundtrip-ff-session",
+    log_root: logDir,
+    default_scope: { level: "project", identifier: "probe-roundtrip-ff" },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 2,
+    downstream_servers: [{ name: downstreamName, command: "not-spawned", args: [] }],
+    tool_defaults: {},
+  }
+  const proxy = new MCPProxy(config, {
+    downstreamFactory: () => [downstream],
+    upstreamFactory: (tools, handler) =>
+      new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
+  })
+
+  let startThrew = false
+  try {
+    await proxy.start()
+  } catch (err) {
+    startThrew = true
+    const message = err instanceof Error ? err.message : String(err)
+    if (!message.includes("sanitisation failure") && !message.includes("synthetic")) {
+      return {
+        passed: false,
+        details:
+          `proxy.start() threw, but the error didn't look like the synthetic ` +
+          `sanitisation failure we induced. Got: ${message.slice(0, 200)}`,
+      }
+    }
+  }
+  if (!startThrew) {
+    await proxy.stop()
+    return {
+      passed: false,
+      details:
+        `proxy.start() did not throw despite the poisoned tool's getter raising`,
+    }
+  }
+
+  // The structural assertion: every namespaced name from the
+  // downstream's catalog must now be ABSENT from the process-wide
+  // kernel registry. Pre-fix, goodB would still be registered
+  // (its name was never added to registeredToolNames).
+  const { lookupTool } = await import("@qmilab/lodestar-action-kernel")
+  for (const native of ["good_a", "poisoned", "good_b"]) {
+    const namespacedName = `mcp.${downstreamName}.${native}`
+    if (lookupTool(namespacedName) !== undefined) {
+      return {
+        passed: false,
+        details:
+          `${namespacedName} survived the rollback. Pre-fix this was the bug — ` +
+          `registeredToolNames was populated after sanitisation, so tools whose ` +
+          `slot came after the throw leaked. The fix pre-populates the rollback ` +
+          `set immediately after registerDownstreamToolsWithKernel returns.`,
+      }
+    }
+  }
+  return {
+    passed: true,
+    details:
+      "sanitisation threw on the middle tool; rollback deregistered all three (good_a, poisoned, good_b) from the kernel registry",
   }
 }
 
