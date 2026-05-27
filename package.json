@@ -30,7 +30,9 @@
     "probe:contradiction-routing": "bun run research/probes/context-policy-contradiction-routing.ts",
     "probe:kernel-context": "bun run research/probes/kernel-context-propagation.ts",
     "probe:singlewriter": "bun run research/probes/event-log-single-writer.ts",
-    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract && bun run probe:contradiction-routing && bun run probe:kernel-context && bun run probe:singlewriter",
+    "probe:mcp-roundtrip": "bun run research/probes/mcp-proxy-roundtrip.ts",
+    "probe:mcp-injection": "bun run research/probes/mcp-proxy-injection-defense.ts",
+    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract && bun run probe:contradiction-routing && bun run probe:kernel-context && bun run probe:singlewriter && bun run probe:mcp-roundtrip && bun run probe:mcp-injection",
     "lodestar": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
@@ -47,6 +49,7 @@
     "@qmilab/lodestar-adapter-git": "workspace:*",
     "@qmilab/lodestar-trace": "workspace:*",
     "@qmilab/lodestar-guard": "workspace:*",
+    "@qmilab/lodestar-guard-mcp": "workspace:*",
     "@qmilab/lodestar-memory-firewall-mem0": "workspace:*",
     "@qmilab/lodestar-memory-firewall-letta": "workspace:*",
     "@qmilab/lodestar-memory-firewall-zep": "workspace:*"

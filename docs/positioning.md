@@ -66,7 +66,12 @@ The architecture exposes itself through four developer-facing packages. Each can
 
 Wraps agent tool calls. Captures observations. Records claims/beliefs/decisions. Gates risky actions. This is the first thing most developers will adopt because it solves a visible pain (debug-by-staring-at-logs) without requiring a rewrite of the agent runtime.
 
-**Adoption shape**: library integration (`guard.wrap()`) for greenfield agents; CLI wrapper (`lodestar guard run -- claude code`) and MCP proxy for existing agents.
+**Two adoption shapes:**
+
+- **Greenfield (library)**: `guard.wrap()` in `@qmilab/lodestar-guard`. Best for new agents the developer owns end-to-end. Drop the wrap call around the agent loop; every tool invocation flows through the Action Kernel.
+- **Existing MCP agent (proxy)**: `lodestar guard mcp-proxy --config <path>` from `@qmilab/lodestar-guard-mcp`. Best for wrapping an agent the developer doesn't own: Claude Code, Cursor, Aider, anything that speaks MCP. The proxy sits between the agent and its downstream MCP servers; the agent talks to it as if it were the tool surface. No code changes to the agent — just point its MCP server list at the proxy.
+
+The Batch 3 MCP proxy ships with the auto-observation gate from Round 5 wired in: text content inside an MCP tool result is recorded as `external_document` evidence and cannot auto-promote to `truth_status: supported`, defending against prompt-injection content surfaced through tool calls.
 
 ### Lodestar Trace — the read side
 
@@ -194,10 +199,10 @@ This is the Hugging Face / Allen AI shape: research lab anchors credibility, com
 
 These positioning decisions shape the implementation roadmap (`docs/roadmap.md`):
 
-- **Batch 1** (current): write positioning, README, roadmap. No code changes.
-- **Batch 2**: repackage existing code into the four developer-facing surfaces (Guard meta-package, Trace CLI, Memory Firewall adapters for mem0/Letta/Zep). Light code work, mostly re-exports and adapters.
-- **Batch 3**: build the MCP proxy mode for wrapping existing agents like Claude Code. This is the headline-use-case implementation — the point at which Lodestar becomes legible outside this design conversation.
-- **Batch 4**: build the Harness infrastructure that makes the marketplace possible. Sentinel base class, calibrator, probe pack format. New code.
+- **Batch 1** (done): positioning, README, roadmap. No code changes.
+- **Batch 2** (done): repackaged existing code into the four developer-facing surfaces (Guard meta-package, Trace CLI, Memory Firewall adapters for mem0/Letta/Zep). Re-exports and adapters.
+- **Batch 3** (done): MCP proxy mode for wrapping existing agents like Claude Code. `lodestar guard mcp-proxy --config <path>` ships; `examples/claude-code-wrapped/` exercises the proxy end-to-end and produces a useful trust report; two new probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`) bring the probe count to fourteen. This is the point at which Lodestar becomes legible outside this design conversation.
+- **Batch 4** (next): build the Harness infrastructure that makes the marketplace possible. Sentinel base class, calibrator, probe pack format. New code.
 - **Batch 5**: assemble the week-8 thesis demo. A coding agent governed end-to-end, producing a trust report.
 
 The architecture does not change. Only its presentation does.

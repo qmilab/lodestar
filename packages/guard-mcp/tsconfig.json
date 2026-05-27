@@ -9,10 +9,8 @@
     { "path": "../core" },
     { "path": "../event-log" },
     { "path": "../action-kernel" },
-    { "path": "../guard" },
-    { "path": "../guard-mcp" },
-    { "path": "../trace" },
-    { "path": "../adapters/filesystem" },
-    { "path": "../adapters/git" }
+    { "path": "../memory-firewall" },
+    { "path": "../cognitive-core" },
+    { "path": "../guard" }
   ]
 }

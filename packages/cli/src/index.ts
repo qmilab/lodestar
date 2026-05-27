@@ -21,6 +21,7 @@ import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
 import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import { actionDescribeCommand, actionListCommand } from "./commands/action.js"
 import { guardWrapCommand } from "./commands/guard.js"
+import { guardMCPProxyCommand } from "./commands/guard-mcp.js"
 import { HELP_TEXT } from "./commands/help.js"
 import { probeCommand } from "./commands/probe.js"
 import { reportCommand } from "./commands/report.js"
@@ -61,7 +62,11 @@ async function dispatch(): Promise<number> {
 
     case "guard":
       if (sub === "wrap") return guardWrapCommand(rest)
-      process.stderr.write("usage: lodestar guard wrap --target <module>\n")
+      if (sub === "mcp-proxy") return guardMCPProxyCommand(rest)
+      process.stderr.write(
+        "usage: lodestar guard wrap --target <module>\n" +
+          "       lodestar guard mcp-proxy --config <path>\n",
+      )
       return 2
 
     case "action":

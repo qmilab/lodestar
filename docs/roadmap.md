@@ -8,15 +8,16 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs twelve probes end-to-end. v0.1.5 of all 13 packages is on npm via CI trusted publishing. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs fourteen probes end-to-end. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
 - Append-only NDJSON event log with monotonic sequencing, payload hashes, and per-partition append serialization
 - Two-phase action execution with precondition revalidation; required `KernelContext` (no silent stub fallback)
 - Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
-- Cognitive core: extractors, evidence linker, world model, ingestion orchestrator
-- Twelve passing probes:
+- Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
+- **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
+- Fourteen passing probes:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -29,9 +30,9 @@ Concrete state:
   - context policy contradiction routing (subject-relation join, collision-free keys, gate symmetry)
   - kernel context propagation (real session/project flow through to event log)
   - event log single-writer (per-partition mutex, no torn writes under fan-out)
-- End-to-end example producing an 11-event audit trail
-- `guard.wrap()` driving a homegrown coding-agent loop in
-  `examples/coding-agent-greenfield/`
+  - mcp-proxy-roundtrip (tool call through the proxy produces the right epistemic chain entries, with real session/project IDs)
+  - mcp-proxy-injection-defense (hostile content in a tool result is recorded verbatim but does NOT promote to a supported belief — the headline Batch 3 demonstration)
+- End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server)
 
 ---
 
@@ -76,56 +77,68 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 
 ### Batch 3 — Thin MCP proxy vertical slice
 
-**Goal**: the headline use case. Wrap an existing coding agent (Claude Code, Cursor, Aider, any MCP client) without requiring it to be rewritten on top of Lodestar. Get to `lodestar guard mcp-proxy --target ... && claude code ... && lodestar report latest` as quickly as possible.
+**Status**: done.
 
-This batch moves *before* the full Harness because the public promise is "wrap your coding agent." Until that path works, time spent perfecting internal machinery is time the project's adoption story is hypothetical.
+**Goal**: the headline use case. Wrap an existing coding agent (Claude Code, Cursor, Aider, any MCP client) without requiring it to be rewritten on top of Lodestar. Get to `lodestar guard mcp-proxy --config ... && claude code ... && lodestar report latest` as quickly as possible.
 
-**Deliverables**:
-- `packages/guard-mcp/` package implementing an MCP proxy server
-- Every tool call from the client passes through the Action Kernel; outputs go through the Cognitive Core
-- The proxy advertises the same tools as the underlying MCP server but adds policy and audit
-- `lodestar guard mcp-proxy --target <url> --policy <policy.ts>` CLI command
-- Event log single-writer enforcement (file lock or single-process invariant — must land before MCP because the proxy introduces concurrency)
-- Kernel context fix: real `session_id`/`project_id` propagation from the proxy into observations (currently stubbed)
-- Worked example: Claude Code talking to a filesystem MCP server proxied by Lodestar, producing a trace report
-- Integration guide for one MCP client (Claude Code first; Cursor/Aider follow in Batch 5 prep)
+This batch moved *before* the full Harness because the public promise is "wrap your coding agent." Until that path works, time spent perfecting internal machinery would have left the adoption story hypothetical.
 
-**Minimum-viable safety scaffolding (must ship with this batch)**:
-- A minimal probe runner that runs the four new firewall probes (see "Memory Firewall invariants to add" below) before the proxy goes live
-- Documentation noting which threat-model attack classes the v0.2 proxy covers and which it does not
+**Deliverables** (all landed):
+- ✅ `packages/guard-mcp/` — MCP proxy package. Stdio transport on the upstream face; spawns downstream MCP servers as child processes via `@modelcontextprotocol/sdk`'s `StdioClientTransport`. Mirrors the union of downstream tool catalogs upstream under namespaced names `mcp.<server>.<tool>`.
+- ✅ Every inbound `tools/call` from the wrapped agent becomes a Lodestar Action: `propose → arbitrate → execute`. Outputs flow through the Cognitive Core. Round 5 invariants hold — real session/project IDs, no stub fallback, per-partition append serialization.
+- ✅ `lodestar guard mcp-proxy --config <path>` CLI subcommand. Zod-validated config; conservative defaults (irreversible, controlled-shell, L3 trust) for any tool the operator did not enumerate in `tool_defaults`. MCP `annotations` deliberately ignored as a trust source (per spec, they're untrusted unless from a trusted server).
+- ✅ Synthetic `policy_denied` `CallToolResult` on policy block. The wrapped agent reads it as a normal tool response and can revise — far better UX than an MCP-level error that most agents treat as a fatal transport abort.
+- ✅ `mcp.tool_result@1` observation schema + `MCPToolResultExtractor` + `MCPAwareEvidenceLinker`. Envelope claim ("tool X was called") gets `tool_result` evidence quality; per-text-block content claims get `external_document` quality. The auto-observation gate then keeps the content claims at `truth_status: unverified`.
+- ✅ `examples/claude-code-wrapped/` — stand-in MCP agent drives the proxy in-process against a real subprocess `@modelcontextprotocol/server-filesystem` downstream. Reads three files including a deliberately prompt-injected `notes.md`. Produces a complete trust report.
+- ✅ Two new probes:
+  - `mcp-proxy-roundtrip` — round-trip a tool call through the proxy, assert real session/project IDs propagate end-to-end, assert the chain `proposed → approved → completed`, assert at least one envelope claim is adopted at `truth_status: supported`.
+  - `mcp-proxy-injection-defense` — drive a poisoned-file CallToolResult through the proxy and assert: (a) the hostile text is preserved verbatim in the observation payload (audit), (b) the envelope claim adopts at `supported` (tool_result quality is trustworthy), (c) the content claim does NOT adopt at `supported` (`external_document` quality, gate fires), (d) the evidence set carries an `external_document` quality item so the firewall has the signal it needs.
+- ✅ Threat-model documentation in `docs/architecture/v02-delta.md` ("Batch 3 — MCP proxy threat model"): what the v0 proxy covers, what's deferred, operator guidance.
 
-**Out of scope**: full Harness infrastructure (Batch 4), non-MCP runtimes, multi-tenant policy scoping.
+**Out of scope** (and remained so): full Harness infrastructure (Batch 4), non-MCP runtimes, multi-tenant policy scoping, HTTP transport for the upstream face, OS-level sandbox enforcement, publishing `@qmilab/lodestar-guard-mcp` to npm (deferred to a mini-marathon after Batch 3 stabilises).
 
-**Effort**: ~2 weeks. Modelling MCP's transport and tool-discovery protocol correctly is most of the work.
+**Probe count after Batch 3**: 14 (was 12; up by `mcp-proxy-roundtrip` + `mcp-proxy-injection-defense`).
 
 ### Batch 4 — Harness infrastructure
 
-**Goal**: turn the probe scripts and the minimum-viable probe runner from Batch 3 into a real harness with probes, sentinels, and calibrators that can be packaged and shared.
+**Status**: next.
+
+**Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from "fourteen TS files in `research/probes/`" to an installable surface external packs can plug into.
 
 **Deliverables**:
-- `packages/harness/` package with:
-  - `Probe` base class and execution runner (formalized from Batch 3's minimum-viable runner)
-  - `Sentinel` base class with hooks into the firewall transition stream
-  - `Calibrator` that consumes the event log and produces per-class accuracy tables (ECE, Brier score)
-  - Probe pack format (`lodestar.probe-pack.json` manifest + probe files)
-  - `lodestar harness run --pack <name>` CLI command
-- Repackage existing probes into the new format
-- Three additional probes:
-  - Prompt-injection probe (observation contains injected instructions)
-  - Tool-poisoning probe (MCP server returns adversarial output)
-  - Confidence-drift probe (belief confidence diverges from outcome over time)
-- Two additional firewall invariants deferred from earlier batches:
-  - **Reflection cannot promote to normal retrieval alone** (requires reflection pass to exist; lands here)
-  - **Contradicted belief flags dependent decisions** (requires Decision dependency pipeline; lands here)
-- Three sentinels:
-  - Low-confidence action sentinel
-  - Suspicious memory-origin sentinel
-  - Anomalous tool sequence sentinel
-- First in-repo probe pack: `packs/coding-agent-safety/`
 
-**Out of scope**: public registry (v1+), signed manifests (v1.5+).
+*Harness package* — `packages/harness/`:
+- `Probe` base class and execution runner. Each probe declares its name, threat-model description, and expected pass/fail criteria; the runner records every probe invocation as a `synthetic_probe`-quality observation in the event log so probe runs are themselves auditable.
+- `Sentinel` base class with hooks into the firewall transition stream. Sentinels watch for patterns (low-confidence actions, suspicious memory-origin combinations, anomalous tool sequences) and emit `sentinel.alerted` events.
+- `Calibrator` that consumes the event log and produces per-class accuracy tables (ECE, Brier score) suitable for the calibration paper drafts.
+- Probe pack format (`lodestar.probe-pack.json` manifest + probe files; the manifest declares pack name, version, declared coverage areas, and which Lodestar invariants it exercises).
+- `lodestar harness run --pack <name>` CLI command (registered under the existing `lodestar` binary, not a new bin).
 
-**Effort**: ~1.5 weeks.
+*Probe pack repackaging*:
+- Move the 14 existing probes from `research/probes/` into a first-party pack `packs/lodestar-core/` so they ride the same loader path external packs will use. The probes themselves don't change; the pack manifest is new.
+
+*Three new probes (the threat-model gaps Batch 3 surfaced but couldn't close)*:
+- `prompt-injection-cross-tool` — observation chain where injected instructions in one tool's output try to manipulate a subsequent tool's invocation. Stronger than `mcp-proxy-injection-defense` because it spans two calls.
+- `tool-poisoning-cross-session` — a memory imported from a hostile source in session A is queried by session B; verify the firewall's `external_document` provenance survives the session boundary (requires a persistent belief store, see below).
+- `confidence-drift` — belief confidence diverges from observed outcome over a sequence of actions; the calibrator should flag this as a per-class miscalibration.
+
+*Two firewall invariants deferred from earlier batches* (now unblocked because reflection lands here):
+- **Reflection cannot promote to `normal` retrieval alone.** The Round 5 auto-observation gate downgrades `external_document` claims to `reflection` authority; reflection itself was previously a stub. Implementing the reflection pass — and the invariant that reflection alone cannot move a belief to `normal` retrieval without another corroborating source — is part of this batch.
+- **Contradicted belief flags dependent decisions.** Requires the Decision→Belief dependency pipeline to track and propagate cascading contradictions; partial in Batch 3, full here.
+
+*Three sentinels*:
+- **Low-confidence action sentinel.** Watches `action.proposed`/`action.approved`; alerts on actions whose `required_level` ≥ 3 backed by a belief at `confidence < 0.5` or `truth_status: unverified`.
+- **Suspicious memory-origin sentinel.** Watches `belief.adopted`; alerts when an `external_document`-sourced belief becomes a `belief_dependency` of a Decision.
+- **Anomalous tool sequence sentinel.** Pattern-matches against known suspicious sequences (e.g., `fs.read` → `network.egress` → `fs.write`) and surfaces them for review.
+
+*Persistence (carve-out)*:
+- Postgres-backed `BeliefStore` and `ClaimStore`. The harness needs this to validate sentinels across sessions; the in-memory stores are session-scoped.
+
+*First in-repo probe pack*: `packs/coding-agent-safety/` — bundles the prompt-injection / tool-poisoning / confidence-drift probes plus the three sentinels into a single installable pack a future operator can point `lodestar harness run --pack coding-agent-safety` at.
+
+**Out of scope**: public registry (v1+), signed manifests (v1.5+), hosted dashboard, multi-tenant control plane.
+
+**Effort estimate**: ~1.5 weeks once the reflection pass design is locked. The reflection pass is the load-bearing piece; the rest of the deliverables hang off it.
 
 ### Batch 5 — Week-8 thesis demo + second proving ground
 
