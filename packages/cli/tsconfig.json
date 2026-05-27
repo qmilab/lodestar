@@ -12,6 +12,7 @@
     { "path": "../guard" },
     { "path": "../guard-mcp" },
     { "path": "../trace" },
+    { "path": "../cognitive-core" },
     { "path": "../adapters/filesystem" },
     { "path": "../adapters/git" }
   ]

@@ -8,7 +8,7 @@ This is where the epistemic chain comes alive. The core consumes typed Observati
 - **World model** (`src/world-model/`) — typed key-value store of the agent's current picture of the world. Separate from beliefs (beliefs are *about* world state; the world model captures current observed state).
 - **Evidence linker** (`src/evidence-linker.ts`) — for a new claim, find supporting and contradicting sources from prior observations and beliefs.
 - **Planner** (`src/planner.ts`) — turns goals into Decisions and Action proposals, respecting ContextPolicy.
-- **Reflection** (`src/reflection.ts`) — scheduled or on-demand; produces proposals (claim, belief, skill, policy) without auto-committing.
+- **Reflection** (`src/reflection.ts`) — on-demand or tail-async; rule-based in v0 (contradicted-belief cascade); produces typed `ReflectionProposal`s and applies them via `MemoryFirewall` with `by_authority: "reflection"`. Stores and the firewall are optional inputs so dry-run inspection (CLI `lodestar reflect`) works without rebuilding live state. Design contract: `docs/architecture/reflection-pass.md`.
 - **Explanation generator** (`src/explanation.ts`) — produces structured Explanation records for governance events.
 
 ## Invariants

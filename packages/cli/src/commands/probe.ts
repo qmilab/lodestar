@@ -51,6 +51,8 @@ const PROBE_ALIASES: Record<string, string> = {
   "guard-import": "guard-import-no-self-promote",
   "guard-precond": "guard-precondition-revalidation",
   "guard-contract": "guard-contract-invariants",
+  "reflection-retrieval": "reflection-cannot-promote-to-normal-alone",
+  "reflection-cascade": "contradicted-belief-flags-dependent-decisions",
 }
 
 export async function probeCommand(argv: string[]): Promise<number> {
