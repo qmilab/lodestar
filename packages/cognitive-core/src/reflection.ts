@@ -301,16 +301,19 @@ export class Reflection {
       let groundedAnyProposal = false
       for (const decision of decisions) {
         if (decision.seq >= event.seq) continue
+        // Record the decision envelope id as soon as it passes the
+        // seq filter — even if its belief_dependencies don't match
+        // this contradicted belief. The pass *inspected* the
+        // decision to determine cascade-relevance, so an auditor
+        // reading reflection.completed should see it in
+        // observed_event_ids. Without this, a no_op for "no
+        // dependent decisions" cannot be distinguished from "no
+        // prior decisions existed at all."
+        additional.add(decision.envelope_id)
         if (!decision.belief_dependencies.includes(belief_id)) continue
         const dedupeKey = `${decision.id}::${belief_id}`
         if (seen.has(dedupeKey)) continue
         seen.add(dedupeKey)
-
-        // Record the decision envelope id so it appears in
-        // reflection.completed.observed_event_ids — historical
-        // decisions outside the cursor window are still
-        // causally relevant to the proposals they ground.
-        additional.add(decision.envelope_id)
 
         const rationale = this.inputs.explanations.build({
           subject_type: "belief_revision",

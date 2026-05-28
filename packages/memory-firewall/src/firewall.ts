@@ -149,7 +149,12 @@ export class MemoryFirewall {
       by_authority: input.by_authority,
       at: new Date().toISOString(),
       by_actor_id: input.rationale.generated_by,
-      causal_parent_ids: input.causal_parent_ids,
+      // Only set when defined. `causal_parent_ids: undefined` on the
+      // payload causes the writer's canonicalHash (treats undefined as
+      // null) and JSON.stringify (drops the key) to disagree, so the
+      // persisted payload hash never verifies against the stored
+      // payload. The same caveat applies to `transitionAxis` below.
+      ...(input.causal_parent_ids ? { causal_parent_ids: input.causal_parent_ids } : {}),
     })
     return belief
   }
@@ -205,7 +210,7 @@ export class MemoryFirewall {
       rationale_id: input.rationale.id,
       at: new Date().toISOString(),
       by_actor_id: input.by_actor_id,
-      causal_parent_ids: input.causal_parent_ids,
+      ...(input.causal_parent_ids ? { causal_parent_ids: input.causal_parent_ids } : {}),
     })
   }
 

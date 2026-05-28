@@ -246,15 +246,22 @@ function stringifyCanonical(value: unknown): string {
   if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value)
   if (typeof value === "string") return JSON.stringify(value)
   if (Array.isArray(value)) {
-    return `[${value.map(stringifyCanonical).join(",")}]`
+    // JSON.stringify renders `undefined` array elements as `null`;
+    // mirror that exactly so the hash matches what lands on disk.
+    return `[${value.map((v) => (v === undefined ? "null" : stringifyCanonical(v))).join(",")}]`
   }
   if (typeof value === "object") {
-    const keys = Object.keys(value as Record<string, unknown>).sort()
-    const entries = keys.map((k) =>
-      `${JSON.stringify(k)}:${stringifyCanonical((value as Record<string, unknown>)[k])}`,
-    )
+    // Skip undefined-valued keys to mirror JSON.stringify's behavior
+    // (it drops them in objects). Without this, an in-memory object
+    // with `{x: undefined}` would hash with `"x":null` while the
+    // persisted JSON has no `x` key — verification would always fail.
+    const obj = value as Record<string, unknown>
+    const keys = Object.keys(obj)
+      .filter((k) => obj[k] !== undefined)
+      .sort()
+    const entries = keys.map((k) => `${JSON.stringify(k)}:${stringifyCanonical(obj[k])}`)
     return `{${entries.join(",")}}`
   }
-  // undefined, function, etc.
+  // undefined, function, etc. — defensive fallback; same as JSON.stringify of these at top level.
   return "null"
 }

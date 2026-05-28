@@ -483,19 +483,29 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
  * proposal or a no_op. Without per-belief no_op emission, the
  * second contradicted belief silently disappears from the audit
  * chain even though reflection inspected it.
+ *
+ * Also asserts the inspected-decisions audit: the unrelated decision
+ * (seq < contradiction.seq, but doesn't name the contradicted belief)
+ * must still appear in observed_event_ids so an auditor can
+ * distinguish "no decisions existed" from "decisions were inspected
+ * and did not match."
  */
 async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[] }> {
   const beliefWithDecision = crypto.randomUUID()
   const beliefWithoutDecision = crypto.randomUUID()
-  const decisionId = crypto.randomUUID()
+  const decisionWithMatch = crypto.randomUUID()
+  // An unrelated decision that doesn't name either belief in its
+  // dependencies — exercises the inspected-but-unmatched audit case.
+  const decisionUnrelated = crypto.randomUUID()
+  const unrelatedBelief = crypto.randomUUID()
 
   const events: EventEnvelope[] = [
     makeEnvelope({
       seq: 0,
       type: "decision.made",
       payload: {
-        id: decisionId,
-        question: "Probe sub-case G",
+        id: decisionWithMatch,
+        question: "Probe sub-case G (matched)",
         options: [{ id: "yes", description: "use direct-push" }],
         selected_option_id: "yes",
         rationale_id: crypto.randomUUID(),
@@ -507,6 +517,21 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
     }),
     makeEnvelope({
       seq: 1,
+      type: "decision.made",
+      payload: {
+        id: decisionUnrelated,
+        question: "Probe sub-case G (unrelated)",
+        options: [{ id: "yes", description: "use direct-push" }],
+        selected_option_id: "yes",
+        rationale_id: crypto.randomUUID(),
+        belief_dependencies: [unrelatedBelief],
+        policy_dependencies: [],
+        made_by: "probe-actor",
+        made_at: new Date().toISOString(),
+      },
+    }),
+    makeEnvelope({
+      seq: 2,
       type: "belief.transitioned",
       payload: {
         belief_id: beliefWithDecision,
@@ -518,7 +543,7 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
       },
     }),
     makeEnvelope({
-      seq: 2,
+      seq: 3,
       type: "belief.transitioned",
       payload: {
         belief_id: beliefWithoutDecision,
@@ -530,6 +555,8 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
       },
     }),
   ]
+  const decisionWithMatchEnvelopeId = events[0]!.id
+  const decisionUnrelatedEnvelopeId = events[1]!.id
 
   const claimStore = new InMemoryClaimStore()
   const beliefStore = new InMemoryBeliefStore()
@@ -596,11 +623,38 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
       ],
     }
   }
+
+  // Both decisions were inspected (their seq < contradiction.seq).
+  // observed_event_ids must include both — the matched one because it
+  // grounded a proposal, the unrelated one because the pass had to
+  // read it to determine it was unrelated.
+  const obs = new Set(result.payload.observed_event_ids)
+  if (!obs.has(decisionWithMatchEnvelopeId)) {
+    return {
+      passed: false,
+      lines: [
+        `G (mixed window audit): FAIL — observed_event_ids missing the matched-decision envelope ` +
+          `(${decisionWithMatchEnvelopeId.slice(0, 8)}).`,
+      ],
+    }
+  }
+  if (!obs.has(decisionUnrelatedEnvelopeId)) {
+    return {
+      passed: false,
+      lines: [
+        `G (mixed window audit): FAIL — observed_event_ids missing the inspected-but-unrelated ` +
+          `decision envelope (${decisionUnrelatedEnvelopeId.slice(0, 8)}). The audit chain cannot ` +
+          `distinguish "no decisions existed" from "decisions were inspected and did not match."`,
+      ],
+    }
+  }
+
   return {
     passed: true,
     lines: [
       `G (mixed window audit): PASS — 1 decision_dependency_flagged for ${beliefWithDecision.slice(0, 8)}, ` +
-        `1 no_op for ${beliefWithoutDecision.slice(0, 8)}`,
+        `1 no_op for ${beliefWithoutDecision.slice(0, 8)}, both decision envelopes (matched + unrelated) ` +
+        `in observed_event_ids`,
     ],
   }
 }
