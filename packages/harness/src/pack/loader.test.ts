@@ -160,6 +160,16 @@ describe("loadProbePack", () => {
     expect(pack.probes[0]?.name).toBe("linked")
   })
 
+  test("accepts an in-pack path whose segment merely starts with dots", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ probes: [{ name: "dotted", file: "..fixtures/probe.ts" }] }),
+      probeFiles: ["..fixtures/probe.ts"],
+    })
+    const pack = await loadProbePack(dir)
+    expect(pack.probes[0]?.name).toBe("dotted")
+    expect(pack.probes[0]?.path).toBe(join(dir, "..fixtures/probe.ts"))
+  })
+
   test("rejects an absolute probe file path", async () => {
     const dir = await makePack({
       manifest: validManifest({ probes: [{ name: "abs", file: "/var/tmp/probe.ts" }] }),

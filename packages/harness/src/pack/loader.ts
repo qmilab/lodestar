@@ -57,6 +57,16 @@ async function pathKind(p: string): Promise<"file" | "dir" | "other" | "missing"
   }
 }
 
+// Given a path relative to the pack root, does it point at or outside
+// the root? Escape means a leading `..` *segment* or an absolute path.
+// Test the segment, not a bare "..": "..fixtures/p.ts" is a legitimate
+// in-pack name whose relative form merely starts with two dots.
+function escapesRoot(rel: string): boolean {
+  return (
+    rel === "" || rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel)
+  )
+}
+
 /**
  * Load and validate a probe pack.
  *
@@ -140,7 +150,7 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
     // probe file must stay within the pack root — reject any `file` that
     // escapes it (e.g. "../../etc/passwd") before we ever touch the path.
     const rel = relative(root, probePath)
-    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) {
+    if (escapesRoot(rel)) {
       throw new ProbePackError(
         `Probe '${entry.name}' resolves outside the pack root: '${entry.file}' (pack root ${root}).`,
       )
@@ -163,7 +173,7 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
     }
 
     const realRel = relative(realRoot, realProbe)
-    if (realRel === "" || realRel.startsWith("..") || isAbsolute(realRel)) {
+    if (escapesRoot(realRel)) {
       throw new ProbePackError(
         `Probe '${entry.name}' resolves outside the pack root via a symlink: '${entry.file}' -> ${realProbe} (pack root ${realRoot}).`,
       )
