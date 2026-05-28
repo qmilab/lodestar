@@ -170,9 +170,16 @@ export class Reflection {
     const window = events.filter((e) => e.seq > since_seq)
 
     const proposals: ReflectionProposal[] = []
-    const observed: string[] = window.map((e) => e.id)
+    const observedIds = new Set<string>(window.map((e) => e.id))
 
-    proposals.push(...this.detectContradictedDecisionCascade(events, window))
+    const cascade = this.detectContradictedDecisionCascade(events, window)
+    proposals.push(...cascade.proposals)
+    // Decisions that grounded a proposal but predate the cursor
+    // window must still appear in `observed_event_ids` — auditors
+    // reading reflection.completed need every causally relevant
+    // event_id to reconstruct why each proposal fired.
+    for (const id of cascade.additional_observed_event_ids) observedIds.add(id)
+    const observed = Array.from(observedIds)
 
     if (proposals.length === 0) {
       // Per the design doc Q2: every pass emits at least one
@@ -271,16 +278,17 @@ export class Reflection {
   private detectContradictedDecisionCascade(
     history: EventEnvelope[],
     window: EventEnvelope[],
-  ): ReflectionProposal[] {
+  ): { proposals: ReflectionProposal[]; additional_observed_event_ids: string[] } {
     const proposals: ReflectionProposal[] = []
+    const additional = new Set<string>()
     const decisions = collectDecisions(history)
-    if (decisions.length === 0) return proposals
+    if (decisions.length === 0) return { proposals, additional_observed_event_ids: [] }
 
     const seen = new Set<string>()
     for (const event of window) {
       const transition = extractContradictionTransition(event)
       if (!transition) continue
-      const { belief_id } = transition
+      const { belief_id, from_value } = transition
 
       for (const decision of decisions) {
         if (decision.seq >= event.seq) continue
@@ -289,15 +297,22 @@ export class Reflection {
         if (seen.has(dedupeKey)) continue
         seen.add(dedupeKey)
 
+        // Record the decision envelope id so it appears in
+        // reflection.completed.observed_event_ids — historical
+        // decisions outside the cursor window are still
+        // causally relevant to the proposals they ground.
+        additional.add(decision.envelope_id)
+
+        const previousTruthStatus = isTruthStatus(from_value) ? from_value : "supported"
         const rationale = this.inputs.explanations.build({
           subject_type: "belief_revision",
           subject_id: decision.id,
           audience: "audit",
           summary: `Decision ${decision.id.slice(0, 8)} depended on belief ${belief_id.slice(0, 8)}, now contradicted`,
           full_text:
-            `Belief ${belief_id} transitioned to truth_status='contradicted' in event ${event.id}. ` +
-            `Decision ${decision.id} ("${decision.question}") recorded this belief in its ` +
-            `belief_dependencies at the time it was made. Reflection proposes flagging the ` +
+            `Belief ${belief_id} transitioned from truth_status='${previousTruthStatus}' to 'contradicted' ` +
+            `in event ${event.id}. Decision ${decision.id} ("${decision.question}") recorded this belief ` +
+            `in its belief_dependencies at the time it was made. Reflection proposes flagging the ` +
             `Decision so a downstream Revision can re-examine whether the selected option still ` +
             `holds under the updated belief state.`,
           claims_used: [],
@@ -307,12 +322,13 @@ export class Reflection {
           kind: "decision_dependency_flagged",
           decision_id: decision.id,
           contradicted_belief_id: belief_id,
+          previous_truth_status: previousTruthStatus,
           rationale_id: rationale.id,
         })
       }
     }
 
-    return proposals
+    return { proposals, additional_observed_event_ids: Array.from(additional) }
   }
 
   // ── Apply proposals ───────────────────────────────────────────────────────
@@ -427,7 +443,7 @@ export class Reflection {
           changes: [
             {
               field: `belief_dependencies.${proposal.contradicted_belief_id}.truth_status`,
-              old_value: "supported",
+              old_value: proposal.previous_truth_status,
               new_value: "contradicted",
             },
           ],
@@ -537,6 +553,7 @@ export class Reflection {
 
 interface DecisionLike {
   id: string
+  envelope_id: string
   seq: number
   question: string
   belief_dependencies: string[]
@@ -548,7 +565,7 @@ function collectDecisions(events: EventEnvelope[]): DecisionLike[] {
   for (const e of events) {
     if (e.type !== DECISION_MADE_EVENT_TYPE) continue
     const decision = e.payload as
-      | (Partial<DecisionLike> & { belief_dependencies?: unknown })
+      | { id?: unknown; question?: unknown; belief_dependencies?: unknown }
       | undefined
     if (!decision || typeof decision.id !== "string") continue
     if (!Array.isArray(decision.belief_dependencies)) continue
@@ -560,6 +577,7 @@ function collectDecisions(events: EventEnvelope[]): DecisionLike[] {
     seenIds.add(decision.id)
     out.push({
       id: decision.id,
+      envelope_id: e.id,
       seq: e.seq,
       question: typeof decision.question === "string" ? decision.question : "(no question)",
       belief_dependencies: decision.belief_dependencies.filter((x): x is string => typeof x === "string"),
@@ -568,16 +586,40 @@ function collectDecisions(events: EventEnvelope[]): DecisionLike[] {
   return out
 }
 
+const TRUTH_STATUSES = new Set<string>([
+  "unverified",
+  "supported",
+  "contradicted",
+  "superseded",
+])
+
+function isTruthStatus(value: string): value is import("@qmilab/lodestar-core").TruthStatus {
+  return TRUTH_STATUSES.has(value)
+}
+
+/**
+ * Hosts emit firewall audit events with the type prefix `firewall.`
+ * — `firewall.belief.transitioned` from Guard's `runGuarded` and from
+ * the MCP proxy. Synthetic event streams in probes use the bare
+ * `belief.transitioned` form. The detector accepts both so a real
+ * event log produced by Guard/MCP and a synthetic stream both fire
+ * the cascade.
+ *
+ * Also returns `from_value` so the decision Revision can record the
+ * real prior `truth_status` instead of hardcoding `"supported"` —
+ * a belief can transition `unverified → contradicted` directly.
+ */
 function extractContradictionTransition(
   event: EventEnvelope,
-): { belief_id: string } | null {
-  if (event.type !== "belief.transitioned") return null
+): { belief_id: string; from_value: string } | null {
+  if (event.type !== "belief.transitioned" && event.type !== "firewall.belief.transitioned") return null
   const payload = event.payload as
-    | { belief_id?: unknown; axis?: unknown; to_value?: unknown }
+    | { belief_id?: unknown; axis?: unknown; to_value?: unknown; from_value?: unknown }
     | undefined
   if (!payload) return null
   if (payload.axis !== "truth_status") return null
   if (payload.to_value !== "contradicted") return null
   if (typeof payload.belief_id !== "string") return null
-  return { belief_id: payload.belief_id }
+  if (typeof payload.from_value !== "string") return null
+  return { belief_id: payload.belief_id, from_value: payload.from_value }
 }

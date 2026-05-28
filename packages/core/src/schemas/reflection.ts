@@ -100,6 +100,16 @@ export const ReflectionProposalSchema = z.discriminatedUnion("kind", [
     kind: z.literal("decision_dependency_flagged"),
     decision_id: z.string(),
     contradicted_belief_id: z.string(),
+    /**
+     * The contradicted belief's truth_status BEFORE the transition.
+     * Captured from the firing `belief.transitioned` payload's
+     * `from_value` (defensively a TruthStatus, but stored as the raw
+     * string the transition emitted). Used by the application step
+     * to record an accurate `old_value` in the dependent Decision's
+     * Revision — a belief can transition `unverified → contradicted`
+     * directly, not only from `supported`.
+     */
+    previous_truth_status: TruthStatusSchema,
     rationale_id: z.string(),
   }),
   z.object({
