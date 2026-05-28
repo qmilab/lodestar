@@ -19,3 +19,12 @@ export {
   type WorldModelSetInput,
   InMemoryWorldModel,
 } from "./world-model/index.js"
+export {
+  Reflection,
+  type ReflectionInputs,
+  type ReflectionContext,
+  type ReflectionEmitter,
+  type RunInput as ReflectionRunInput,
+  type RunResult as ReflectionRunResult,
+  type AppliedSummary as ReflectionAppliedSummary,
+} from "./reflection.js"

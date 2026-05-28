@@ -8,6 +8,7 @@ Usage:
   lodestar action describe <action-id>
   lodestar trace inspect <event-id> [--project <id>] [--session <id>]
   lodestar probe <name>
+  lodestar reflect <session-id> [--since-seq <n>] [--trigger <name>] [--json]
   lodestar help
 
 Commands:
@@ -22,6 +23,9 @@ Commands:
   probe      Run a research probe by short name (poison, chain, external,
              quarantine, sensitivity, autoobs, guard-import). Probes are spec,
              not test scaffolding.
+  reflect    Dry-run a reflection pass over a session's event log: print the
+             typed proposals reflection would produce. Applying is the host's
+             job (Guard / the MCP proxy own the live firewall).
 
 Examples:
   lodestar report session-1779551238212
@@ -30,4 +34,5 @@ Examples:
   lodestar action describe git.status
   lodestar trace inspect <event-id>
   lodestar probe chain
+  lodestar reflect session-1779551238212
 `

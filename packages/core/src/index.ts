@@ -28,5 +28,8 @@ export * from "./schemas/revision.js"
 // Event log envelope
 export * from "./schemas/event.js"
 
+// Reflection (Batch 4) — proposals and the reflection.completed@1 payload
+export * from "./schemas/reflection.js"
+
 // Schema registry
 export * as registry from "./registry.js"

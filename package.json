@@ -32,7 +32,10 @@
     "probe:singlewriter": "bun run research/probes/event-log-single-writer.ts",
     "probe:mcp-roundtrip": "bun run research/probes/mcp-proxy-roundtrip.ts",
     "probe:mcp-injection": "bun run research/probes/mcp-proxy-injection-defense.ts",
-    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract && bun run probe:contradiction-routing && bun run probe:kernel-context && bun run probe:singlewriter && bun run probe:mcp-roundtrip && bun run probe:mcp-injection",
+    "probe:reflection-retrieval": "bun run research/probes/reflection-cannot-promote-to-normal-alone.ts",
+    "probe:reflection-cascade": "bun run research/probes/contradicted-belief-flags-dependent-decisions.ts",
+    "probe:canonical-hash": "bun run research/probes/event-log-canonical-hash.ts",
+    "probes:all": "bun run probe:poison && bun run probe:chain && bun run probe:external && bun run probe:quarantine && bun run probe:sensitivity && bun run probe:autoobs && bun run probe:guard-import && bun run probe:guard-precond && bun run probe:guard-contract && bun run probe:contradiction-routing && bun run probe:kernel-context && bun run probe:singlewriter && bun run probe:mcp-roundtrip && bun run probe:mcp-injection && bun run probe:reflection-retrieval && bun run probe:reflection-cascade && bun run probe:canonical-hash",
     "lodestar": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {

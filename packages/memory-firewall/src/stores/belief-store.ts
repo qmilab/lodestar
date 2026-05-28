@@ -26,6 +26,13 @@ export interface BeliefStore {
   list(filter?: BeliefFilter): Promise<Belief[]>
   history(id: string): Promise<BeliefAxisTransition[]>
   transition(input: BeliefAxisTransitionInput): Promise<BeliefAxisTransition>
+  /**
+   * Stamp `superseded_by` on a stored belief. Called by
+   * `MemoryFirewall.markSuperseded` after the truth_status transition
+   * has been recorded. The successor pointer is a non-axis update,
+   * so it cannot ride the standard transition API.
+   */
+  setSupersededBy(belief_id: string, successor_id: string): Promise<void>
 }
 
 export interface BeliefFilter {
@@ -106,6 +113,14 @@ export class InMemoryBeliefStore implements BeliefStore {
 
   async history(id: string): Promise<BeliefAxisTransition[]> {
     return this.transitions.get(id) ?? []
+  }
+
+  async setSupersededBy(belief_id: string, successor_id: string): Promise<void> {
+    const belief = this.beliefs.get(belief_id)
+    if (!belief) {
+      throw new Error(`BeliefStore: belief ${belief_id} not found`)
+    }
+    this.beliefs.set(belief_id, { ...belief, superseded_by: successor_id })
   }
 
   async transition(input: BeliefAxisTransitionInput): Promise<BeliefAxisTransition> {

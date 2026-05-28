@@ -77,6 +77,13 @@ export class MemoryFirewall {
     evidence_id: string
     by_authority: TransitionAuthority
     rationale: Explanation
+    /**
+     * Optional causal parents to attribute to the resulting
+     * `belief.adopted` audit event. Used by Reflection so the
+     * downstream event log can cite the `reflection.completed`
+     * envelope id — design doc Q4 ("how does reflection cite").
+     */
+    causal_parent_ids?: string[]
   }): Promise<Belief> {
     const claim = await this.claims.get(input.candidate.claim_id)
     if (!claim) {
@@ -142,6 +149,12 @@ export class MemoryFirewall {
       by_authority: input.by_authority,
       at: new Date().toISOString(),
       by_actor_id: input.rationale.generated_by,
+      // Only set when defined. `causal_parent_ids: undefined` on the
+      // payload causes the writer's canonicalHash (treats undefined as
+      // null) and JSON.stringify (drops the key) to disagree, so the
+      // persisted payload hash never verifies against the stored
+      // payload. The same caveat applies to `transitionAxis` below.
+      ...(input.causal_parent_ids ? { causal_parent_ids: input.causal_parent_ids } : {}),
     })
     return belief
   }
@@ -161,12 +174,46 @@ export class MemoryFirewall {
     by_authority: TransitionAuthority
     by_actor_id: string
     rationale: Explanation
+    /**
+     * Optional causal parents to attribute to the resulting
+     * `belief.transitioned` audit event. Used by Reflection so the
+     * downstream event log can cite the `reflection.completed`
+     * envelope id — design doc Q4 ("how does reflection cite").
+     */
+    causal_parent_ids?: string[]
+    /**
+     * Optional optimistic-concurrency guard. When provided, the
+     * transition is rejected unless the belief's current axis value
+     * equals `expected_from`. A proposal (e.g. a reflection
+     * `belief_transition`) carries the source state it was minted
+     * against; if the belief has since moved, applying the proposal
+     * would mutate state under a rationale written for a different
+     * source. Several reflection-authorised transitions share a
+     * target (`unverified → contradicted` and `supported →
+     * contradicted`), so the table check alone cannot catch a stale
+     * source. This does.
+     */
+    expected_from?: string
+    /**
+     * Set by `markSuperseded` for a `truth_status → superseded`
+     * transition. Carried onto the `belief.transitioned` audit event
+     * so a replay can reconstruct *which* belief replaced this one —
+     * the successor pointer is otherwise only in the live store and
+     * invisible to the event log.
+     */
+    superseded_by?: string
   }): Promise<void> {
     const belief = await this.beliefs.get(input.belief_id)
     if (!belief) {
       throw new Error(`MemoryFirewall: belief ${input.belief_id} not found`)
     }
     const fromValue = belief[input.axis] as string
+    if (input.expected_from !== undefined && fromValue !== input.expected_from) {
+      throw new Error(
+        `MemoryFirewall: stale transition on axis ${input.axis}: proposal expected from='${input.expected_from}' ` +
+          `but belief is currently '${fromValue}'. The belief moved since the proposal was minted; refusing to apply.`,
+      )
+    }
     if (!isTransitionAllowed(input.axis, fromValue, input.to_value, input.by_authority)) {
       throw new Error(
         `MemoryFirewall: transition ${input.axis}: ${fromValue} → ${input.to_value} not allowed for authority '${input.by_authority}'`,
@@ -190,7 +237,53 @@ export class MemoryFirewall {
       rationale_id: input.rationale.id,
       at: new Date().toISOString(),
       by_actor_id: input.by_actor_id,
+      ...(input.causal_parent_ids ? { causal_parent_ids: input.causal_parent_ids } : {}),
+      ...(input.superseded_by ? { superseded_by: input.superseded_by } : {}),
     })
+  }
+
+  /**
+   * Mark a belief as superseded by a successor.
+   *
+   * - Transitions the old belief's `truth_status` to `superseded`
+   *   under the supplied authority (which the table re-validates).
+   * - Records the successor pointer on the old belief via
+   *   `BeliefStore.setSupersededBy`.
+   *
+   * Used by Reflection's `belief_supersession` proposal apply path
+   * so the successor relationship survives the audit chain. Without
+   * the pointer, downstream retrieval can see "this belief is
+   * superseded" but cannot tell *by what* — and the Revision
+   * machinery loses the link to the replacement.
+   */
+  async markSuperseded(input: {
+    old_belief_id: string
+    new_belief_id: string
+    by_authority: TransitionAuthority
+    by_actor_id: string
+    rationale: Explanation
+    causal_parent_ids?: string[]
+  }): Promise<void> {
+    const successor = await this.beliefs.get(input.new_belief_id)
+    if (!successor) {
+      throw new Error(
+        `MemoryFirewall: successor belief ${input.new_belief_id} not found; cannot record supersession`,
+      )
+    }
+    await this.transitionAxis({
+      belief_id: input.old_belief_id,
+      axis: "truth_status",
+      to_value: "superseded",
+      by_authority: input.by_authority,
+      by_actor_id: input.by_actor_id,
+      rationale: input.rationale,
+      causal_parent_ids: input.causal_parent_ids,
+      // Carried onto the belief.transitioned audit event so a replay
+      // can reconstruct the successor link from the event log alone,
+      // not just from the live store.
+      superseded_by: input.new_belief_id,
+    })
+    await this.beliefs.setSupersededBy(input.old_belief_id, input.new_belief_id)
   }
 
   /**
@@ -290,6 +383,12 @@ export type FirewallAuditEvent =
       by_authority: TransitionAuthority
       at: string
       by_actor_id: string
+      /** Set by Reflection.applyProposal so the downstream event-log
+       *  envelope's `causal_parent_ids` can cite the
+       *  `reflection.completed` event id. Hosts that wire an audit
+       *  sink to the event log should honour it when present and
+       *  fall back to `[]` otherwise. */
+      causal_parent_ids?: string[]
     }
   | {
       kind: "belief.transitioned"
@@ -301,4 +400,9 @@ export type FirewallAuditEvent =
       rationale_id: string
       at: string
       by_actor_id: string
+      causal_parent_ids?: string[]
+      /** Set for a `truth_status → superseded` transition produced by
+       *  `markSuperseded`. Records the successor belief id so the
+       *  event log alone can reconstruct the supersession link. */
+      superseded_by?: string
     }

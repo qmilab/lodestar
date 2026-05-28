@@ -216,7 +216,11 @@ export async function runGuarded<T>(
   const evidence = new InMemoryEvidenceStore()
   const worldModel = new InMemoryWorldModel()
 
-  const emit = async (type: string, payload: unknown): Promise<void> => {
+  const emit = async (
+    type: string,
+    payload: unknown,
+    options?: { causal_parent_ids?: string[] },
+  ): Promise<void> => {
     await writer.append({
       id: randomUUID(),
       type,
@@ -225,7 +229,7 @@ export async function runGuarded<T>(
       session_id,
       actor_id: config.actor_id,
       timestamp: new Date().toISOString(),
-      causal_parent_ids: [],
+      causal_parent_ids: options?.causal_parent_ids ?? [],
       payload,
       payload_hash: canonicalHash(payload),
       versions: { schema_registry_version: "0.1.0" },
@@ -233,7 +237,12 @@ export async function runGuarded<T>(
   }
 
   const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
-    await emit(`firewall.${event.kind}`, event)
+    // Honour `causal_parent_ids` when the firewall audit event carries
+    // it — reflection-driven transitions cite the `reflection.completed`
+    // event id this way (design doc Q4).
+    const causal_parent_ids =
+      "causal_parent_ids" in event && event.causal_parent_ids ? event.causal_parent_ids : undefined
+    await emit(`firewall.${event.kind}`, event, causal_parent_ids ? { causal_parent_ids } : undefined)
   })
   const linker = new EvidenceLinker(evidence, beliefs)
   const explanations = new ExplanationGenerator(config.actor_id)

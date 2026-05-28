@@ -24,6 +24,7 @@ import { guardWrapCommand } from "./commands/guard.js"
 import { guardMCPProxyCommand } from "./commands/guard-mcp.js"
 import { HELP_TEXT } from "./commands/help.js"
 import { probeCommand } from "./commands/probe.js"
+import { reflectCommand } from "./commands/reflect.js"
 import { reportCommand } from "./commands/report.js"
 import { traceInspectCommand } from "./commands/trace.js"
 
@@ -83,6 +84,9 @@ async function dispatch(): Promise<number> {
 
     case "probe":
       return probeCommand(sub === undefined ? [] : [sub, ...rest])
+
+    case "reflect":
+      return reflectCommand(sub === undefined ? [] : [sub, ...rest])
 
     case undefined:
     case "help":
