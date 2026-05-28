@@ -477,6 +477,134 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
   }
 }
 
+/**
+ * Sub-case G — mixed window: one contradicted belief with a dependent
+ * decision, one without. Each examined belief gets either a typed
+ * proposal or a no_op. Without per-belief no_op emission, the
+ * second contradicted belief silently disappears from the audit
+ * chain even though reflection inspected it.
+ */
+async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[] }> {
+  const beliefWithDecision = crypto.randomUUID()
+  const beliefWithoutDecision = crypto.randomUUID()
+  const decisionId = crypto.randomUUID()
+
+  const events: EventEnvelope[] = [
+    makeEnvelope({
+      seq: 0,
+      type: "decision.made",
+      payload: {
+        id: decisionId,
+        question: "Probe sub-case G",
+        options: [{ id: "yes", description: "use direct-push" }],
+        selected_option_id: "yes",
+        rationale_id: crypto.randomUUID(),
+        belief_dependencies: [beliefWithDecision],
+        policy_dependencies: [],
+        made_by: "probe-actor",
+        made_at: new Date().toISOString(),
+      },
+    }),
+    makeEnvelope({
+      seq: 1,
+      type: "belief.transitioned",
+      payload: {
+        belief_id: beliefWithDecision,
+        axis: "truth_status",
+        from_value: "supported",
+        to_value: "contradicted",
+        by_authority: "sentinel",
+        rationale_id: crypto.randomUUID(),
+      },
+    }),
+    makeEnvelope({
+      seq: 2,
+      type: "belief.transitioned",
+      payload: {
+        belief_id: beliefWithoutDecision,
+        axis: "truth_status",
+        from_value: "supported",
+        to_value: "contradicted",
+        by_authority: "sentinel",
+        rationale_id: crypto.randomUUID(),
+      },
+    }),
+  ]
+
+  const claimStore = new InMemoryClaimStore()
+  const beliefStore = new InMemoryBeliefStore()
+  const evidenceStore = new InMemoryEvidenceStore()
+  const firewall = new MemoryFirewall(claimStore, beliefStore, evidenceStore, async () => {})
+
+  const emitter: ReflectionEmitter = {
+    async emitReflectionCompleted() {
+      return crypto.randomUUID()
+    },
+    async emitDecisionRevision() {
+      return crypto.randomUUID()
+    },
+  }
+
+  const reflection = new Reflection({
+    beliefs: beliefStore,
+    claims: claimStore,
+    evidence: evidenceStore,
+    firewall,
+    explanations: new ExplanationGenerator("probe-reflector"),
+    emitter,
+    context: {
+      project_id: "probe-project",
+      session_id: "probe-session",
+      actor_id: "probe-reflector",
+    },
+  })
+
+  const result = await reflection.run({
+    trigger: "tail_cascade",
+    events,
+    apply: true,
+  })
+
+  const flagged = result.payload.proposals.filter(
+    (p) => p.kind === "decision_dependency_flagged",
+  )
+  const noOps = result.payload.proposals.filter((p) => p.kind === "no_op")
+
+  if (flagged.length !== 1) {
+    return {
+      passed: false,
+      lines: [`G (mixed window audit): FAIL — expected 1 decision_dependency_flagged, got ${flagged.length}`],
+    }
+  }
+  if (noOps.length !== 1) {
+    return {
+      passed: false,
+      lines: [
+        `G (mixed window audit): FAIL — expected exactly 1 no_op for the contradicted belief with ` +
+          `no dependent decision, got ${noOps.length}. The audit chain loses evidence that reflection ` +
+          `inspected the no-fallout contradiction.`,
+      ],
+    }
+  }
+  const noOp = noOps[0]!
+  if (noOp.kind !== "no_op" || noOp.subject.kind !== "belief" || noOp.subject.id !== beliefWithoutDecision) {
+    return {
+      passed: false,
+      lines: [
+        `G (mixed window audit): FAIL — no_op did not name the expected belief ` +
+          `(${beliefWithoutDecision.slice(0, 8)})`,
+      ],
+    }
+  }
+  return {
+    passed: true,
+    lines: [
+      `G (mixed window audit): PASS — 1 decision_dependency_flagged for ${beliefWithDecision.slice(0, 8)}, ` +
+        `1 no_op for ${beliefWithoutDecision.slice(0, 8)}`,
+    ],
+  }
+}
+
 async function run(): Promise<ProbeResult> {
   const details: string[] = []
   for (const sub of SUB_CASES) {
@@ -484,7 +612,7 @@ async function run(): Promise<ProbeResult> {
     for (const l of lines) details.push(l)
     if (!passed) return { passed: false, details }
   }
-  for (const sub of [runSelfChainIdempotence, runSupersessionLink]) {
+  for (const sub of [runSelfChainIdempotence, runSupersessionLink, runMixedWindowAudit]) {
     const { passed, lines } = await sub()
     for (const l of lines) details.push(l)
     if (!passed) return { passed: false, details }

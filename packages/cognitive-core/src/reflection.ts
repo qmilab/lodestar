@@ -274,6 +274,14 @@ export class Reflection {
    * but defensively) or if two `decision.made` events name the same
    * decision id (also a bug, but defensively), the cascade emits a
    * single proposal per pair.
+   *
+   * Per the class contract ("each examined belief gets either a
+   * typed proposal or a no_op"), every contradicted-belief
+   * transition in the window that produces zero
+   * decision_dependency_flagged proposals receives a no_op naming
+   * the inspected belief. Without this, mixed windows with both
+   * actionable and non-actionable contradictions silently lose audit
+   * evidence for the no-fallout ones.
    */
   private detectContradictedDecisionCascade(
     history: EventEnvelope[],
@@ -282,14 +290,15 @@ export class Reflection {
     const proposals: ReflectionProposal[] = []
     const additional = new Set<string>()
     const decisions = collectDecisions(history)
-    if (decisions.length === 0) return { proposals, additional_observed_event_ids: [] }
-
     const seen = new Set<string>()
+
     for (const event of window) {
       const transition = extractContradictionTransition(event)
       if (!transition) continue
       const { belief_id, from_value } = transition
+      const previousTruthStatus = isTruthStatus(from_value) ? from_value : "supported"
 
+      let groundedAnyProposal = false
       for (const decision of decisions) {
         if (decision.seq >= event.seq) continue
         if (!decision.belief_dependencies.includes(belief_id)) continue
@@ -303,7 +312,6 @@ export class Reflection {
         // causally relevant to the proposals they ground.
         additional.add(decision.envelope_id)
 
-        const previousTruthStatus = isTruthStatus(from_value) ? from_value : "supported"
         const rationale = this.inputs.explanations.build({
           subject_type: "belief_revision",
           subject_id: decision.id,
@@ -323,6 +331,28 @@ export class Reflection {
           decision_id: decision.id,
           contradicted_belief_id: belief_id,
           previous_truth_status: previousTruthStatus,
+          rationale_id: rationale.id,
+        })
+        groundedAnyProposal = true
+      }
+
+      if (!groundedAnyProposal) {
+        const rationale = this.inputs.explanations.build({
+          subject_type: "belief_revision",
+          subject_id: belief_id,
+          audience: "audit",
+          summary: `Belief ${belief_id.slice(0, 8)} contradicted; no dependent decisions found`,
+          full_text:
+            `Belief ${belief_id} transitioned from truth_status='${previousTruthStatus}' to 'contradicted' ` +
+            `in event ${event.id}. No past Decision in the partition history named this belief in its ` +
+            `belief_dependencies. Reflection inspected the contradiction and concluded no cascade is ` +
+            `required, recording this no_op so the audit chain shows the belief was considered.`,
+          claims_used: [],
+          evidence_used: [],
+        })
+        proposals.push({
+          kind: "no_op",
+          subject: { kind: "belief", id: belief_id },
           rationale_id: rationale.id,
         })
       }
