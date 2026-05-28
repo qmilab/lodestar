@@ -42,10 +42,16 @@ export interface LoadedProbePack {
   probes: LoadedProbe[]
 }
 
-async function pathKind(p: string): Promise<"file" | "dir" | "missing"> {
+// "file" means a *regular* file specifically. A FIFO/socket/device is
+// neither a regular file nor a directory and comes back as "other" —
+// reading a FIFO manifest could hang readFile(), and a non-regular
+// probe source violates the loader's regular-file guarantee.
+async function pathKind(p: string): Promise<"file" | "dir" | "other" | "missing"> {
   try {
     const s = await stat(p)
-    return s.isDirectory() ? "dir" : "file"
+    if (s.isDirectory()) return "dir"
+    if (s.isFile()) return "file"
+    return "other"
   } catch {
     return "missing"
   }
@@ -71,6 +77,11 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
 
   if (kind === "missing") {
     throw new ProbePackError(`Probe pack path does not exist: ${absTarget}`)
+  }
+  if (kind === "other") {
+    throw new ProbePackError(
+      `Probe pack path is neither a regular file nor a directory: ${absTarget}`,
+    )
   }
 
   const manifestPath = kind === "dir" ? join(absTarget, PROBE_PACK_MANIFEST_FILENAME) : absTarget

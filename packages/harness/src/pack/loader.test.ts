@@ -160,6 +160,17 @@ describe("loadProbePack", () => {
     expect(pack.probes[0]?.name).toBe("linked")
   })
 
+  test("rejects a non-regular file (FIFO) at a probe path", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ probes: [{ name: "fifo", file: "probes/fifo.ts" }] }),
+    })
+    await mkdir(join(dir, "probes"), { recursive: true })
+    const made = Bun.spawnSync(["mkfifo", join(dir, "probes/fifo.ts")])
+    if (!made.success) return // mkfifo unavailable on this platform; nothing to assert
+
+    await expect(loadProbePack(dir)).rejects.toThrow(/not a regular file/)
+  })
+
   test("rejects duplicate probe names", async () => {
     const dir = await makePack({
       manifest: validManifest({
