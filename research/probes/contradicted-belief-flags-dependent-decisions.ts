@@ -255,19 +255,31 @@ async function runSubCase(sub: SubCase): Promise<{ passed: boolean; lines: strin
 /**
  * Sub-case E — idempotence under repeated passes.
  *
- * Each `reflection.completed` envelope has `seq > cursor.to_seq` (it
- * IS the highest seq in its window). Without an envelope-seq floor in
- * `resolveSinceSeq`, the next pass over the same log would re-observe
- * the prior reflection.completed event and append a fresh no_op
- * forever. This sub-case drives two consecutive passes over the same
- * stream (empty rule space) and asserts the second pass observes
- * nothing.
+ * Pass 1 over a non-empty stream emits a reflection.completed
+ * envelope. That envelope's `seq` is higher than the `cursor.to_seq`
+ * it records. Pass 2 over the same log (now including pass 1's
+ * envelope) must observe NOTHING new and must NOT emit — reflection's
+ * own completion events are filtered out of the window by type, so
+ * they never re-trigger. Repeated passes over an unchanged log are
+ * idempotent.
  */
 async function runSelfChainIdempotence(): Promise<{ passed: boolean; lines: string[] }> {
-  let nextSeq = 0
-  const events: EventEnvelope[] = []
+  let nextSeq = 1
+  // A single domain event so pass 1 has a non-empty window and emits.
+  const events: EventEnvelope[] = [
+    makeEnvelope({
+      seq: 0,
+      type: "belief.adopted",
+      payload: {
+        belief_id: crypto.randomUUID(),
+        claim_id: crypto.randomUUID(),
+        evidence_id: crypto.randomUUID(),
+        rationale_id: crypto.randomUUID(),
+        by_authority: "auto_observation",
+      },
+    }),
+  ]
 
-  // Run pass 1 over an empty stream — emits a no_op + reflection.completed.
   const reflection = new Reflection({
     explanations: new ExplanationGenerator("probe-reflector"),
     context: {
@@ -292,36 +304,142 @@ async function runSelfChainIdempotence(): Promise<{ passed: boolean; lines: stri
   })
 
   const pass1 = await reflection.run({ trigger: "programmatic", events: [...events], apply: false })
+  if (!pass1.emitted) {
+    return {
+      passed: false,
+      lines: ["E (self-chain idempotence): FAIL — pass 1 over a non-empty window should have emitted"],
+    }
+  }
+  // events now contains pass 1's reflection.completed envelope.
   const pass2 = await reflection.run({ trigger: "programmatic", events: [...events], apply: false })
 
-  // Pass 2's window must be empty — same log, the prior pass's own
-  // reflection.completed envelope must NOT re-enter the window.
-  if (pass2.payload.cursor.from_seq < pass1.payload.cursor.to_seq) {
+  if (pass2.emitted) {
     return {
       passed: false,
       lines: [
-        `E (self-chain idempotence): FAIL — pass 2 since_seq=${pass2.payload.cursor.from_seq} but ` +
-          `pass 1 ended at to_seq=${pass1.payload.cursor.to_seq}. The cursor floor did not advance past ` +
-          `pass 1's own reflection.completed envelope.`,
+        `E (self-chain idempotence): FAIL — pass 2 over an unchanged log emitted a reflection.completed. ` +
+          `The prior pass's own envelope re-triggered a no_op (self-chain).`,
       ],
     }
   }
-  // Pass 2 observed nothing new — its observed_event_ids should be empty.
   if (pass2.payload.observed_event_ids.length !== 0) {
     return {
       passed: false,
       lines: [
         `E (self-chain idempotence): FAIL — pass 2 observed_event_ids has ` +
-          `${pass2.payload.observed_event_ids.length} ids; expected 0 (the prior reflection.completed ` +
-          `event must be excluded from the next window).`,
+          `${pass2.payload.observed_event_ids.length} ids; expected 0.`,
       ],
     }
   }
   return {
     passed: true,
     lines: [
-      `E (self-chain idempotence): PASS — pass 2 since_seq=${pass2.payload.cursor.from_seq} excludes ` +
-        `pass 1's emission; observed_event_ids empty as expected`,
+      `E (self-chain idempotence): PASS — pass 1 emitted (to_seq=${pass1.payload.cursor.to_seq}), ` +
+        `pass 2 over the unchanged log did not emit and observed nothing`,
+    ],
+  }
+}
+
+/**
+ * Sub-case H — concurrent write is not skipped.
+ *
+ * The dangerous interleaving: a domain event is appended after a
+ * pass's snapshot but before its reflection.completed envelope lands,
+ * so the event's seq is BELOW the envelope's seq. An earlier fix that
+ * floored the next cursor at the envelope seq would skip it forever.
+ * The cursor must track only the highest DOMAIN seq actually observed,
+ * so the next pass still picks up the intervening event.
+ */
+async function runConcurrentWriteNotSkipped(): Promise<{ passed: boolean; lines: string[] }> {
+  const beliefId = crypto.randomUUID()
+  const decisionId = crypto.randomUUID()
+  let nextSeq = 1
+
+  // Pass 1 snapshot: a single decision that depends on beliefId.
+  // No contradiction yet → pass 1 emits a global no_op (cursor.to_seq=0).
+  const events: EventEnvelope[] = [
+    makeEnvelope({
+      seq: 0,
+      type: "decision.made",
+      payload: {
+        id: decisionId,
+        question: "Probe sub-case H",
+        options: [{ id: "yes", description: "use direct-push" }],
+        selected_option_id: "yes",
+        rationale_id: crypto.randomUUID(),
+        belief_dependencies: [beliefId],
+        policy_dependencies: [],
+        made_by: "probe-actor",
+        made_at: new Date().toISOString(),
+      },
+    }),
+  ]
+
+  const reflection = new Reflection({
+    explanations: new ExplanationGenerator("probe-reflector"),
+    context: {
+      project_id: "probe-project",
+      session_id: "probe-session",
+      actor_id: "probe-reflector",
+    },
+    emitter: {
+      async emitReflectionCompleted({ payload }) {
+        // Before the envelope is recorded, a contradiction lands
+        // concurrently at a seq BELOW where the envelope will sit.
+        if (!events.some((e) => e.type === "belief.transitioned")) {
+          events.push(
+            makeEnvelope({
+              seq: nextSeq++,
+              type: "belief.transitioned",
+              payload: {
+                belief_id: beliefId,
+                axis: "truth_status",
+                from_value: "supported",
+                to_value: "contradicted",
+                by_authority: "sentinel",
+                rationale_id: crypto.randomUUID(),
+              },
+            }),
+          )
+        }
+        const env = makeEnvelope({ seq: nextSeq++, type: "reflection.completed", payload })
+        events.push(env)
+        return env.id
+      },
+      async emitDecisionRevision() {
+        return crypto.randomUUID()
+      },
+    },
+  })
+
+  const pass1 = await reflection.run({ trigger: "tail_batch", events: [...events], apply: false })
+  // After pass 1: events = [decision@0, belief.transitioned@1, reflection.completed@2].
+  const pass2 = await reflection.run({ trigger: "tail_cascade", events: [...events], apply: false })
+
+  const flagged = pass2.payload.proposals.filter((p) => p.kind === "decision_dependency_flagged")
+  if (flagged.length !== 1) {
+    return {
+      passed: false,
+      lines: [
+        `H (concurrent write not skipped): FAIL — pass 2 produced ${flagged.length} ` +
+          `decision_dependency_flagged proposals; expected 1. The contradiction written concurrently ` +
+          `with pass 1 (seq below pass 1's envelope) was skipped.`,
+      ],
+    }
+  }
+  const proposal = flagged[0]!
+  if (proposal.kind !== "decision_dependency_flagged" || proposal.decision_id !== decisionId) {
+    return {
+      passed: false,
+      lines: [`H (concurrent write not skipped): FAIL — proposal did not name decision ${decisionId.slice(0, 8)}`],
+    }
+  }
+  void pass1
+  return {
+    passed: true,
+    lines: [
+      `H (concurrent write not skipped): PASS — contradiction at seq below pass 1's envelope was ` +
+        `picked up by pass 2; decision ${decisionId.slice(0, 8)} flagged`,
     ],
   }
 }
@@ -666,14 +784,19 @@ async function run(): Promise<ProbeResult> {
     for (const l of lines) details.push(l)
     if (!passed) return { passed: false, details }
   }
-  for (const sub of [runSelfChainIdempotence, runSupersessionLink, runMixedWindowAudit]) {
+  for (const sub of [
+    runSelfChainIdempotence,
+    runSupersessionLink,
+    runMixedWindowAudit,
+    runConcurrentWriteNotSkipped,
+  ]) {
     const { passed, lines } = await sub()
     for (const l of lines) details.push(l)
     if (!passed) return { passed: false, details }
   }
   details.push("All sub-cases pass: cascade fires under both event-naming forms, captures the real " +
-    "from_value, lists historical decision envelopes, is idempotent under repeated passes, and " +
-    "preserves the supersession successor link.")
+    "from_value, lists historical/inspected decision envelopes, is idempotent under repeated passes, " +
+    "preserves the supersession successor link, and never skips concurrently-written events.")
   return { passed: true, details }
 }
 

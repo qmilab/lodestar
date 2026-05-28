@@ -138,6 +138,14 @@ export interface RunInput {
 export interface RunResult {
   pass_id: string
   reflection_event_id?: string
+  /**
+   * Whether this pass emitted a `reflection.completed` event. False
+   * when the window was empty (no new domain events since the last
+   * pass) — such a pass records nothing, so repeated passes over an
+   * unchanged log are idempotent. When false, `payload.proposals` is
+   * empty and the payload was NOT validated/persisted.
+   */
+  emitted: boolean
   payload: ReflectionCompletedPayload
   applied: AppliedSummary
 }
@@ -167,7 +175,49 @@ export class Reflection {
     const pass_id = crypto.randomUUID()
     const events = await this.gatherEvents(input)
     const since_seq = await this.resolveSinceSeq(input, events)
-    const window = events.filter((e) => e.seq > since_seq)
+    // Exclude reflection's own completion events from the window:
+    //  - they are metadata, never domain events to act on;
+    //  - including them would re-trigger a no_op on every pass over
+    //    an unchanged log (the self-chain problem);
+    //  - and they must NOT push the cursor forward, or a domain event
+    //    written concurrently (after this snapshot but before the
+    //    reflection.completed envelope lands, hence at a lower seq
+    //    than the envelope) would be skipped forever.
+    const window = events.filter(
+      (e) => e.seq > since_seq && e.type !== REFLECTION_COMPLETED_EVENT_TYPE,
+    )
+
+    const emptyApplied: AppliedSummary = {
+      belief_transitions: 0,
+      belief_supersessions: 0,
+      claim_promotions: 0,
+      decision_flags: 0,
+      no_ops: 0,
+      decision_flags_skipped_no_emitter: 0,
+      errors: [],
+    }
+
+    // An empty window means no new domain events since the last pass.
+    // Such a pass records nothing — emitting here would append a
+    // no_op forever on repeated passes over an unchanged log. True
+    // idempotence: no observation, no event. The cursor stays put.
+    if (window.length === 0) {
+      return {
+        pass_id,
+        reflection_event_id: undefined,
+        emitted: false,
+        payload: {
+          pass_id,
+          triggered_by: input.trigger,
+          cursor: { from_seq: since_seq, to_seq: since_seq },
+          observed_event_ids: [],
+          proposals: [],
+          started_at: startedAt,
+          finished_at: new Date().toISOString(),
+        },
+        applied: emptyApplied,
+      }
+    }
 
     const proposals: ReflectionProposal[] = []
     const observedIds = new Set<string>(window.map((e) => e.id))
@@ -182,10 +232,11 @@ export class Reflection {
     const observed = Array.from(observedIds)
 
     if (proposals.length === 0) {
-      // Per the design doc Q2: every pass emits at least one
-      // proposal. A truly empty inspection still emits a no_op
-      // against the partition itself so the audit chain can tell
-      // "ran and silent" apart from "did not run."
+      // The window had new domain events but none produced a typed
+      // proposal (e.g. adoptions/actions, no contradictions). Emit a
+      // single no_op recording that reflection considered them and
+      // found nothing actionable — distinguishes "ran and silent"
+      // from "did not run," and advances the cursor.
       proposals.push({
         kind: "no_op",
         subject: { kind: "belief", id: `partition:${this.inputs.context.session_id}` },
@@ -200,7 +251,12 @@ export class Reflection {
     }
 
     const finishedAt = new Date().toISOString()
-    const max_seq = window.length === 0 ? since_seq : window[window.length - 1]!.seq
+    // cursor.to_seq is the highest DOMAIN event seq actually observed
+    // (reflection.completed events are already filtered out of
+    // `window`). It must not jump to the about-to-be-written
+    // reflection.completed envelope's seq, or concurrent writes are
+    // skipped.
+    const max_seq = window[window.length - 1]!.seq
     const payload: ReflectionCompletedPayload = {
       pass_id,
       triggered_by: input.trigger,
@@ -249,7 +305,7 @@ export class Reflection {
       }
     }
 
-    return { pass_id, reflection_event_id, payload, applied }
+    return { pass_id, reflection_event_id, emitted: true, payload, applied }
   }
 
   // ── Rule: contradicted-belief cascade ─────────────────────────────────────
@@ -526,21 +582,20 @@ export class Reflection {
     events: EventEnvelope[],
   ): Promise<number> {
     if (input.since_seq !== undefined) return input.since_seq
-    // For each prior reflection.completed, the cursor floor for the
-    // NEXT pass is `max(its cursor.to_seq, its own envelope seq)`.
-    // Without the envelope-seq floor, the next pass re-observes the
-    // prior reflection.completed event itself (its seq is always >
-    // its own cursor.to_seq), and the cascade detector — which has
-    // nothing to act on — appends another no_op forever. Folding
-    // the envelope seq into the floor makes repeated passes
-    // idempotent over an unchanged log.
+    // The cursor is the highest `cursor.to_seq` any prior pass
+    // recorded — i.e. the highest DOMAIN event seq already observed.
+    // It is deliberately NOT floored at the reflection.completed
+    // envelope's own seq: doing so would skip a domain event written
+    // concurrently with a pass (after its snapshot, before its
+    // envelope landed). Self-chaining is prevented instead by
+    // filtering reflection.completed out of the window in `run()`,
+    // so the prior envelope re-entering the next window is harmless.
     let highest = -1
     for (const e of events) {
       if (e.type !== REFLECTION_COMPLETED_EVENT_TYPE) continue
       const payload = e.payload as { cursor?: { to_seq?: unknown } } | undefined
       const toSeq = payload?.cursor?.to_seq
-      const candidate = typeof toSeq === "number" ? Math.max(toSeq, e.seq) : e.seq
-      if (candidate > highest) highest = candidate
+      if (typeof toSeq === "number" && toSeq > highest) highest = toSeq
     }
     return highest
   }

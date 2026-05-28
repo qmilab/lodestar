@@ -223,42 +223,70 @@ async function run(): Promise<ProbeResult> {
   }
   details.push(`OK: Reflection.applyProposal rejected bypass with: ${reflectionErrorMessage}`)
 
-  // Also exercise Reflection itself with the bypass proposal injected
-  // via the events stream to confirm Reflection's apply path errors
-  // out (and surfaces the error in the applied.errors list rather
-  // than silently succeeding).
-  const applyResult = await reflection.run({
+  // An empty event window is a true no-op: reflection observes
+  // nothing, emits nothing, and the cursor stays put. (Repeated
+  // passes over an unchanged log must be idempotent — emitting a
+  // no_op here would append forever.)
+  const emptyResult = await reflection.run({
     trigger: "programmatic",
     events: [],
     apply: false,
   })
-  details.push(`OK: Reflection.run with no input events produced ${applyResult.payload.proposals.length} proposal(s)`)
-  details.push(`  (expected at least one no_op for audit completeness)`)
-  if (applyResult.payload.proposals.length === 0) {
+  if (emptyResult.emitted) {
     return {
       passed: false,
       details: [
         ...details,
-        "FAIL: reflection produced zero proposals. Per Q2, every pass emits at least one " +
-          "proposal (no_op counts) so the audit chain can distinguish silent runs from absent ones.",
+        "FAIL: reflection emitted a reflection.completed over an empty window. An empty window " +
+          "must be a true no-op (no emission) so repeated passes stay idempotent.",
       ],
     }
   }
-  if (!applyResult.payload.proposals.some((p) => p.kind === "no_op")) {
+  if (emptyResult.payload.proposals.length !== 0) {
     return {
       passed: false,
       details: [
         ...details,
-        "FAIL: reflection produced no no_op proposal in an empty event window. " +
-          "no_op is mandatory per Q2.",
+        `FAIL: empty-window pass produced ${emptyResult.payload.proposals.length} proposal(s); expected 0.`,
       ],
     }
   }
-  details.push("OK: reflection emitted a no_op proposal for the empty event window")
+  details.push("OK: empty-window pass is a true no-op (emitted=false, zero proposals)")
 
   // Confirm Reflection's own rule set never produces a normal-retrieval proposal.
-  // We do this by checking the payload proposals don't target retrieval normal.
-  const offenders = applyResult.payload.proposals.filter(
+  // The cascade rule only emits decision_dependency_flagged and no_op,
+  // so no belief_transition targeting retrieval_status: normal can
+  // originate from reflection itself. Verify over a window containing a
+  // contradiction (which exercises the rule set).
+  const ruleSetResult = await reflection.run({
+    trigger: "tail_cascade",
+    events: [
+      {
+        id: crypto.randomUUID(),
+        seq: 0,
+        type: "belief.transitioned",
+        schema_version: "1",
+        project_id: "probe-project",
+        session_id: "probe-session",
+        actor_id: "probe-actor",
+        timestamp: new Date().toISOString(),
+        logical_clock: 0,
+        causal_parent_ids: [],
+        payload_hash: "probe",
+        payload: {
+          belief_id: crypto.randomUUID(),
+          axis: "truth_status",
+          from_value: "supported",
+          to_value: "contradicted",
+          by_authority: "sentinel",
+          rationale_id: crypto.randomUUID(),
+        },
+        versions: {},
+      },
+    ],
+    apply: false,
+  })
+  const offenders = ruleSetResult.payload.proposals.filter(
     (p) =>
       p.kind === "belief_transition" &&
       p.axis === "retrieval_status" &&

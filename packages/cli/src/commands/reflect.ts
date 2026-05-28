@@ -95,7 +95,15 @@ export async function reflectCommand(argv: string[]): Promise<number> {
   })
 
   if (json) {
-    process.stdout.write(`${JSON.stringify(result.payload, null, 2)}\n`)
+    process.stdout.write(`${JSON.stringify({ emitted: result.emitted, ...result.payload }, null, 2)}\n`)
+    return 0
+  }
+
+  if (!result.emitted) {
+    process.stdout.write(
+      `pass ${result.pass_id.slice(0, 8)}  trigger=cli\n` +
+        `  no new events since seq ${result.payload.cursor.from_seq} — nothing to reflect on (no-op)\n`,
+    )
     return 0
   }
 
