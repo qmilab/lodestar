@@ -49,6 +49,14 @@ export const ProbeEntrySchema = z.object({
   file: z
     .string()
     .min(1)
+    // Must be relative to the pack root: a pack that names an absolute
+    // path loads on its author's machine but breaks once moved or
+    // published. Reject POSIX (`/`), UNC/Windows-root (`\`), and
+    // drive-letter (`C:`) prefixes so the contract holds cross-platform.
+    .refine((f) => !/^([/\\]|[A-Za-z]:)/.test(f), {
+      message:
+        "probe file must be a relative path inside the pack (absolute paths are not allowed)",
+    })
     .describe(
       "Probe source file, relative to the pack root (the directory containing the manifest).",
     ),

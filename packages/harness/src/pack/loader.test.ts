@@ -160,6 +160,13 @@ describe("loadProbePack", () => {
     expect(pack.probes[0]?.name).toBe("linked")
   })
 
+  test("rejects an absolute probe file path", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ probes: [{ name: "abs", file: "/var/tmp/probe.ts" }] }),
+    })
+    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+  })
+
   test("rejects a non-regular file (FIFO) at a probe path", async () => {
     const dir = await makePack({
       manifest: validManifest({ probes: [{ name: "fifo", file: "probes/fifo.ts" }] }),
