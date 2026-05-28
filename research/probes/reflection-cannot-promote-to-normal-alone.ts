@@ -276,6 +276,60 @@ async function run(): Promise<ProbeResult> {
   }
   details.push("OK: reflection's own rule set produces no restricted → normal retrieval proposals")
 
+  // Stale-proposal guard: a belief_transition proposal carries the
+  // source state it was minted against (from_value). If the belief
+  // has since moved, applying the proposal must be rejected — the
+  // rationale was written for a different source. Seed belief is at
+  // truth_status=unverified; a proposal claiming from_value=supported
+  // → contradicted (a legal reflection transition for the *supported*
+  // source) must be refused because the belief is actually unverified.
+  const staleRationale = explanationGen.build({
+    subject_type: "belief_revision",
+    subject_id: seed.id,
+    audience: "audit",
+    summary: "Probe: stale-source belief_transition proposal",
+    full_text: "Probe verifies a belief_transition proposal whose from_value no longer matches the belief is rejected.",
+    claims_used: [claim.id],
+    evidence_used: [evidence.id],
+  })
+  const staleProposal: ReflectionProposal = {
+    kind: "belief_transition",
+    belief_id: seed.id,
+    axis: "truth_status",
+    from_value: "supported", // belief is actually 'unverified'
+    to_value: "contradicted",
+    rationale_id: staleRationale.id,
+  }
+  let staleRejected = false
+  let staleError = ""
+  try {
+    await reflection.applyProposal(staleProposal, undefined)
+  } catch (err) {
+    staleRejected = true
+    staleError = err instanceof Error ? err.message : String(err)
+  }
+  if (!staleRejected) {
+    return {
+      passed: false,
+      details: [
+        ...details,
+        "FAIL: applyProposal accepted a belief_transition whose from_value='supported' did not match " +
+          "the belief's actual truth_status='unverified'. A stale proposal mutated state under a " +
+          "rationale written for a different source.",
+      ],
+    }
+  }
+  if (!/stale|expected from|currently/.test(staleError)) {
+    return {
+      passed: false,
+      details: [
+        ...details,
+        `FAIL: stale proposal was rejected, but not by the expected_from guard. Got: ${staleError}`,
+      ],
+    }
+  }
+  details.push(`OK: stale belief_transition (from_value mismatch) rejected with: ${staleError}`)
+
   void emittedPayload // tracked above; surface for audit if needed
 
   return {
@@ -283,7 +337,7 @@ async function run(): Promise<ProbeResult> {
     details: [
       ...details,
       "All checks pass: reflection cannot — by table or by runtime — promote a belief " +
-        "to retrieval_status: normal on its own.",
+        "to retrieval_status: normal on its own, and stale belief_transition proposals are refused.",
     ],
   }
 }

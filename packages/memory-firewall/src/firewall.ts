@@ -181,12 +181,31 @@ export class MemoryFirewall {
      * envelope id — design doc Q4 ("how does reflection cite").
      */
     causal_parent_ids?: string[]
+    /**
+     * Optional optimistic-concurrency guard. When provided, the
+     * transition is rejected unless the belief's current axis value
+     * equals `expected_from`. A proposal (e.g. a reflection
+     * `belief_transition`) carries the source state it was minted
+     * against; if the belief has since moved, applying the proposal
+     * would mutate state under a rationale written for a different
+     * source. Several reflection-authorised transitions share a
+     * target (`unverified → contradicted` and `supported →
+     * contradicted`), so the table check alone cannot catch a stale
+     * source. This does.
+     */
+    expected_from?: string
   }): Promise<void> {
     const belief = await this.beliefs.get(input.belief_id)
     if (!belief) {
       throw new Error(`MemoryFirewall: belief ${input.belief_id} not found`)
     }
     const fromValue = belief[input.axis] as string
+    if (input.expected_from !== undefined && fromValue !== input.expected_from) {
+      throw new Error(
+        `MemoryFirewall: stale transition on axis ${input.axis}: proposal expected from='${input.expected_from}' ` +
+          `but belief is currently '${fromValue}'. The belief moved since the proposal was minted; refusing to apply.`,
+      )
+    }
     if (!isTransitionAllowed(input.axis, fromValue, input.to_value, input.by_authority)) {
       throw new Error(
         `MemoryFirewall: transition ${input.axis}: ${fromValue} → ${input.to_value} not allowed for authority '${input.by_authority}'`,

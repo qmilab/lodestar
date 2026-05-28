@@ -403,6 +403,11 @@ export class Reflection {
           by_actor_id: this.inputs.context.actor_id,
           rationale: explanation,
           causal_parent_ids: reflection_event_id ? [reflection_event_id] : undefined,
+          // Reject the proposal if the belief moved since it was
+          // minted — the rationale was written against
+          // `proposal.from_value`, so applying it from a different
+          // state would mis-attribute the change.
+          expected_from: proposal.from_value,
         })
         return "applied"
       }
