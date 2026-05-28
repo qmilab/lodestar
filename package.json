@@ -51,6 +51,7 @@
     "@qmilab/lodestar-adapter-filesystem": "workspace:*",
     "@qmilab/lodestar-adapter-git": "workspace:*",
     "@qmilab/lodestar-trace": "workspace:*",
+    "@qmilab/lodestar-harness": "workspace:*",
     "@qmilab/lodestar-guard": "workspace:*",
     "@qmilab/lodestar-guard-mcp": "workspace:*",
     "@qmilab/lodestar-memory-firewall-mem0": "workspace:*",

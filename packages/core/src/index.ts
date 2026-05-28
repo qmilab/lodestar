@@ -31,5 +31,8 @@ export * from "./schemas/event.js"
 // Reflection (Batch 4) — proposals and the reflection.completed@1 payload
 export * from "./schemas/reflection.js"
 
+// Probe pack format (Batch 4) — the lodestar.probe-pack.json manifest contract
+export * from "./schemas/probe-pack.js"
+
 // Schema registry
 export * as registry from "./registry.js"

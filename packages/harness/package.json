@@ -1,0 +1,57 @@
+{
+  "name": "@qmilab/lodestar-harness",
+  "version": "0.1.0",
+  "description": "The Lodestar Harness — probe packs, sentinels, and calibrators that exercise and audit the epistemic chain. Part of Lodestar, the trust layer for AI agents.",
+  "license": "Apache-2.0",
+  "author": "QMI Lab <hello@qmilab.com>",
+  "homepage": "https://qmilab.com/lodestar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qmilab/lodestar.git",
+    "directory": "packages/harness"
+  },
+  "bugs": {
+    "url": "https://github.com/qmilab/lodestar/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "harness",
+    "probe",
+    "probe-pack",
+    "agent-governance"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@qmilab/lodestar-core": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}
