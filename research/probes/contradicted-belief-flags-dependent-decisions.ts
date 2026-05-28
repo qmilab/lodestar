@@ -252,6 +252,231 @@ async function runSubCase(sub: SubCase): Promise<{ passed: boolean; lines: strin
   }
 }
 
+/**
+ * Sub-case E — idempotence under repeated passes.
+ *
+ * Each `reflection.completed` envelope has `seq > cursor.to_seq` (it
+ * IS the highest seq in its window). Without an envelope-seq floor in
+ * `resolveSinceSeq`, the next pass over the same log would re-observe
+ * the prior reflection.completed event and append a fresh no_op
+ * forever. This sub-case drives two consecutive passes over the same
+ * stream (empty rule space) and asserts the second pass observes
+ * nothing.
+ */
+async function runSelfChainIdempotence(): Promise<{ passed: boolean; lines: string[] }> {
+  let nextSeq = 0
+  const events: EventEnvelope[] = []
+
+  // Run pass 1 over an empty stream — emits a no_op + reflection.completed.
+  const reflection = new Reflection({
+    explanations: new ExplanationGenerator("probe-reflector"),
+    context: {
+      project_id: "probe-project",
+      session_id: "probe-session",
+      actor_id: "probe-reflector",
+    },
+    emitter: {
+      async emitReflectionCompleted({ payload }) {
+        const env = makeEnvelope({
+          seq: nextSeq++,
+          type: "reflection.completed",
+          payload,
+        })
+        events.push(env)
+        return env.id
+      },
+      async emitDecisionRevision() {
+        return crypto.randomUUID()
+      },
+    },
+  })
+
+  const pass1 = await reflection.run({ trigger: "programmatic", events: [...events], apply: false })
+  const pass2 = await reflection.run({ trigger: "programmatic", events: [...events], apply: false })
+
+  // Pass 2's window must be empty — same log, the prior pass's own
+  // reflection.completed envelope must NOT re-enter the window.
+  if (pass2.payload.cursor.from_seq < pass1.payload.cursor.to_seq) {
+    return {
+      passed: false,
+      lines: [
+        `E (self-chain idempotence): FAIL — pass 2 since_seq=${pass2.payload.cursor.from_seq} but ` +
+          `pass 1 ended at to_seq=${pass1.payload.cursor.to_seq}. The cursor floor did not advance past ` +
+          `pass 1's own reflection.completed envelope.`,
+      ],
+    }
+  }
+  // Pass 2 observed nothing new — its observed_event_ids should be empty.
+  if (pass2.payload.observed_event_ids.length !== 0) {
+    return {
+      passed: false,
+      lines: [
+        `E (self-chain idempotence): FAIL — pass 2 observed_event_ids has ` +
+          `${pass2.payload.observed_event_ids.length} ids; expected 0 (the prior reflection.completed ` +
+          `event must be excluded from the next window).`,
+      ],
+    }
+  }
+  return {
+    passed: true,
+    lines: [
+      `E (self-chain idempotence): PASS — pass 2 since_seq=${pass2.payload.cursor.from_seq} excludes ` +
+        `pass 1's emission; observed_event_ids empty as expected`,
+    ],
+  }
+}
+
+/**
+ * Sub-case F — supersession preserves the successor pointer.
+ *
+ * `belief_supersession` proposals applied through Reflection must call
+ * `MemoryFirewall.markSuperseded`, which transitions truth_status AND
+ * stamps `superseded_by = new_belief_id`. Without the pointer, the
+ * audit chain says "this belief was superseded" but cannot say by
+ * what.
+ */
+async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[] }> {
+  const claimStore = new InMemoryClaimStore()
+  const beliefStore = new InMemoryBeliefStore()
+  const evidenceStore = new InMemoryEvidenceStore()
+  const firewall = new MemoryFirewall(claimStore, beliefStore, evidenceStore, async () => {})
+
+  // Seed two beliefs: the predecessor (truth=supported) and the
+  // successor. Both share the same claim+evidence to keep setup tight.
+  const claim = {
+    id: crypto.randomUUID(),
+    statement: "Probe claim for supersession test",
+    source_observation_ids: [crypto.randomUUID()],
+    extraction_method: "tool" as const,
+    extracted_by: "probe-actor",
+    status: "extracted" as const,
+    scope: { level: "project" as const, identifier: "probe-project" },
+    sensitivity: "internal" as const,
+    authors: ["probe-actor"],
+    created_at: new Date().toISOString(),
+  }
+  await firewall.acceptClaim(claim)
+  const evidence = {
+    id: crypto.randomUUID(),
+    claim_id: claim.id,
+    items: [{
+      source_id: claim.source_observation_ids[0]!,
+      relation: "supports" as const,
+      quality: "tool_result" as const,
+      independence_group: "obs:probe.tool",
+      freshness: "fresh" as const,
+    }],
+    assessed_by: "probe-actor",
+    assessed_at: new Date().toISOString(),
+  }
+  await evidenceStore.put(evidence)
+
+  const explanations = new ExplanationGenerator("probe-actor")
+  const adoptExplanation = explanations.forBeliefAdoption({
+    belief_id: "pending",
+    claim_id: claim.id,
+    evidence_id: evidence.id,
+    confidence: 0.8,
+    rationale_text: "probe seed",
+  })
+  const predecessor = await firewall.adoptBelief({
+    candidate: {
+      claim_id: claim.id,
+      confidence: 0.8,
+      calibration_class: "probe::supersession",
+      scope: claim.scope,
+      sensitivity: claim.sensitivity,
+      authority: "observed",
+      truth_status: "supported",
+      retrieval_status: "restricted",
+      security_status: "clean",
+      freshness_status: "fresh",
+      observed_at: claim.created_at,
+    },
+    evidence_id: evidence.id,
+    by_authority: "auto_observation",
+    rationale: adoptExplanation,
+  })
+  const successor = await firewall.adoptBelief({
+    candidate: {
+      claim_id: claim.id,
+      confidence: 0.8,
+      calibration_class: "probe::supersession",
+      scope: claim.scope,
+      sensitivity: claim.sensitivity,
+      authority: "observed",
+      truth_status: "supported",
+      retrieval_status: "restricted",
+      security_status: "clean",
+      freshness_status: "fresh",
+      observed_at: claim.created_at,
+    },
+    evidence_id: evidence.id,
+    by_authority: "auto_observation",
+    rationale: adoptExplanation,
+  })
+
+  const reflection = new Reflection({
+    beliefs: beliefStore,
+    claims: claimStore,
+    evidence: evidenceStore,
+    firewall,
+    explanations,
+    context: {
+      project_id: "probe-project",
+      session_id: "probe-session",
+      actor_id: "probe-reflector",
+    },
+  })
+
+  const supersessionRationale = explanations.build({
+    subject_type: "belief_revision",
+    subject_id: predecessor.id,
+    audience: "audit",
+    summary: "probe: supersede predecessor with successor",
+    full_text: "Probe applies a belief_supersession proposal and verifies the successor link is stamped.",
+    claims_used: [claim.id],
+    evidence_used: [evidence.id],
+  })
+
+  await reflection.applyProposal(
+    {
+      kind: "belief_supersession",
+      old_belief_id: predecessor.id,
+      new_belief_id: successor.id,
+      rationale_id: supersessionRationale.id,
+    },
+    undefined,
+  )
+
+  const stored = await beliefStore.get(predecessor.id)
+  if (!stored) {
+    return { passed: false, lines: ["F (supersession link): FAIL — predecessor belief not found after apply"] }
+  }
+  if (stored.truth_status !== "superseded") {
+    return {
+      passed: false,
+      lines: [`F (supersession link): FAIL — truth_status='${stored.truth_status}', expected 'superseded'`],
+    }
+  }
+  if (stored.superseded_by !== successor.id) {
+    return {
+      passed: false,
+      lines: [
+        `F (supersession link): FAIL — superseded_by='${stored.superseded_by}', expected '${successor.id}'. ` +
+          `The successor pointer was lost; downstream audit cannot tell which belief replaced this one.`,
+      ],
+    }
+  }
+  return {
+    passed: true,
+    lines: [
+      `F (supersession link): PASS — truth_status='superseded', superseded_by=${successor.id.slice(0, 8)} ` +
+        `(predecessor=${predecessor.id.slice(0, 8)})`,
+    ],
+  }
+}
+
 async function run(): Promise<ProbeResult> {
   const details: string[] = []
   for (const sub of SUB_CASES) {
@@ -259,8 +484,14 @@ async function run(): Promise<ProbeResult> {
     for (const l of lines) details.push(l)
     if (!passed) return { passed: false, details }
   }
-  details.push("All sub-cases pass: cascade fires under both event-naming forms, " +
-    "captures the real from_value, and lists historical decision envelopes in observed_event_ids.")
+  for (const sub of [runSelfChainIdempotence, runSupersessionLink]) {
+    const { passed, lines } = await sub()
+    for (const l of lines) details.push(l)
+    if (!passed) return { passed: false, details }
+  }
+  details.push("All sub-cases pass: cascade fires under both event-naming forms, captures the real " +
+    "from_value, lists historical decision envelopes, is idempotent under repeated passes, and " +
+    "preserves the supersession successor link.")
   return { passed: true, details }
 }
 

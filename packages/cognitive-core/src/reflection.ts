@@ -410,15 +410,15 @@ export class Reflection {
       }
       case "belief_supersession": {
         if (!this.inputs.firewall) throw new Error("Reflection: belief_supersession requires a firewall")
-        // Recorded by transitioning the old belief's truth_status to
-        // 'superseded' and stamping superseded_by on the stored belief
-        // record. The successor belief is assumed to exist already
-        // (reflection does not create the successor).
+        // `markSuperseded` does both halves: transition the old
+        // belief's truth_status under `reflection` authority AND
+        // stamp `superseded_by = new_belief_id` on the old belief
+        // record. The successor is required to exist already —
+        // reflection does not create the successor belief.
         const explanation = await this.materializeExplanation(proposal.rationale_id)
-        await this.inputs.firewall.transitionAxis({
-          belief_id: proposal.old_belief_id,
-          axis: "truth_status",
-          to_value: "superseded",
+        await this.inputs.firewall.markSuperseded({
+          old_belief_id: proposal.old_belief_id,
+          new_belief_id: proposal.new_belief_id,
           by_authority: "reflection",
           by_actor_id: this.inputs.context.actor_id,
           rationale: explanation,
@@ -488,13 +488,21 @@ export class Reflection {
     events: EventEnvelope[],
   ): Promise<number> {
     if (input.since_seq !== undefined) return input.since_seq
-    // Highest cursor.to_seq from prior reflection.completed events for the partition
+    // For each prior reflection.completed, the cursor floor for the
+    // NEXT pass is `max(its cursor.to_seq, its own envelope seq)`.
+    // Without the envelope-seq floor, the next pass re-observes the
+    // prior reflection.completed event itself (its seq is always >
+    // its own cursor.to_seq), and the cascade detector — which has
+    // nothing to act on — appends another no_op forever. Folding
+    // the envelope seq into the floor makes repeated passes
+    // idempotent over an unchanged log.
     let highest = -1
     for (const e of events) {
       if (e.type !== REFLECTION_COMPLETED_EVENT_TYPE) continue
       const payload = e.payload as { cursor?: { to_seq?: unknown } } | undefined
       const toSeq = payload?.cursor?.to_seq
-      if (typeof toSeq === "number" && toSeq > highest) highest = toSeq
+      const candidate = typeof toSeq === "number" ? Math.max(toSeq, e.seq) : e.seq
+      if (candidate > highest) highest = candidate
     }
     return highest
   }

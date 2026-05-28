@@ -130,6 +130,7 @@
         "@qmilab/lodestar-action-kernel": "workspace:*",
         "@qmilab/lodestar-adapter-filesystem": "workspace:*",
         "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-cognitive-core": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
         "@qmilab/lodestar-event-log": "workspace:*",
         "@qmilab/lodestar-guard": "workspace:*",

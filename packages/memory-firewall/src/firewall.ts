@@ -210,6 +210,46 @@ export class MemoryFirewall {
   }
 
   /**
+   * Mark a belief as superseded by a successor.
+   *
+   * - Transitions the old belief's `truth_status` to `superseded`
+   *   under the supplied authority (which the table re-validates).
+   * - Records the successor pointer on the old belief via
+   *   `BeliefStore.setSupersededBy`.
+   *
+   * Used by Reflection's `belief_supersession` proposal apply path
+   * so the successor relationship survives the audit chain. Without
+   * the pointer, downstream retrieval can see "this belief is
+   * superseded" but cannot tell *by what* — and the Revision
+   * machinery loses the link to the replacement.
+   */
+  async markSuperseded(input: {
+    old_belief_id: string
+    new_belief_id: string
+    by_authority: TransitionAuthority
+    by_actor_id: string
+    rationale: Explanation
+    causal_parent_ids?: string[]
+  }): Promise<void> {
+    const successor = await this.beliefs.get(input.new_belief_id)
+    if (!successor) {
+      throw new Error(
+        `MemoryFirewall: successor belief ${input.new_belief_id} not found; cannot record supersession`,
+      )
+    }
+    await this.transitionAxis({
+      belief_id: input.old_belief_id,
+      axis: "truth_status",
+      to_value: "superseded",
+      by_authority: input.by_authority,
+      by_actor_id: input.by_actor_id,
+      rationale: input.rationale,
+      causal_parent_ids: input.causal_parent_ids,
+    })
+    await this.beliefs.setSupersededBy(input.old_belief_id, input.new_belief_id)
+  }
+
+  /**
    * Quarantine a belief. Shortcut for a security_status transition;
    * verifies the actor's authority and records why.
    */
