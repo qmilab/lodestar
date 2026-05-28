@@ -148,6 +148,14 @@ export interface AppliedSummary {
   claim_promotions: number
   decision_flags: number
   no_ops: number
+  /**
+   * Proposals whose apply step ran but produced no externally-visible
+   * effect because a dependency was missing — currently only the
+   * decision-flagged path when `emitter` is absent. Reported
+   * separately so callers cannot mistake the silent path for a real
+   * persisted Revision.
+   */
+  decision_flags_skipped_no_emitter: number
   errors: { proposal_kind: ReflectionProposal["kind"]; message: string }[]
 }
 
@@ -164,7 +172,7 @@ export class Reflection {
     const proposals: ReflectionProposal[] = []
     const observed: string[] = window.map((e) => e.id)
 
-    proposals.push(...this.detectContradictedDecisionCascade(window))
+    proposals.push(...this.detectContradictedDecisionCascade(events, window))
 
     if (proposals.length === 0) {
       // Per the design doc Q2: every pass emits at least one
@@ -210,14 +218,17 @@ export class Reflection {
       claim_promotions: 0,
       decision_flags: 0,
       no_ops: 0,
+      decision_flags_skipped_no_emitter: 0,
       errors: [],
     }
 
     if (input.apply !== false) {
       for (const proposal of proposals) {
         try {
-          await this.applyProposal(proposal, reflection_event_id)
-          if (proposal.kind === "belief_transition") applied.belief_transitions += 1
+          const outcome = await this.applyProposal(proposal, reflection_event_id)
+          if (outcome === "skipped_no_emitter") {
+            applied.decision_flags_skipped_no_emitter += 1
+          } else if (proposal.kind === "belief_transition") applied.belief_transitions += 1
           else if (proposal.kind === "belief_supersession") applied.belief_supersessions += 1
           else if (proposal.kind === "claim_promotion") applied.claim_promotions += 1
           else if (proposal.kind === "decision_dependency_flagged") applied.decision_flags += 1
@@ -236,20 +247,48 @@ export class Reflection {
 
   // ── Rule: contradicted-belief cascade ─────────────────────────────────────
 
+  /**
+   * Two-scope match:
+   *  - `history` is the full partition history (all session events).
+   *    Decisions live here — a decision that predates the current
+   *    window must still be matched if a later contradiction names
+   *    its belief_dependency.
+   *  - `window` is the events with `seq > since_seq`. Only
+   *    contradictions in the window count, so a single contradiction
+   *    fires the cascade exactly once across consecutive passes.
+   *
+   * `decision.seq < contradiction.seq` keeps a `decision.made` event
+   * that lands *after* a contradiction (within the same window) from
+   * being false-flagged — a Decision cannot depend on a belief whose
+   * contradiction it could not have observed at the time it was made.
+   *
+   * Proposals are de-duplicated by (decision_id, contradicted_belief_id):
+   * if the same contradiction fires twice in one window (it shouldn't,
+   * but defensively) or if two `decision.made` events name the same
+   * decision id (also a bug, but defensively), the cascade emits a
+   * single proposal per pair.
+   */
   private detectContradictedDecisionCascade(
+    history: EventEnvelope[],
     window: EventEnvelope[],
   ): ReflectionProposal[] {
     const proposals: ReflectionProposal[] = []
-    const decisions = collectDecisions(window)
+    const decisions = collectDecisions(history)
     if (decisions.length === 0) return proposals
 
+    const seen = new Set<string>()
     for (const event of window) {
       const transition = extractContradictionTransition(event)
       if (!transition) continue
       const { belief_id } = transition
 
       for (const decision of decisions) {
+        if (decision.seq >= event.seq) continue
         if (!decision.belief_dependencies.includes(belief_id)) continue
+        const dedupeKey = `${decision.id}::${belief_id}`
+        if (seen.has(dedupeKey)) continue
+        seen.add(dedupeKey)
+
         const rationale = this.inputs.explanations.build({
           subject_type: "belief_revision",
           subject_id: decision.id,
@@ -278,10 +317,25 @@ export class Reflection {
 
   // ── Apply proposals ───────────────────────────────────────────────────────
 
-  private async applyProposal(
+  /**
+   * Apply a single proposal through the standard Reflection codepath.
+   *
+   * Returns "applied" for proposals that produced a real, persisted
+   * effect; "skipped_no_emitter" for the decision-flagged path when no
+   * emitter is wired up (probes that drive Reflection without an event
+   * log). Throws on real errors — `run()`'s loop catches and records them.
+   *
+   * Public because the bypass probe
+   * (`reflection-cannot-promote-to-normal-alone`) and any future host
+   * that wants to apply a hand-built proposal without re-running the
+   * detection rules need a stable seam. The same codepath the rules
+   * exercise — there is no "test mode" branch — so a regression that
+   * routes around the firewall is observable from outside.
+   */
+  async applyProposal(
     proposal: ReflectionProposal,
     reflection_event_id: string | undefined,
-  ): Promise<void> {
+  ): Promise<"applied" | "skipped_no_emitter"> {
     switch (proposal.kind) {
       case "belief_transition": {
         if (!this.inputs.firewall) throw new Error("Reflection: belief_transition requires a firewall")
@@ -299,8 +353,9 @@ export class Reflection {
           by_authority: "reflection",
           by_actor_id: this.inputs.context.actor_id,
           rationale: explanation,
+          causal_parent_ids: reflection_event_id ? [reflection_event_id] : undefined,
         })
-        return
+        return "applied"
       }
       case "claim_promotion": {
         if (!this.inputs.firewall || !this.inputs.claims) {
@@ -333,8 +388,9 @@ export class Reflection {
           evidence_id: proposal.evidence_id,
           by_authority: "reflection",
           rationale: explanation,
+          causal_parent_ids: reflection_event_id ? [reflection_event_id] : undefined,
         })
-        return
+        return "applied"
       }
       case "belief_supersession": {
         if (!this.inputs.firewall) throw new Error("Reflection: belief_supersession requires a firewall")
@@ -350,16 +406,19 @@ export class Reflection {
           by_authority: "reflection",
           by_actor_id: this.inputs.context.actor_id,
           rationale: explanation,
+          causal_parent_ids: reflection_event_id ? [reflection_event_id] : undefined,
         })
-        return
+        return "applied"
       }
       case "decision_dependency_flagged": {
         if (!this.inputs.emitter) {
           // No emitter wired up — the proposal stays in the
           // reflection.completed payload but the Revision side is
           // not persisted. Probes that drive reflection without an
-          // event log rely on this path.
-          return
+          // event log rely on this path; the run-loop counts this
+          // outcome in `applied.decision_flags_skipped_no_emitter`
+          // so callers cannot mistake it for a persisted Revision.
+          return "skipped_no_emitter"
         }
         const revision: Revision = {
           id: crypto.randomUUID(),
@@ -380,10 +439,10 @@ export class Reflection {
           revision,
           causal_parent_ids: reflection_event_id ? [reflection_event_id] : [],
         })
-        return
+        return "applied"
       }
       case "no_op":
-        return
+        return "applied"
     }
   }
 
@@ -392,7 +451,18 @@ export class Reflection {
   private async gatherEvents(input: RunInput): Promise<EventEnvelope[]> {
     if (input.events) return [...input.events].sort((a, b) => a.seq - b.seq)
     if (this.inputs.reader) {
-      return this.inputs.reader.readAll(this.inputs.context.project_id)
+      // Scope to (project_id, session_id). Reading the whole project
+      // would let session A's prior reflection.completed cursor advance
+      // session B's pass, and would surface decisions/contradictions
+      // from sibling sessions that the current pass should not be
+      // matching against. The cursor is a per-session affordance.
+      const events = await this.inputs.reader.readSession(
+        this.inputs.context.project_id,
+        this.inputs.context.session_id,
+      )
+      // readSession sorts by logical_clock; re-sort by seq to match
+      // the cursor's semantics (seq is the cross-actor monotonic key).
+      return [...events].sort((a, b) => a.seq - b.seq)
     }
     return []
   }
@@ -467,19 +537,30 @@ export class Reflection {
 
 interface DecisionLike {
   id: string
+  seq: number
   question: string
   belief_dependencies: string[]
 }
 
 function collectDecisions(events: EventEnvelope[]): DecisionLike[] {
   const out: DecisionLike[] = []
+  const seenIds = new Set<string>()
   for (const e of events) {
     if (e.type !== DECISION_MADE_EVENT_TYPE) continue
-    const decision = e.payload as Partial<DecisionLike> | undefined
+    const decision = e.payload as
+      | (Partial<DecisionLike> & { belief_dependencies?: unknown })
+      | undefined
     if (!decision || typeof decision.id !== "string") continue
     if (!Array.isArray(decision.belief_dependencies)) continue
+    // First-write-wins on collisions — a duplicated `decision.made`
+    // envelope (legitimate replay or hostile re-emit) does not double
+    // up cascade proposals. The seq from the *first* sighting is the
+    // canonical one for `seq < contradiction.seq` ordering.
+    if (seenIds.has(decision.id)) continue
+    seenIds.add(decision.id)
     out.push({
       id: decision.id,
+      seq: e.seq,
       question: typeof decision.question === "string" ? decision.question : "(no question)",
       belief_dependencies: decision.belief_dependencies.filter((x): x is string => typeof x === "string"),
     })

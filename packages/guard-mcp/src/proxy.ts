@@ -224,7 +224,16 @@ export class MCPProxy {
     this.evidenceStore = evidence
     const worldModel = new InMemoryWorldModel()
     this.firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
-      await this.emit(`firewall.${event.kind}`, event)
+      // Honour `causal_parent_ids` when the firewall audit event
+      // carries it — reflection-driven transitions cite the
+      // `reflection.completed` event id this way (design doc Q4).
+      const causal_parent_ids =
+        "causal_parent_ids" in event && event.causal_parent_ids ? event.causal_parent_ids : undefined
+      await this.emit(
+        `firewall.${event.kind}`,
+        event,
+        causal_parent_ids ? { causal_parent_ids } : undefined,
+      )
     })
     const linker = new MCPAwareEvidenceLinker(evidence, beliefs)
     const explanations = new ExplanationGenerator(this.config.actor_id)
@@ -768,7 +777,11 @@ export class MCPProxy {
     }
   }
 
-  private async emit(type: string, payload: unknown): Promise<void> {
+  private async emit(
+    type: string,
+    payload: unknown,
+    options?: { causal_parent_ids?: string[] },
+  ): Promise<void> {
     await this.writer.append({
       id: randomUUID(),
       type,
@@ -777,7 +790,7 @@ export class MCPProxy {
       session_id: this.sessionId,
       actor_id: this.config.actor_id,
       timestamp: new Date().toISOString(),
-      causal_parent_ids: [],
+      causal_parent_ids: options?.causal_parent_ids ?? [],
       payload,
       payload_hash: canonicalHash(payload),
       versions: { schema_registry_version: "0.1.0" },

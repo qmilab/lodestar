@@ -77,6 +77,13 @@ export class MemoryFirewall {
     evidence_id: string
     by_authority: TransitionAuthority
     rationale: Explanation
+    /**
+     * Optional causal parents to attribute to the resulting
+     * `belief.adopted` audit event. Used by Reflection so the
+     * downstream event log can cite the `reflection.completed`
+     * envelope id — design doc Q4 ("how does reflection cite").
+     */
+    causal_parent_ids?: string[]
   }): Promise<Belief> {
     const claim = await this.claims.get(input.candidate.claim_id)
     if (!claim) {
@@ -142,6 +149,7 @@ export class MemoryFirewall {
       by_authority: input.by_authority,
       at: new Date().toISOString(),
       by_actor_id: input.rationale.generated_by,
+      causal_parent_ids: input.causal_parent_ids,
     })
     return belief
   }
@@ -161,6 +169,13 @@ export class MemoryFirewall {
     by_authority: TransitionAuthority
     by_actor_id: string
     rationale: Explanation
+    /**
+     * Optional causal parents to attribute to the resulting
+     * `belief.transitioned` audit event. Used by Reflection so the
+     * downstream event log can cite the `reflection.completed`
+     * envelope id — design doc Q4 ("how does reflection cite").
+     */
+    causal_parent_ids?: string[]
   }): Promise<void> {
     const belief = await this.beliefs.get(input.belief_id)
     if (!belief) {
@@ -190,6 +205,7 @@ export class MemoryFirewall {
       rationale_id: input.rationale.id,
       at: new Date().toISOString(),
       by_actor_id: input.by_actor_id,
+      causal_parent_ids: input.causal_parent_ids,
     })
   }
 
@@ -290,6 +306,12 @@ export type FirewallAuditEvent =
       by_authority: TransitionAuthority
       at: string
       by_actor_id: string
+      /** Set by Reflection.applyProposal so the downstream event-log
+       *  envelope's `causal_parent_ids` can cite the
+       *  `reflection.completed` event id. Hosts that wire an audit
+       *  sink to the event log should honour it when present and
+       *  fall back to `[]` otherwise. */
+      causal_parent_ids?: string[]
     }
   | {
       kind: "belief.transitioned"
@@ -301,4 +323,5 @@ export type FirewallAuditEvent =
       rationale_id: string
       at: string
       by_actor_id: string
+      causal_parent_ids?: string[]
     }

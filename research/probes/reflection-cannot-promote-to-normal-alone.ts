@@ -187,38 +187,41 @@ async function run(): Promise<ProbeResult> {
     },
   })
 
-  // Drive a pass with no input events but with the bypass proposal
-  // forced through application. The cleanest way to test bypass
-  // rejection: directly call the firewall's transitionAxis with the
-  // same arguments Reflection would use, since Reflection's own
-  // detection rule won't produce a restricted → normal proposal.
-  let firewallRejected = false
-  let firewallErrorMessage = ""
+  // Drive the bypass proposal through Reflection's OWN apply path —
+  // not the firewall directly. If a future change ever has
+  // Reflection route around `MemoryFirewall.transitionAxis` (e.g.
+  // calling `beliefStore.transition` directly), the firewall-only
+  // test wouldn't catch it; this one does.
+  let reflectionApplyThrew = false
+  let reflectionErrorMessage = ""
   try {
-    await firewall.transitionAxis({
-      belief_id: bypassProposal.belief_id,
-      axis: "retrieval_status",
-      to_value: "normal",
-      by_authority: "reflection",
-      by_actor_id: "probe-reflector",
-      rationale: transitionRationale,
-    })
+    await reflection.applyProposal(bypassProposal, undefined)
   } catch (err) {
-    firewallRejected = true
-    firewallErrorMessage = err instanceof Error ? err.message : String(err)
+    reflectionApplyThrew = true
+    reflectionErrorMessage = err instanceof Error ? err.message : String(err)
   }
 
-  if (!firewallRejected) {
+  if (!reflectionApplyThrew) {
     return {
       passed: false,
       details: [
         ...details,
-        "FAIL: firewall accepted retrieval_status restricted → normal under 'reflection' authority. " +
-          "This contradicts the design-doc Q5 invariant.",
+        "FAIL: Reflection.applyProposal accepted retrieval_status restricted → normal under 'reflection' authority. " +
+          "This contradicts the design-doc Q5 invariant — the apply path is routing around the firewall.",
       ],
     }
   }
-  details.push(`OK: firewall rejected bypass with: ${firewallErrorMessage}`)
+  if (!/retrieval_status|normal|reflection/.test(reflectionErrorMessage)) {
+    return {
+      passed: false,
+      details: [
+        ...details,
+        `FAIL: Reflection.applyProposal threw, but the error did not name the table-level rejection. ` +
+          `Got: ${reflectionErrorMessage}. Expected the firewall's transition-not-allowed message.`,
+      ],
+    }
+  }
+  details.push(`OK: Reflection.applyProposal rejected bypass with: ${reflectionErrorMessage}`)
 
   // Also exercise Reflection itself with the bypass proposal injected
   // via the events stream to confirm Reflection's apply path errors
