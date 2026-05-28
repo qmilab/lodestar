@@ -441,6 +441,25 @@ export class Reflection {
     proposal: ReflectionProposal,
     reflection_event_id: string | undefined,
   ): Promise<"applied" | "skipped_no_emitter"> {
+    // Every state-mutating proposal must cite a reflection.completed
+    // event so the resulting firewall mutation / Revision has a parent
+    // in the audit chain (design doc Q4). Without this, a caller using
+    // the public applyProposal standalone could mutate belief state
+    // with no reflection.completed record anywhere in the log. A
+    // `no_op` never mutates; a `decision_dependency_flagged` only
+    // mutates (emits a Revision) when an emitter is wired up.
+    const wouldMutate =
+      proposal.kind === "belief_transition" ||
+      proposal.kind === "claim_promotion" ||
+      proposal.kind === "belief_supersession" ||
+      (proposal.kind === "decision_dependency_flagged" && this.inputs.emitter !== undefined)
+    if (wouldMutate && reflection_event_id === undefined) {
+      throw new Error(
+        `Reflection: applying a '${proposal.kind}' proposal requires a reflection_event_id so the ` +
+          `mutation cites a reflection.completed event in the audit chain. Run via run() (which emits ` +
+          `the pass record first), or pass the id of an already-emitted reflection.completed event.`,
+      )
+    }
     switch (proposal.kind) {
       case "belief_transition": {
         if (!this.inputs.firewall) throw new Error("Reflection: belief_transition requires a firewall")

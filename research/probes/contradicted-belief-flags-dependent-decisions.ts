@@ -457,7 +457,18 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
   const claimStore = new InMemoryClaimStore()
   const beliefStore = new InMemoryBeliefStore()
   const evidenceStore = new InMemoryEvidenceStore()
-  const firewall = new MemoryFirewall(claimStore, beliefStore, evidenceStore, async () => {})
+  // Capture firewall audit events so we can assert the
+  // belief.transitioned event carries superseded_by (replay-grade
+  // audit, not just the live store).
+  const auditEvents: { kind: string; to_value?: string; superseded_by?: string }[] = []
+  const firewall = new MemoryFirewall(
+    claimStore,
+    beliefStore,
+    evidenceStore,
+    async (event) => {
+      auditEvents.push(event as { kind: string; to_value?: string; superseded_by?: string })
+    },
+  )
 
   // Seed two beliefs: the predecessor (truth=supported) and the
   // successor. Both share the same claim+evidence to keep setup tight.
@@ -557,6 +568,8 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
     evidence_used: [evidence.id],
   })
 
+  // Mutating proposals require a reflection_event_id so the change
+  // cites a reflection.completed event in the audit chain.
   await reflection.applyProposal(
     {
       kind: "belief_supersession",
@@ -564,8 +577,29 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
       new_belief_id: successor.id,
       rationale_id: supersessionRationale.id,
     },
-    undefined,
+    crypto.randomUUID(),
   )
+
+  // The belief.transitioned audit event must carry superseded_by so a
+  // replay can reconstruct the successor link from the log alone.
+  const supersedeEvent = auditEvents.find(
+    (e) => e.kind === "belief.transitioned" && e.to_value === "superseded",
+  )
+  if (!supersedeEvent) {
+    return {
+      passed: false,
+      lines: ["F (supersession link): FAIL — no belief.transitioned → superseded audit event emitted"],
+    }
+  }
+  if (supersedeEvent.superseded_by !== successor.id) {
+    return {
+      passed: false,
+      lines: [
+        `F (supersession link): FAIL — audit event superseded_by='${supersedeEvent.superseded_by}', ` +
+          `expected '${successor.id}'. Replay cannot reconstruct the successor link from the event log.`,
+      ],
+    }
+  }
 
   const stored = await beliefStore.get(predecessor.id)
   if (!stored) {
@@ -589,8 +623,8 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
   return {
     passed: true,
     lines: [
-      `F (supersession link): PASS — truth_status='superseded', superseded_by=${successor.id.slice(0, 8)} ` +
-        `(predecessor=${predecessor.id.slice(0, 8)})`,
+      `F (supersession link): PASS — store + audit event both carry superseded_by=${successor.id.slice(0, 8)} ` +
+        `(predecessor=${predecessor.id.slice(0, 8)}, truth_status='superseded')`,
     ],
   }
 }

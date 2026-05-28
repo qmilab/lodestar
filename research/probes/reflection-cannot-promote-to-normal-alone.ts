@@ -192,10 +192,14 @@ async function run(): Promise<ProbeResult> {
   // Reflection route around `MemoryFirewall.transitionAxis` (e.g.
   // calling `beliefStore.transition` directly), the firewall-only
   // test wouldn't catch it; this one does.
+  // Pass a real reflection_event_id so the audit-chain guard is
+  // satisfied and this check isolates the table-level rejection
+  // (the thing under test) rather than the missing-event guard.
+  const dummyReflectionEventId = crypto.randomUUID()
   let reflectionApplyThrew = false
   let reflectionErrorMessage = ""
   try {
-    await reflection.applyProposal(bypassProposal, undefined)
+    await reflection.applyProposal(bypassProposal, dummyReflectionEventId)
   } catch (err) {
     reflectionApplyThrew = true
     reflectionErrorMessage = err instanceof Error ? err.message : String(err)
@@ -331,7 +335,7 @@ async function run(): Promise<ProbeResult> {
   let staleRejected = false
   let staleError = ""
   try {
-    await reflection.applyProposal(staleProposal, undefined)
+    await reflection.applyProposal(staleProposal, dummyReflectionEventId)
   } catch (err) {
     staleRejected = true
     staleError = err instanceof Error ? err.message : String(err)

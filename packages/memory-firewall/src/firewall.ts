@@ -194,6 +194,14 @@ export class MemoryFirewall {
      * source. This does.
      */
     expected_from?: string
+    /**
+     * Set by `markSuperseded` for a `truth_status → superseded`
+     * transition. Carried onto the `belief.transitioned` audit event
+     * so a replay can reconstruct *which* belief replaced this one —
+     * the successor pointer is otherwise only in the live store and
+     * invisible to the event log.
+     */
+    superseded_by?: string
   }): Promise<void> {
     const belief = await this.beliefs.get(input.belief_id)
     if (!belief) {
@@ -230,6 +238,7 @@ export class MemoryFirewall {
       at: new Date().toISOString(),
       by_actor_id: input.by_actor_id,
       ...(input.causal_parent_ids ? { causal_parent_ids: input.causal_parent_ids } : {}),
+      ...(input.superseded_by ? { superseded_by: input.superseded_by } : {}),
     })
   }
 
@@ -269,6 +278,10 @@ export class MemoryFirewall {
       by_actor_id: input.by_actor_id,
       rationale: input.rationale,
       causal_parent_ids: input.causal_parent_ids,
+      // Carried onto the belief.transitioned audit event so a replay
+      // can reconstruct the successor link from the event log alone,
+      // not just from the live store.
+      superseded_by: input.new_belief_id,
     })
     await this.beliefs.setSupersededBy(input.old_belief_id, input.new_belief_id)
   }
@@ -388,4 +401,8 @@ export type FirewallAuditEvent =
       at: string
       by_actor_id: string
       causal_parent_ids?: string[]
+      /** Set for a `truth_status → superseded` transition produced by
+       *  `markSuperseded`. Records the successor belief id so the
+       *  event log alone can reconstruct the supersession link. */
+      superseded_by?: string
     }
