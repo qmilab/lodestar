@@ -1,4 +1,4 @@
-import { readFile, stat } from "node:fs/promises"
+import { readFile, realpath, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import {
   PROBE_PACK_MANIFEST_FILENAME,
@@ -111,6 +111,8 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
   }
 
   const root = dirname(manifestPath)
+  // Canonical pack root, used for the post-symlink containment check.
+  const realRoot = await realpath(root)
 
   const seen = new Set<string>()
   const probes: LoadedProbe[] = []
@@ -133,9 +135,32 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
       )
     }
 
-    if ((await pathKind(probePath)) !== "file") {
+    // The lexical check above is not enough: the probe file (or a
+    // directory along the way) may be a symlink whose real target lives
+    // outside the pack root. realpath follows every link; re-check
+    // containment against the canonical root so a symlinked escape
+    // (e.g. probes/p.ts -> /etc/passwd) is rejected. realpath also
+    // throws if the path does not exist — that is the "not found" case.
+    let realProbe: string
+    try {
+      realProbe = await realpath(probePath)
+    } catch (cause) {
       throw new ProbePackError(
         `Probe '${entry.name}' file not found: ${probePath} (declared as '${entry.file}').`,
+        { cause },
+      )
+    }
+
+    const realRel = relative(realRoot, realProbe)
+    if (realRel === "" || realRel.startsWith("..") || isAbsolute(realRel)) {
+      throw new ProbePackError(
+        `Probe '${entry.name}' resolves outside the pack root via a symlink: '${entry.file}' -> ${realProbe} (pack root ${realRoot}).`,
+      )
+    }
+
+    if ((await pathKind(realProbe)) !== "file") {
+      throw new ProbePackError(
+        `Probe '${entry.name}' is not a regular file: ${probePath} (declared as '${entry.file}').`,
       )
     }
 

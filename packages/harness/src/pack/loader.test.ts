@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PROBE_PACK_MANIFEST_FILENAME, type ProbePackManifest } from "@qmilab/lodestar-core"
@@ -132,6 +132,32 @@ describe("loadProbePack", () => {
       }),
     })
     await expect(loadProbePack(dir)).rejects.toThrow(/outside the pack root/)
+  })
+
+  test("rejects a probe file that escapes the pack root via a symlink", async () => {
+    // A real file outside the pack root, then a probe symlink pointing
+    // at it — the lexical path stays inside the pack, but realpath
+    // resolves outside. This is the case a plain stat() would miss.
+    const outsideSecret = join(tmpRoot, `outside-secret-${packCounter}.ts`)
+    await writeFile(outsideSecret, "// pretend this is /etc/passwd\n")
+    const dir = await makePack({
+      manifest: validManifest({ probes: [{ name: "escaper", file: "probes/escaper.ts" }] }),
+    })
+    await mkdir(join(dir, "probes"), { recursive: true })
+    await symlink(outsideSecret, join(dir, "probes/escaper.ts"))
+
+    await expect(loadProbePack(dir)).rejects.toThrow(/outside the pack root via a symlink/)
+  })
+
+  test("accepts an in-pack symlink (real target stays inside the root)", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ probes: [{ name: "linked", file: "probes/linked.ts" }] }),
+      probeFiles: ["probes/real.ts"],
+    })
+    await symlink(join(dir, "probes/real.ts"), join(dir, "probes/linked.ts"))
+
+    const pack = await loadProbePack(dir)
+    expect(pack.probes[0]?.name).toBe("linked")
   })
 
   test("rejects duplicate probe names", async () => {
