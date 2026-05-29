@@ -24,6 +24,11 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # Lint is independent of the build (biome is standalone), so run it
+      # first for the fastest feedback on style regressions.
+      - name: Lint
+        run: bun run lint
+
       # Build first so TypeScript project references resolve cross-package
       # types before typecheck and the probes (which import from dist/).
       - name: Build
