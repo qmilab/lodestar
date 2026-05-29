@@ -101,7 +101,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 ### Batch 4 — Harness infrastructure
 
-**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, and the `Probe` base class + pack runner + `lodestar harness run` CLI have landed; sentinels, calibrator, and the three new probes are still ahead).
+**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, and the `Sentinel` base class + the three sentinels have landed; the Postgres stores, calibrator, and the three new probes are still ahead).
 
 **Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from loose TS files in `research/probes/` to an installable surface external packs can plug into.
 
@@ -109,7 +109,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 *Harness package* — `packages/harness/`:
 - ✅ `Probe` base class and execution runner. The `Probe` authoring surface (`Probe` / `ProbeSpec` / `runProbeAsScript`) is additive — the 17 first-party probes stay as standalone scripts (probes are spec). The runner (`runPack`) is a subprocess driver: each probe is `bun run`-executed and judged by exit code, and every run is recorded as a `trust: "synthetic"` `observation.recorded` event (schema `harness.probe_run@1`) so probe runs are themselves auditable through `lodestar report`.
-- `Sentinel` base class with hooks into the firewall transition stream. Sentinels watch for patterns (low-confidence actions, suspicious memory-origin combinations, anomalous tool sequences) and emit `sentinel.alerted` events.
+- ✅ `Sentinel` base class + `SentinelRunner`, an async tail over the event stream (which carries the firewall's `belief.adopted` / `belief.transitioned` transitions). Sentinels watch for patterns and emit `sentinel.alerted@1` events; they are non-blocking by design (Q7 of the reflection design doc). Wire format (`SentinelAlertPayloadSchema`) lives in `@qmilab/lodestar-core`; base class, runner, three sentinels, and the injected `eventLogAlertSink` live in `@qmilab/lodestar-harness`. Design lock: `docs/architecture/sentinels.md`. The `arbitrate` hook that *consumes* alerts is deliberately deferred to the Policy Kernel (additive; alerts are audit signal until then).
 - `Calibrator` that consumes the event log and produces per-class accuracy tables (ECE, Brier score) suitable for the calibration paper drafts.
 - ✅ Probe pack format (`lodestar.probe-pack.json` manifest + probe files; the manifest declares pack name, version, declared coverage areas, and which Lodestar invariants it exercises). Schema in `@qmilab/lodestar-core` (`ProbePackManifestSchema`); the v0 loader in `@qmilab/lodestar-harness` resolves `local` packs and rejects path-traversal / symlink escapes.
 - ✅ `lodestar harness run --pack <name>` CLI command (registered under the existing `lodestar` binary, not a new bin). Plus `lodestar harness list` for side-effect-free manifest inspection. `probes:all` now drives the runner instead of a hand-chained script.
@@ -126,10 +126,10 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - **Reflection cannot promote to `normal` retrieval alone.** The Round 5 auto-observation gate downgrades `external_document` claims to `reflection` authority; reflection itself was previously a stub. Implementing the reflection pass — and the invariant that reflection alone cannot move a belief to `normal` retrieval without another corroborating source — is part of this batch.
 - **Contradicted belief flags dependent decisions.** Requires the Decision→Belief dependency pipeline to track and propagate cascading contradictions; partial in Batch 3, full here.
 
-*Three sentinels*:
-- **Low-confidence action sentinel.** Watches `action.proposed`/`action.approved`; alerts on actions whose `required_level` ≥ 3 backed by a belief at `confidence < 0.5` or `truth_status: unverified`.
-- **Suspicious memory-origin sentinel.** Watches `belief.adopted`; alerts when an `external_document`-sourced belief becomes a `belief_dependency` of a Decision.
-- **Anomalous tool sequence sentinel.** Pattern-matches against known suspicious sequences (e.g., `fs.read` → `network.egress` → `fs.write`) and surfaces them for review.
+*Three sentinels* (all landed):
+- ✅ **Low-confidence action sentinel** (`low-confidence-action`). Watches `action.proposed`/`action.approved`; alerts on actions whose `required_level` ≥ 3 backed by a belief at `confidence < 0.5` or `truth_status: unverified`. Resolves the backing via `action.decision_id → decision.belief_dependencies → belief`; dedupes per action id; thresholds configurable.
+- ✅ **Suspicious memory-origin sentinel** (`suspicious-memory-origin`). Learns `external_document` origin from `evidence.assessed` + `belief.adopted`, then alerts at `decision.made` when such a belief is a `belief_dependency`. One alert per offending belief (subject `kind: belief`) so the future kernel hook can gate the next action that leans on it.
+- ✅ **Anomalous tool sequence sentinel** (`anomalous-tool-sequence`). Pattern-matches executed actions per session against known suspicious sequences as an ordered subsequence that must complete at the current event; ships the `read → external-egress → write` exfiltration pattern by default (egress keyed off `blast_radius: external`). Matched steps are consumed so the pattern alerts once per genuine completion.
 
 *Persistence (carve-out)*:
 - Postgres-backed `BeliefStore` and `ClaimStore`. The harness needs this to validate sentinels across sessions; the in-memory stores are session-scoped.

@@ -7,8 +7,9 @@ and share.
 
 Batch 4 lands the harness incrementally. What ships today is the
 **probe-pack format and loader**, the **`Probe` authoring surface**, the
-**pack runner**, and the **`lodestar harness run` CLI**. Sentinels and
-the calibrator follow.
+**pack runner**, the **`lodestar harness run` CLI**, and the
+**`Sentinel` surface** (base class, runner, three first-party sentinels).
+The calibrator follows.
 
 ## Probe pack format
 
@@ -132,7 +133,60 @@ const probe: ProbeSpec = {
 await runProbeAsScript(probe) // prints the banner, exits 0 / 1
 ```
 
+## Sentinels
+
+A sentinel is an online tripwire over the event stream — the opposite of a
+probe (an offline adversarial test). It is fed events one at a time, watches
+for a suspicious shape, and emits a `sentinel.alerted@1` event. Sentinels are
+**non-blocking**: they alert, they never stop an action mid-flight. Design
+lock: `docs/architecture/sentinels.md`.
+
+```ts
+import {
+  SentinelRunner,
+  LowConfidenceActionSentinel,
+  SuspiciousMemoryOriginSentinel,
+  AnomalousToolSequenceSentinel,
+  eventLogAlertSink,
+} from "@qmilab/lodestar-harness"
+
+const runner = new SentinelRunner(
+  [
+    new LowConfidenceActionSentinel(),
+    new SuspiciousMemoryOriginSentinel(),
+    new AnomalousToolSequenceSentinel(),
+  ],
+  // Optional sink — append each alert to the event log as a
+  // `sentinel.alerted@1` event, in the triggering event's session slice.
+  { sink: eventLogAlertSink({ root: ".lodestar/events" }) },
+)
+
+// Live tail: push each event as it lands.
+const alerts = await runner.observe(event)
+// Or replay an ordered batch:
+const all = await runner.sweep(await new EventLogReader(root).readSession(p, s))
+```
+
+The three first-party sentinels:
+
+- **`LowConfidenceActionSentinel`** — flags an action at `required_level ≥ 3`
+  whose backing belief sits below the confidence floor (default 0.5) or is
+  `unverified`.
+- **`SuspiciousMemoryOriginSentinel`** — flags a decision that depends on a
+  belief whose supporting evidence includes `external_document` content
+  (highest poisoning risk). One alert per offending belief.
+- **`AnomalousToolSequenceSentinel`** — flags a session whose executed tools
+  match a known-suspicious ordered sequence; ships the `read → external-egress
+  → write` exfiltration pattern by default. Configurable via `sequences` /
+  `watchPhases` / `windowSize`.
+
+To author your own, subclass `Sentinel` (or return a `SentinelFinding[]` from
+`inspect`). The runner stamps the alert id, timestamp, and routing.
+
 ## What it does not do (yet)
 
 - Resolve `source_type: "npm"` packs.
-- Sentinels and the calibrator.
+- The calibrator.
+- *Consume* sentinel alerts in the Action Kernel's `arbitrate` step — alerts
+  are audit signal until the Policy Kernel lands the (additive) hook.
+- Persist sentinel state across sessions (in-memory for now).
