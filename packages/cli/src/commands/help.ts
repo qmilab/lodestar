@@ -8,6 +8,8 @@ Usage:
   lodestar action describe <action-id>
   lodestar trace inspect <event-id> [--project <id>] [--session <id>]
   lodestar probe <name>
+  lodestar harness run [--pack <name|path>] [--log-root <path>] [--no-record]
+  lodestar harness list [--pack <name|path>]
   lodestar reflect <session-id> [--since-seq <n>] [--trigger <name>] [--json]
   lodestar help
 
@@ -20,9 +22,13 @@ Commands:
   action     Introspect the registered tool catalogue.
   trace      Debug-grade event-log inspection. Not the user-facing surface;
              prefer 'lodestar report'.
-  probe      Run a research probe by short name (poison, chain, external,
+  probe      Run a single probe by short name (poison, chain, external,
              quarantine, sensitivity, autoobs, guard-import). Probes are spec,
              not test scaffolding.
+  harness    Drive a whole probe pack. Two modes:
+               run   — run every probe in a pack; records each run as a
+                       synthetic observation so the run is itself auditable.
+               list  — inspect a pack's manifest without executing anything.
   reflect    Dry-run a reflection pass over a session's event log: print the
              typed proposals reflection would produce. Applying is the host's
              job (Guard / the MCP proxy own the live firewall).
@@ -34,5 +40,7 @@ Examples:
   lodestar action describe git.status
   lodestar trace inspect <event-id>
   lodestar probe chain
+  lodestar harness run --pack lodestar-core
+  lodestar harness list
   lodestar reflect session-1779551238212
 `

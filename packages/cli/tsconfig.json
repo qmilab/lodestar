@@ -11,6 +11,7 @@
     { "path": "../action-kernel" },
     { "path": "../guard" },
     { "path": "../guard-mcp" },
+    { "path": "../harness" },
     { "path": "../trace" },
     { "path": "../cognitive-core" },
     { "path": "../adapters/filesystem" },

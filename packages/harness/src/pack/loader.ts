@@ -76,8 +76,9 @@ function escapesRoot(rel: string): boolean {
  * The loader validates the manifest against the core schema, resolves
  * every probe file to an absolute path, and verifies each one exists
  * and lives inside the pack root. It does NOT execute probes — running
- * is the runner's job (Batch 4 step 5). Passes for `source_type: "npm"`
- * are rejected: the v0 loader resolves `local` packs only.
+ * is the runner's job (`runPack` in `../runner.ts`). Passes for
+ * `source_type: "npm"` are rejected: the v0 loader resolves `local`
+ * packs only.
  *
  * Throws {@link ProbePackError} on any failure.
  */

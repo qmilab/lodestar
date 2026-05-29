@@ -62,6 +62,24 @@ lodestar probe poison
 lodestar probe guard-import
 ```
 
+### `lodestar harness run` / `lodestar harness list`
+
+Drive a whole probe pack instead of a single probe. `run` executes every
+probe in the pack and prints an aggregate summary (a failing probe does
+not abort the run); `list` inspects the pack's manifest without executing
+anything. By default `run` records each probe run as a synthetic
+observation in the event log so the run is itself auditable via
+`lodestar report`.
+
+```sh
+lodestar harness run                       # the first-party lodestar-core pack
+lodestar harness run --pack ./packs/mine   # a local pack directory
+lodestar harness run --no-record           # skip event-log recording (CI)
+lodestar harness list
+```
+
+`run` exits non-zero if any probe fails, so it works as a CI gate.
+
 ## Exit codes
 
 - `0` — success

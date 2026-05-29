@@ -22,6 +22,7 @@ import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import { actionDescribeCommand, actionListCommand } from "./commands/action.js"
 import { guardMCPProxyCommand } from "./commands/guard-mcp.js"
 import { guardWrapCommand } from "./commands/guard.js"
+import { harnessCommand } from "./commands/harness.js"
 import { HELP_TEXT } from "./commands/help.js"
 import { probeCommand } from "./commands/probe.js"
 import { reflectCommand } from "./commands/reflect.js"
@@ -84,6 +85,9 @@ async function dispatch(): Promise<number> {
 
     case "probe":
       return probeCommand(sub === undefined ? [] : [sub, ...rest])
+
+    case "harness":
+      return harnessCommand(sub === undefined ? [] : [sub, ...rest])
 
     case "reflect":
       return reflectCommand(sub === undefined ? [] : [sub, ...rest])

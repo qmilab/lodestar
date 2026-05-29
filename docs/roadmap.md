@@ -101,18 +101,18 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 ### Batch 4 — Harness infrastructure
 
-**Status**: in progress (reflection pass, probe-pack format + loader, and probe repackaging have landed; runner, sentinels, calibrator, and the three new probes are still ahead).
+**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, and the `Probe` base class + pack runner + `lodestar harness run` CLI have landed; sentinels, calibrator, and the three new probes are still ahead).
 
 **Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from loose TS files in `research/probes/` to an installable surface external packs can plug into.
 
 **Deliverables**:
 
 *Harness package* — `packages/harness/`:
-- `Probe` base class and execution runner. Each probe declares its name, threat-model description, and expected pass/fail criteria; the runner records every probe invocation as a `synthetic_probe`-quality observation in the event log so probe runs are themselves auditable.
+- ✅ `Probe` base class and execution runner. The `Probe` authoring surface (`Probe` / `ProbeSpec` / `runProbeAsScript`) is additive — the 17 first-party probes stay as standalone scripts (probes are spec). The runner (`runPack`) is a subprocess driver: each probe is `bun run`-executed and judged by exit code, and every run is recorded as a `trust: "synthetic"` `observation.recorded` event (schema `harness.probe_run@1`) so probe runs are themselves auditable through `lodestar report`.
 - `Sentinel` base class with hooks into the firewall transition stream. Sentinels watch for patterns (low-confidence actions, suspicious memory-origin combinations, anomalous tool sequences) and emit `sentinel.alerted` events.
 - `Calibrator` that consumes the event log and produces per-class accuracy tables (ECE, Brier score) suitable for the calibration paper drafts.
 - ✅ Probe pack format (`lodestar.probe-pack.json` manifest + probe files; the manifest declares pack name, version, declared coverage areas, and which Lodestar invariants it exercises). Schema in `@qmilab/lodestar-core` (`ProbePackManifestSchema`); the v0 loader in `@qmilab/lodestar-harness` resolves `local` packs and rejects path-traversal / symlink escapes.
-- `lodestar harness run --pack <name>` CLI command (registered under the existing `lodestar` binary, not a new bin).
+- ✅ `lodestar harness run --pack <name>` CLI command (registered under the existing `lodestar` binary, not a new bin). Plus `lodestar harness list` for side-effect-free manifest inspection. `probes:all` now drives the runner instead of a hand-chained script.
 
 *Probe pack repackaging*:
 - ✅ Moved the 17 existing probes from `research/probes/` into a first-party pack `packs/lodestar-core/` so they ride the same loader path external packs will use. The probes themselves did not change; the `lodestar.probe-pack.json` manifest is new and loads through `@qmilab/lodestar-harness`. (Count grew 14→17 in Batch 4's reflection-pass step before the move: `reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`.)
