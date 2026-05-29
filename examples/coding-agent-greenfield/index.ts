@@ -20,14 +20,14 @@
 
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
+import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
+import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import {
+  type GuardContext,
   alwaysHoldsChecker,
   autoApprovePolicy,
   wrap,
-  type GuardContext,
 } from "@qmilab/lodestar-guard"
-import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
-import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import {
   defaultLogRoot,
   loadSessionEvents,
@@ -116,10 +116,7 @@ async function agentLoop(ctx: GuardContext): Promise<AgentResult> {
     branch: gitOut.branch,
     read_files: readFiles,
     decision_id,
-    summary:
-      `Greenfield agent inspected the repo on branch ` +
-      `'${gitOut.branch}' and read ${readFiles.length} file(s). ` +
-      `No side-effectful action was taken.`,
+    summary: `Greenfield agent inspected the repo on branch '${gitOut.branch}' and read ${readFiles.length} file(s). No side-effectful action was taken.`,
   }
 }
 
@@ -150,9 +147,7 @@ const { events } = await loadSessionEvents({
   project_id: PROJECT_ID,
 })
 const projection = projectChain(events, { session_id, project_id: PROJECT_ID })
-process.stdout.write(
-  `${renderReport(projection, { title: "Trust report — greenfield agent" })}\n`,
-)
+process.stdout.write(`${renderReport(projection, { title: "Trust report — greenfield agent" })}\n`)
 
 process.stdout.write(
   `\n[greenfield] event log: ${resolve(LOG_ROOT, PROJECT_ID)}\n` +

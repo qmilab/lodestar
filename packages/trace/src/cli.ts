@@ -16,8 +16,8 @@
  */
 
 import { writeFile } from "node:fs/promises"
-import { defaultLogRoot, loadSessionEvents } from "./load.js"
 import { projectChain } from "./chain.js"
+import { defaultLogRoot, loadSessionEvents } from "./load.js"
 import { renderReport } from "./report.js"
 
 interface ParsedArgs {
@@ -80,8 +80,7 @@ async function main(): Promise<number> {
     project_id: loaded.project_id,
   })
 
-  const renderOptions =
-    args.raw_event_limit > 0 ? { raw_event_limit: args.raw_event_limit } : {}
+  const renderOptions = args.raw_event_limit > 0 ? { raw_event_limit: args.raw_event_limit } : {}
   const report = renderReport(projection, renderOptions)
 
   if (args.out) {

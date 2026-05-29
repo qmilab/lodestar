@@ -208,8 +208,7 @@ async function run(): Promise<ProbeResult> {
   if (contradictions.length !== 1) {
     return {
       passed: false,
-      details:
-        `Expected exactly 1 related contradiction, got ${contradictions.length}.`,
+      details: `Expected exactly 1 related contradiction, got ${contradictions.length}.`,
     }
   }
 
@@ -239,9 +238,7 @@ async function run(): Promise<ProbeResult> {
   if (result.contradictions.length !== 1) {
     return {
       passed: false,
-      details:
-        `retrieve().contradictions had ${result.contradictions.length} entries; ` +
-        `expected 1.`,
+      details: `retrieve().contradictions had ${result.contradictions.length} entries; expected 1.`,
     }
   }
 
@@ -292,7 +289,7 @@ async function run(): Promise<ProbeResult> {
     retrieval_status: "normal",
     security_status: "clean",
     freshness_status: "fresh", // freshness_status axis is decorative;
-                               // freshness_max_age uses observed_at
+    // freshness_max_age uses observed_at
     observed_at: stale,
     last_verified_at: stale,
   }
@@ -350,10 +347,7 @@ async function run(): Promise<ProbeResult> {
   if (staleScopeContradictions.length !== 0) {
     return {
       passed: false,
-      details:
-        `Expected 0 contradictions in the stale-scope test (the only ` +
-        `supported belief was freshness-rejected), got ` +
-        `${staleScopeContradictions.length}.`,
+      details: `Expected 0 contradictions in the stale-scope test (the only supported belief was freshness-rejected), got ${staleScopeContradictions.length}.`,
     }
   }
 

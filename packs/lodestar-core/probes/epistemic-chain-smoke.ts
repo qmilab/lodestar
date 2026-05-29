@@ -17,13 +17,7 @@
  * - Adopted beliefs are in retrieval_status='restricted' (not 'normal' — no auto-promote to retrievable).
  */
 
-import { registry } from "@qmilab/lodestar-core"
-import {
-  InMemoryBeliefStore,
-  InMemoryClaimStore,
-  InMemoryEvidenceStore,
-  MemoryFirewall,
-} from "@qmilab/lodestar-memory-firewall"
+import { GitStatusOutputSchema } from "@qmilab/lodestar-adapter-git"
 import {
   CognitiveCore,
   EvidenceLinker,
@@ -31,7 +25,13 @@ import {
   InMemoryWorldModel,
   registerBuiltInExtractors,
 } from "@qmilab/lodestar-cognitive-core"
-import { GitStatusOutputSchema } from "@qmilab/lodestar-adapter-git"
+import { registry } from "@qmilab/lodestar-core"
+import {
+  InMemoryBeliefStore,
+  InMemoryClaimStore,
+  InMemoryEvidenceStore,
+  MemoryFirewall,
+} from "@qmilab/lodestar-memory-firewall"
 
 // Ensure git.status@1 schema is registered (the adapter does this on import).
 void GitStatusOutputSchema
@@ -104,10 +104,7 @@ async function run(): Promise<ProbeResult> {
   if (result.claims.length !== 3) {
     return {
       passed: false,
-      details: [
-        ...details,
-        `expected 3 claims (branch, dirty, sync); got ${result.claims.length}`,
-      ],
+      details: [...details, `expected 3 claims (branch, dirty, sync); got ${result.claims.length}`],
     }
   }
 

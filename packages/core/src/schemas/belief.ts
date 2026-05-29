@@ -19,7 +19,13 @@ import {
 export const TruthStatusSchema = z.enum(["unverified", "supported", "contradicted", "superseded"])
 export type TruthStatus = z.infer<typeof TruthStatusSchema>
 
-export const RetrievalStatusSchema = z.enum(["hidden", "restricted", "normal", "privileged_only", "blocked"])
+export const RetrievalStatusSchema = z.enum([
+  "hidden",
+  "restricted",
+  "normal",
+  "privileged_only",
+  "blocked",
+])
 export type RetrievalStatus = z.infer<typeof RetrievalStatusSchema>
 
 export const SecurityStatusSchema = z.enum(["clean", "suspicious", "quarantined", "malicious"])

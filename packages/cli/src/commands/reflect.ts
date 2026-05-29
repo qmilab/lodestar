@@ -1,9 +1,6 @@
-import type { ReflectionProposal } from "@qmilab/lodestar-core"
 import { ExplanationGenerator, Reflection } from "@qmilab/lodestar-cognitive-core"
-import {
-  defaultLogRoot,
-  loadSessionEvents,
-} from "@qmilab/lodestar-trace"
+import type { ReflectionProposal } from "@qmilab/lodestar-core"
+import { defaultLogRoot, loadSessionEvents } from "@qmilab/lodestar-trace"
 
 /**
  * `lodestar reflect <session-id> [--project <id>] [--log-root <path>]
@@ -72,9 +69,7 @@ export async function reflectCommand(argv: string[]): Promise<number> {
     project_id,
   })
   if (loaded.events.length === 0) {
-    process.stderr.write(
-      `no events found for session '${session_id}' under '${log_root}'\n`,
-    )
+    process.stderr.write(`no events found for session '${session_id}' under '${log_root}'\n`)
     return 3
   }
 
@@ -95,7 +90,9 @@ export async function reflectCommand(argv: string[]): Promise<number> {
   })
 
   if (json) {
-    process.stdout.write(`${JSON.stringify({ emitted: result.emitted, ...result.payload }, null, 2)}\n`)
+    process.stdout.write(
+      `${JSON.stringify({ emitted: result.emitted, ...result.payload }, null, 2)}\n`,
+    )
     return 0
   }
 
@@ -126,7 +123,9 @@ function renderProposalsHuman(
   const lines: string[] = []
   lines.push(`pass ${payload.pass_id.slice(0, 8)}  trigger=${payload.triggered_by}`)
   lines.push(`  cursor: seq ${payload.cursor.from_seq} → ${payload.cursor.to_seq}`)
-  lines.push(`  observed ${payload.observed_event_ids.length} of ${total_session_events} session event(s)`)
+  lines.push(
+    `  observed ${payload.observed_event_ids.length} of ${total_session_events} session event(s)`,
+  )
   lines.push(`  proposals: ${payload.proposals.length}`)
   for (const p of payload.proposals) {
     lines.push(`    - ${describeProposal(p)}`)

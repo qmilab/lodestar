@@ -27,7 +27,7 @@
  *      fan-out, the on-disk line count matches the number of appends
  */
 
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -96,10 +96,7 @@ async function run(): Promise<ProbeResult> {
     if (envelopes.length !== pending.length) {
       return {
         passed: false,
-        details:
-          `Expected ${pending.length} envelopes from the reader, got ` +
-          `${envelopes.length}. The reader either failed to parse some ` +
-          `lines (torn writes?) or some appends were lost.`,
+        details: `Expected ${pending.length} envelopes from the reader, got ${envelopes.length}. The reader either failed to parse some lines (torn writes?) or some appends were lost.`,
       }
     }
 
@@ -109,9 +106,7 @@ async function run(): Promise<ProbeResult> {
       const dup = seqs.find((s, i) => i > 0 && s === seqs[i - 1])
       return {
         passed: false,
-        details:
-          `Duplicate seq detected (e.g. ${dup}). Module-level seq counter ` +
-          `is not serialized correctly across writer instances.`,
+        details: `Duplicate seq detected (e.g. ${dup}). Module-level seq counter is not serialized correctly across writer instances.`,
       }
     }
     for (let i = 0; i < seqs.length; i++) {
@@ -126,9 +121,7 @@ async function run(): Promise<ProbeResult> {
     }
 
     // ── Check 3: every NDJSON line is complete + parseable ──
-    const files = (await readdir(join(logDir, PROJECT_ID))).filter((f) =>
-      f.endsWith(".ndjson"),
-    )
+    const files = (await readdir(join(logDir, PROJECT_ID))).filter((f) => f.endsWith(".ndjson"))
     if (files.length === 0) {
       return { passed: false, details: "No NDJSON file produced." }
     }
@@ -159,37 +152,25 @@ async function run(): Promise<ProbeResult> {
     if (tornLines > 0) {
       return {
         passed: false,
-        details:
-          `Found ${tornLines} unparseable NDJSON line(s) out of ${totalLines}. ` +
-          `Torn writes detected — the append serialization is not effective.`,
+        details: `Found ${tornLines} unparseable NDJSON line(s) out of ${totalLines}. Torn writes detected — the append serialization is not effective.`,
       }
     }
     if (nonEnvelopeLines > 0) {
       return {
         passed: false,
-        details:
-          `Found ${nonEnvelopeLines} parseable but non-envelope lines. ` +
-          `Two writes likely interleaved into a single line that happened ` +
-          `to JSON-parse.`,
+        details: `Found ${nonEnvelopeLines} parseable but non-envelope lines. Two writes likely interleaved into a single line that happened to JSON-parse.`,
       }
     }
     if (totalLines !== pending.length) {
       return {
         passed: false,
-        details:
-          `On-disk line count ${totalLines} ≠ appends ${pending.length}. ` +
-          `Either a write was lost or two appends collapsed into one line.`,
+        details: `On-disk line count ${totalLines} ≠ appends ${pending.length}. Either a write was lost or two appends collapsed into one line.`,
       }
     }
 
     return {
       passed: true,
-      details:
-        `${pending.length} concurrent appends across 2 writer instances, ` +
-        `large payloads (>${LARGE_PAYLOAD_FILLER.length} bytes/event). ` +
-        `All persisted, unique contiguous seq 0..${seqs.length - 1}, ` +
-        `every line a complete envelope. Per-partition append mutex ` +
-        `serializes correctly under fan-out.`,
+      details: `${pending.length} concurrent appends across 2 writer instances, large payloads (>${LARGE_PAYLOAD_FILLER.length} bytes/event). All persisted, unique contiguous seq 0..${seqs.length - 1}, every line a complete envelope. Per-partition append mutex serializes correctly under fan-out.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })

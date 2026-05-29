@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises"
-import { z } from "zod"
 import { ResourceScopeSchema } from "@qmilab/lodestar-core"
+import { z } from "zod"
 
 /**
  * Configuration for one downstream MCP server the proxy should manage.
@@ -77,15 +77,21 @@ export type ToolContractDefaults = z.infer<typeof ToolContractDefaultsSchema>
  * rejects them.
  */
 export const ProxyConfigSchema = z.object({
-  project_id: z.string().min(1).refine((v) => v !== "project-stub", {
-    message: "project_id 'project-stub' is reserved for test fixtures",
-  }),
+  project_id: z
+    .string()
+    .min(1)
+    .refine((v) => v !== "project-stub", {
+      message: "project_id 'project-stub' is reserved for test fixtures",
+    }),
   actor_id: z.string().min(1),
   session_id: z.union([
     z.literal("auto"),
-    z.string().min(1).refine((v) => v !== "session-stub", {
-      message: "session_id 'session-stub' is reserved for test fixtures",
-    }),
+    z
+      .string()
+      .min(1)
+      .refine((v) => v !== "session-stub", {
+        message: "session_id 'session-stub' is reserved for test fixtures",
+      }),
   ]),
   /** Where the event log NDJSON files are written. */
   log_root: z.string().default(".lodestar/events"),
@@ -95,9 +101,7 @@ export const ProxyConfigSchema = z.object({
    * `ResourceScope`: `{ level, identifier }`.
    */
   default_scope: ResourceScopeSchema,
-  default_sensitivity: z
-    .enum(["public", "internal", "confidential", "secret"])
-    .default("internal"),
+  default_sensitivity: z.enum(["public", "internal", "confidential", "secret"]).default("internal"),
   /**
    * Trust ceiling for the auto-approve policy. Tools with
    * `required_trust_level` ≤ this ceiling are auto-approved; higher
@@ -114,15 +118,12 @@ export const ProxyConfigSchema = z.object({
   downstream_servers: z
     .array(DownstreamServerConfigSchema)
     .min(1)
-    .refine(
-      (servers) => new Set(servers.map((s) => s.name)).size === servers.length,
-      {
-        message:
-          "downstream_servers[*].name must be unique; two entries with the same " +
-          "name would map their tools to the same `mcp.<name>.<tool>` namespace " +
-          "and make tool_defaults ownership + audit trail ambiguous",
-      },
-    ),
+    .refine((servers) => new Set(servers.map((s) => s.name)).size === servers.length, {
+      message:
+        "downstream_servers[*].name must be unique; two entries with the same " +
+        "name would map their tools to the same `mcp.<name>.<tool>` namespace " +
+        "and make tool_defaults ownership + audit trail ambiguous",
+    }),
   tool_defaults: z.record(ToolContractDefaultsSchema).default({}),
 })
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>

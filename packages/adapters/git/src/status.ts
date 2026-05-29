@@ -1,8 +1,8 @@
-import { resolve } from "node:path"
 import { spawn } from "node:child_process"
-import { z } from "zod"
+import { resolve } from "node:path"
+import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
-import { registerTool, type Tool } from "@qmilab/lodestar-action-kernel"
+import { z } from "zod"
 
 /**
  * git.status — get the status of a git repository.
@@ -15,13 +15,15 @@ import { registerTool, type Tool } from "@qmilab/lodestar-action-kernel"
  * sandboxing.
  */
 
-export const GitStatusOutputSchema = z.object({
-  branch: z.string(),
-  dirty: z.array(z.string()).describe("modified or untracked files"),
-  ahead: z.number().int().nonnegative(),
-  behind: z.number().int().nonnegative(),
-  detached: z.boolean(),
-}).describe("git.status tool output")
+export const GitStatusOutputSchema = z
+  .object({
+    branch: z.string(),
+    dirty: z.array(z.string()).describe("modified or untracked files"),
+    ahead: z.number().int().nonnegative(),
+    behind: z.number().int().nonnegative(),
+    detached: z.boolean(),
+  })
+  .describe("git.status tool output")
 
 registry.register("git.status@1", GitStatusOutputSchema)
 
@@ -40,8 +42,12 @@ function runGit(repoPath: string, args: string[]): Promise<SpawnResult> {
     const proc = spawn("git", ["-C", repoPath, ...args], { stdio: ["ignore", "pipe", "pipe"] })
     let stdout = ""
     let stderr = ""
-    proc.stdout.on("data", (chunk) => { stdout += chunk.toString() })
-    proc.stderr.on("data", (chunk) => { stderr += chunk.toString() })
+    proc.stdout.on("data", (chunk) => {
+      stdout += chunk.toString()
+    })
+    proc.stderr.on("data", (chunk) => {
+      stderr += chunk.toString()
+    })
     proc.on("close", (code) => {
       resolveFn({ stdout, stderr, exitCode: code ?? 0 })
     })
@@ -49,7 +55,9 @@ function runGit(repoPath: string, args: string[]): Promise<SpawnResult> {
   })
 }
 
-export function makeGitStatusTool(projectRoot: string): Tool<z.infer<typeof GitStatusInputSchema>, z.infer<typeof GitStatusOutputSchema>> {
+export function makeGitStatusTool(
+  projectRoot: string,
+): Tool<z.infer<typeof GitStatusInputSchema>, z.infer<typeof GitStatusOutputSchema>> {
   const root = resolve(projectRoot)
   return {
     name: "git.status",
@@ -69,7 +77,9 @@ export function makeGitStatusTool(projectRoot: string): Tool<z.infer<typeof GitS
 
       const branchRes = await runGit(repoPath, ["rev-parse", "--abbrev-ref", "HEAD"])
       if (branchRes.exitCode !== 0) {
-        throw new Error(`git.status: failed to read branch in '${inputs.repo}': ${branchRes.stderr.trim()}`)
+        throw new Error(
+          `git.status: failed to read branch in '${inputs.repo}': ${branchRes.stderr.trim()}`,
+        )
       }
       const branchOut = branchRes.stdout.trim()
       const detached = branchOut === "HEAD"

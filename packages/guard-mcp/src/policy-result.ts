@@ -146,16 +146,9 @@ export interface CallToolResultLike {
  * cleanly across the MCP transport. The MCP TypeScript SDK accepts
  * any value that conforms to the CallToolResult schema; this matches.
  */
-export function buildPolicyDeniedResult(
-  details: PolicyDeniedDetails,
-): CallToolResultLike {
+export function buildPolicyDeniedResult(details: PolicyDeniedDetails): CallToolResultLike {
   const kind = details.kind ?? "policy_denied"
-  const humanText =
-    `Lodestar policy denied this tool call.\n\n` +
-    `Tool: ${details.tool_name}\n` +
-    `Reason: ${details.reason}\n` +
-    `Denial kind: ${kind}` +
-    (details.action_id ? `\nAction id: ${details.action_id}` : "")
+  const humanText = `Lodestar policy denied this tool call.\n\nTool: ${details.tool_name}\nReason: ${details.reason}\nDenial kind: ${kind}${details.action_id ? `\nAction id: ${details.action_id}` : ""}`
 
   return {
     content: [{ type: "text", text: humanText }],

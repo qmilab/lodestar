@@ -25,15 +25,20 @@
  */
 
 import * as fs from "node:fs/promises"
-import { z } from "zod"
-import { registry } from "@qmilab/lodestar-core"
 import { _resetToolsForTests, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registerBuiltInExtractors } from "@qmilab/lodestar-cognitive-core"
+import { registry } from "@qmilab/lodestar-core"
 import {
   EventLogReader,
   EventLogWriter,
   _resetEventLogStateForTests,
 } from "@qmilab/lodestar-event-log"
+import {
+  type PolicyGate,
+  alwaysHoldsChecker,
+  autoApprovePolicy,
+  runGuarded,
+} from "@qmilab/lodestar-guard"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
@@ -41,12 +46,7 @@ import {
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
 import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
-import {
-  alwaysHoldsChecker,
-  autoApprovePolicy,
-  runGuarded,
-  type PolicyGate,
-} from "@qmilab/lodestar-guard"
+import { z } from "zod"
 
 interface ProbeResult {
   passed: boolean
@@ -127,16 +127,10 @@ async function caseA(): Promise<string | undefined> {
   )
 
   if (preconditionChecks !== 1) {
-    return (
-      `[A] precondition_checker was invoked ${preconditionChecks} time(s); expected 1. ` +
-      `Caller-supplied empty preconditions silently replaced the tool's declarations.`
-    )
+    return `[A] precondition_checker was invoked ${preconditionChecks} time(s); expected 1. Caller-supplied empty preconditions silently replaced the tool's declarations.`
   }
   if (execs.count !== 0) {
-    return (
-      `[A] tool.execute ran ${execs.count} time(s); expected 0. ` +
-      `Kernel should have rejected before execute.`
-    )
+    return `[A] tool.execute ran ${execs.count} time(s); expected 0. Kernel should have rejected before execute.`
   }
   if (!/precondition/i.test(rejection)) {
     return `[A] expected rejection mentioning 'precondition'; got: ${rejection || "(no rejection)"}`
@@ -177,10 +171,7 @@ async function caseB(): Promise<string | undefined> {
   )
 
   if (seenSensitivity !== "secret") {
-    return (
-      `[B] policy_gate saw data_sensitivity='${seenSensitivity}'; expected 'secret'. ` +
-      `Guard is silently downgrading a secret session to a private action.`
-    )
+    return `[B] policy_gate saw data_sensitivity='${seenSensitivity}'; expected 'secret'. Guard is silently downgrading a secret session to a private action.`
   }
 
   // The kernel hardcodes observation.sensitivity to 'internal'; Guard
@@ -190,10 +181,7 @@ async function caseB(): Promise<string | undefined> {
   const observationSensitivity = (run.result as { observation: { sensitivity: string } })
     .observation.sensitivity
   if (observationSensitivity !== "secret") {
-    return (
-      `[B] callTool returned observation.sensitivity='${observationSensitivity}'; expected 'secret'. ` +
-      `Guard is not lifting sensitive observations from the kernel's default 'internal'.`
-    )
+    return `[B] callTool returned observation.sensitivity='${observationSensitivity}'; expected 'secret'. Guard is not lifting sensitive observations from the kernel's default 'internal'.`
   }
   return undefined
 }
@@ -233,10 +221,7 @@ async function caseC(): Promise<string | undefined> {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     if (/already registered|schema_key/i.test(message)) {
-      return (
-        `[C] runGuarded threw when built-in extractors were pre-registered: ${message}. ` +
-        `Guard must tolerate extractors that another module already registered.`
-      )
+      return `[C] runGuarded threw when built-in extractors were pre-registered: ${message}. Guard must tolerate extractors that another module already registered.`
     }
     return `[C] unexpected error: ${message}`
   }
@@ -285,10 +270,7 @@ async function caseD(): Promise<string | undefined> {
   )
 
   if (seenSensitivity !== "secret") {
-    return (
-      `[D] policy_gate saw data_sensitivity='${seenSensitivity}' after a caller passed ` +
-      `'public' in a secret session. The override should be clamped to the session floor.`
-    )
+    return `[D] policy_gate saw data_sensitivity='${seenSensitivity}' after a caller passed 'public' in a secret session. The override should be clamped to the session floor.`
   }
   return undefined
 }
@@ -305,27 +287,21 @@ async function caseE(): Promise<string | undefined> {
   const N = 10
   const runs = await Promise.all(
     Array.from({ length: N }, (_, i) =>
-      runGuarded(
-        async (ctx) => ctx.session_id,
-        {
-          project_id: `probe-contract-E-${i}`,
-          actor_id: "tester",
-          log_root: "/tmp/lodestar-probe-contract-E",
-          default_scope: { level: "project", identifier: `probe-contract-E-${i}` },
-          default_sensitivity: "internal",
-          policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
-          precondition_checker: alwaysHoldsChecker,
-        },
-      ),
+      runGuarded(async (ctx) => ctx.session_id, {
+        project_id: `probe-contract-E-${i}`,
+        actor_id: "tester",
+        log_root: "/tmp/lodestar-probe-contract-E",
+        default_scope: { level: "project", identifier: `probe-contract-E-${i}` },
+        default_sensitivity: "internal",
+        policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "p" }),
+        precondition_checker: alwaysHoldsChecker,
+      }),
     ),
   )
 
   const ids = new Set(runs.map((r) => r.session_id))
   if (ids.size !== N) {
-    return (
-      `[E] ${N} concurrent runGuarded calls produced only ${ids.size} distinct ` +
-      `session_id(s). Date.now()-based defaults can collide; use a UUID.`
-    )
+    return `[E] ${N} concurrent runGuarded calls produced only ${ids.size} distinct session_id(s). Date.now()-based defaults can collide; use a UUID.`
   }
   return undefined
 }
@@ -368,15 +344,10 @@ async function caseF(): Promise<string | undefined> {
   )
 
   if (captured.session_id !== "session-probe-F-fixed") {
-    return (
-      `[F] tool.execute saw ctx.session_id='${captured.session_id}'; ` +
-      `expected 'session-probe-F-fixed'. The kernel is still handing tools its stub context.`
-    )
+    return `[F] tool.execute saw ctx.session_id='${captured.session_id}'; expected 'session-probe-F-fixed'. The kernel is still handing tools its stub context.`
   }
   if (captured.project_id !== "probe-contract-F") {
-    return (
-      `[F] tool.execute saw ctx.project_id='${captured.project_id}'; expected 'probe-contract-F'.`
-    )
+    return `[F] tool.execute saw ctx.project_id='${captured.project_id}'; expected 'probe-contract-F'.`
   }
   return undefined
 }
@@ -421,11 +392,11 @@ async function caseG(): Promise<string | undefined> {
   }
   const duplicates = [...seen.entries()].filter(([_, c]) => c > 1)
   if (duplicates.length > 0) {
-    const sample = duplicates.slice(0, 3).map(([s, c]) => `seq=${s}×${c}`).join(", ")
-    return (
-      `[G] event log has duplicate seq values across runGuarded calls: ${sample}. ` +
-      `EventLogWriter must hydrate from existing log before writing.`
-    )
+    const sample = duplicates
+      .slice(0, 3)
+      .map(([s, c]) => `seq=${s}×${c}`)
+      .join(", ")
+    return `[G] event log has duplicate seq values across runGuarded calls: ${sample}. EventLogWriter must hydrate from existing log before writing.`
   }
   // Also sanity-check monotonic increasing order in read result.
   for (let i = 1; i < events.length; i++) {
@@ -453,9 +424,7 @@ function caseH(): string | undefined {
   } catch (err) {
     threw = true
     if (
-      !/auto_approve_up_to|L5|prohibited/i.test(
-        err instanceof Error ? err.message : String(err),
-      )
+      !/auto_approve_up_to|L5|prohibited/i.test(err instanceof Error ? err.message : String(err))
     ) {
       return `[H] autoApprovePolicy threw on ceiling=5 but the error message did not mention the invalid ceiling: ${String(err)}`
     }
@@ -470,7 +439,8 @@ function caseH(): string | undefined {
 
 async function caseI(): Promise<string | undefined> {
   registerProbeTool({ count: 0 }) // ensure registry is non-empty
-  let observed: { sensitivity?: string; context?: { session_id?: string; project_id?: string } } = {}
+  let observed: { sensitivity?: string; context?: { session_id?: string; project_id?: string } } =
+    {}
 
   // Clean the log dir so we read only this run's events (no chance of
   // matching an `observation.recorded` event written by a previous run
@@ -531,19 +501,13 @@ async function caseI(): Promise<string | undefined> {
   observed = { sensitivity: payload.sensitivity, context: payload.context }
 
   if (observed.context?.session_id !== "session-probe-I") {
-    return (
-      `[I] observation.recorded.context.session_id='${observed.context?.session_id}'; ` +
-      `expected 'session-probe-I'. Manual ingestObservation should rewrite context like callTool.`
-    )
+    return `[I] observation.recorded.context.session_id='${observed.context?.session_id}'; expected 'session-probe-I'. Manual ingestObservation should rewrite context like callTool.`
   }
   if (observed.context?.project_id !== "probe-contract-I") {
     return `[I] observation.recorded.context.project_id='${observed.context?.project_id}'; expected 'probe-contract-I'.`
   }
   if (observed.sensitivity !== "secret") {
-    return (
-      `[I] observation.recorded.sensitivity='${observed.sensitivity}'; expected 'secret'. ` +
-      `ingestObservation must lift sensitivity to the session floor.`
-    )
+    return `[I] observation.recorded.sensitivity='${observed.sensitivity}'; expected 'secret'. ingestObservation must lift sensitivity to the session floor.`
   }
   return undefined
 }
@@ -653,17 +617,18 @@ async function caseK(): Promise<string | undefined> {
   const reader = new EventLogReader(LOG_ROOT)
   const events = await reader.readSession(PROJECT, SESSION)
   const finalAction = events
-    .filter((e) => e.type.startsWith("action.") && e.type !== "action.proposed" && e.type !== "action.approved")
+    .filter(
+      (e) =>
+        e.type.startsWith("action.") &&
+        e.type !== "action.proposed" &&
+        e.type !== "action.approved",
+    )
     .pop()
   if (!finalAction) {
     return "[K] no terminal action.* event was written"
   }
   if (finalAction.type !== "action.rejected") {
-    return (
-      `[K] execution-time precondition rejection landed as event type '${finalAction.type}'; ` +
-      `expected 'action.rejected'. Consumers filtering by event type would conflate ` +
-      `TOCTOU rejections with tool failures.`
-    )
+    return `[K] execution-time precondition rejection landed as event type '${finalAction.type}'; expected 'action.rejected'. Consumers filtering by event type would conflate TOCTOU rejections with tool failures.`
   }
   return undefined
 }
@@ -684,11 +649,7 @@ async function caseL(): Promise<string | undefined> {
   })
   if (runFromSubdir.exitCode !== 0) {
     const stderr = runFromSubdir.stderr.toString()
-    return (
-      `[L] 'lodestar probe chain' failed when invoked from packages/cli ` +
-      `(exit ${runFromSubdir.exitCode}). The CLI must resolve the probe directory ` +
-      `from its own location, not process.cwd(). stderr: ${stderr.slice(0, 200)}`
-    )
+    return `[L] 'lodestar probe chain' failed when invoked from packages/cli (exit ${runFromSubdir.exitCode}). The CLI must resolve the probe directory from its own location, not process.cwd(). stderr: ${stderr.slice(0, 200)}`
   }
   return undefined
 }
@@ -752,12 +713,11 @@ async function caseM(): Promise<string | undefined> {
   }
   const duplicates = [...seen.entries()].filter(([_, c]) => c > 1)
   if (duplicates.length > 0) {
-    const sample = duplicates.slice(0, 3).map(([s, c]) => `seq=${s}×${c}`).join(", ")
-    return (
-      `[M] concurrent first appends produced duplicate seq values: ${sample}. ` +
-      `EventLogWriter.hydrate must serialise — a Set marker that fires before the ` +
-      `async scan completes lets a second append skip hydration and allocate seq=0.`
-    )
+    const sample = duplicates
+      .slice(0, 3)
+      .map(([s, c]) => `seq=${s}×${c}`)
+      .join(", ")
+    return `[M] concurrent first appends produced duplicate seq values: ${sample}. EventLogWriter.hydrate must serialise — a Set marker that fires before the async scan completes lets a second append skip hydration and allocate seq=0.`
   }
   return undefined
 }
@@ -816,11 +776,7 @@ async function caseN(): Promise<string | undefined> {
   )
 
   if (seenReversibility !== "irreversible") {
-    return (
-      `[N] policy_gate saw reversibility='${seenReversibility}' after a caller passed ` +
-      `'reversible' for an irreversible tool. The override should be clamped to ` +
-      `the tool's declared (higher-risk) value.`
-    )
+    return `[N] policy_gate saw reversibility='${seenReversibility}' after a caller passed 'reversible' for an irreversible tool. The override should be clamped to the tool's declared (higher-risk) value.`
   }
   return undefined
 }
@@ -837,10 +793,7 @@ async function caseO(): Promise<string | undefined> {
   // runGuarded scenario. Each constructs its own EventLogWriter. They
   // must share allocation state or both will scan an empty log and
   // allocate seq=0 simultaneously.
-  const writers = [
-    new EventLogWriter(LOG_ROOT),
-    new EventLogWriter(LOG_ROOT),
-  ]
+  const writers = [new EventLogWriter(LOG_ROOT), new EventLogWriter(LOG_ROOT)]
 
   const PER_WRITER = 5
   const appends: Promise<unknown>[] = []
@@ -875,11 +828,11 @@ async function caseO(): Promise<string | undefined> {
   }
   const duplicates = [...seen.entries()].filter(([_, c]) => c > 1)
   if (duplicates.length > 0) {
-    const sample = duplicates.slice(0, 3).map(([s, c]) => `seq=${s}×${c}`).join(", ")
-    return (
-      `[O] concurrent writer instances produced duplicate seq values: ${sample}. ` +
-      `EventLogWriter must share seq state across instances pointed at the same root/project.`
-    )
+    const sample = duplicates
+      .slice(0, 3)
+      .map(([s, c]) => `seq=${s}×${c}`)
+      .join(", ")
+    return `[O] concurrent writer instances produced duplicate seq values: ${sample}. EventLogWriter must share seq state across instances pointed at the same root/project.`
   }
   if (events.length !== writers.length * PER_WRITER) {
     return `[O] expected ${writers.length * PER_WRITER} events; got ${events.length}`
@@ -949,19 +902,10 @@ async function caseP(): Promise<string | undefined> {
   //      ("abc++", "abc+++", …) which mis-records both factory and
   //      execute against the caller's intent.
   if (preconditionFactoryToken !== executeToken) {
-    return (
-      `[P] precondition factory saw token='${preconditionFactoryToken}' but ` +
-      `tool.execute saw token='${executeToken}'. Inputs are being parsed more than ` +
-      `once; the second parse re-applies the transform and shifts the value the ` +
-      `tool executes against what its preconditions guarded.`
-    )
+    return `[P] precondition factory saw token='${preconditionFactoryToken}' but tool.execute saw token='${executeToken}'. Inputs are being parsed more than once; the second parse re-applies the transform and shifts the value the tool executes against what its preconditions guarded.`
   }
   if (executeToken !== "abc+") {
-    return (
-      `[P] tool.execute saw token='${executeToken}'; expected 'abc+' (single transform). ` +
-      `Repeated parse compounded the transform — the kernel/Guard pair must parse ` +
-      `tool inputs exactly once per callTool.`
-    )
+    return `[P] tool.execute saw token='${executeToken}'; expected 'abc+' (single transform). Repeated parse compounded the transform — the kernel/Guard pair must parse tool inputs exactly once per callTool.`
   }
   return undefined
 }
@@ -1006,8 +950,8 @@ async function caseQ(): Promise<string | undefined> {
   if (evidenceEvents.length === 0) {
     return (
       `[Q] no 'evidence.assessed' events in the guarded session log. ` +
-      `Guard must emit the EvidenceSets the cognitive core produces so the trust ` +
-      `report can audit why beliefs were adopted.`
+      "Guard must emit the EvidenceSets the cognitive core produces so the trust " +
+      "report can audit why beliefs were adopted."
     )
   }
 
@@ -1022,7 +966,7 @@ async function caseQ(): Promise<string | undefined> {
   }
   const report = renderReport(projection)
   if (!report.includes("## Evidence")) {
-    return `[Q] rendered trust report did not include an Evidence section`
+    return "[Q] rendered trust report did not include an Evidence section"
   }
   return undefined
 }
@@ -1063,17 +1007,17 @@ async function caseR(): Promise<string | undefined> {
   const { projectChain, renderReport } = await import("@qmilab/lodestar-trace")
   const projection = projectChain(events, { session_id: SESSION, project_id: PROJECT })
   if (projection.decisions.length === 0) {
-    return `[R] projectChain returned 0 decisions despite an emitted decision.made event`
+    return "[R] projectChain returned 0 decisions despite an emitted decision.made event"
   }
   const report = renderReport(projection)
   if (!report.includes("## Decisions")) {
-    return `[R] rendered trust report did not include a Decisions section`
+    return "[R] rendered trust report did not include a Decisions section"
   }
   if (!report.includes("probe decision rendering")) {
     return `[R] rendered trust report did not include the decision's intent`
   }
   if (!report.includes("probing the renderer")) {
-    return `[R] rendered trust report did not include the chosen_option rationale`
+    return "[R] rendered trust report did not include the chosen_option rationale"
   }
   return undefined
 }
@@ -1121,7 +1065,7 @@ async function caseS(): Promise<string | undefined> {
   // still capture it as a standalone ProjectedAction with outcome only.
   const projected = projection.actions.find((a) => a.outcome?.action_id === actionId)
   if (!projected) {
-    return `[S] projectChain did not project the outcome.observed event onto its action`
+    return "[S] projectChain did not project the outcome.observed event onto its action"
   }
   const report = renderReport(projection)
   if (!report.includes("probe-side-effect")) {
@@ -1170,11 +1114,7 @@ async function caseT(): Promise<string | undefined> {
   if (!obsEvent) return "[T] no observation.recorded event"
   const obsPayload = obsEvent.payload as { sensitivity?: string }
   if (obsPayload.sensitivity !== "secret") {
-    return (
-      `[T] per-call override 'secret' did not propagate into the observation ` +
-      `(sensitivity='${obsPayload.sensitivity}'). The kernel must derive ` +
-      `obs.sensitivity from contract.data_sensitivity, not hardcode 'internal'.`
-    )
+    return `[T] per-call override 'secret' did not propagate into the observation (sensitivity='${obsPayload.sensitivity}'). The kernel must derive obs.sensitivity from contract.data_sensitivity, not hardcode 'internal'.`
   }
 
   // The probe.contract_tool's output schema isn't bound to an
@@ -1228,8 +1168,8 @@ async function caseU(): Promise<string | undefined> {
   const projected = projection.actions.find((a) => a.action?.id === "partial-1")
   if (projected) {
     return (
-      `[U] projection accepted a malformed action.* payload as a full Action. ` +
-      `Schema validation must reject it before it reaches the renderer.`
+      "[U] projection accepted a malformed action.* payload as a full Action. " +
+      "Schema validation must reject it before it reaches the renderer."
     )
   }
 
@@ -1238,10 +1178,7 @@ async function caseU(): Promise<string | undefined> {
   try {
     renderReport(projection)
   } catch (err) {
-    return (
-      `[U] renderReport threw on a session that included a malformed action.* event: ` +
-      `${err instanceof Error ? err.message : String(err)}`
-    )
+    return `[U] renderReport threw on a session that included a malformed action.* event: ${err instanceof Error ? err.message : String(err)}`
   }
   return undefined
 }
@@ -1324,57 +1261,50 @@ async function caseV(): Promise<string | undefined> {
   ]
   for (const { kind, size } of buckets) {
     if (size !== 0) {
-      return (
-        `[V] projection.${kind}.length=${size} after emitting malformed payloads. ` +
-        `Strict Zod validation must reject events that don't match the full schema.`
-      )
+      return `[V] projection.${kind}.length=${size} after emitting malformed payloads. Strict Zod validation must reject events that don't match the full schema.`
     }
   }
   // The malformed outcome should not attach to a ProjectedAction.
-  const projectedOutcome = projection.actions.find(
-    (a) => a.outcome?.action_id === "action-bad",
-  )
+  const projectedOutcome = projection.actions.find((a) => a.outcome?.action_id === "action-bad")
   if (projectedOutcome) {
-    return `[V] malformed outcome.observed event was projected onto a ProjectedAction`
+    return "[V] malformed outcome.observed event was projected onto a ProjectedAction"
   }
 
   // Rendering must not throw despite all the malformed events being in raw_events.
   try {
     renderReport(projection)
   } catch (err) {
-    return (
-      `[V] renderReport threw with a session full of malformed chain payloads: ` +
-      `${err instanceof Error ? err.message : String(err)}`
-    )
+    return `[V] renderReport threw with a session full of malformed chain payloads: ${err instanceof Error ? err.message : String(err)}`
   }
   return undefined
 }
 
 async function run(): Promise<ProbeResult> {
-  const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> = [
-    { name: "A: caller cannot drop tool preconditions", fn: caseA },
-    { name: "B: secret session → secret action sensitivity", fn: caseB },
-    { name: "C: built-in extractor registration is idempotent", fn: caseC },
-    { name: "D: caller cannot lower contract.data_sensitivity", fn: caseD },
-    { name: "E: default session_ids are collision-resistant", fn: caseE },
-    { name: "F: tool.execute receives the guarded session/project", fn: caseF },
-    { name: "G: event log seq is monotonic across runGuarded calls", fn: caseG },
-    { name: "H: autoApprovePolicy rejects out-of-range ceilings", fn: caseH },
-    { name: "I: ingestObservation rewrites context + lifts sensitivity", fn: caseI },
-    { name: "J: mem0 adapter tolerates malformed records", fn: caseJ },
-    { name: "K: execution-time rejections emit action.rejected", fn: caseK },
-    { name: "L: lodestar probe works from any working directory", fn: caseL },
-    { name: "M: writer hydration is race-safe", fn: caseM },
-    { name: "N: caller cannot lower contract.reversibility", fn: caseN },
-    { name: "O: concurrent writers share seq across instances", fn: caseO },
-    { name: "P: tool inputs are parsed exactly once", fn: caseP },
-    { name: "Q: evidence persists in event log + renders in report", fn: caseQ },
-    { name: "R: decision.made events render in the trust report", fn: caseR },
-    { name: "S: outcome.observed events project + render", fn: caseS },
-    { name: "T: per-call data_sensitivity propagates into observations", fn: caseT },
-    { name: "U: malformed action.* events don't crash the report", fn: caseU },
-    { name: "V: malformed chain payloads don't crash the report", fn: caseV },
-  ]
+  const cases: Array<{ name: string; fn: () => Promise<string | undefined> | string | undefined }> =
+    [
+      { name: "A: caller cannot drop tool preconditions", fn: caseA },
+      { name: "B: secret session → secret action sensitivity", fn: caseB },
+      { name: "C: built-in extractor registration is idempotent", fn: caseC },
+      { name: "D: caller cannot lower contract.data_sensitivity", fn: caseD },
+      { name: "E: default session_ids are collision-resistant", fn: caseE },
+      { name: "F: tool.execute receives the guarded session/project", fn: caseF },
+      { name: "G: event log seq is monotonic across runGuarded calls", fn: caseG },
+      { name: "H: autoApprovePolicy rejects out-of-range ceilings", fn: caseH },
+      { name: "I: ingestObservation rewrites context + lifts sensitivity", fn: caseI },
+      { name: "J: mem0 adapter tolerates malformed records", fn: caseJ },
+      { name: "K: execution-time rejections emit action.rejected", fn: caseK },
+      { name: "L: lodestar probe works from any working directory", fn: caseL },
+      { name: "M: writer hydration is race-safe", fn: caseM },
+      { name: "N: caller cannot lower contract.reversibility", fn: caseN },
+      { name: "O: concurrent writers share seq across instances", fn: caseO },
+      { name: "P: tool inputs are parsed exactly once", fn: caseP },
+      { name: "Q: evidence persists in event log + renders in report", fn: caseQ },
+      { name: "R: decision.made events render in the trust report", fn: caseR },
+      { name: "S: outcome.observed events project + render", fn: caseS },
+      { name: "T: per-call data_sensitivity propagates into observations", fn: caseT },
+      { name: "U: malformed action.* events don't crash the report", fn: caseU },
+      { name: "V: malformed chain payloads don't crash the report", fn: caseV },
+    ]
   const passed: string[] = []
   for (const { name, fn } of cases) {
     const failure = await fn()

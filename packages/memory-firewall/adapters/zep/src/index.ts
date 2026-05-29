@@ -1,20 +1,15 @@
 import { randomUUID } from "node:crypto"
-import type {
-  Claim,
-  EvidenceSet,
-  Explanation,
-  Observation,
-} from "@qmilab/lodestar-core"
+import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
 import {
-  AdapterImportOptionsSchema,
-  notImplementedFor,
   type AdapterImportOptions,
+  AdapterImportOptionsSchema,
   type AdapterImportResult,
   type EvidenceStore,
   type ExternalMemoryAdapter,
   type MemoryFirewall,
+  notImplementedFor,
 } from "@qmilab/lodestar-memory-firewall"
-import { ZepEnvelopeSchema, ZepFactSchema, type ZepFact } from "./schema.js"
+import { ZepEnvelopeSchema, type ZepFact, ZepFactSchema } from "./schema.js"
 
 export { ZepExportSchema, ZepFactSchema } from "./schema.js"
 export type { ZepExport, ZepFact } from "./schema.js"
@@ -41,10 +36,7 @@ export class ZepAdapter implements ExternalMemoryAdapter {
     private readonly evidence: EvidenceStore,
   ) {}
 
-  async importMemories(
-    raw: unknown,
-    options: AdapterImportOptions,
-  ): Promise<AdapterImportResult> {
+  async importMemories(raw: unknown, options: AdapterImportOptions): Promise<AdapterImportResult> {
     const opts = AdapterImportOptionsSchema.parse(options)
     // Validate the envelope's shape but treat each fact as unknown so
     // per-record schema failures can be reported via rejection_reasons
@@ -103,9 +95,7 @@ export class ZepAdapter implements ExternalMemoryAdapter {
     options: AdapterImportOptions,
   ): Promise<{ claim: Claim; beliefId?: string }> {
     const projectId =
-      typeof options.scope.identifier === "string"
-        ? options.scope.identifier
-        : "imported"
+      typeof options.scope.identifier === "string" ? options.scope.identifier : "imported"
 
     const observation: Observation = {
       id: randomUUID(),
@@ -148,10 +138,7 @@ export class ZepAdapter implements ExternalMemoryAdapter {
           relation: "supports",
           quality: "external_document",
           freshness: fact.expired_at ? "stale" : "unknown",
-          notes:
-            `Zep fact uuid=${fact.uuid}` +
-            (fact.session_id ? `, session_id=${fact.session_id}` : "") +
-            (typeof fact.rating === "number" ? `, rating=${fact.rating}` : ""),
+          notes: `Zep fact uuid=${fact.uuid}${fact.session_id ? `, session_id=${fact.session_id}` : ""}${typeof fact.rating === "number" ? `, rating=${fact.rating}` : ""}`,
         },
       ],
       assessed_by: options.source_actor_id,

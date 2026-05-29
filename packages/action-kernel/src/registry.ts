@@ -1,10 +1,10 @@
-import type { z } from "zod"
 import type {
   ActionPrecondition,
   Observation,
   Reversibility,
   TrustLevel,
 } from "@qmilab/lodestar-core"
+import type { z } from "zod"
 
 /**
  * Sandbox profiles available to tools.
@@ -16,21 +16,12 @@ import type {
  * - controlled-shell: read/write + shell with command allowlist; container
  *                     sandbox; restricted network egress
  */
-export type SandboxProfile =
-  | "read"
-  | "write-isolated"
-  | "write-local"
-  | "controlled-shell"
+export type SandboxProfile = "read" | "write-isolated" | "write-local" | "controlled-shell"
 
 /**
  * Permission tokens. Narrower than sandbox profiles; declarative.
  */
-export type Permission =
-  | "fs.read"
-  | "fs.write"
-  | "shell.exec"
-  | "network.egress"
-  | "secret.sign"
+export type Permission = "fs.read" | "fs.write" | "shell.exec" | "network.egress" | "secret.sign"
 
 /**
  * A registered tool. Tools are pure data: schemas, declared effects,

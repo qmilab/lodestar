@@ -23,7 +23,12 @@
  * gate auto_observation by evidence quality, not just strength.
  */
 
-import { z } from "zod"
+import {
+  CognitiveCore,
+  type EvidenceLinker,
+  ExplanationGenerator,
+  InMemoryWorldModel,
+} from "@qmilab/lodestar-cognitive-core"
 import type { Observation } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import {
@@ -32,12 +37,7 @@ import {
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import {
-  CognitiveCore,
-  EvidenceLinker,
-  ExplanationGenerator,
-  InMemoryWorldModel,
-} from "@qmilab/lodestar-cognitive-core"
+import { z } from "zod"
 
 // Register a synthetic schema for the probe
 const SCHEMA_KEY = "probe.external_doc@1"
@@ -50,7 +50,11 @@ if (!registry.has(SCHEMA_KEY)) {
 // external_document evidence item. For probe purposes, this simulates
 // what would happen if a generic LLM extractor pulled claims from a
 // README or webpage observation.
-import { lookupExtractor, registerExtractor, type ClaimExtractor } from "@qmilab/lodestar-cognitive-core"
+import {
+  type ClaimExtractor,
+  lookupExtractor,
+  registerExtractor,
+} from "@qmilab/lodestar-cognitive-core"
 
 const probeExtractor: ClaimExtractor = {
   schema_key: SCHEMA_KEY,
@@ -163,7 +167,9 @@ async function run(): Promise<ProbeResult> {
   // We expect at least one belief to be adopted, but it should be at
   // truth_status='unverified', NOT 'supported'.
   if (result.beliefs.length === 0) {
-    details.push("No belief was adopted at all — gate may be over-tight, but not failing this probe.")
+    details.push(
+      "No belief was adopted at all — gate may be over-tight, but not failing this probe.",
+    )
     return { passed: true, details }
   }
 

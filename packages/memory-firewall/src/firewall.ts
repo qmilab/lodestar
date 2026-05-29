@@ -9,15 +9,12 @@ import type {
   SecurityStatus,
   TruthStatus,
 } from "@qmilab/lodestar-core"
+import { GatedRetrieval, type RetrievalQuery } from "./retrieval.js"
 import type { BeliefStore, LifecycleAxis } from "./stores/belief-store.js"
 import type { ClaimStore } from "./stores/claim-store.js"
 import type { EvidenceStore } from "./stores/evidence-store.js"
 import { aggregateStrength } from "./stores/evidence-store.js"
-import { GatedRetrieval, type RetrievalQuery } from "./retrieval.js"
-import {
-  type TransitionAuthority,
-  isTransitionAllowed,
-} from "./transitions.js"
+import { type TransitionAuthority, isTransitionAllowed } from "./transitions.js"
 
 /**
  * The MemoryFirewall enforces the promotion gates and lifecycle transitions
@@ -87,7 +84,9 @@ export class MemoryFirewall {
   }): Promise<Belief> {
     const claim = await this.claims.get(input.candidate.claim_id)
     if (!claim) {
-      throw new Error(`MemoryFirewall: cannot adopt belief for unknown claim ${input.candidate.claim_id}`)
+      throw new Error(
+        `MemoryFirewall: cannot adopt belief for unknown claim ${input.candidate.claim_id}`,
+      )
     }
     if (claim.status === "rejected") {
       throw new Error(`MemoryFirewall: cannot adopt a rejected claim ${claim.id}`)
@@ -119,7 +118,14 @@ export class MemoryFirewall {
     // retrievable without explicit promotion.
     const proposedRetrieval = input.candidate.retrieval_status
     if (proposedRetrieval !== "hidden" && proposedRetrieval !== "restricted") {
-      if (!isTransitionAllowed("retrieval_status", "restricted", proposedRetrieval, input.by_authority)) {
+      if (
+        !isTransitionAllowed(
+          "retrieval_status",
+          "restricted",
+          proposedRetrieval,
+          input.by_authority,
+        )
+      ) {
         throw new Error(
           `MemoryFirewall: authority '${input.by_authority}' cannot insert belief at retrieval_status='${proposedRetrieval}'`,
         )
@@ -302,9 +308,8 @@ export class MemoryFirewall {
     }
     if (belief.security_status === "quarantined") return
 
-    const path: SecurityStatus[] = belief.security_status === "clean"
-      ? ["quarantined"]
-      : ["quarantined"]
+    const path: SecurityStatus[] =
+      belief.security_status === "clean" ? ["quarantined"] : ["quarantined"]
 
     let current: SecurityStatus = belief.security_status
     for (const next of path) {
@@ -338,23 +343,15 @@ export class MemoryFirewall {
    * See `GatedRetrieval.retrieveContradictions` for the
    * (subject, relation) join and gate semantics.
    */
-  async retrieveContradictions(
-    query: RetrievalQuery,
-    policy: ContextPolicy,
-  ): Promise<Belief[]> {
-    return new GatedRetrieval(this.beliefs, this.claims).retrieveContradictions(
-      query,
-      policy,
-    )
+  async retrieveContradictions(query: RetrievalQuery, policy: ContextPolicy): Promise<Belief[]> {
+    return new GatedRetrieval(this.beliefs, this.claims).retrieveContradictions(query, policy)
   }
 
   private assertEvidenceIsRealistic(evidence: EvidenceSet): void {
     if (evidence.items.length === 0) {
       throw new Error("MemoryFirewall: cannot adopt belief from empty EvidenceSet")
     }
-    const realCount = evidence.items.filter(
-      (i) => i.quality !== "synthetic_probe",
-    ).length
+    const realCount = evidence.items.filter((i) => i.quality !== "synthetic_probe").length
     if (realCount === 0) {
       throw new Error(
         "MemoryFirewall: EvidenceSet contains only synthetic_probe items; cannot adopt real belief from probe evidence",

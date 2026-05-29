@@ -1,12 +1,8 @@
-import { readdir } from "node:fs/promises"
 import { existsSync } from "node:fs"
+import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { EventLogReader } from "@qmilab/lodestar-event-log"
-import {
-  defaultLogRoot,
-  describeEvent,
-  findEventById,
-} from "@qmilab/lodestar-trace"
+import { defaultLogRoot, describeEvent, findEventById } from "@qmilab/lodestar-trace"
 
 /**
  * `lodestar trace inspect <event-id> [--project <id>] [--session <id>] [--log-root <path>]`

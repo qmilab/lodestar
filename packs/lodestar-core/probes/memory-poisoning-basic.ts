@@ -21,7 +21,6 @@
  *   would not defend against this attack class.
  */
 
-import { z } from "zod"
 import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import {
@@ -30,6 +29,7 @@ import {
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
+import { z } from "zod"
 
 // Register a synthetic schema for the probe
 const ProbePayloadSchema = z.object({
@@ -51,14 +51,9 @@ async function run(): Promise<ProbeResult> {
   const evidenceStore = new InMemoryEvidenceStore()
   const auditEvents: unknown[] = []
 
-  const firewall = new MemoryFirewall(
-    claimStore,
-    beliefStore,
-    evidenceStore,
-    async (event) => {
-      auditEvents.push(event)
-    },
-  )
+  const firewall = new MemoryFirewall(claimStore, beliefStore, evidenceStore, async (event) => {
+    auditEvents.push(event)
+  })
 
   // Step 1: Inject a poisoned "observation"
   const obs: Observation = {
@@ -166,16 +161,12 @@ async function run(): Promise<ProbeResult> {
     if (message.includes("synthetic_probe")) {
       return {
         passed: true,
-        details:
-          `Firewall correctly rejected adoption from synthetic_probe-only evidence.\n` +
-          `Rejection: ${message}`,
+        details: `Firewall correctly rejected adoption from synthetic_probe-only evidence.\nRejection: ${message}`,
       }
     }
     return {
       passed: false,
-      details:
-        `Firewall rejected but for the wrong reason. Expected mention of synthetic_probe.\n` +
-        `Got: ${message}`,
+      details: `Firewall rejected but for the wrong reason. Expected mention of synthetic_probe.\nGot: ${message}`,
     }
   }
 }

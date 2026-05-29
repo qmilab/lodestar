@@ -51,9 +51,7 @@ export async function reportCommand(argv: string[]): Promise<number> {
     project_id,
   })
   if (loaded.events.length === 0) {
-    process.stderr.write(
-      `no events found for session '${session_id}' under '${log_root}'\n`,
-    )
+    process.stderr.write(`no events found for session '${session_id}' under '${log_root}'\n`)
     return 3
   }
 

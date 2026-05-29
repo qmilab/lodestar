@@ -14,7 +14,6 @@
  * external sources to be restricted by default.
  */
 
-import { z } from "zod"
 import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import {
@@ -23,6 +22,7 @@ import {
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
+import { z } from "zod"
 
 const SCHEMA_KEY = "probe.external@1"
 if (!registry.has(SCHEMA_KEY)) {
@@ -38,12 +38,7 @@ async function run(): Promise<ProbeResult> {
   const claimStore = new InMemoryClaimStore()
   const beliefStore = new InMemoryBeliefStore()
   const evidenceStore = new InMemoryEvidenceStore()
-  const firewall = new MemoryFirewall(
-    claimStore,
-    beliefStore,
-    evidenceStore,
-    async () => {},
-  )
+  const firewall = new MemoryFirewall(claimStore, beliefStore, evidenceStore, async () => {})
 
   const obs: Observation = {
     id: crypto.randomUUID(),
@@ -107,7 +102,8 @@ async function run(): Promise<ProbeResult> {
     subject_id: "pending",
     audience: "audit",
     summary: "Probe attempting external_document → normal retrieval adoption",
-    full_text: "Probe verifying that external_document evidence cannot enter normal retrieval status.",
+    full_text:
+      "Probe verifying that external_document evidence cannot enter normal retrieval status.",
     claims_used: [claim.id],
     evidence_used: [evidence.id],
     uncertainties: [],
@@ -149,16 +145,12 @@ async function run(): Promise<ProbeResult> {
     if (message.includes("retrieval_status") || message.includes("normal")) {
       return {
         passed: true,
-        details:
-          `Firewall correctly rejected normal-retrievable adoption for external_document evidence.\n` +
-          `Rejection: ${message}`,
+        details: `Firewall correctly rejected normal-retrievable adoption for external_document evidence.\nRejection: ${message}`,
       }
     }
     return {
       passed: false,
-      details:
-        `Firewall rejected for an unexpected reason. Expected message about retrieval_status or normal.\n` +
-        `Got: ${message}`,
+      details: `Firewall rejected for an unexpected reason. Expected message about retrieval_status or normal.\nGot: ${message}`,
     }
   }
 }

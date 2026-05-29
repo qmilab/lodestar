@@ -26,16 +26,8 @@
 
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
-import {
-  MCPProxy,
-  UpstreamServer,
-  type ProxyConfig,
-} from "@qmilab/lodestar-guard-mcp"
-import {
-  loadSessionEvents,
-  projectChain,
-  renderReport,
-} from "@qmilab/lodestar-trace"
+import { MCPProxy, type ProxyConfig, UpstreamServer } from "@qmilab/lodestar-guard-mcp"
+import { loadSessionEvents, projectChain, renderReport } from "@qmilab/lodestar-trace"
 
 const PROJECT_ROOT = resolve(import.meta.dirname ?? ".", "..", "..")
 const EXAMPLE_DIR = resolve(import.meta.dirname ?? ".")
@@ -177,9 +169,7 @@ async function main(): Promise<void> {
   process.stdout.write(report)
   process.stdout.write("\n")
   process.stderr.write(
-    `[example] done. Render again any time with:\n` +
-      `  bun run --filter @qmilab/lodestar-cli lodestar -- report ${proxy.session_id} ` +
-      `--project ${PROJECT_ID} --log-root ${LOG_ROOT}\n`,
+    `[example] done. Render again any time with:\n  bun run --filter @qmilab/lodestar-cli lodestar -- report ${proxy.session_id} --project ${PROJECT_ID} --log-root ${LOG_ROOT}\n`,
   )
 }
 

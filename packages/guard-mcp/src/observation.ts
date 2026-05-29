@@ -1,12 +1,4 @@
 import { randomUUID } from "node:crypto"
-import { z } from "zod"
-import {
-  type Claim,
-  type EvidenceItem,
-  type EvidenceSet,
-  type Observation,
-  registry,
-} from "@qmilab/lodestar-core"
 import {
   type ClaimExtractor,
   EvidenceLinker,
@@ -14,7 +6,15 @@ import {
   lookupExtractor,
   registerExtractor,
 } from "@qmilab/lodestar-cognitive-core"
+import {
+  type Claim,
+  type EvidenceItem,
+  type EvidenceSet,
+  type Observation,
+  registry,
+} from "@qmilab/lodestar-core"
 import type { BeliefStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
+import { z } from "zod"
 
 /**
  * Schema-bound observation payload for tool calls forwarded through the
@@ -143,9 +143,7 @@ export const MCPToolResultObservationSchema = z.object({
   meta: z.record(z.string(), z.unknown()).optional(),
 })
 
-export type MCPToolResultObservationPayload = z.infer<
-  typeof MCPToolResultObservationSchema
->
+export type MCPToolResultObservationPayload = z.infer<typeof MCPToolResultObservationSchema>
 
 export const MCP_TOOL_RESULT_SCHEMA_KEY = "mcp.tool_result@1"
 
@@ -213,11 +211,7 @@ export const MCPToolResultExtractor: ClaimExtractor = {
     const claims: Claim[] = []
 
     const contentKinds = payload.content.map((block) => block.type)
-    const envelopeStatement =
-      `MCP tool '${payload.tool_name}' (server: ${payload.downstream_server}) ` +
-      `returned ${payload.content.length} content block${payload.content.length === 1 ? "" : "s"} ` +
-      `[${contentKinds.join(", ")}]` +
-      (payload.is_error ? " (downstream marked is_error=true)" : "")
+    const envelopeStatement = `MCP tool '${payload.tool_name}' (server: ${payload.downstream_server}) returned ${payload.content.length} content block${payload.content.length === 1 ? "" : "s"} [${contentKinds.join(", ")}]${payload.is_error ? " (downstream marked is_error=true)" : ""}`
 
     claims.push({
       id: randomUUID(),
@@ -268,8 +262,7 @@ export const MCPToolResultExtractor: ClaimExtractor = {
       const truncatedStatement = text.length > 200 ? `${text.slice(0, 200)}…` : text
       claims.push({
         id: randomUUID(),
-        statement:
-          `External document content via '${payload.tool_name}' content block #${index}: ${truncatedStatement}`,
+        statement: `External document content via '${payload.tool_name}' content block #${index}: ${truncatedStatement}`,
         structured_predicate: {
           subject,
           relation: MCP_EXTERNAL_DOCUMENT_RELATION,

@@ -32,32 +32,24 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
-import type {
-  Belief,
-  Claim,
-  EventEnvelope,
-  Observation,
-} from "@qmilab/lodestar-core"
+import type { Belief, Claim, EventEnvelope, Observation } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import {
-  collectPaginatedTools,
   DownstreamConnection,
-  isPolicyDeniedResult,
   MCPProxy,
   MCP_TOOL_INVOCATION_RELATION,
   MCP_TOOL_RESULT_SCHEMA_KEY,
-  mergeDownstreamEnv,
   type ProxyConfig,
   ProxyConfigSchema,
-  sanitizeAdvertisedTool,
   UpstreamServer,
+  collectPaginatedTools,
+  isPolicyDeniedResult,
+  mergeDownstreamEnv,
+  sanitizeAdvertisedTool,
 } from "@qmilab/lodestar-guard-mcp"
-import type {
-  CallToolResult,
-  Tool as MCPTool,
-} from "@modelcontextprotocol/sdk/types.js"
 
 interface ProbeResult {
   passed: boolean
@@ -86,10 +78,7 @@ class FakeDownstreamConnection extends DownstreamConnection {
   override getTools(): readonly MCPTool[] {
     return this.fakeTools
   }
-  override async callTool(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<CallToolResult> {
+  override async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     return this.fakeCallTool(name, args)
   }
   override async stop(): Promise<void> {}
@@ -137,9 +126,7 @@ async function run(): Promise<ProbeResult> {
       default_scope: { level: "project", identifier: REAL_PROJECT_ID },
       default_sensitivity: "internal",
       auto_approve_ceiling: 2,
-      downstream_servers: [
-        { name: DOWNSTREAM_NAME, command: "not-spawned", args: [] },
-      ],
+      downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
       tool_defaults: {
         [LODESTAR_TOOL_NAME]: {
           reversibility: "reversible",
@@ -176,12 +163,11 @@ async function run(): Promise<ProbeResult> {
     }
     if (result.isError === true) {
       const meta = (result._meta as { _lodestar?: unknown })?._lodestar ?? "(no _meta marker)"
-      const firstText = result.content[0]?.type === "text" ? result.content[0].text : "(no text content)"
+      const firstText =
+        result.content[0]?.type === "text" ? result.content[0].text : "(no text content)"
       return {
         passed: false,
-        details:
-          `expected the round-trip CallToolResult to have isError=false; got true. ` +
-          `Meta: ${JSON.stringify(meta)}. Text: ${firstText}`,
+        details: `expected the round-trip CallToolResult to have isError=false; got true. Meta: ${JSON.stringify(meta)}. Text: ${firstText}`,
       }
     }
     const text = result.content[0]?.type === "text" ? result.content[0].text : undefined
@@ -196,42 +182,27 @@ async function run(): Promise<ProbeResult> {
 
     // Read the persisted event log and project the chain.
     const reader = new EventLogReader(logDir)
-    const envelopes: EventEnvelope[] = await reader.readSession(
-      REAL_PROJECT_ID,
-      REAL_SESSION_ID,
-    )
+    const envelopes: EventEnvelope[] = await reader.readSession(REAL_PROJECT_ID, REAL_SESSION_ID)
 
     if (envelopes.length === 0) {
       return {
         passed: false,
-        details:
-          `no events found in the log for session=${REAL_SESSION_ID}, project=${REAL_PROJECT_ID}. ` +
-          `Either the writer didn't flush or the IDs leaked into a different partition.`,
+        details: `no events found in the log for session=${REAL_SESSION_ID}, project=${REAL_PROJECT_ID}. Either the writer didn't flush or the IDs leaked into a different partition.`,
       }
     }
 
     // (a) Every envelope carries the real session/project IDs.
     for (const env of envelopes) {
-      if (
-        env.session_id !== REAL_SESSION_ID ||
-        env.project_id !== REAL_PROJECT_ID
-      ) {
+      if (env.session_id !== REAL_SESSION_ID || env.project_id !== REAL_PROJECT_ID) {
         return {
           passed: false,
-          details:
-            `event ${env.id} type=${env.type} carries session=${env.session_id} ` +
-            `project=${env.project_id} (expected ${REAL_SESSION_ID} / ${REAL_PROJECT_ID}). ` +
-            `Likely a stub-fallback regression in the proxy or kernel.`,
+          details: `event ${env.id} type=${env.type} carries session=${env.session_id} project=${env.project_id} (expected ${REAL_SESSION_ID} / ${REAL_PROJECT_ID}). Likely a stub-fallback regression in the proxy or kernel.`,
         }
       }
-      if (
-        env.session_id === "session-stub" ||
-        env.project_id === "project-stub"
-      ) {
+      if (env.session_id === "session-stub" || env.project_id === "project-stub") {
         return {
           passed: false,
-          details:
-            `event ${env.id} type=${env.type} carries a Round-5-forbidden stub id`,
+          details: `event ${env.id} type=${env.type} carries a Round-5-forbidden stub id`,
         }
       }
     }
@@ -242,8 +213,7 @@ async function run(): Promise<ProbeResult> {
       if (!types.includes(expected)) {
         return {
           passed: false,
-          details:
-            `expected event of type '${expected}' in the chain; saw [${types.join(", ")}]`,
+          details: `expected event of type '${expected}' in the chain; saw [${types.join(", ")}]`,
         }
       }
     }
@@ -257,14 +227,10 @@ async function run(): Promise<ProbeResult> {
     if (obs.schema !== MCP_TOOL_RESULT_SCHEMA_KEY) {
       return {
         passed: false,
-        details:
-          `observation.recorded carried schema='${obs.schema}', expected '${MCP_TOOL_RESULT_SCHEMA_KEY}'`,
+        details: `observation.recorded carried schema='${obs.schema}', expected '${MCP_TOOL_RESULT_SCHEMA_KEY}'`,
       }
     }
-    if (
-      obs.context.session_id !== REAL_SESSION_ID ||
-      obs.context.project_id !== REAL_PROJECT_ID
-    ) {
+    if (obs.context.session_id !== REAL_SESSION_ID || obs.context.project_id !== REAL_PROJECT_ID) {
       return {
         passed: false,
         details:
@@ -282,10 +248,7 @@ async function run(): Promise<ProbeResult> {
     if (!envelopeClaim) {
       return {
         passed: false,
-        details:
-          `expected at least one claim with structured_predicate.relation=` +
-          `'${MCP_TOOL_INVOCATION_RELATION}'; saw ${claims.length} claims with ` +
-          `relations: [${claims.map((c) => c.structured_predicate?.relation ?? "(none)").join(", ")}]`,
+        details: `expected at least one claim with structured_predicate.relation='${MCP_TOOL_INVOCATION_RELATION}'; saw ${claims.length} claims with relations: [${claims.map((c) => c.structured_predicate?.relation ?? "(none)").join(", ")}]`,
       }
     }
 
@@ -296,11 +259,7 @@ async function run(): Promise<ProbeResult> {
     if (!supportedBelief) {
       return {
         passed: false,
-        details:
-          `expected at least one belief at truth_status='supported' (the ` +
-          `envelope claim is tool_result quality, strength 0.85, should ` +
-          `auto-promote); saw ${beliefs.length} beliefs with statuses: ` +
-          `[${beliefs.map((b) => b.truth_status).join(", ")}]`,
+        details: `expected at least one belief at truth_status='supported' (the envelope claim is tool_result quality, strength 0.85, should auto-promote); saw ${beliefs.length} beliefs with statuses: [${beliefs.map((b) => b.truth_status).join(", ")}]`,
       }
     }
 
@@ -759,44 +718,7 @@ async function run(): Promise<ProbeResult> {
 
     return {
       passed: true,
-      details:
-        `MCP proxy round-trip clean: ${envelopes.length} envelopes carried real ` +
-        `session/project IDs (no stub leak); chain proposed→approved→completed ` +
-        `present; observation.recorded carried schema='${MCP_TOOL_RESULT_SCHEMA_KEY}'; ` +
-        `${claims.length} claims extracted with at least one ${MCP_TOOL_INVOCATION_RELATION}; ` +
-        `${beliefs.length} beliefs adopted (at least one supported); fake downstream ` +
-        `was called exactly once and the text content round-tripped unchanged. ` +
-        `Sub-case B (image round-trip): ${subBResult.details}. ` +
-        `Sub-case C (concurrent calls): ${subCResult.details}. ` +
-        `Sub-case D (stop+restart): ${subDResult.details}. ` +
-        `Sub-case E (resource blob round-trip): ${subEResult.details}. ` +
-        `Sub-case F (helper rollback): ${subFResult.details}. ` +
-        `Sub-case G (resource_link round-trip): ${subGResult.details}. ` +
-        `Sub-case H (structuredContent round-trip): ${subHResult.details}. ` +
-        `Sub-case I (_meta + annotations round-trip): ${subIResult.details}. ` +
-        `Sub-case J (failed start does not emit session.ended): ${subJResult.details}. ` +
-        `Sub-case K (rejects unadvertised tools): ${subKResult.details}. ` +
-        `Sub-case L (stdin EOF closes proxy): ${subLResult.details}. ` +
-        `Sub-case M (strips reserved _lodestar from downstream _meta): ${subMResult.details}. ` +
-        `Sub-case N (duplicate downstream names rejected): ${subNResult.details}. ` +
-        `Sub-case O (task-required tools filtered): ${subOResult.details}. ` +
-        `Sub-case P (bad log_root fails cleanly): ${subPResult.details}. ` +
-        `Sub-case Q (restart does not accumulate catalog): ${subQResult.details}. ` +
-        `Sub-case R (refused calls audited): ${subRResult.details}. ` +
-        `Sub-case S (paginated tools/list drained): ${subSResult.details}. ` +
-        `Sub-case T (unknown-block _lodestar stripped): ${subTResult.details}. ` +
-        `Sub-case U (pagination cap edge): ${subUResult.details}. ` +
-        `Sub-case V (downstream env merged with defaults): ${subVResult.details}. ` +
-        `Sub-case W (advertised catalog sanitised): ${subWResult.details}. ` +
-        `Sub-case X (optional taskSupport → forbidden): ${subXResult.details}. ` +
-        `Sub-case Y (description property preserved): ${subYResult.details}. ` +
-        `Sub-case Z (properties-as-property-name closed): ${subZResult.details}. ` +
-        `Sub-case AA (title + $comment scrubbed): ${subAAResult.details}. ` +
-        `Sub-case BB (hyphenated task-required tool skipped): ${subBBResult.details}. ` +
-        `Sub-case CC (upstream stop without start): ${subCCResult.details}. ` +
-        `Sub-case DD (default + examples scrubbed): ${subDDResult.details}. ` +
-        `Sub-case EE (extension keys dropped): ${subEEResult.details}. ` +
-        `Sub-case FF (sanitise failure rolls back all registrations): ${subFFResult.details}.`,
+      details: `MCP proxy round-trip clean: ${envelopes.length} envelopes carried real session/project IDs (no stub leak); chain proposed→approved→completed present; observation.recorded carried schema='${MCP_TOOL_RESULT_SCHEMA_KEY}'; ${claims.length} claims extracted with at least one ${MCP_TOOL_INVOCATION_RELATION}; ${beliefs.length} beliefs adopted (at least one supported); fake downstream was called exactly once and the text content round-tripped unchanged. Sub-case B (image round-trip): ${subBResult.details}. Sub-case C (concurrent calls): ${subCResult.details}. Sub-case D (stop+restart): ${subDResult.details}. Sub-case E (resource blob round-trip): ${subEResult.details}. Sub-case F (helper rollback): ${subFResult.details}. Sub-case G (resource_link round-trip): ${subGResult.details}. Sub-case H (structuredContent round-trip): ${subHResult.details}. Sub-case I (_meta + annotations round-trip): ${subIResult.details}. Sub-case J (failed start does not emit session.ended): ${subJResult.details}. Sub-case K (rejects unadvertised tools): ${subKResult.details}. Sub-case L (stdin EOF closes proxy): ${subLResult.details}. Sub-case M (strips reserved _lodestar from downstream _meta): ${subMResult.details}. Sub-case N (duplicate downstream names rejected): ${subNResult.details}. Sub-case O (task-required tools filtered): ${subOResult.details}. Sub-case P (bad log_root fails cleanly): ${subPResult.details}. Sub-case Q (restart does not accumulate catalog): ${subQResult.details}. Sub-case R (refused calls audited): ${subRResult.details}. Sub-case S (paginated tools/list drained): ${subSResult.details}. Sub-case T (unknown-block _lodestar stripped): ${subTResult.details}. Sub-case U (pagination cap edge): ${subUResult.details}. Sub-case V (downstream env merged with defaults): ${subVResult.details}. Sub-case W (advertised catalog sanitised): ${subWResult.details}. Sub-case X (optional taskSupport → forbidden): ${subXResult.details}. Sub-case Y (description property preserved): ${subYResult.details}. Sub-case Z (properties-as-property-name closed): ${subZResult.details}. Sub-case AA (title + $comment scrubbed): ${subAAResult.details}. Sub-case BB (hyphenated task-required tool skipped): ${subBBResult.details}. Sub-case CC (upstream stop without start): ${subCCResult.details}. Sub-case DD (default + examples scrubbed): ${subDDResult.details}. Sub-case EE (extension keys dropped): ${subEEResult.details}. Sub-case FF (sanitise failure rolls back all registrations): ${subFFResult.details}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })
@@ -890,9 +812,7 @@ async function subcaseSanitiseFailureRollsBackAllRegistrations(
     if (!message.includes("sanitisation failure") && !message.includes("synthetic")) {
       return {
         passed: false,
-        details:
-          `proxy.start() threw, but the error didn't look like the synthetic ` +
-          `sanitisation failure we induced. Got: ${message.slice(0, 200)}`,
+        details: `proxy.start() threw, but the error didn't look like the synthetic sanitisation failure we induced. Got: ${message.slice(0, 200)}`,
       }
     }
   }
@@ -900,8 +820,7 @@ async function subcaseSanitiseFailureRollsBackAllRegistrations(
     await proxy.stop()
     return {
       passed: false,
-      details:
-        `proxy.start() did not throw despite the poisoned tool's getter raising`,
+      details: `proxy.start() did not throw despite the poisoned tool's getter raising`,
     }
   }
 
@@ -915,11 +834,7 @@ async function subcaseSanitiseFailureRollsBackAllRegistrations(
     if (lookupTool(namespacedName) !== undefined) {
       return {
         passed: false,
-        details:
-          `${namespacedName} survived the rollback. Pre-fix this was the bug — ` +
-          `registeredToolNames was populated after sanitisation, so tools whose ` +
-          `slot came after the throw leaked. The fix pre-populates the rollback ` +
-          `set immediately after registerDownstreamToolsWithKernel returns.`,
+        details: `${namespacedName} survived the rollback. Pre-fix this was the bug — registeredToolNames was populated after sanitisation, so tools whose slot came after the throw leaked. The fix pre-populates the rollback set immediately after registerDownstreamToolsWithKernel returns.`,
       }
     }
   }
@@ -1006,9 +921,7 @@ function subcaseExtensionKeysDropped(): ProbeResult {
   if (!("user_id" in props) || !("x-correlation-id" in props)) {
     return {
       passed: false,
-      details:
-        `expected properties.user_id and properties['x-correlation-id'] to survive; ` +
-        `got [${Object.keys(props).join(", ")}]`,
+      details: `expected properties.user_id and properties['x-correlation-id'] to survive; got [${Object.keys(props).join(", ")}]`,
     }
   }
   // (5) Each property keeps its type but loses any extension-key
@@ -1098,9 +1011,7 @@ function subcaseDefaultAndExamplesScrubbed(): ProbeResult {
   if (JSON.stringify(safe).includes(INJECTION_MARKER)) {
     return {
       passed: false,
-      details:
-        `injection marker survived inside the sanitised tool — default or examples ` +
-        `annotation was preserved: ${JSON.stringify(safe.inputSchema)}`,
+      details: `injection marker survived inside the sanitised tool — default or examples annotation was preserved: ${JSON.stringify(safe.inputSchema)}`,
     }
   }
   const schema = safe.inputSchema as Record<string, unknown>
@@ -1115,23 +1026,16 @@ function subcaseDefaultAndExamplesScrubbed(): ProbeResult {
   }
   // (3) All three property NAMES survive: x, default, examples.
   const props = schema.properties as Record<string, unknown> | undefined
-  if (
-    !props ||
-    !("x" in props) ||
-    !("default" in props) ||
-    !("examples" in props)
-  ) {
+  if (!props || !("x" in props) || !("default" in props) || !("examples" in props)) {
     return {
       passed: false,
-      details:
-        `expected properties.x, properties.default, properties.examples to survive; ` +
-        `got [${Object.keys(props ?? {}).join(", ")}]`,
+      details: `expected properties.x, properties.default, properties.examples to survive; got [${Object.keys(props ?? {}).join(", ")}]`,
     }
   }
   // (4) Per-property annotations gone, but type stays.
   const xProp = props.x as Record<string, unknown>
   if (xProp.type !== "string") {
-    return { passed: false, details: `properties.x lost its type` }
+    return { passed: false, details: "properties.x lost its type" }
   }
   for (const annotation of ["default", "examples"]) {
     if (annotation in xProp) {
@@ -1143,22 +1047,22 @@ function subcaseDefaultAndExamplesScrubbed(): ProbeResult {
   }
   const defaultProp = props.default as Record<string, unknown>
   if (defaultProp.type !== "string") {
-    return { passed: false, details: `properties.default lost its type` }
+    return { passed: false, details: "properties.default lost its type" }
   }
   if ("default" in defaultProp) {
     return {
       passed: false,
-      details: `properties.default.default annotation survived`,
+      details: "properties.default.default annotation survived",
     }
   }
   const examplesProp = props.examples as Record<string, unknown>
   if (examplesProp.type !== "array") {
-    return { passed: false, details: `properties.examples lost its type` }
+    return { passed: false, details: "properties.examples lost its type" }
   }
   if ("examples" in examplesProp) {
     return {
       passed: false,
-      details: `properties.examples.examples annotation survived`,
+      details: "properties.examples.examples annotation survived",
     }
   }
   // (5) `required` array intact — schema stays self-consistent.
@@ -1265,11 +1169,7 @@ async function subcaseHyphenatedTaskRequiredSkipped(logDir: string): Promise<Pro
     startThrew = true
     return {
       passed: false,
-      details:
-        `proxy.start() threw because of the hyphenated task-required tool: ` +
-        `${err instanceof Error ? err.message : String(err)}. The fix should ` +
-        `skip task-required tools BEFORE running their names through ` +
-        `namespacedToolName.`,
+      details: `proxy.start() threw because of the hyphenated task-required tool: ${err instanceof Error ? err.message : String(err)}. The fix should skip task-required tools BEFORE running their names through namespacedToolName.`,
     }
   }
   void startThrew
@@ -1325,7 +1225,7 @@ async function subcaseUpstreamStopWithoutStart(): Promise<ProbeResult> {
     return {
       passed: false,
       details:
-        `waitUntilClosed() did not resolve within 1s of stop() being called on an unstarted UpstreamServer`,
+        "waitUntilClosed() did not resolve within 1s of stop() being called on an unstarted UpstreamServer",
     }
   }
   // Second stop must be a no-op (no throw).
@@ -1338,7 +1238,7 @@ async function subcaseUpstreamStopWithoutStart(): Promise<ProbeResult> {
   if (secondThrew) {
     return {
       passed: false,
-      details: `second stop() call threw; must be idempotent`,
+      details: "second stop() call threw; must be idempotent",
     }
   }
   return {
@@ -1396,9 +1296,7 @@ function subcaseTitleAndCommentAnnotationsScrubbed(): ProbeResult {
   if (JSON.stringify(safe).includes(INJECTION_MARKER)) {
     return {
       passed: false,
-      details:
-        `injection marker survived inside the sanitised tool — title or $comment ` +
-        `annotation was preserved: ${JSON.stringify(safe.inputSchema)}`,
+      details: `injection marker survived inside the sanitised tool — title or $comment annotation was preserved: ${JSON.stringify(safe.inputSchema)}`,
     }
   }
   const schema = safe.inputSchema as Record<string, unknown>
@@ -1422,7 +1320,7 @@ function subcaseTitleAndCommentAnnotationsScrubbed(): ProbeResult {
   // (4) Per-property annotations gone, but type stays.
   const nameProp = props.name as Record<string, unknown>
   if (nameProp.type !== "string") {
-    return { passed: false, details: `properties.name lost its type` }
+    return { passed: false, details: "properties.name lost its type" }
   }
   for (const annotation of ["title", "$comment", "description"]) {
     if (annotation in nameProp) {
@@ -1434,7 +1332,7 @@ function subcaseTitleAndCommentAnnotationsScrubbed(): ProbeResult {
   }
   const titleProp = props.title as Record<string, unknown>
   if (titleProp.type !== "string") {
-    return { passed: false, details: `properties.title lost its type` }
+    return { passed: false, details: "properties.title lost its type" }
   }
   for (const annotation of ["title", "$comment", "description"]) {
     if (annotation in titleProp) {
@@ -1447,11 +1345,7 @@ function subcaseTitleAndCommentAnnotationsScrubbed(): ProbeResult {
   // (5) `required` references both property names — schema stays
   //     self-consistent.
   const required = schema.required as string[] | undefined
-  if (
-    !Array.isArray(required) ||
-    !required.includes("name") ||
-    !required.includes("title")
-  ) {
+  if (!Array.isArray(required) || !required.includes("name") || !required.includes("title")) {
     return {
       passed: false,
       details: `required array changed: ${JSON.stringify(required)}`,
@@ -1523,11 +1417,7 @@ function subcasePropertiesNamedPropertyNotAKeyword(): ProbeResult {
   if (JSON.stringify(safe).includes(INJECTION_MARKER)) {
     return {
       passed: false,
-      details:
-        `injection marker survived inside the sanitised tool — the round-16 ` +
-        `walker treated 'properties' / 'patternProperties' as JSON Schema ` +
-        `keywords even when they were property NAMES, preserving their ` +
-        `description annotations: ${JSON.stringify(safe.inputSchema)}`,
+      details: `injection marker survived inside the sanitised tool — the round-16 walker treated 'properties' / 'patternProperties' as JSON Schema keywords even when they were property NAMES, preserving their description annotations: ${JSON.stringify(safe.inputSchema)}`,
     }
   }
   // (2) The property NAMES survive (so the model can still call
@@ -1536,9 +1426,7 @@ function subcasePropertiesNamedPropertyNotAKeyword(): ProbeResult {
   if (!props || !("properties" in props) || !("patternProperties" in props)) {
     return {
       passed: false,
-      details:
-        `expected both 'properties' and 'patternProperties' property names to survive; ` +
-        `got keys [${Object.keys(props ?? {}).join(", ")}]`,
+      details: `expected both 'properties' and 'patternProperties' property names to survive; got keys [${Object.keys(props ?? {}).join(", ")}]`,
     }
   }
   // (3) Each surviving property has `type` but no `description`.
@@ -1547,19 +1435,19 @@ function subcasePropertiesNamedPropertyNotAKeyword(): ProbeResult {
   if (propsProp.type !== "string" || patternProp.type !== "string") {
     return {
       passed: false,
-      details: `surviving property schemas lost their type fields`,
+      details: "surviving property schemas lost their type fields",
     }
   }
   if ("description" in propsProp) {
     return {
       passed: false,
-      details: `properties.properties.description survived — the bypass is still open`,
+      details: "properties.properties.description survived — the bypass is still open",
     }
   }
   if ("description" in patternProp) {
     return {
       passed: false,
-      details: `properties.patternProperties.description survived — the bypass is still open`,
+      details: "properties.patternProperties.description survived — the bypass is still open",
     }
   }
   return {
@@ -1630,7 +1518,7 @@ function subcaseDescriptionPropertyPreserved(): ProbeResult {
   if ("description" in schema) {
     return {
       passed: false,
-      details: `schema-level annotation description should have been dropped, but it survived`,
+      details: "schema-level annotation description should have been dropped, but it survived",
     }
   }
   // (3) The `properties` map keeps both keys — including the one
@@ -1639,11 +1527,7 @@ function subcaseDescriptionPropertyPreserved(): ProbeResult {
   if (!props || !("title" in props) || !("description" in props)) {
     return {
       passed: false,
-      details:
-        `expected properties.title and properties.description to both survive; ` +
-        `got keys [${Object.keys(props ?? {}).join(", ")}]. ` +
-        `Pre-fix the description PROPERTY was dropped because the scrubber treated ` +
-        `every key named 'description' as an annotation.`,
+      details: `expected properties.title and properties.description to both survive; got keys [${Object.keys(props ?? {}).join(", ")}]. Pre-fix the description PROPERTY was dropped because the scrubber treated every key named 'description' as an annotation.`,
     }
   }
   // (4) Each surviving property keeps its `type` but loses its
@@ -1653,19 +1537,19 @@ function subcaseDescriptionPropertyPreserved(): ProbeResult {
   if (titleProp.type !== "string" || descriptionProp.type !== "string") {
     return {
       passed: false,
-      details: `surviving properties lost their type fields`,
+      details: "surviving properties lost their type fields",
     }
   }
   if ("description" in titleProp) {
     return {
       passed: false,
-      details: `properties.title.description (annotation) survived — should be scrubbed`,
+      details: "properties.title.description (annotation) survived — should be scrubbed",
     }
   }
   if ("description" in descriptionProp) {
     return {
       passed: false,
-      details: `properties.description.description (annotation) survived — should be scrubbed`,
+      details: "properties.description.description (annotation) survived — should be scrubbed",
     }
   }
   // (5) The `required` array still references "description" and
@@ -1782,9 +1666,7 @@ async function subcaseAdvertisedCatalogSanitised(logDir: string): Promise<ProbeR
   if (advertisedJson.includes(INJECTION_MARKER)) {
     return {
       passed: false,
-      details:
-        `the injection marker '${INJECTION_MARKER}' leaked into the advertised tool catalog. ` +
-        `Pre-fix this is the prompt-injection path Codex flagged.`,
+      details: `the injection marker '${INJECTION_MARKER}' leaked into the advertised tool catalog. Pre-fix this is the prompt-injection path Codex flagged.`,
     }
   }
   if (advertised.length !== 1) {
@@ -1832,7 +1714,7 @@ async function subcaseAdvertisedCatalogSanitised(logDir: string): Promise<ProbeR
   if ("description" in pathProp) {
     return {
       passed: false,
-      details: `inputSchema.properties.path.description survived — injection vector remains`,
+      details: "inputSchema.properties.path.description survived — injection vector remains",
     }
   }
 
@@ -1847,7 +1729,8 @@ async function subcaseAdvertisedCatalogSanitised(logDir: string): Promise<ProbeR
   if (!adEvent) {
     return {
       passed: false,
-      details: "no mcp_proxy.tool_advertised audit event — operators have no way to see what the downstream actually claimed",
+      details:
+        "no mcp_proxy.tool_advertised audit event — operators have no way to see what the downstream actually claimed",
     }
   }
   const payload = adEvent.payload as {
@@ -1856,7 +1739,10 @@ async function subcaseAdvertisedCatalogSanitised(logDir: string): Promise<ProbeR
     original_tool?: { description?: string }
   }
   if (payload.lodestar_name !== lodestarName) {
-    return { passed: false, details: `audit event has wrong lodestar_name: '${payload.lodestar_name}'` }
+    return {
+      passed: false,
+      details: `audit event has wrong lodestar_name: '${payload.lodestar_name}'`,
+    }
   }
   if (
     typeof payload.original_tool?.description !== "string" ||
@@ -1896,10 +1782,7 @@ function subcaseOptionalTaskSupportForcedForbidden(): ProbeResult {
   if (taskSupport !== "forbidden") {
     return {
       passed: false,
-      details:
-        `expected execution.taskSupport='forbidden' on sanitised tool, got '${String(taskSupport)}'. ` +
-        `Pre-fix, optional-task tools advertised their original hint and task-aware clients would ` +
-        `send task-augmented calls the v0 proxy can't forward.`,
+      details: `expected execution.taskSupport='forbidden' on sanitised tool, got '${String(taskSupport)}'. Pre-fix, optional-task tools advertised their original hint and task-aware clients would send task-augmented calls the v0 proxy can't forward.`,
     }
   }
   // A tool with no execution hint at all should also come out
@@ -1915,7 +1798,8 @@ function subcaseOptionalTaskSupportForcedForbidden(): ProbeResult {
     lodestarName: "mcp.example.plain",
     downstreamName: "example",
   })
-  const plainTaskSupport = (safePlain as { execution?: { taskSupport?: string } }).execution?.taskSupport
+  const plainTaskSupport = (safePlain as { execution?: { taskSupport?: string } }).execution
+    ?.taskSupport
   if (plainTaskSupport !== "forbidden") {
     return {
       passed: false,
@@ -1944,14 +1828,14 @@ function subcaseDownstreamEnvMerged(): ProbeResult {
     return {
       passed: false,
       details:
-        `mergeDownstreamEnv(undefined) returned a defined object; expected undefined so the SDK applies its default`,
+        "mergeDownstreamEnv(undefined) returned a defined object; expected undefined so the SDK applies its default",
     }
   }
   // (2) defined config env → must include PATH from the SDK's
   //     default AND the operator-supplied key.
   const merged = mergeDownstreamEnv({ CUSTOM_API_KEY: "abc-123" })
   if (merged === undefined) {
-    return { passed: false, details: `mergeDownstreamEnv returned undefined for a defined config` }
+    return { passed: false, details: "mergeDownstreamEnv returned undefined for a defined config" }
   }
   if (merged.CUSTOM_API_KEY !== "abc-123") {
     return {
@@ -1965,9 +1849,7 @@ function subcaseDownstreamEnvMerged(): ProbeResult {
   if (typeof merged.PATH !== "string" || merged.PATH.length === 0) {
     return {
       passed: false,
-      details:
-        `merged env is missing PATH from the SDK's default. Operator-supplied env wholesale replaced ` +
-        `the safe-inherited environment. merged keys: [${Object.keys(merged).join(", ")}]`,
+      details: `merged env is missing PATH from the SDK's default. Operator-supplied env wholesale replaced the safe-inherited environment. merged keys: [${Object.keys(merged).join(", ")}]`,
     }
   }
   // (3) Operator value wins on collision with the default env.
@@ -2103,12 +1985,16 @@ async function subcaseUnknownBlockMetaStripped(logDir: string): Promise<ProbeRes
   const raw = block.raw as Record<string, unknown>
   const meta = raw._meta as Record<string, unknown> | undefined
   if (!meta) {
-    return { passed: false, details: "raw._meta was stripped entirely; expected sibling x-server-tag preserved" }
+    return {
+      passed: false,
+      details: "raw._meta was stripped entirely; expected sibling x-server-tag preserved",
+    }
   }
   if ("_lodestar" in meta) {
     return {
       passed: false,
-      details: "raw._meta still carries the forged _lodestar marker — strip did not reach the unknown branch",
+      details:
+        "raw._meta still carries the forged _lodestar marker — strip did not reach the unknown branch",
     }
   }
   if (meta["x-server-tag"] !== "preserved") {
@@ -2120,12 +2006,16 @@ async function subcaseUnknownBlockMetaStripped(logDir: string): Promise<ProbeRes
   const inner = raw.inner as Record<string, unknown> | undefined
   const innerMeta = inner?._meta as Record<string, unknown> | undefined
   if (!innerMeta) {
-    return { passed: false, details: "raw.inner._meta was stripped entirely; expected sibling nested_keep preserved" }
+    return {
+      passed: false,
+      details: "raw.inner._meta was stripped entirely; expected sibling nested_keep preserved",
+    }
   }
   if ("_lodestar" in innerMeta) {
     return {
       passed: false,
-      details: "raw.inner._meta still carries the forged _lodestar marker — recursive strip did not descend",
+      details:
+        "raw.inner._meta still carries the forged _lodestar marker — recursive strip did not descend",
     }
   }
   if (innerMeta.nested_keep !== "yes") {
@@ -2155,9 +2045,10 @@ async function subcasePaginationCapEdge(): Promise<ProbeResult> {
       inputSchema: { type: "object", properties: {}, required: [] },
     },
   ]
-  const singlePage = async (
-    _params?: { cursor?: string },
-  ): Promise<{ tools: MCPTool[]; nextCursor?: string }> => ({
+  const singlePage = async (_params?: { cursor?: string }): Promise<{
+    tools: MCPTool[]
+    nextCursor?: string
+  }> => ({
     tools: SINGLE_PAGE,
   })
   // With maxPages = 1 and a single-page catalog: pre-fix this
@@ -2171,9 +2062,10 @@ async function subcasePaginationCapEdge(): Promise<ProbeResult> {
   }
   // Sanity check the cap still fires when the cursor IS still set.
   let capThrew = false
-  const alwaysCursor = async (
-    _params?: { cursor?: string },
-  ): Promise<{ tools: MCPTool[]; nextCursor?: string }> => ({
+  const alwaysCursor = async (_params?: { cursor?: string }): Promise<{
+    tools: MCPTool[]
+    nextCursor?: string
+  }> => ({
     tools: [],
     nextCursor: "endless",
   })
@@ -2202,23 +2094,48 @@ async function subcasePaginationCapEdge(): Promise<ProbeResult> {
  */
 async function subcasePaginatedToolsList(): Promise<ProbeResult> {
   const PAGE_1: MCPTool[] = [
-    { name: "p1_a", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "p1_b", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+    {
+      name: "p1_a",
+      description: "",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "p1_b",
+      description: "",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
   ]
   const PAGE_2: MCPTool[] = [
-    { name: "p2_a", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+    {
+      name: "p2_a",
+      description: "",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
   ]
   const PAGE_3: MCPTool[] = [
-    { name: "p3_a", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "p3_b", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: "p3_c", description: "", inputSchema: { type: "object", properties: {}, required: [] } },
+    {
+      name: "p3_a",
+      description: "",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "p3_b",
+      description: "",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: "p3_c",
+      description: "",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
   ]
 
   // (1) Happy path: three pages drained in order, no leftover cursor.
   const calls: Array<{ cursor?: string }> = []
-  const happy = async (
-    params?: { cursor?: string },
-  ): Promise<{ tools: MCPTool[]; nextCursor?: string }> => {
+  const happy = async (params?: { cursor?: string }): Promise<{
+    tools: MCPTool[]
+    nextCursor?: string
+  }> => {
     calls.push({ cursor: params?.cursor })
     if (params?.cursor === undefined) {
       return { tools: PAGE_1, nextCursor: "cursor-1" }
@@ -2257,9 +2174,10 @@ async function subcasePaginatedToolsList(): Promise<ProbeResult> {
 
   // (2) Safety cap: a misbehaving downstream that returns
   //     nextCursor forever must abort after maxPages.
-  const infinite = async (
-    _params?: { cursor?: string },
-  ): Promise<{ tools: MCPTool[]; nextCursor?: string }> => ({
+  const infinite = async (_params?: { cursor?: string }): Promise<{
+    tools: MCPTool[]
+    nextCursor?: string
+  }> => ({
     tools: [],
     nextCursor: "never-ends",
   })
@@ -2279,7 +2197,7 @@ async function subcasePaginatedToolsList(): Promise<ProbeResult> {
   if (!capThrew) {
     return {
       passed: false,
-      details: `infinite-pagination downstream did not trigger the safety cap`,
+      details: "infinite-pagination downstream did not trigger the safety cap",
     }
   }
   return {
@@ -2352,7 +2270,7 @@ async function subcaseRefusedCallAudited(logDir: string): Promise<ProbeResult> {
       arguments: { sneaky: true },
     })
     if (!result.isError) {
-      return { passed: false, details: `proxy did not refuse the unadvertised call` }
+      return { passed: false, details: "proxy did not refuse the unadvertised call" }
     }
   } finally {
     await proxy.stop()
@@ -2368,8 +2286,8 @@ async function subcaseRefusedCallAudited(logDir: string): Promise<ProbeResult> {
     return {
       passed: false,
       details:
-        `no mcp_proxy.call_refused envelope in the event log. Pre-fix the proxy returned ` +
-        `the synthetic result silently and the bypass attempt left no trace in lodestar report.`,
+        "no mcp_proxy.call_refused envelope in the event log. Pre-fix the proxy returned " +
+        "the synthetic result silently and the bypass attempt left no trace in lodestar report.",
     }
   }
   const payload = refused.payload as {
@@ -2398,7 +2316,7 @@ async function subcaseRefusedCallAudited(logDir: string): Promise<ProbeResult> {
     }
   }
   if (typeof payload.refused_at !== "string") {
-    return { passed: false, details: `refused event missing refused_at timestamp` }
+    return { passed: false, details: "refused event missing refused_at timestamp" }
   }
   return {
     passed: true,
@@ -2418,8 +2336,16 @@ async function subcaseRestartDoesNotAccumulateCatalog(logDir: string): Promise<P
   const toolA = "echo_a"
   const toolB = "echo_b"
   const tools: MCPTool[] = [
-    { name: toolA, description: "A", inputSchema: { type: "object", properties: {}, required: [] } },
-    { name: toolB, description: "B", inputSchema: { type: "object", properties: {}, required: [] } },
+    {
+      name: toolA,
+      description: "A",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
+    {
+      name: toolB,
+      description: "B",
+      inputSchema: { type: "object", properties: {}, required: [] },
+    },
   ]
   const buildDownstream = (): DownstreamConnection =>
     new (class extends DownstreamConnection {
@@ -2489,10 +2415,7 @@ async function subcaseRestartDoesNotAccumulateCatalog(logDir: string): Promise<P
   if (secondCatalogSize !== 2) {
     return {
       passed: false,
-      details:
-        `second start advertised ${secondCatalogSize} tool(s); expected 2. ` +
-        `Pre-fix the catalog would have grown to 4 (accumulated copies of each tool).` +
-        ` Names: [${secondCatalogNames.join(", ")}]`,
+      details: `second start advertised ${secondCatalogSize} tool(s); expected 2. Pre-fix the catalog would have grown to 4 (accumulated copies of each tool). Names: [${secondCatalogNames.join(", ")}]`,
     }
   }
   // Also assert names are distinct — guards against any future
@@ -2501,14 +2424,12 @@ async function subcaseRestartDoesNotAccumulateCatalog(logDir: string): Promise<P
   if (uniqueNames.size !== secondCatalogSize) {
     return {
       passed: false,
-      details:
-        `second start advertised duplicate names: [${secondCatalogNames.join(", ")}]`,
+      details: `second start advertised duplicate names: [${secondCatalogNames.join(", ")}]`,
     }
   }
   return {
     passed: true,
-    details:
-      "same MCPProxy started twice; catalog stayed at 2 tools each cycle, names distinct",
+    details: "same MCPProxy started twice; catalog stayed at 2 tools each cycle, names distinct",
   }
 }
 
@@ -2594,17 +2515,14 @@ async function subcaseTaskRequiredToolsFiltered(logDir: string): Promise<ProbeRe
     if (!advertised.some((t) => t.name === regularLodestarName)) {
       return {
         passed: false,
-        details:
-          `the regular tool was dropped from the catalog (advertised=[${advertised.map((t) => t.name).join(", ")}])`,
+        details: `the regular tool was dropped from the catalog (advertised=[${advertised.map((t) => t.name).join(", ")}])`,
       }
     }
     // (2) … but NOT the task-required tool.
     if (advertised.some((t) => t.name === taskOnlyLodestarName)) {
       return {
         passed: false,
-        details:
-          `the task-required tool '${taskOnlyLodestarName}' leaked into the upstream catalog. ` +
-          `Spec-compliant clients that send a task call would get a protocol error.`,
+        details: `the task-required tool '${taskOnlyLodestarName}' leaked into the upstream catalog. Spec-compliant clients that send a task call would get a protocol error.`,
       }
     }
     // (3) The proxy must refuse calls to the task-required tool —
@@ -2618,8 +2536,8 @@ async function subcaseTaskRequiredToolsFiltered(logDir: string): Promise<ProbeRe
       return {
         passed: false,
         details:
-          `proxy.handleCallTool on the task-required tool did not return isError; ` +
-          `the gate let through a tool we explicitly chose not to advertise`,
+          "proxy.handleCallTool on the task-required tool did not return isError; " +
+          "the gate let through a tool we explicitly chose not to advertise",
       }
     }
   } finally {
@@ -2719,10 +2637,7 @@ async function subcaseBadLogRootFailsCleanly(_logDir: string): Promise<ProbeResu
   if (stopThrew) {
     return {
       passed: false,
-      details:
-        `proxy.stop() threw after a clean rollback of proxy.start(). ` +
-        `The CLI catch path would surface a compound error instead of the original ` +
-        `startup failure (${startError instanceof Error ? startError.message : String(startError)}).`,
+      details: `proxy.stop() threw after a clean rollback of proxy.start(). The CLI catch path would surface a compound error instead of the original startup failure (${startError instanceof Error ? startError.message : String(startError)}).`,
     }
   }
   return {
@@ -2824,26 +2739,29 @@ async function subcaseStripReservedLodestarMeta(logDir: string): Promise<ProbeRe
       return {
         passed: false,
         details:
-          `isPolicyDeniedResult returned true for a downstream-authored result. ` +
-          `The hostile downstream spoofed the policy_denied marker via _meta._lodestar.`,
+          "isPolicyDeniedResult returned true for a downstream-authored result. " +
+          "The hostile downstream spoofed the policy_denied marker via _meta._lodestar.",
       }
     }
     // (2) Result-level _meta should still carry the non-reserved
     // downstream tag, but NOT _lodestar.
     const meta = result._meta
     if (!meta) {
-      return { passed: false, details: `result._meta was stripped entirely; expected sibling keys preserved` }
+      return {
+        passed: false,
+        details: "result._meta was stripped entirely; expected sibling keys preserved",
+      }
     }
     if ("_lodestar" in meta) {
       return {
         passed: false,
-        details: `result._meta retained the reserved _lodestar key from the hostile downstream`,
+        details: "result._meta retained the reserved _lodestar key from the hostile downstream",
       }
     }
     if (meta["x-real-server-tag"] !== "preserved") {
       return {
         passed: false,
-        details: `result._meta lost a legitimate downstream key alongside _lodestar`,
+        details: "result._meta lost a legitimate downstream key alongside _lodestar",
       }
     }
     // (3) Same check at the block level.
@@ -2852,19 +2770,19 @@ async function subcaseStripReservedLodestarMeta(logDir: string): Promise<ProbeRe
     if (!blockMeta) {
       return {
         passed: false,
-        details: `content[0]._meta was stripped entirely; expected sibling keys preserved`,
+        details: "content[0]._meta was stripped entirely; expected sibling keys preserved",
       }
     }
     if ("_lodestar" in blockMeta) {
       return {
         passed: false,
-        details: `content[0]._meta retained the reserved _lodestar key from the hostile downstream`,
+        details: "content[0]._meta retained the reserved _lodestar key from the hostile downstream",
       }
     }
     if (blockMeta["x-server-block-tag"] !== "preserved") {
       return {
         passed: false,
-        details: `content[0]._meta lost a legitimate downstream key alongside _lodestar`,
+        details: "content[0]._meta lost a legitimate downstream key alongside _lodestar",
       }
     }
     // (4) Audit trail: the event log's observation.recorded must
@@ -2877,15 +2795,15 @@ async function subcaseStripReservedLodestarMeta(logDir: string): Promise<ProbeRe
     )
     const obsEnvelope = envelopes.find((e) => e.type === "observation.recorded")
     if (!obsEnvelope) {
-      return { passed: false, details: `no observation.recorded event in log` }
+      return { passed: false, details: "no observation.recorded event in log" }
     }
     const obs = obsEnvelope.payload as { meta?: Record<string, unknown> }
     if (obs.meta && "_lodestar" in obs.meta) {
       return {
         passed: false,
         details:
-          `the persisted observation carried the spoofed _meta._lodestar marker. ` +
-          `Sentinels reading the event log would misclassify it as a Lodestar decision.`,
+          "the persisted observation carried the spoofed _meta._lodestar marker. " +
+          "Sentinels reading the event log would misclassify it as a Lodestar decision.",
       }
     }
   } finally {
@@ -2929,9 +2847,7 @@ function subcaseDuplicateDownstreamNamesRejected(): ProbeResult {
     if (!message.includes("downstream_servers")) {
       return {
         passed: false,
-        details:
-          `config parse threw but the error did not mention 'downstream_servers'. ` +
-          `Got: ${message.slice(0, 200)}`,
+        details: `config parse threw but the error did not mention 'downstream_servers'. Got: ${message.slice(0, 200)}`,
       }
     }
   }
@@ -2940,7 +2856,7 @@ function subcaseDuplicateDownstreamNamesRejected(): ProbeResult {
       passed: false,
       details:
         `ProxyConfigSchema accepted a config with two downstream servers named 'samename'. ` +
-        `Without the uniqueness refine, audit trail and tool_defaults ownership are ambiguous.`,
+        "Without the uniqueness refine, audit trail and tool_defaults ownership are ambiguous.",
     }
   }
   return {
@@ -2978,26 +2894,21 @@ async function subcaseStdinEofClosesProxy(): Promise<ProbeResult> {
   // PassThrough. Cap at 2s so a regression fails the probe instead
   // of hanging it forever.
   const closed = upstream.waitUntilClosed()
-  const timeout = new Promise<"TIMEOUT">((resolve) =>
-    setTimeout(() => resolve("TIMEOUT"), 2000),
-  )
+  const timeout = new Promise<"TIMEOUT">((resolve) => setTimeout(() => resolve("TIMEOUT"), 2000))
 
   // Signal EOF on the writable side of the PassThrough. Its
   // readable side then emits 'end', which our listener picks up.
   stdin.end()
 
-  const outcome = await Promise.race([
-    closed.then(() => "CLOSED" as const),
-    timeout,
-  ])
+  const outcome = await Promise.race([closed.then(() => "CLOSED" as const), timeout])
   if (outcome === "TIMEOUT") {
     await upstream.stop()
     return {
       passed: false,
       details:
-        `UpstreamServer.waitUntilClosed() did not resolve within 2s after stdin EOF. ` +
+        "UpstreamServer.waitUntilClosed() did not resolve within 2s after stdin EOF. " +
         `Pre-fix, the SDK's StdioServerTransport never surfaced stdin EOF; the proxy ` +
-        `would have hung forever and downstream child processes would leak.`,
+        "would have hung forever and downstream child processes would leak.",
     }
   }
   await upstream.stop()
@@ -3024,9 +2935,7 @@ async function subcaseRejectsUnadvertisedTools(logDir: string): Promise<ProbeRes
   const FOREIGN_TOOL_NAME = "foreign.exec"
   let foreignExecuted = false
   const z = await import("zod")
-  const {
-    registerTool: kernelRegisterTool,
-  } = await import("@qmilab/lodestar-action-kernel")
+  const { registerTool: kernelRegisterTool } = await import("@qmilab/lodestar-action-kernel")
   // Register a foreign output schema so this tool is structurally
   // valid; the proxy must still refuse to invoke it.
   registry.register(
@@ -3127,8 +3036,8 @@ async function subcaseRejectsUnadvertisedTools(logDir: string): Promise<ProbeRes
       return {
         passed: false,
         details:
-          `the proxy rejected the foreign call but the tool already executed — gate ran AFTER ` +
-          `kernel propose/execute. The gate must precede any kernel interaction.`,
+          "the proxy rejected the foreign call but the tool already executed — gate ran AFTER " +
+          "kernel propose/execute. The gate must precede any kernel interaction.",
       }
     }
     // The denial must surface as the new "tool_not_advertised" kind
@@ -3140,8 +3049,7 @@ async function subcaseRejectsUnadvertisedTools(logDir: string): Promise<ProbeRes
     if (kind !== "tool_not_advertised") {
       return {
         passed: false,
-        details:
-          `expected _meta._lodestar.kind='tool_not_advertised'; got '${kind ?? "(none)"}'`,
+        details: `expected _meta._lodestar.kind='tool_not_advertised'; got '${kind ?? "(none)"}'`,
       }
     }
   } finally {
@@ -3235,14 +3143,14 @@ async function subcaseMetadataRoundtrip(logDir: string): Promise<ProbeResult> {
       arguments: {},
     })
     if (result.isError === true) {
-      return { passed: false, details: `meta-roundtrip result.isError=true` }
+      return { passed: false, details: "meta-roundtrip result.isError=true" }
     }
     // (1) result-level _meta survived
     if (!result._meta) {
       return {
         passed: false,
         details:
-          `result._meta was undefined; expected to round-trip { progressToken, x-server-trace-id }`,
+          "result._meta was undefined; expected to round-trip { progressToken, x-server-trace-id }",
       }
     }
     if (JSON.stringify(result._meta) !== JSON.stringify(RESULT_META)) {
@@ -3260,17 +3168,14 @@ async function subcaseMetadataRoundtrip(logDir: string): Promise<ProbeResult> {
     if (JSON.stringify(blockRecord._meta) !== JSON.stringify(BLOCK_META)) {
       return {
         passed: false,
-        details:
-          `block._meta did not round-trip. Got: ${JSON.stringify(blockRecord._meta)}. ` +
-          `Pre-fix block-level _meta and annotations were silently dropped.`,
+        details: `block._meta did not round-trip. Got: ${JSON.stringify(blockRecord._meta)}. Pre-fix block-level _meta and annotations were silently dropped.`,
       }
     }
     // (3) content-block annotations survived
     if (JSON.stringify(blockRecord.annotations) !== JSON.stringify(BLOCK_ANNOTATIONS)) {
       return {
         passed: false,
-        details:
-          `block.annotations did not round-trip. Got: ${JSON.stringify(blockRecord.annotations)}`,
+        details: `block.annotations did not round-trip. Got: ${JSON.stringify(blockRecord.annotations)}`,
       }
     }
   } finally {
@@ -3339,7 +3244,7 @@ async function subcaseFailedStartNoSpuriousEnd(logDir: string): Promise<ProbeRes
   }
   if (!threw) {
     await proxy.stop()
-    return { passed: false, details: `proxy.start() did not throw despite failing downstream` }
+    return { passed: false, details: "proxy.start() did not throw despite failing downstream" }
   }
   // Mirror the CLI's catch path: call stop() after start() threw.
   // With the round-4 fix, this must NOT emit guard.session.ended.
@@ -3347,10 +3252,7 @@ async function subcaseFailedStartNoSpuriousEnd(logDir: string): Promise<ProbeRes
 
   // Inspect the event log for this session.
   const reader = new EventLogReader(logDir)
-  const envelopes = await reader.readSession(
-    config.project_id,
-    config.session_id as string,
-  )
+  const envelopes = await reader.readSession(config.project_id, config.session_id as string)
   const types = envelopes.map((e) => e.type)
   const hasFailed = types.includes("guard.session.failed")
   const hasEnded = types.includes("guard.session.ended")
@@ -3363,9 +3265,7 @@ async function subcaseFailedStartNoSpuriousEnd(logDir: string): Promise<ProbeRes
   if (hasEnded) {
     return {
       passed: false,
-      details:
-        `the trust report would show this failed startup as if it closed cleanly. ` +
-        `guard.session.ended found alongside guard.session.failed: [${types.join(", ")}]`,
+      details: `the trust report would show this failed startup as if it closed cleanly. guard.session.ended found alongside guard.session.failed: [${types.join(", ")}]`,
     }
   }
   return {
@@ -3456,15 +3356,13 @@ async function subcaseResourceLinkRoundtrip(logDir: string): Promise<ProbeResult
       arguments: {},
     })
     if (result.isError === true) {
-      return { passed: false, details: `resource_link result.isError=true` }
+      return { passed: false, details: "resource_link result.isError=true" }
     }
     const block = result.content[0]
     if (!block || block.type !== "resource_link") {
       return {
         passed: false,
-        details:
-          `expected content[0].type='resource_link'; got '${block?.type ?? "(none)"}'. ` +
-          `Pre-fix this block fell through to "unknown" and was downgraded to a text placeholder.`,
+        details: `expected content[0].type='resource_link'; got '${block?.type ?? "(none)"}'. Pre-fix this block fell through to "unknown" and was downgraded to a text placeholder.`,
       }
     }
     if (block.uri !== LINK_URI || block.name !== LINK_NAME) {
@@ -3474,13 +3372,13 @@ async function subcaseResourceLinkRoundtrip(logDir: string): Promise<ProbeResult
       }
     }
     if (block.description !== LINK_DESCRIPTION) {
-      return { passed: false, details: `description did not round-trip` }
+      return { passed: false, details: "description did not round-trip" }
     }
     if (block.mimeType !== LINK_MIME) {
-      return { passed: false, details: `mimeType did not round-trip` }
+      return { passed: false, details: "mimeType did not round-trip" }
     }
     if (block.size !== LINK_SIZE) {
-      return { passed: false, details: `size did not round-trip` }
+      return { passed: false, details: "size did not round-trip" }
     }
   } finally {
     await proxy.stop()
@@ -3566,14 +3464,14 @@ async function subcaseStructuredContentRoundtrip(logDir: string): Promise<ProbeR
       arguments: {},
     })
     if (result.isError === true) {
-      return { passed: false, details: `structuredContent result.isError=true` }
+      return { passed: false, details: "structuredContent result.isError=true" }
     }
     if (result.structuredContent === undefined) {
       return {
         passed: false,
         details:
-          `result.structuredContent was undefined; expected the typed payload to round-trip. ` +
-          `Pre-fix the proxy dropped this field entirely.`,
+          "result.structuredContent was undefined; expected the typed payload to round-trip. " +
+          "Pre-fix the proxy dropped this field entirely.",
       }
     }
     if (JSON.stringify(result.structuredContent) !== JSON.stringify(STRUCTURED)) {
@@ -3587,8 +3485,7 @@ async function subcaseStructuredContentRoundtrip(logDir: string): Promise<ProbeR
   }
   return {
     passed: true,
-    details:
-      "structuredContent round-tripped intact alongside the text content blocks",
+    details: "structuredContent round-tripped intact alongside the text content blocks",
   }
 }
 
@@ -3601,7 +3498,8 @@ async function subcaseResourceBlobRoundtrip(logDir: string): Promise<ProbeResult
   const downstreamName = "blobsrv"
   const toolName = "fetch_pdf"
   const lodestarName = `mcp.${downstreamName}.${toolName}`
-  const PDF_BYTES_B64 = "JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9MZW5ndGggNiAwIFI+PgpzdHJlYW0KQlQKRVQKZW5kc3RyZWFtCmVuZG9iago="
+  const PDF_BYTES_B64 =
+    "JVBERi0xLjQKJcfsj6IKNSAwIG9iago8PC9MZW5ndGggNiAwIFI+PgpzdHJlYW0KQlQKRVQKZW5kc3RyZWFtCmVuZG9iago="
   const PDF_MIME = "application/pdf"
   const PDF_URI = "file:///tmp/example.pdf"
   const tool: MCPTool = {
@@ -3669,15 +3567,13 @@ async function subcaseResourceBlobRoundtrip(logDir: string): Promise<ProbeResult
       arguments: {},
     })
     if (result.isError === true) {
-      return { passed: false, details: `blob-roundtrip result.isError=true` }
+      return { passed: false, details: "blob-roundtrip result.isError=true" }
     }
     const block = result.content[0]
     if (!block || block.type !== "resource") {
       return {
         passed: false,
-        details:
-          `expected the content block to round-trip as type='resource'; got ` +
-          `type='${block?.type ?? "(none)"}'`,
+        details: `expected the content block to round-trip as type='resource'; got type='${block?.type ?? "(none)"}'`,
       }
     }
     if (block.resource.uri !== PDF_URI) {
@@ -3689,24 +3585,19 @@ async function subcaseResourceBlobRoundtrip(logDir: string): Promise<ProbeResult
     if (block.resource.mimeType !== PDF_MIME) {
       return {
         passed: false,
-        details: `resource.mimeType did not round-trip`,
+        details: "resource.mimeType did not round-trip",
       }
     }
     if (block.resource.blob !== PDF_BYTES_B64) {
       return {
         passed: false,
-        details:
-          `resource.blob did not round-trip. Got: ${block.resource.blob ?? "(undefined)"}. ` +
-          `Pre-fix this dropped the binary payload entirely — PDFs, images-as-resource, ` +
-          `anything not text would lose its bytes on the way through the proxy.`,
+        details: `resource.blob did not round-trip. Got: ${block.resource.blob ?? "(undefined)"}. Pre-fix this dropped the binary payload entirely — PDFs, images-as-resource, anything not text would lose its bytes on the way through the proxy.`,
       }
     }
     if (block.resource.text !== undefined) {
       return {
         passed: false,
-        details:
-          `resource.text was '${block.resource.text}', expected undefined ` +
-          `(downstream sent blob only)`,
+        details: `resource.text was '${block.resource.text}', expected undefined (downstream sent blob only)`,
       }
     }
   } finally {
@@ -3792,10 +3683,9 @@ async function subcaseHelperRollback(logDir: string): Promise<ProbeResult> {
   // forces the helper to throw on its second iteration, after it has
   // already registered the FIRST tool. Pre-fix the first
   // registration stayed in the registry.
-  const {
-    _resetToolsForTests: _reset,
-    registerTool: registerToolFn,
-  } = await import("@qmilab/lodestar-action-kernel")
+  const { _resetToolsForTests: _reset, registerTool: registerToolFn } = await import(
+    "@qmilab/lodestar-action-kernel"
+  )
   void _reset
   registerToolFn({
     name: collidingLodestarName,
@@ -3828,7 +3718,7 @@ async function subcaseHelperRollback(logDir: string): Promise<ProbeResult> {
     await proxy.stop()
     return {
       passed: false,
-      details: `proxy.start() did not throw despite a pre-existing colliding tool registration`,
+      details: "proxy.start() did not throw despite a pre-existing colliding tool registration",
     }
   }
 
@@ -3840,10 +3730,7 @@ async function subcaseHelperRollback(logDir: string): Promise<ProbeResult> {
   if (lookupTool(okLodestarName) !== undefined) {
     return {
       passed: false,
-      details:
-        `${okLodestarName} is still registered after the helper threw. ` +
-        `The transactional rollback failed; earlier registrations were ` +
-        `stranded in the process-wide registry.`,
+      details: `${okLodestarName} is still registered after the helper threw. The transactional rollback failed; earlier registrations were stranded in the process-wide registry.`,
     }
   }
   return {
@@ -3866,7 +3753,8 @@ async function subcaseImageRoundtrip(logDir: string): Promise<ProbeResult> {
     description: "Fetch an image",
     inputSchema: { type: "object", properties: {}, required: [] },
   }
-  const IMG_BYTES = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
+  const IMG_BYTES =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
   const IMG_MIME = "image/png"
   const downstream = new (class extends DownstreamConnection {
     constructor() {
@@ -3919,7 +3807,10 @@ async function subcaseImageRoundtrip(logDir: string): Promise<ProbeResult> {
       arguments: {},
     })
     if (result.isError === true) {
-      return { passed: false, details: `image-roundtrip result.isError=true; meta=${JSON.stringify(result._meta)}` }
+      return {
+        passed: false,
+        details: `image-roundtrip result.isError=true; meta=${JSON.stringify(result._meta)}`,
+      }
     }
     if (result.content.length !== 1) {
       return {
@@ -3931,16 +3822,13 @@ async function subcaseImageRoundtrip(logDir: string): Promise<ProbeResult> {
     if (!block || block.type !== "image") {
       return {
         passed: false,
-        details:
-          `expected the content block to round-trip as type='image'; got ` +
-          `type='${block?.type ?? "(none)"}'. Likely the pre-fix text-placeholder ` +
-          `downgrade regressed.`,
+        details: `expected the content block to round-trip as type='image'; got type='${block?.type ?? "(none)"}'. Likely the pre-fix text-placeholder downgrade regressed.`,
       }
     }
     if (block.data !== IMG_BYTES) {
       return {
         passed: false,
-        details: `image bytes did not round-trip unchanged (data mismatch)`,
+        details: "image bytes did not round-trip unchanged (data mismatch)",
       }
     }
     if (block.mimeType !== IMG_MIME) {
@@ -3998,10 +3886,7 @@ async function subcaseConcurrentCalls(logDir: string): Promise<ProbeResult> {
     override getTools(): readonly MCPTool[] {
       return [echoTool]
     }
-    override async callTool(
-      name: string,
-      args: Record<string, unknown>,
-    ): Promise<CallToolResult> {
+    override async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
       return callTool(name, args)
     }
     override async stop(): Promise<void> {}
@@ -4044,18 +3929,13 @@ async function subcaseConcurrentCalls(logDir: string): Promise<ProbeResult> {
     if (textFirst !== "echo:first") {
       return {
         passed: false,
-        details:
-          `first call (tag=first, slow) round-tripped '${textFirst ?? "(undef)"}' ` +
-          `instead of 'echo:first'. Captures raced — the proxy returned a ` +
-          `different invocation's observation.`,
+        details: `first call (tag=first, slow) round-tripped '${textFirst ?? "(undef)"}' instead of 'echo:first'. Captures raced — the proxy returned a different invocation's observation.`,
       }
     }
     if (textSecond !== "echo:second") {
       return {
         passed: false,
-        details:
-          `second call (tag=second, fast) round-tripped '${textSecond ?? "(undef)"}' ` +
-          `instead of 'echo:second'. Captures raced.`,
+        details: `second call (tag=second, fast) round-tripped '${textSecond ?? "(undef)"}' instead of 'echo:second'. Captures raced.`,
       }
     }
   } finally {
@@ -4063,8 +3943,7 @@ async function subcaseConcurrentCalls(logDir: string): Promise<ProbeResult> {
   }
   return {
     passed: true,
-    details:
-      "two concurrent handleCallTool invocations each received their own observation",
+    details: "two concurrent handleCallTool invocations each received their own observation",
   }
 }
 
@@ -4147,11 +4026,7 @@ async function subcaseStopThenRestart(logDir: string): Promise<ProbeResult> {
   } catch (err) {
     return {
       passed: false,
-      details:
-        `second MCPProxy.start() threw after a clean stop of the first: ` +
-        `${err instanceof Error ? err.message : String(err)}. ` +
-        `Pre-fix this happened because the tool-adapter silently skipped ` +
-        `re-registration, leaving the kernel pointing at the dead closure.`,
+      details: `second MCPProxy.start() threw after a clean stop of the first: ${err instanceof Error ? err.message : String(err)}. Pre-fix this happened because the tool-adapter silently skipped re-registration, leaving the kernel pointing at the dead closure.`,
     }
   }
   try {
@@ -4159,15 +4034,11 @@ async function subcaseStopThenRestart(logDir: string): Promise<ProbeResult> {
       name: lodestarName,
       arguments: {},
     })
-    const text =
-      result.content[0]?.type === "text" ? result.content[0].text : undefined
+    const text = result.content[0]?.type === "text" ? result.content[0].text : undefined
     if (text !== "ok") {
       return {
         passed: false,
-        details:
-          `second proxy executed but the tool returned '${text ?? "(undef)"}'; ` +
-          `expected 'ok'. The kernel may still be routing to the first proxy's ` +
-          `closure (Codex P2.2).`,
+        details: `second proxy executed but the tool returned '${text ?? "(undef)"}'; expected 'ok'. The kernel may still be routing to the first proxy's closure (Codex P2.2).`,
       }
     }
   } finally {

@@ -47,7 +47,11 @@ export interface BeliefFilter {
   calibration_class?: string
 }
 
-export type LifecycleAxis = "truth_status" | "retrieval_status" | "security_status" | "freshness_status"
+export type LifecycleAxis =
+  | "truth_status"
+  | "retrieval_status"
+  | "security_status"
+  | "freshness_status"
 
 export interface BeliefAxisTransitionInput {
   belief_id: string
@@ -79,7 +83,9 @@ export class InMemoryBeliefStore implements BeliefStore {
 
   async put(belief: Belief): Promise<void> {
     if (this.beliefs.has(belief.id)) {
-      throw new Error(`BeliefStore: belief ${belief.id} already exists; use transition() for axis changes`)
+      throw new Error(
+        `BeliefStore: belief ${belief.id} already exists; use transition() for axis changes`,
+      )
     }
     this.beliefs.set(belief.id, belief)
     this.transitions.set(belief.id, [])
@@ -96,11 +102,17 @@ export class InMemoryBeliefStore implements BeliefStore {
       if (filter.claim_id && b.claim_id !== filter.claim_id) return false
       if (filter.authority && !filter.authority.includes(b.authority)) return false
       if (filter.truth_status && !filter.truth_status.includes(b.truth_status)) return false
-      if (filter.retrieval_status && !filter.retrieval_status.includes(b.retrieval_status)) return false
-      if (filter.security_status && !filter.security_status.includes(b.security_status)) return false
-      if (filter.freshness_status && !filter.freshness_status.includes(b.freshness_status)) return false
+      if (filter.retrieval_status && !filter.retrieval_status.includes(b.retrieval_status))
+        return false
+      if (filter.security_status && !filter.security_status.includes(b.security_status))
+        return false
+      if (filter.freshness_status && !filter.freshness_status.includes(b.freshness_status))
+        return false
       if (filter.calibration_class && b.calibration_class !== filter.calibration_class) return false
-      if (filter.max_sensitivity && sensitivityRank(b.sensitivity) > sensitivityRank(filter.max_sensitivity)) {
+      if (
+        filter.max_sensitivity &&
+        sensitivityRank(b.sensitivity) > sensitivityRank(filter.max_sensitivity)
+      ) {
         return false
       }
       if (filter.scope) {

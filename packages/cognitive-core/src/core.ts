@@ -1,4 +1,11 @@
-import type { Belief, Claim, EvidenceItem, EvidenceSet, Observation, ResourceScope } from "@qmilab/lodestar-core"
+import type {
+  Belief,
+  Claim,
+  EvidenceItem,
+  EvidenceSet,
+  Observation,
+  ResourceScope,
+} from "@qmilab/lodestar-core"
 import type { MemoryFirewall } from "@qmilab/lodestar-memory-firewall"
 import { aggregateStrength } from "@qmilab/lodestar-memory-firewall"
 import type { EvidenceLinker } from "./evidence-linker.js"
@@ -111,14 +118,13 @@ export class CognitiveCore {
       // codename Orrery; see docs/architecture/v02-delta.md.)
       const strongestQuality = strongestEvidenceQuality(evidence)
       const autoObservationBlocked =
-        strongestQuality === "external_document" ||
-        strongestQuality === "model_inference"
+        strongestQuality === "external_document" || strongestQuality === "model_inference"
 
-      const initialTruthStatus = strength >= 0.7 && !autoObservationBlocked
-        ? "supported"
-        : "unverified"
+      const initialTruthStatus =
+        strength >= 0.7 && !autoObservationBlocked ? "supported" : "unverified"
       const initialConfidence = Math.min(0.95, Math.max(0.1, strength))
-      const transitionAuthority = initialTruthStatus === "supported" ? "auto_observation" : "reflection"
+      const transitionAuthority =
+        initialTruthStatus === "supported" ? "auto_observation" : "reflection"
 
       const explanation = this.explanationGenerator.forBeliefAdoption({
         belief_id: "pending",

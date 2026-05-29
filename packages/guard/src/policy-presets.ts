@@ -1,5 +1,9 @@
+import type {
+  PolicyDecision,
+  PolicyGate,
+  PreconditionChecker,
+} from "@qmilab/lodestar-action-kernel"
 import type { Action } from "@qmilab/lodestar-core"
-import type { PolicyDecision, PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
 
 /**
  * Policy preset that auto-approves at the configured ceiling and
@@ -31,9 +35,7 @@ export function autoApprovePolicy(input: {
     input.auto_approve_up_to > 4
   ) {
     throw new Error(
-      `autoApprovePolicy: auto_approve_up_to must be an integer in [0,4]; ` +
-        `got ${String(input.auto_approve_up_to)}. ` +
-        `L5 is prohibited and cannot be used as an auto-approve ceiling.`,
+      `autoApprovePolicy: auto_approve_up_to must be an integer in [0,4]; got ${String(input.auto_approve_up_to)}. L5 is prohibited and cannot be used as an auto-approve ceiling.`,
     )
   }
   return async (action: Action): Promise<PolicyDecision> => {

@@ -1,8 +1,8 @@
 import { readFile, stat } from "node:fs/promises"
-import { resolve, relative } from "node:path"
-import { z } from "zod"
+import { relative, resolve } from "node:path"
+import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
-import { registerTool, type Tool } from "@qmilab/lodestar-action-kernel"
+import { z } from "zod"
 
 /**
  * fs.read — read a file's contents.
@@ -14,12 +14,14 @@ import { registerTool, type Tool } from "@qmilab/lodestar-action-kernel"
  * construction time. Paths that escape the root are rejected.
  */
 
-export const FsReadOutputSchema = z.object({
-  path: z.string(),
-  bytes: z.number().int().nonnegative(),
-  contents: z.string(),
-  truncated: z.boolean(),
-}).describe("fs.read tool output")
+export const FsReadOutputSchema = z
+  .object({
+    path: z.string(),
+    bytes: z.number().int().nonnegative(),
+    contents: z.string(),
+    truncated: z.boolean(),
+  })
+  .describe("fs.read tool output")
 
 // Register the output schema with the global registry.
 // This is what the action kernel uses to validate tool outputs.
@@ -37,7 +39,9 @@ const DEFAULT_MAX_BYTES = 1024 * 1024
  * The same tool implementation can be registered for different
  * project roots in the future via a per-session adapter pattern.
  */
-export function makeFsReadTool(projectRoot: string): Tool<z.infer<typeof FsReadInputSchema>, z.infer<typeof FsReadOutputSchema>> {
+export function makeFsReadTool(
+  projectRoot: string,
+): Tool<z.infer<typeof FsReadInputSchema>, z.infer<typeof FsReadOutputSchema>> {
   const root = resolve(projectRoot)
   return {
     name: "fs.read",

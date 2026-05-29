@@ -31,13 +31,13 @@ import {
   Reflection,
   type ReflectionEmitter,
 } from "@qmilab/lodestar-cognitive-core"
+import type { EventEnvelope, ReflectionCompletedPayload, Revision } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import type { EventEnvelope, ReflectionCompletedPayload, Revision } from "@qmilab/lodestar-core"
 
 interface ProbeResult {
   passed: boolean
@@ -74,10 +74,30 @@ interface SubCase {
 }
 
 const SUB_CASES: SubCase[] = [
-  { label: "A (bare event type, from supported)",     transition_type: "belief.transitioned",          from_value: "supported",  decision_before_cursor: false },
-  { label: "B (prefixed firewall.* event type)",      transition_type: "firewall.belief.transitioned", from_value: "supported",  decision_before_cursor: false },
-  { label: "C (from_value: 'unverified' direct)",     transition_type: "belief.transitioned",          from_value: "unverified", decision_before_cursor: false },
-  { label: "D (historical decision, predates cursor)", transition_type: "belief.transitioned",          from_value: "supported",  decision_before_cursor: true  },
+  {
+    label: "A (bare event type, from supported)",
+    transition_type: "belief.transitioned",
+    from_value: "supported",
+    decision_before_cursor: false,
+  },
+  {
+    label: "B (prefixed firewall.* event type)",
+    transition_type: "firewall.belief.transitioned",
+    from_value: "supported",
+    decision_before_cursor: false,
+  },
+  {
+    label: "C (from_value: 'unverified' direct)",
+    transition_type: "belief.transitioned",
+    from_value: "unverified",
+    decision_before_cursor: false,
+  },
+  {
+    label: "D (historical decision, predates cursor)",
+    transition_type: "belief.transitioned",
+    from_value: "supported",
+    decision_before_cursor: true,
+  },
 ]
 
 async function runSubCase(sub: SubCase): Promise<{ passed: boolean; lines: string[] }> {
@@ -174,13 +194,13 @@ async function runSubCase(sub: SubCase): Promise<{ passed: boolean; lines: strin
     return { passed: false, lines: [`${sub.label}: FAIL — emitReflectionCompleted not called`] }
   }
 
-  const flagged = result.payload.proposals.filter(
-    (p) => p.kind === "decision_dependency_flagged",
-  )
+  const flagged = result.payload.proposals.filter((p) => p.kind === "decision_dependency_flagged")
   if (flagged.length !== 1) {
     return {
       passed: false,
-      lines: [`${sub.label}: FAIL — expected exactly 1 decision_dependency_flagged proposal, got ${flagged.length}`],
+      lines: [
+        `${sub.label}: FAIL — expected exactly 1 decision_dependency_flagged proposal, got ${flagged.length}`,
+      ],
     }
   }
   const proposal = flagged[0]!
@@ -307,7 +327,9 @@ async function runSelfChainIdempotence(): Promise<{ passed: boolean; lines: stri
   if (!pass1.emitted) {
     return {
       passed: false,
-      lines: ["E (self-chain idempotence): FAIL — pass 1 over a non-empty window should have emitted"],
+      lines: [
+        "E (self-chain idempotence): FAIL — pass 1 over a non-empty window should have emitted",
+      ],
     }
   }
   // events now contains pass 1's reflection.completed envelope.
@@ -317,7 +339,7 @@ async function runSelfChainIdempotence(): Promise<{ passed: boolean; lines: stri
     return {
       passed: false,
       lines: [
-        `E (self-chain idempotence): FAIL — pass 2 over an unchanged log emitted a reflection.completed. ` +
+        "E (self-chain idempotence): FAIL — pass 2 over an unchanged log emitted a reflection.completed. " +
           `The prior pass's own envelope re-triggered a no_op (self-chain).`,
       ],
     }
@@ -326,16 +348,14 @@ async function runSelfChainIdempotence(): Promise<{ passed: boolean; lines: stri
     return {
       passed: false,
       lines: [
-        `E (self-chain idempotence): FAIL — pass 2 observed_event_ids has ` +
-          `${pass2.payload.observed_event_ids.length} ids; expected 0.`,
+        `E (self-chain idempotence): FAIL — pass 2 observed_event_ids has ${pass2.payload.observed_event_ids.length} ids; expected 0.`,
       ],
     }
   }
   return {
     passed: true,
     lines: [
-      `E (self-chain idempotence): PASS — pass 1 emitted (to_seq=${pass1.payload.cursor.to_seq}), ` +
-        `pass 2 over the unchanged log did not emit and observed nothing`,
+      `E (self-chain idempotence): PASS — pass 1 emitted (to_seq=${pass1.payload.cursor.to_seq}), pass 2 over the unchanged log did not emit and observed nothing`,
     ],
   }
 }
@@ -421,9 +441,7 @@ async function runConcurrentWriteNotSkipped(): Promise<{ passed: boolean; lines:
     return {
       passed: false,
       lines: [
-        `H (concurrent write not skipped): FAIL — pass 2 produced ${flagged.length} ` +
-          `decision_dependency_flagged proposals; expected 1. The contradiction written concurrently ` +
-          `with pass 1 (seq below pass 1's envelope) was skipped.`,
+        `H (concurrent write not skipped): FAIL — pass 2 produced ${flagged.length} decision_dependency_flagged proposals; expected 1. The contradiction written concurrently with pass 1 (seq below pass 1's envelope) was skipped.`,
       ],
     }
   }
@@ -431,15 +449,16 @@ async function runConcurrentWriteNotSkipped(): Promise<{ passed: boolean; lines:
   if (proposal.kind !== "decision_dependency_flagged" || proposal.decision_id !== decisionId) {
     return {
       passed: false,
-      lines: [`H (concurrent write not skipped): FAIL — proposal did not name decision ${decisionId.slice(0, 8)}`],
+      lines: [
+        `H (concurrent write not skipped): FAIL — proposal did not name decision ${decisionId.slice(0, 8)}`,
+      ],
     }
   }
   void pass1
   return {
     passed: true,
     lines: [
-      `H (concurrent write not skipped): PASS — contradiction at seq below pass 1's envelope was ` +
-        `picked up by pass 2; decision ${decisionId.slice(0, 8)} flagged`,
+      `H (concurrent write not skipped): PASS — contradiction at seq below pass 1's envelope was picked up by pass 2; decision ${decisionId.slice(0, 8)} flagged`,
     ],
   }
 }
@@ -461,14 +480,9 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
   // belief.transitioned event carries superseded_by (replay-grade
   // audit, not just the live store).
   const auditEvents: { kind: string; to_value?: string; superseded_by?: string }[] = []
-  const firewall = new MemoryFirewall(
-    claimStore,
-    beliefStore,
-    evidenceStore,
-    async (event) => {
-      auditEvents.push(event as { kind: string; to_value?: string; superseded_by?: string })
-    },
-  )
+  const firewall = new MemoryFirewall(claimStore, beliefStore, evidenceStore, async (event) => {
+    auditEvents.push(event as { kind: string; to_value?: string; superseded_by?: string })
+  })
 
   // Seed two beliefs: the predecessor (truth=supported) and the
   // successor. Both share the same claim+evidence to keep setup tight.
@@ -488,13 +502,15 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
   const evidence = {
     id: crypto.randomUUID(),
     claim_id: claim.id,
-    items: [{
-      source_id: claim.source_observation_ids[0]!,
-      relation: "supports" as const,
-      quality: "tool_result" as const,
-      independence_group: "obs:probe.tool",
-      freshness: "fresh" as const,
-    }],
+    items: [
+      {
+        source_id: claim.source_observation_ids[0]!,
+        relation: "supports" as const,
+        quality: "tool_result" as const,
+        independence_group: "obs:probe.tool",
+        freshness: "fresh" as const,
+      },
+    ],
     assessed_by: "probe-actor",
     assessed_at: new Date().toISOString(),
   }
@@ -563,7 +579,8 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
     subject_id: predecessor.id,
     audience: "audit",
     summary: "probe: supersede predecessor with successor",
-    full_text: "Probe applies a belief_supersession proposal and verifies the successor link is stamped.",
+    full_text:
+      "Probe applies a belief_supersession proposal and verifies the successor link is stamped.",
     claims_used: [claim.id],
     evidence_used: [evidence.id],
   })
@@ -588,7 +605,9 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
   if (!supersedeEvent) {
     return {
       passed: false,
-      lines: ["F (supersession link): FAIL — no belief.transitioned → superseded audit event emitted"],
+      lines: [
+        "F (supersession link): FAIL — no belief.transitioned → superseded audit event emitted",
+      ],
     }
   }
   if (supersedeEvent.superseded_by !== successor.id) {
@@ -603,20 +622,24 @@ async function runSupersessionLink(): Promise<{ passed: boolean; lines: string[]
 
   const stored = await beliefStore.get(predecessor.id)
   if (!stored) {
-    return { passed: false, lines: ["F (supersession link): FAIL — predecessor belief not found after apply"] }
+    return {
+      passed: false,
+      lines: ["F (supersession link): FAIL — predecessor belief not found after apply"],
+    }
   }
   if (stored.truth_status !== "superseded") {
     return {
       passed: false,
-      lines: [`F (supersession link): FAIL — truth_status='${stored.truth_status}', expected 'superseded'`],
+      lines: [
+        `F (supersession link): FAIL — truth_status='${stored.truth_status}', expected 'superseded'`,
+      ],
     }
   }
   if (stored.superseded_by !== successor.id) {
     return {
       passed: false,
       lines: [
-        `F (supersession link): FAIL — superseded_by='${stored.superseded_by}', expected '${successor.id}'. ` +
-          `The successor pointer was lost; downstream audit cannot tell which belief replaced this one.`,
+        `F (supersession link): FAIL — superseded_by='${stored.superseded_by}', expected '${successor.id}'. The successor pointer was lost; downstream audit cannot tell which belief replaced this one.`,
       ],
     }
   }
@@ -744,34 +767,35 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
     apply: true,
   })
 
-  const flagged = result.payload.proposals.filter(
-    (p) => p.kind === "decision_dependency_flagged",
-  )
+  const flagged = result.payload.proposals.filter((p) => p.kind === "decision_dependency_flagged")
   const noOps = result.payload.proposals.filter((p) => p.kind === "no_op")
 
   if (flagged.length !== 1) {
     return {
       passed: false,
-      lines: [`G (mixed window audit): FAIL — expected 1 decision_dependency_flagged, got ${flagged.length}`],
+      lines: [
+        `G (mixed window audit): FAIL — expected 1 decision_dependency_flagged, got ${flagged.length}`,
+      ],
     }
   }
   if (noOps.length !== 1) {
     return {
       passed: false,
       lines: [
-        `G (mixed window audit): FAIL — expected exactly 1 no_op for the contradicted belief with ` +
-          `no dependent decision, got ${noOps.length}. The audit chain loses evidence that reflection ` +
-          `inspected the no-fallout contradiction.`,
+        `G (mixed window audit): FAIL — expected exactly 1 no_op for the contradicted belief with no dependent decision, got ${noOps.length}. The audit chain loses evidence that reflection inspected the no-fallout contradiction.`,
       ],
     }
   }
   const noOp = noOps[0]!
-  if (noOp.kind !== "no_op" || noOp.subject.kind !== "belief" || noOp.subject.id !== beliefWithoutDecision) {
+  if (
+    noOp.kind !== "no_op" ||
+    noOp.subject.kind !== "belief" ||
+    noOp.subject.id !== beliefWithoutDecision
+  ) {
     return {
       passed: false,
       lines: [
-        `G (mixed window audit): FAIL — no_op did not name the expected belief ` +
-          `(${beliefWithoutDecision.slice(0, 8)})`,
+        `G (mixed window audit): FAIL — no_op did not name the expected belief (${beliefWithoutDecision.slice(0, 8)})`,
       ],
     }
   }
@@ -785,8 +809,7 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
     return {
       passed: false,
       lines: [
-        `G (mixed window audit): FAIL — observed_event_ids missing the matched-decision envelope ` +
-          `(${decisionWithMatchEnvelopeId.slice(0, 8)}).`,
+        `G (mixed window audit): FAIL — observed_event_ids missing the matched-decision envelope (${decisionWithMatchEnvelopeId.slice(0, 8)}).`,
       ],
     }
   }
@@ -794,9 +817,7 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
     return {
       passed: false,
       lines: [
-        `G (mixed window audit): FAIL — observed_event_ids missing the inspected-but-unrelated ` +
-          `decision envelope (${decisionUnrelatedEnvelopeId.slice(0, 8)}). The audit chain cannot ` +
-          `distinguish "no decisions existed" from "decisions were inspected and did not match."`,
+        `G (mixed window audit): FAIL — observed_event_ids missing the inspected-but-unrelated decision envelope (${decisionUnrelatedEnvelopeId.slice(0, 8)}). The audit chain cannot distinguish "no decisions existed" from "decisions were inspected and did not match."`,
       ],
     }
   }
@@ -804,9 +825,7 @@ async function runMixedWindowAudit(): Promise<{ passed: boolean; lines: string[]
   return {
     passed: true,
     lines: [
-      `G (mixed window audit): PASS — 1 decision_dependency_flagged for ${beliefWithDecision.slice(0, 8)}, ` +
-        `1 no_op for ${beliefWithoutDecision.slice(0, 8)}, both decision envelopes (matched + unrelated) ` +
-        `in observed_event_ids`,
+      `G (mixed window audit): PASS — 1 decision_dependency_flagged for ${beliefWithDecision.slice(0, 8)}, 1 no_op for ${beliefWithoutDecision.slice(0, 8)}, both decision envelopes (matched + unrelated) in observed_event_ids`,
     ],
   }
 }
@@ -828,9 +847,11 @@ async function run(): Promise<ProbeResult> {
     for (const l of lines) details.push(l)
     if (!passed) return { passed: false, details }
   }
-  details.push("All sub-cases pass: cascade fires under both event-naming forms, captures the real " +
-    "from_value, lists historical/inspected decision envelopes, is idempotent under repeated passes, " +
-    "preserves the supersession successor link, and never skips concurrently-written events.")
+  details.push(
+    "All sub-cases pass: cascade fires under both event-naming forms, captures the real " +
+      "from_value, lists historical/inspected decision envelopes, is idempotent under repeated passes, " +
+      "preserves the supersession successor link, and never skips concurrently-written events.",
+  )
   return { passed: true, details }
 }
 

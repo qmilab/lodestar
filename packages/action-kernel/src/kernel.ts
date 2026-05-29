@@ -1,6 +1,12 @@
 import { randomUUID } from "node:crypto"
-import { type Action, type ActionContract, type ActionPrecondition, type Observation, registry } from "@qmilab/lodestar-core"
-import { lookupTool, type Tool } from "./registry.js"
+import {
+  type Action,
+  type ActionContract,
+  type ActionPrecondition,
+  type Observation,
+  registry,
+} from "@qmilab/lodestar-core"
+import { type Tool, lookupTool } from "./registry.js"
 
 /**
  * The policy gate interface. The action kernel does not implement policy
@@ -139,9 +145,7 @@ export class ActionKernel {
     // the caller — overrides are additive only. The kernel owns this
     // merge so callers don't have to (and so they can't get it wrong
     // by double-parsing inputs to compute declared preconditions).
-    const declaredPreconditions = tool.preconditions
-      ? tool.preconditions(parsedInputs)
-      : []
+    const declaredPreconditions = tool.preconditions ? tool.preconditions(parsedInputs) : []
     const mergedContract: ActionContract = {
       ...input.contract,
       preconditions: [...declaredPreconditions, ...input.contract.preconditions],

@@ -1,36 +1,28 @@
 import { randomUUID } from "node:crypto"
 import { resolve as resolvePath } from "node:path"
+import type { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import {
   ActionKernel,
-  lookupTool,
-  unregisterTool,
   type PolicyGate,
   type PreconditionChecker,
+  lookupTool,
+  unregisterTool,
 } from "@qmilab/lodestar-action-kernel"
-import { canonicalHash, EventLogWriter } from "@qmilab/lodestar-event-log"
-import {
-  InMemoryBeliefStore,
-  InMemoryClaimStore,
-  InMemoryEvidenceStore,
-  MemoryFirewall,
-} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   ExplanationGenerator,
   InMemoryWorldModel,
   type IngestResult,
 } from "@qmilab/lodestar-cognitive-core"
-import type {
-  Action,
-  ActionContract,
-  Observation,
-  Reversibility,
-} from "@qmilab/lodestar-core"
+import type { Action, ActionContract, Observation, Reversibility } from "@qmilab/lodestar-core"
+import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import { alwaysHoldsChecker, autoApprovePolicy } from "@qmilab/lodestar-guard"
 import {
-  autoApprovePolicy,
-  alwaysHoldsChecker,
-} from "@qmilab/lodestar-guard"
-import type { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
+  InMemoryBeliefStore,
+  InMemoryClaimStore,
+  InMemoryEvidenceStore,
+  MemoryFirewall,
+} from "@qmilab/lodestar-memory-firewall"
 import type { ProxyConfig, ToolContractDefaults } from "./config.js"
 import { DownstreamConnection } from "./downstream.js"
 import {
@@ -39,9 +31,9 @@ import {
   registerMCPProxyExtractors,
 } from "./observation.js"
 import {
-  buildPolicyDeniedResult,
   type CallToolContentBlock,
   type CallToolResultLike,
+  buildPolicyDeniedResult,
 } from "./policy-result.js"
 import {
   CONSERVATIVE_TOOL_DEFAULTS,
@@ -77,7 +69,10 @@ export interface MCPProxyOverrides {
    */
   upstreamFactory?: (
     tools: MCPTool[],
-    handler: (req: { name: string; arguments: Record<string, unknown> }) => Promise<CallToolResultLike>,
+    handler: (req: {
+      name: string
+      arguments: Record<string, unknown>
+    }) => Promise<CallToolResultLike>,
   ) => UpstreamServer
   /**
    * Override the policy gate. Defaults to `autoApprovePolicy`
@@ -127,10 +122,7 @@ export class MCPProxy {
    * "completed without producing an observation". Per-invocation
    * keying makes each call atomic with respect to the others.
    */
-  private readonly captures = new Map<
-    string,
-    { observation: Observation; ingest: IngestResult }
-  >()
+  private readonly captures = new Map<string, { observation: Observation; ingest: IngestResult }>()
   /**
    * Names this proxy registered with the action-kernel tool
    * registry. Tracked for two reasons:
@@ -158,24 +150,23 @@ export class MCPProxy {
   private readonly registeredToolNames: Set<string> = new Set()
   private started = false
 
-  constructor(public readonly config: ProxyConfig, overrides?: MCPProxyOverrides) {
-    this.sessionId =
-      config.session_id === "auto" ? `session-${randomUUID()}` : config.session_id
+  constructor(
+    public readonly config: ProxyConfig,
+    overrides?: MCPProxyOverrides,
+  ) {
+    this.sessionId = config.session_id === "auto" ? `session-${randomUUID()}` : config.session_id
     this.logRoot = resolvePath(process.cwd(), config.log_root)
     this.writer = new EventLogWriter(this.logRoot)
     this.downstreams =
       overrides?.downstreamFactory?.(config) ??
-      config.downstream_servers.map(
-        (entry) => new DownstreamConnection(entry, SERVER_INFO),
-      )
+      config.downstream_servers.map((entry) => new DownstreamConnection(entry, SERVER_INFO))
     this.policyGate =
       overrides?.policyGate ??
       autoApprovePolicy({
         auto_approve_up_to: config.auto_approve_ceiling as 0 | 1 | 2 | 3 | 4,
         approver_id: `policy:auto-approve-up-to-${config.auto_approve_ceiling}`,
       })
-    this.preconditionChecker =
-      overrides?.preconditionChecker ?? alwaysHoldsChecker
+    this.preconditionChecker = overrides?.preconditionChecker ?? alwaysHoldsChecker
     if (overrides?.upstreamFactory !== undefined) {
       this.upstreamFactory = overrides.upstreamFactory
     }
@@ -228,7 +219,9 @@ export class MCPProxy {
       // carries it — reflection-driven transitions cite the
       // `reflection.completed` event id this way (design doc Q4).
       const causal_parent_ids =
-        "causal_parent_ids" in event && event.causal_parent_ids ? event.causal_parent_ids : undefined
+        "causal_parent_ids" in event && event.causal_parent_ids
+          ? event.causal_parent_ids
+          : undefined
       await this.emit(
         `firewall.${event.kind}`,
         event,
@@ -302,14 +295,9 @@ export class MCPProxy {
             // name didn't match the action-kernel regex). Show
             // whichever we have; either case is useful operator
             // signal.
-            const display =
-              info.lodestarName ??
-              `mcp.${info.downstreamName}.<${info.toolName}>`
+            const display = info.lodestarName ?? `mcp.${info.downstreamName}.<${info.toolName}>`
             process.stderr.write(
-              `[mcp-proxy] skipping task-required tool '${display}' ` +
-                `(downstream '${info.downstreamName}', native name '${info.toolName}'). ` +
-                `The v0 proxy forwards synchronous CallTool only; task forwarding ` +
-                `is deferred to a later batch.\n`,
+              `[mcp-proxy] skipping task-required tool '${display}' (downstream '${info.downstreamName}', native name '${info.toolName}'). The v0 proxy forwards synchronous CallTool only; task forwarding is deferred to a later batch.\n`,
             )
           },
         })
@@ -360,15 +348,8 @@ export class MCPProxy {
       // 7. Start the upstream server with the aggregated catalog and
       //    a handler that drives each call through the kernel.
       this.upstream =
-        this.upstreamFactory?.(
-          this.namespacedTools,
-          (req) => this.handleCallTool(req),
-        ) ??
-        new UpstreamServer(
-          this.namespacedTools,
-          (req) => this.handleCallTool(req),
-          SERVER_INFO,
-        )
+        this.upstreamFactory?.(this.namespacedTools, (req) => this.handleCallTool(req)) ??
+        new UpstreamServer(this.namespacedTools, (req) => this.handleCallTool(req), SERVER_INFO)
       await this.upstream.start()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -477,16 +458,13 @@ export class MCPProxy {
         kind: "tool_not_advertised",
         tool_name: req.name,
         args: req.arguments,
-        reason:
-          "tool name is not in this MCPProxy's advertised catalog (registeredToolNames)",
+        reason: "tool name is not in this MCPProxy's advertised catalog (registeredToolNames)",
       })
       return {
         content: [
           {
             type: "text",
-            text:
-              `Unknown tool '${req.name}'. The Lodestar MCP proxy does not advertise this tool — ` +
-              `check the wrapped agent's tool list or the proxy config.`,
+            text: `Unknown tool '${req.name}'. The Lodestar MCP proxy does not advertise this tool — check the wrapped agent's tool list or the proxy config.`,
           },
         ],
         isError: true,
@@ -494,8 +472,7 @@ export class MCPProxy {
           _lodestar: {
             kind: "tool_not_advertised",
             tool_name: req.name,
-            reason:
-              "tool name is not in this MCPProxy's advertised catalog (registeredToolNames)",
+            reason: "tool name is not in this MCPProxy's advertised catalog (registeredToolNames)",
             args: req.arguments,
           },
         },
@@ -512,16 +489,13 @@ export class MCPProxy {
         kind: "tool_registration_lost",
         tool_name: req.name,
         args: req.arguments,
-        reason:
-          "registeredToolNames includes this name but lookupTool returned undefined",
+        reason: "registeredToolNames includes this name but lookupTool returned undefined",
       })
       return {
         content: [
           {
             type: "text",
-            text:
-              `Tool '${req.name}' is advertised by this proxy but the action-kernel registry ` +
-              `no longer recognises it. This indicates an out-of-band deregistration race.`,
+            text: `Tool '${req.name}' is advertised by this proxy but the action-kernel registry no longer recognises it. This indicates an out-of-band deregistration race.`,
           },
         ],
         isError: true,
@@ -529,8 +503,7 @@ export class MCPProxy {
           _lodestar: {
             kind: "tool_registration_lost",
             tool_name: req.name,
-            reason:
-              "registeredToolNames includes this name but lookupTool returned undefined",
+            reason: "registeredToolNames includes this name but lookupTool returned undefined",
             args: req.arguments,
           },
         },
@@ -602,10 +575,7 @@ export class MCPProxy {
         content: [
           {
             type: "text",
-            text:
-              `Tool '${req.name}' failed during execution: ${detail}. ` +
-              `This is a kernel-level failure, not a policy denial — the downstream MCP server ` +
-              `returned an error or the proxy could not validate its output.`,
+            text: `Tool '${req.name}' failed during execution: ${detail}. This is a kernel-level failure, not a policy denial — the downstream MCP server returned an error or the proxy could not validate its output.`,
           },
         ],
         isError: true,
@@ -867,9 +837,7 @@ export class MCPProxy {
  * `CallToolContentBlock` union (see `policy-result.ts`) is what
  * makes the typed round-trip below possible.
  */
-function payloadToCallToolResult(
-  payload: MCPToolResultObservationPayload,
-): CallToolResultLike {
+function payloadToCallToolResult(payload: MCPToolResultObservationPayload): CallToolResultLike {
   const content: CallToolContentBlock[] = payload.content.map((block) => {
     // For every known block kind we copy the documented fields then
     // pass any preserved extras (annotations, block-level _meta,
@@ -906,11 +874,12 @@ function payloadToCallToolResult(
       if (block.resource.mimeType !== undefined) resource.mimeType = block.resource.mimeType
       if (block.resource.text !== undefined) resource.text = block.resource.text
       if (block.resource.blob !== undefined) resource.blob = block.resource.blob
-      copyBlockExtras(
-        block.resource as unknown as Record<string, unknown>,
-        resource,
-        ["uri", "mimeType", "text", "blob"],
-      )
+      copyBlockExtras(block.resource as unknown as Record<string, unknown>, resource, [
+        "uri",
+        "mimeType",
+        "text",
+        "blob",
+      ])
       const out: Record<string, unknown> = {
         type: "resource",
         resource,
@@ -973,11 +942,7 @@ function payloadToCallToolResult(
  * keep round-trip-time and capture-time logic close to their
  * respective entry points.
  */
-function copyBlockExtras(
-  block: unknown,
-  out: Record<string, unknown>,
-  excluded: string[],
-): void {
+function copyBlockExtras(block: unknown, out: Record<string, unknown>, excluded: string[]): void {
   if (block === null || typeof block !== "object") return
   const skip = new Set(excluded)
   for (const key of Object.keys(block as Record<string, unknown>)) {

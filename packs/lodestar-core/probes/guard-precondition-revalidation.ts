@@ -28,10 +28,10 @@
  * Codex caught in the Batch 2 review.
  */
 
-import { z } from "zod"
+import { _resetToolsForTests, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
-import { registerTool, _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
 import { autoApprovePolicy, runGuarded } from "@qmilab/lodestar-guard"
+import { z } from "zod"
 
 interface ProbeResult {
   passed: boolean
@@ -107,17 +107,13 @@ async function run(): Promise<ProbeResult> {
   if (preconditionChecks !== 1) {
     return {
       passed: false,
-      details:
-        `precondition_checker was invoked ${preconditionChecks} time(s); expected 1. ` +
-        `Guard probably dropped the tool's declared preconditions when constructing the contract.`,
+      details: `precondition_checker was invoked ${preconditionChecks} time(s); expected 1. Guard probably dropped the tool's declared preconditions when constructing the contract.`,
     }
   }
   if (executeCalls !== 0) {
     return {
       passed: false,
-      details:
-        `tool.execute ran ${executeCalls} time(s). Expected 0 — the kernel should have ` +
-        `rejected the action before execute when the precondition no longer held.`,
+      details: `tool.execute ran ${executeCalls} time(s). Expected 0 — the kernel should have rejected the action before execute when the precondition no longer held.`,
     }
   }
   if (!loopResult.rejected) {
@@ -129,18 +125,13 @@ async function run(): Promise<ProbeResult> {
   if (!/precondition/i.test(loopResult.message)) {
     return {
       passed: false,
-      details:
-        `callTool threw but the error did not mention 'precondition'. ` +
-        `Got: ${loopResult.message}`,
+      details: `callTool threw but the error did not mention 'precondition'. Got: ${loopResult.message}`,
     }
   }
 
   return {
     passed: true,
-    details:
-      `Guard wired the tool's declared preconditions into the action contract. ` +
-      `Kernel rejected execution on TOCTOU check; tool.execute was never called.\n` +
-      `Rejection: ${loopResult.message}`,
+    details: `Guard wired the tool's declared preconditions into the action contract. Kernel rejected execution on TOCTOU check; tool.execute was never called.\nRejection: ${loopResult.message}`,
   }
 }
 

@@ -1,12 +1,9 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
 import {
-  getDefaultEnvironment,
   StdioClientTransport,
+  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js"
-import type {
-  CallToolResult,
-  Tool as MCPTool,
-} from "@modelcontextprotocol/sdk/types.js"
+import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import type { DownstreamServerConfig } from "./config.js"
 
 /**
@@ -67,10 +64,7 @@ export class DownstreamConnection {
     // notifications; if a downstream's catalog changes after
     // startup, the proxy will not pick it up until restart.
     const client = this.client
-    this.tools = await collectPaginatedTools(
-      (params) => client.listTools(params),
-      this.config.name,
-    )
+    this.tools = await collectPaginatedTools((params) => client.listTools(params), this.config.name)
     this.started = true
   }
 
@@ -87,10 +81,7 @@ export class DownstreamConnection {
    * CallToolResult unchanged. The proxy wraps the result into a
    * Lodestar observation; this method is the bare wire-level call.
    */
-  async callTool(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<CallToolResult> {
+  async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     if (!this.client) {
       throw new Error(`DownstreamConnection '${this.config.name}': not started`)
     }
@@ -171,9 +162,7 @@ export function mergeDownstreamEnv(
  * have the proxy spin.
  */
 export async function collectPaginatedTools(
-  listToolsFn: (
-    params?: { cursor?: string },
-  ) => Promise<{ tools: MCPTool[]; nextCursor?: string }>,
+  listToolsFn: (params?: { cursor?: string }) => Promise<{ tools: MCPTool[]; nextCursor?: string }>,
   downstreamLabel: string,
   maxPages = 1000,
 ): Promise<MCPTool[]> {
@@ -193,9 +182,7 @@ export async function collectPaginatedTools(
     // an off-by-one that bit `maxPages = 1` single-page catalogs.
     if (pages >= maxPages && cursor !== undefined) {
       throw new Error(
-        `DownstreamConnection '${downstreamLabel}': tools/list returned ` +
-          `${maxPages} pages and still reports a nextCursor; aborting to ` +
-          `avoid an infinite loop. The downstream is likely misbehaving.`,
+        `DownstreamConnection '${downstreamLabel}': tools/list returned ${maxPages} pages and still reports a nextCursor; aborting to avoid an infinite loop. The downstream is likely misbehaving.`,
       )
     }
   } while (cursor !== undefined)

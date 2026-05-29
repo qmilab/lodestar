@@ -1,7 +1,7 @@
-import { mkdir, appendFile, readdir, readFile } from "node:fs/promises"
-import { existsSync } from "node:fs"
-import { dirname, join } from "node:path"
 import { createHash } from "node:crypto"
+import { existsSync } from "node:fs"
+import { appendFile, mkdir, readFile, readdir } from "node:fs/promises"
+import { dirname, join } from "node:path"
 import { type EventEnvelope, EventEnvelopeSchema } from "@qmilab/lodestar-core"
 
 /**
@@ -74,11 +74,13 @@ export function _resetEventLogStateForTests(): void {
 export class EventLogWriter {
   constructor(private readonly rootDir: string) {}
 
-  async append(input: Omit<EventEnvelope, "seq" | "logical_clock" | "payload_hash"> & {
-    seq?: number
-    logical_clock?: number
-    payload_hash?: string
-  }): Promise<EventEnvelope> {
+  async append(
+    input: Omit<EventEnvelope, "seq" | "logical_clock" | "payload_hash"> & {
+      seq?: number
+      logical_clock?: number
+      payload_hash?: string
+    },
+  ): Promise<EventEnvelope> {
     // Hydrate the per-project sequence + per-session logical clock from
     // disk the first time we see a project_id in this process. Without
     // this, a second `EventLogWriter` instance writing to a project
@@ -102,7 +104,10 @@ export class EventLogWriter {
     })
     // Install the new tail BEFORE awaiting the predecessor so any
     // concurrent caller observes us at the end of the chain.
-    sharedAppendLocks.set(lockKey, previous.then(() => self))
+    sharedAppendLocks.set(
+      lockKey,
+      previous.then(() => self),
+    )
     await previous
 
     try {
@@ -163,9 +168,7 @@ export class EventLogWriter {
     let maxSeq = -1
     const sessionMax = new Map<string, number>()
 
-    const files = (await readdir(projectDir))
-      .filter((f) => f.endsWith(".ndjson"))
-      .sort()
+    const files = (await readdir(projectDir)).filter((f) => f.endsWith(".ndjson")).sort()
     for (const file of files) {
       const content = await readFile(join(projectDir, file), "utf8")
       for (const line of content.split("\n")) {
@@ -179,10 +182,7 @@ export class EventLogWriter {
         if (typeof parsed.seq === "number" && parsed.seq > maxSeq) {
           maxSeq = parsed.seq
         }
-        if (
-          typeof parsed.session_id === "string" &&
-          typeof parsed.logical_clock === "number"
-        ) {
+        if (typeof parsed.session_id === "string" && typeof parsed.logical_clock === "number") {
           const current = sessionMax.get(parsed.session_id) ?? -1
           if (parsed.logical_clock > current) {
             sessionMax.set(parsed.session_id, parsed.logical_clock)

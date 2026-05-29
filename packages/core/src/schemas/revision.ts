@@ -13,11 +13,13 @@ export const RevisionSchema = z.object({
   id: z.string(),
   target_type: z.enum(["claim", "belief", "decision"]),
   target_id: z.string(),
-  changes: z.array(z.object({
-    field: z.string(),
-    old_value: z.unknown(),
-    new_value: z.unknown(),
-  })),
+  changes: z.array(
+    z.object({
+      field: z.string(),
+      old_value: z.unknown(),
+      new_value: z.unknown(),
+    }),
+  ),
   triggered_by: z.string().describe("actor_id or event_id"),
   rationale_id: z.string().describe("Explanation id"),
   at: TimestampSchema,

@@ -34,12 +34,7 @@
       "default": "./dist/index.js"
     }
   },
-  "files": [
-    "dist",
-    "src",
-    "README.md",
-    "LICENSE"
-  ],
+  "files": ["dist", "src", "README.md", "LICENSE"],
   "publishConfig": {
     "access": "public",
     "provenance": true

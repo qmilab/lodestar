@@ -178,10 +178,7 @@ export function projectChain(
 
     // Accept both `action.outcome` (the legacy / planner-emitted name)
     // and `outcome.observed` (the documented `ctx.emit` name in Guard).
-    if (
-      (type === "action.outcome" || type === "outcome.observed") &&
-      isOutcomePayload(payload)
-    ) {
+    if ((type === "action.outcome" || type === "outcome.observed") && isOutcomePayload(payload)) {
       const existing = actionsById.get(payload.action_id)
       if (existing) {
         existing.outcome = payload
@@ -312,10 +309,7 @@ function projectFirewallTransition(
   return transition
 }
 
-function matchFirewallKind(
-  type: string,
-  raw: Record<string, unknown>,
-): FirewallTransition["kind"] {
+function matchFirewallKind(type: string, raw: Record<string, unknown>): FirewallTransition["kind"] {
   const candidate = typeof raw.kind === "string" ? raw.kind : type.replace(/^firewall\./, "")
   if (
     candidate === "claim.accepted" ||
