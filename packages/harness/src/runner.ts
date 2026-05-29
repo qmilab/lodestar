@@ -70,17 +70,19 @@ export interface RunPackOptions {
   onResult?: (outcome: ProbeRunOutcome) => void
 }
 
-// Per-stream capture cap. A probe is potentially third-party (the loader
-// treats pack manifests as untrusted) and a buggy or hostile one can
-// print without bound; without a cap the harness would buffer all of it
-// in memory and could OOM. 256 KiB per stream is far more than any probe
-// banner needs while keeping a runaway probe's footprint bounded.
-const MAX_CAPTURE_BYTES = 256 * 1024
+// Per-stream capture cap, in characters (chunks are UTF-8-decoded before
+// counting, so this bounds memory, not exact bytes). A probe is
+// potentially third-party (the loader treats pack manifests as untrusted)
+// and a buggy or hostile one can print without bound; without a cap the
+// harness would buffer all of it in memory and could OOM. 256 Ki chars
+// per stream is far more than any probe banner needs while keeping a
+// runaway probe's footprint bounded.
+const MAX_CAPTURE_CHARS = 256 * 1024
 
 /**
- * Accumulates stream output up to a byte cap, then drops the remainder
- * and appends a truncation marker. Keeps the runner's memory bounded
- * regardless of how much a probe prints.
+ * Accumulates stream output up to a character cap, then drops the
+ * remainder and appends a truncation marker. Keeps the runner's memory
+ * bounded regardless of how much a probe prints.
  */
 class CappedBuffer {
   private readonly chunks: string[] = []
@@ -103,7 +105,7 @@ class CappedBuffer {
 
   toString(): string {
     const body = this.chunks.join("")
-    return this.truncated ? `${body}\n…[output truncated at ${this.cap} bytes]\n` : body
+    return this.truncated ? `${body}\n…[output truncated at ${this.cap} chars]\n` : body
   }
 }
 
@@ -113,8 +115,8 @@ function spawnProbe(
 ): Promise<{ exit_code: number | null; signal: string | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(bun, ["run", probe.path], { stdio: ["ignore", "pipe", "pipe"] })
-    const stdout = new CappedBuffer(MAX_CAPTURE_BYTES)
-    const stderr = new CappedBuffer(MAX_CAPTURE_BYTES)
+    const stdout = new CappedBuffer(MAX_CAPTURE_CHARS)
+    const stderr = new CappedBuffer(MAX_CAPTURE_CHARS)
     child.stdout?.on("data", (chunk) => stdout.push(chunk))
     child.stderr?.on("data", (chunk) => stderr.push(chunk))
     // A spawn failure (e.g. `bun` not on PATH) is a probe failure, not a
