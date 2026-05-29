@@ -12,14 +12,27 @@ Batch 4; see `docs/roadmap.md` (Batch 4) and the kickoff/sequencing in
   `@qmilab/lodestar-core`), validates it, and resolves probe files to
   absolute paths. Returns a `LoadedProbePack`. Raises `ProbePackError`
   on any failure. Filesystem I/O lives here, not in core.
+- `src/probe.ts` — the `Probe` authoring surface (`Probe` base class,
+  `ProbeSpec`, `ProbeResult`, `runProbeAsScript`, `formatProbeReport`).
+  The contract *new* probes declare themselves against. The 17
+  first-party probes predate it and are deliberately left as standalone
+  scripts (probes are spec — see invariant 4). The runner never imports
+  a `Probe`; it drives files by exit code, so a probe authored through
+  this surface is indistinguishable from a hand-rolled one.
+- `src/runner.ts` — `runPack()` / `runProbe()`. A **subprocess driver**:
+  each probe is run as `bun run <file>` and its exit code is the verdict
+  (0 passes, anything else fails). Runs every probe (a failure does not
+  abort the run) and returns a `PackRunResult`. The runner core depends
+  on nothing but `node:child_process`; recording is injected.
+- `src/recorder.ts` — `eventLogRecorder()`. Builds the injected
+  `ProbeRunRecorder` that writes each run as a synthetic
+  `observation.recorded` event. This is where the event-log dependency
+  lives, keeping the runner core I/O-free.
+- `src/observation.ts` — the `harness.probe_run@1` observation schema and
+  `buildProbeRunObservation()`. Registered on import (adapter precedent).
 
 Coming in later Batch 4 steps (do not pre-build):
 
-- `Probe` base class + runner. Each probe run is recorded as a
-  `synthetic_probe`-quality observation in the event log so probe runs
-  are themselves auditable.
-- `lodestar harness run --pack <name>` — registered under the existing
-  `lodestar` binary in `@qmilab/lodestar-cli`, **not** a new bin.
 - `Sentinel` base class + the three sentinels.
 - `Calibrator`.
 
@@ -41,6 +54,17 @@ Coming in later Batch 4 steps (do not pre-build):
 5. **v0 resolves `local` packs only.** `source_type: "npm"` is valid in
    the schema but the loader rejects it with a clear error until npm
    resolution ships.
+6. **The runner drives files, not classes.** Execution is a subprocess
+   spawn (`bun run <file>`) keyed on exit code. This is what keeps the 17
+   first-party probes (invariant 4) unchanged and lets external/future
+   probes be authored in any way that ends in a `bun run`-able script.
+   Do not switch the runner to in-process import — that would force every
+   probe to export a `Probe`, i.e. rewrite the spec.
+7. **A probe run is itself auditable.** When recording is enabled the
+   runner writes one `trust: "synthetic"` observation per run. Synthetic
+   is non-negotiable: a probe run must never be able to promote a real
+   belief. Recording is injected (`ProbeRunRecorder`) so the runner core
+   stays I/O-free and testable with a capturing sink.
 
 ## When extending the pack format
 

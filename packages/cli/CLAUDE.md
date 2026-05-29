@@ -15,7 +15,8 @@ src/
     ├── guard.ts              # `lodestar guard wrap`
     ├── action.ts             # `lodestar action list/describe`
     ├── trace.ts              # `lodestar trace inspect`
-    └── probe.ts              # `lodestar probe <name>`
+    ├── probe.ts              # `lodestar probe <name>`
+    └── harness.ts            # `lodestar harness run/list`
 ```
 
 ## Invariants
@@ -48,4 +49,8 @@ src/
 - Any business logic. Commands are thin shells that parse args and
   hand off to the relevant package.
 - Probe execution. `lodestar probe <name>` shells out to `bun run
-  packs/lodestar-core/probes/<name>.ts` — the probes are the source of truth.
+  packs/lodestar-core/probes/<name>.ts` — the probes are the source of
+  truth. `lodestar harness run` is a thin shell over
+  `@qmilab/lodestar-harness`'s `loadProbePack` + `runPack`; the subprocess
+  driving, exit-code interpretation, and event-log recording all live in
+  the harness package, not here.

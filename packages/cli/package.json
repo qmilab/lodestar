@@ -43,6 +43,7 @@
     "@qmilab/lodestar-action-kernel": "workspace:*",
     "@qmilab/lodestar-guard": "workspace:*",
     "@qmilab/lodestar-guard-mcp": "workspace:*",
+    "@qmilab/lodestar-harness": "workspace:*",
     "@qmilab/lodestar-trace": "workspace:*",
     "@qmilab/lodestar-cognitive-core": "workspace:*",
     "@qmilab/lodestar-adapter-filesystem": "workspace:*",

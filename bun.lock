@@ -136,6 +136,7 @@
         "@qmilab/lodestar-event-log": "workspace:*",
         "@qmilab/lodestar-guard": "workspace:*",
         "@qmilab/lodestar-guard-mcp": "workspace:*",
+        "@qmilab/lodestar-harness": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "zod": "^3.23.8",
       },
@@ -214,6 +215,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {

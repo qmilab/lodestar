@@ -6,8 +6,9 @@ exercise and audit the epistemic chain — the surface that turns
 and share.
 
 Batch 4 lands the harness incrementally. What ships today is the
-**probe-pack format and loader**. The `Probe` base class, the runner,
-and the `lodestar harness run` CLI follow.
+**probe-pack format and loader**, the **`Probe` authoring surface**, the
+**pack runner**, and the **`lodestar harness run` CLI**. Sentinels and
+the calibrator follow.
 
 ## Probe pack format
 
@@ -69,10 +70,69 @@ try {
 absolute path, and verifies each one exists and lives inside the pack
 root. It does **not** run probes — execution is the runner's job.
 
+## Running a pack
+
+```ts
+import { eventLogRecorder, loadProbePack, runPack } from "@qmilab/lodestar-harness"
+
+const pack = await loadProbePack("./packs/lodestar-core")
+const result = await runPack(pack, {
+  // Optional: record each run as a synthetic observation in the event log
+  record: eventLogRecorder({
+    root: ".lodestar/events",
+    project_id: "harness",
+    session_id: "harness-run-1",
+    actor_id: "lodestar-harness",
+  }),
+})
+// result.ok, result.passed, result.failed, result.outcomes[]
+```
+
+The runner is a **subprocess driver**: each probe is run as `bun run
+<file>` and its exit code is the verdict (0 passes, anything else
+fails). This is why the first-party probes are plain scripts and stay
+that way — probes are spec, not scaffolding. A failing probe does not
+abort the run; every probe executes so you see the full picture.
+
+When a `record` sink is supplied, every probe run is written as a
+`trust: "synthetic"` `observation.recorded` event (schema
+`harness.probe_run@1`) so the run is itself auditable through
+`lodestar report`.
+
+From the CLI:
+
+```
+lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record]
+lodestar harness list [--pack <name|path>]
+```
+
+`--pack` accepts a first-party pack name (e.g. `lodestar-core`, the
+default), a pack directory, or a manifest file. `run` executes the pack
+and records runs by default; `list` inspects the manifest without
+executing anything.
+
+## Authoring a new probe
+
+The first-party probes predate the `Probe` surface and are intentionally
+left as standalone scripts. New probes can declare themselves once and
+get the banner-and-exit-code contract for free:
+
+```ts
+import { type ProbeSpec, runProbeAsScript } from "@qmilab/lodestar-harness"
+
+const probe: ProbeSpec = {
+  name: "my-probe",
+  description: "What invariant this defends and the attack it models.",
+  async run() {
+    // ...assertions...
+    return { passed: true, details: ["checked X", "checked Y"] }
+  },
+}
+
+await runProbeAsScript(probe) // prints the banner, exits 0 / 1
+```
+
 ## What it does not do (yet)
 
-- Run probes (`Probe` base class + runner — next step).
-- The `lodestar harness run --pack <name>` CLI (registered under the
-  existing `lodestar` binary, not a new bin).
 - Resolve `source_type: "npm"` packs.
-- Sentinels and calibrators.
+- Sentinels and the calibrator.
