@@ -51,7 +51,12 @@ export function eventLogRecorder(config: EventLogRecorderConfig): ProbeRunRecord
       project_id: config.project_id,
       session_id: config.session_id,
       actor_id: config.actor_id,
-      timestamp: new Date().toISOString(),
+      // Use the probe's start time, the same value as the observation's
+      // `source.captured_at`. The writer derives the NDJSON day-file from
+      // this timestamp; keeping it equal to `captured_at` ensures a run
+      // that straddles midnight UTC lands in one consistent day-file
+      // rather than splitting envelope and observation across two.
+      timestamp: outcome.started_at,
       causal_parent_ids: [],
       payload: observation,
       payload_hash: canonicalHash(observation),

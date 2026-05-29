@@ -51,6 +51,15 @@ function resolvePackTarget(packArg: string): string {
   return resolve(process.cwd(), "packs", packArg)
 }
 
+const USAGE =
+  "usage: lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
+  "       lodestar harness list [--pack <name|path>]\n"
+
+/** A malformed invocation (missing flag value, unknown flag). Maps to exit 2. */
+class UsageError extends Error {
+  override readonly name = "UsageError"
+}
+
 interface ParsedFlags {
   pack: string
   logRoot: string
@@ -69,34 +78,61 @@ function parseFlags(argv: string[]): ParsedFlags {
     actor: "lodestar-harness",
     record: true,
   }
+  // Read the value for a value-taking flag. A value that is missing or
+  // that looks like another flag (`--pack --no-record`) is almost always
+  // a forgotten argument — consuming it silently would mis-resolve the
+  // pack and leave the swallowed flag unapplied, so reject it loudly.
+  const takeValue = (i: number, flag: string): string => {
+    const value = argv[i + 1]
+    if (value === undefined || value.startsWith("--")) {
+      throw new UsageError(`flag ${flag} requires a value`)
+    }
+    return value
+  }
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     switch (arg) {
       case "--pack":
-        flags.pack = argv[++i] ?? flags.pack
+        flags.pack = takeValue(i, arg)
+        i++
         break
       case "--log-root":
-        flags.logRoot = resolve(process.cwd(), argv[++i] ?? "")
+        flags.logRoot = resolve(process.cwd(), takeValue(i, arg))
+        i++
         break
       case "--project":
-        flags.project = argv[++i] ?? flags.project
+        flags.project = takeValue(i, arg)
+        i++
         break
       case "--session":
-        flags.session = argv[++i] ?? flags.session
+        flags.session = takeValue(i, arg)
+        i++
         break
       case "--actor":
-        flags.actor = argv[++i] ?? flags.actor
+        flags.actor = takeValue(i, arg)
+        i++
         break
       case "--no-record":
         flags.record = false
         break
+      default:
+        throw new UsageError(`unknown argument: ${arg}`)
     }
   }
   return flags
 }
 
 async function harnessRun(argv: string[]): Promise<number> {
-  const flags = parseFlags(argv)
+  let flags: ParsedFlags
+  try {
+    flags = parseFlags(argv)
+  } catch (err) {
+    if (err instanceof UsageError) {
+      process.stderr.write(`${err.message}\n${USAGE}`)
+      return 2
+    }
+    throw err
+  }
   const target = resolvePackTarget(flags.pack)
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
@@ -165,7 +201,16 @@ function printSummary(result: PackRunResult, flags: ParsedFlags): void {
 }
 
 async function harnessList(argv: string[]): Promise<number> {
-  const flags = parseFlags(argv)
+  let flags: ParsedFlags
+  try {
+    flags = parseFlags(argv)
+  } catch (err) {
+    if (err instanceof UsageError) {
+      process.stderr.write(`${err.message}\n${USAGE}`)
+      return 2
+    }
+    throw err
+  }
   const target = resolvePackTarget(flags.pack)
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
@@ -197,9 +242,6 @@ export async function harnessCommand(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
   if (sub === "run") return harnessRun(rest)
   if (sub === "list") return harnessList(rest)
-  process.stderr.write(
-    "usage: lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
-      "       lodestar harness list [--pack <name|path>]\n",
-  )
+  process.stderr.write(USAGE)
   return 2
 }

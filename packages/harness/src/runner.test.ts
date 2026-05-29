@@ -62,6 +62,24 @@ describe("runPack", () => {
     }
   })
 
+  test("caps captured output so a runaway probe cannot exhaust memory", async () => {
+    // Print well past the 256 KiB per-stream cap.
+    const dir = await makeFixturePack("fixture-loud", [
+      ["loud.ts", "console.log('x'.repeat(400 * 1024)); process.exit(0)\n"],
+    ])
+    try {
+      const pack = await loadProbePack(dir)
+      const result = await runPack(pack)
+      const loud = result.outcomes[0]
+      expect(loud?.passed).toBe(true)
+      // Bounded: cap (256 KiB) + the truncation marker, not the full 400 KiB.
+      expect(loud?.stdout.length).toBeLessThan(300 * 1024)
+      expect(loud?.stdout).toContain("output truncated")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("a failing probe does not abort the rest of the run", async () => {
     const dir = await makeFixturePack("fixture-order", [
       ["a.ts", "process.exit(1)\n"],

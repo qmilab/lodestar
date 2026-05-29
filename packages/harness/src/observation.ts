@@ -42,8 +42,17 @@ export type ProbeRunObservationPayload = z.infer<typeof ProbeRunObservationPaylo
 // registers `git.status@1` the same way). Guarded so importing the
 // harness twice in one process — or alongside a probe that registers the
 // same key — does not throw on the registry's no-replace rule.
-if (!registry.has(PROBE_RUN_OBSERVATION_SCHEMA_KEY)) {
+const alreadyRegistered = registry.lookup(PROBE_RUN_OBSERVATION_SCHEMA_KEY)
+if (!alreadyRegistered) {
   registry.register(PROBE_RUN_OBSERVATION_SCHEMA_KEY, ProbeRunObservationPayloadSchema)
+} else if (alreadyRegistered !== ProbeRunObservationPayloadSchema) {
+  // Re-importing this module is a no-op (same schema object). But a
+  // *different* schema under our key means someone squatted it — fail
+  // loudly rather than silently validating probe-run payloads against a
+  // foreign schema.
+  throw new Error(
+    `schema registry: key '${PROBE_RUN_OBSERVATION_SCHEMA_KEY}' is already registered with a different schema`,
+  )
 }
 
 /** Everything needed to mint a probe-run Observation, minus the boilerplate. */

@@ -136,6 +136,8 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 *First in-repo probe pack*: `packs/coding-agent-safety/` — bundles the prompt-injection / tool-poisoning / confidence-drift probes plus the three sentinels into a single installable pack a future operator can point `lodestar harness run --pack coding-agent-safety` at.
 
+*Probe-execution sandboxing (carve-out for when external packs land)*: the step-5 runner spawns each probe as a `bun run` subprocess that inherits the harness's full environment — consistent with the existing `lodestar probe` command and fine for the first-party `lodestar-core` pack. Once `coding-agent-safety` (or any third-party pack) becomes a real execution surface, probe subprocesses should run with a scoped environment rather than the host's, so a hostile probe cannot read host secrets out of `process.env`. Mirrors the Action Kernel's "no host env to sandboxes" rule.
+
 **Out of scope**: public registry (v1+), signed manifests (v1.5+), hosted dashboard, multi-tenant control plane.
 
 **Effort estimate**: ~1.5 weeks once the reflection pass design is locked. The reflection pass is the load-bearing piece; the rest of the deliverables hang off it.

@@ -70,33 +70,72 @@ export interface RunPackOptions {
   onResult?: (outcome: ProbeRunOutcome) => void
 }
 
+// Per-stream capture cap. A probe is potentially third-party (the loader
+// treats pack manifests as untrusted) and a buggy or hostile one can
+// print without bound; without a cap the harness would buffer all of it
+// in memory and could OOM. 256 KiB per stream is far more than any probe
+// banner needs while keeping a runaway probe's footprint bounded.
+const MAX_CAPTURE_BYTES = 256 * 1024
+
+/**
+ * Accumulates stream output up to a byte cap, then drops the remainder
+ * and appends a truncation marker. Keeps the runner's memory bounded
+ * regardless of how much a probe prints.
+ */
+class CappedBuffer {
+  private readonly chunks: string[] = []
+  private size = 0
+  private truncated = false
+  constructor(private readonly cap: number) {}
+
+  push(chunk: unknown): void {
+    if (this.truncated) return
+    const s = String(chunk)
+    const remaining = this.cap - this.size
+    if (s.length <= remaining) {
+      this.chunks.push(s)
+      this.size += s.length
+      return
+    }
+    if (remaining > 0) this.chunks.push(s.slice(0, remaining))
+    this.truncated = true
+  }
+
+  toString(): string {
+    const body = this.chunks.join("")
+    return this.truncated ? `${body}\n…[output truncated at ${this.cap} bytes]\n` : body
+  }
+}
+
 function spawnProbe(
   bun: string,
   probe: LoadedProbe,
 ): Promise<{ exit_code: number | null; signal: string | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     const child = spawn(bun, ["run", probe.path], { stdio: ["ignore", "pipe", "pipe"] })
-    let stdout = ""
-    let stderr = ""
-    child.stdout?.on("data", (chunk) => {
-      stdout += chunk
-    })
-    child.stderr?.on("data", (chunk) => {
-      stderr += chunk
-    })
+    const stdout = new CappedBuffer(MAX_CAPTURE_BYTES)
+    const stderr = new CappedBuffer(MAX_CAPTURE_BYTES)
+    child.stdout?.on("data", (chunk) => stdout.push(chunk))
+    child.stderr?.on("data", (chunk) => stderr.push(chunk))
     // A spawn failure (e.g. `bun` not on PATH) is a probe failure, not a
     // harness crash — resolve with a synthetic non-zero outcome so the
     // pack run completes and reports it like any other failing probe.
     child.on("error", (err) => {
+      stderr.push(`failed to spawn probe: ${err.message}\n`)
       resolve({
         exit_code: null,
         signal: null,
-        stdout,
-        stderr: `${stderr}failed to spawn probe: ${err.message}\n`,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
       })
     })
     child.on("close", (code, signal) => {
-      resolve({ exit_code: code, signal: signal ?? null, stdout, stderr })
+      resolve({
+        exit_code: code,
+        signal: signal ?? null,
+        stdout: stdout.toString(),
+        stderr: stderr.toString(),
+      })
     })
   })
 }
