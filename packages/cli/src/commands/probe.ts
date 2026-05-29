@@ -6,28 +6,28 @@ import { spawn } from "node:child_process"
 /**
  * `lodestar probe <name>`
  *
- * Convenience for the research probes in `research/probes/`. The
- * probes ship as standalone TypeScript scripts and are this batch's
- * source of truth for firewall invariants — the CLI does not embed
- * them, it shells out to `bun run`.
+ * Convenience for the probes in `packs/lodestar-core/probes/`. The
+ * probes ship as standalone TypeScript scripts and are the source of
+ * truth for firewall invariants — the CLI does not embed them, it
+ * shells out to `bun run`.
  *
  * Probe names follow the file names (without the `.ts` extension).
  */
 
 /**
- * Locate `research/probes/` by walking up from this file's location.
- * Resolving against `process.cwd()` would only work when the CLI is
- * invoked from the repo root — `lodestar probe …` called from any
- * subdirectory (or from an installed CLI) needs to find the probes
+ * Locate `packs/lodestar-core/probes/` by walking up from this file's
+ * location. Resolving against `process.cwd()` would only work when the
+ * CLI is invoked from the repo root — `lodestar probe …` called from
+ * any subdirectory (or from an installed CLI) needs to find the probes
  * relative to the package, not the caller.
  */
 function findProbeDir(): string {
   const thisFile = fileURLToPath(import.meta.url)
   let dir = dirname(thisFile)
-  // Walk up until we find a directory containing `research/probes`.
+  // Walk up until we find the pack's probes directory.
   // Bounded by filesystem root.
   while (true) {
-    const candidate = resolve(dir, "research", "probes")
+    const candidate = resolve(dir, "packs", "lodestar-core", "probes")
     if (existsSync(candidate)) return candidate
     const parent = dirname(dir)
     if (parent === dir) break // hit filesystem root
@@ -35,12 +35,12 @@ function findProbeDir(): string {
   }
   // Fall back to a CWD-relative lookup so callers running from the
   // repo root still work even if the bin was relocated.
-  return resolve(process.cwd(), "research", "probes")
+  return resolve(process.cwd(), "packs", "lodestar-core", "probes")
 }
 
 const PROBE_DIR = findProbeDir()
 
-/** Short-name → file mapping. Kept in sync with `research/probes/`. */
+/** Short-name → file mapping. Kept in sync with `packs/lodestar-core/probes/`. */
 const PROBE_ALIASES: Record<string, string> = {
   poison: "memory-poisoning-basic",
   chain: "epistemic-chain-smoke",

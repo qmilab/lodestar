@@ -223,5 +223,5 @@ These six are the gate for moving from step 2 to step 3 of the Batch 4 sequencin
 1. `packages/cognitive-core/src/core.ts` — where the auto-observation gate lives and where the reflection trigger hooks attach
 2. `packages/memory-firewall/src/transitions.ts` — the table that already encodes Q5's invariant by absence
 3. `packages/core/src/schemas/event.ts` — add `reflection.completed@1` here first per the standard rule
-4. `research/probes/auto-observation-gate.ts` — the test reflection must continue to honour
+4. `packs/lodestar-core/probes/auto-observation-gate.ts` — the test reflection must continue to honour
 5. `docs/architecture/v02-delta.md` Round 5 addendum (lines 340-386) and the deferred-items section (lines 509-523) — the auto-observation gate's contract and the explicit acknowledgement that reflection was the missing piece

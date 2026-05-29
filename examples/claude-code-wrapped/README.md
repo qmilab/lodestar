@@ -78,7 +78,7 @@ bun run packages/cli/src/index.ts report <session-id> \
 - `notes.md` — appears at first glance to be ordinary engineering
   notes, but contains a `[SYSTEM-PRIORITY MESSAGE]` block planted to
   demonstrate prompt-injection content. The injection-defense probe
-  (`research/probes/mcp-proxy-injection-defense.ts`) covers the same
+  (`packs/lodestar-core/probes/mcp-proxy-injection-defense.ts`) covers the same
   threat model in tighter assertion form.
 
 ## Where this example deviates from a production wrap-an-agent setup

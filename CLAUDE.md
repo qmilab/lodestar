@@ -4,14 +4,20 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Fourteen probes pass under
+publishing), v0.2 architecture locked. Seventeen probes pass under
 strict TypeScript: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
-context propagation, event-log single-writer), and two new Batch 3
-MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`).
-Batches 1, 2, and 3 are complete; `@qmilab/lodestar-guard-mcp` lives
-in this repo and will publish to npm in a follow-up mini-marathon.
-Subsequent batches are tracked in `docs/roadmap.md`.
+context propagation, event-log single-writer), two Batch 3 MCP probes
+(`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`), and three
+Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
+`contradicted-belief-flags-dependent-decisions`,
+`event-log-canonical-hash`). The probes now live in the first-party
+pack `packs/lodestar-core/` and load through the
+`@qmilab/lodestar-harness` pack loader. Batches 1–3 are complete;
+Batch 4 is in progress (reflection pass, probe-pack format, and probe
+repackaging have landed). `@qmilab/lodestar-guard-mcp` lives in this
+repo and will publish to npm in a follow-up mini-marathon. Subsequent
+batches are tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
@@ -65,7 +71,7 @@ packages/
   guard/               # (exists) meta-package + guard.wrap() helper
   trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
-  harness/             # (Batch 4) probes, sentinels, calibrators, replay-lite
+  harness/             # (exists, Batch 4) probe-pack loader; runner, sentinels, calibrators still to come
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
   otel-exporter/       # (Batch 5+) OTel GenAI semantic conventions bridge
   adapters/
@@ -81,6 +87,11 @@ examples/
   coding-agent-greenfield/   # (exists) guard.wrap() demo on a homegrown agent
   claude-code-wrapped/       # (exists, Batch 3) MCP proxy wrapping a stand-in agent
 
+packs/
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 17 probes +
+                             #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
+  coding-agent-safety/       # (later, Batch 4) prompt-injection / tool-poisoning / drift probes + sentinels
+
 docs/
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
   positioning.md       # external voice, four developer entry points
@@ -91,15 +102,8 @@ docs/
   review/              # adversarial review history (ChatGPT rounds 1-5)
 
 research/
-  probes/              # fourteen passing probes (memory-poisoning-basic,
-                       #   epistemic-chain-smoke, external-document-not-normal,
-                       #   quarantined-not-retrievable, sensitivity-ceiling,
-                       #   auto-observation-gate, guard-import-no-self-promote,
-                       #   guard-precondition-revalidation,
-                       #   guard-contract-invariants, context-policy-
-                       #   contradiction-routing, kernel-context-propagation,
-                       #   event-log-single-writer, mcp-proxy-roundtrip,
-                       #   mcp-proxy-injection-defense)
+                       # probes/ moved to packs/lodestar-core/probes/ in Batch 4 —
+                       #   the 17 probes now ship as a loadable pack, not loose files
   benchmarks/          # (later) reproducible evaluation
   datasets/            # (later) logged event traces for analysis
 ```
@@ -130,7 +134,7 @@ When implementing a feature:
 1. Check the v0.2 delta (`docs/architecture/v02-delta.md`) for the authoritative schema.
 2. Define or update the Zod schema in `packages/core` first.
 3. Implement the runtime behavior in the relevant package.
-4. Add a probe in `research/probes/` that exercises the new behavior under adversarial conditions.
+4. Add a probe in `packs/lodestar-core/probes/` that exercises the new behavior under adversarial conditions, and declare it in `packs/lodestar-core/lodestar.probe-pack.json`.
 5. Update the package's `CLAUDE.md` if behavior changed.
 
 When refactoring:
@@ -160,7 +164,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Fourteen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
+- **Seventeen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
 
 ## Quick references
 

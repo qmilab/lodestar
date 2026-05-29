@@ -142,7 +142,7 @@ want auto-approved at lower trust levels.
   `@qmilab/lodestar-cli`.
 - The `claude-code-wrapped` end-to-end example — lives in
   `examples/claude-code-wrapped/`.
-- Probes — live in `research/probes/`.
+- Probes — live in `packs/lodestar-core/probes/`.
 - HTTP transport for the upstream face — Batch later.
 - Sentinel hooks observing the proxy's event stream —
   `@qmilab/lodestar-harness`, Batch 4.

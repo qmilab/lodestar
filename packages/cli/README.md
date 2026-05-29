@@ -53,7 +53,7 @@ lodestar trace inspect <event-id> --session session-... --project my-proj
 
 ### `lodestar probe <name>`
 
-Run one of the research probes in `research/probes/`. Probes are spec,
+Run one of the probes in `packs/lodestar-core/probes/`. Probes are spec,
 not test scaffolding — when they fail, the change is wrong, not the
 probe.
 
