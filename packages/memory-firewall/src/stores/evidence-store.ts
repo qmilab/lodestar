@@ -33,9 +33,7 @@ export class InMemoryEvidenceStore implements EvidenceStore {
 
   async forClaim(claim_id: string): Promise<EvidenceSet[]> {
     const ids = this.byClaim.get(claim_id) ?? []
-    return ids
-      .map((id) => this.byId.get(id))
-      .filter((e): e is EvidenceSet => e !== undefined)
+    return ids.map((id) => this.byId.get(id)).filter((e): e is EvidenceSet => e !== undefined)
   }
 
   async appendItem(evidence_id: string, item: EvidenceItem): Promise<EvidenceSet> {
@@ -104,10 +102,13 @@ export function aggregateStrength(evidence: EvidenceSet): number {
 
   for (const group of groups.values()) {
     // Within a group, take the strongest representative
-    const best = group.reduce((acc, item) => {
-      const w = QUALITY_WEIGHT[item.quality] * FRESHNESS_WEIGHT[item.freshness]
-      return w > acc.weight ? { item, weight: w } : acc
-    }, { item: group[0]!, weight: 0 })
+    const best = group.reduce(
+      (acc, item) => {
+        const w = QUALITY_WEIGHT[item.quality] * FRESHNESS_WEIGHT[item.freshness]
+        return w > acc.weight ? { item, weight: w } : acc
+      },
+      { item: group[0]!, weight: 0 },
+    )
 
     if (best.item.relation === "supports") supportWeight += best.weight
     else if (best.item.relation === "contradicts") contradictWeight += best.weight

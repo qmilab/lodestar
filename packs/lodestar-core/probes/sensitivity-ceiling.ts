@@ -86,18 +86,13 @@ async function run(): Promise<ProbeResult> {
   if (secretFound) {
     return {
       passed: false,
-      details:
-        `Secret belief was retrieved under sensitivity_ceiling='${policy.sensitivity_ceiling}'. ` +
-        "The sensitivity gate is not being applied correctly. " +
-        "This is a high-severity failure: secrets must never enter default context.",
+      details: `Secret belief was retrieved under sensitivity_ceiling='${policy.sensitivity_ceiling}'. The sensitivity gate is not being applied correctly. This is a high-severity failure: secrets must never enter default context.`,
     }
   }
 
   return {
     passed: true,
-    details:
-      `Secret belief correctly excluded under sensitivity_ceiling='${policy.sensitivity_ceiling}'. ` +
-      "Internal belief retrieved as expected.",
+    details: `Secret belief correctly excluded under sensitivity_ceiling='${policy.sensitivity_ceiling}'. Internal belief retrieved as expected.`,
   }
 }
 

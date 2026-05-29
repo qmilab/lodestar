@@ -1,19 +1,16 @@
-import { z } from "zod"
+import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import {
+  type Tool as LodestarTool,
   type Permission,
   type SandboxProfile,
-  type Tool as LodestarTool,
-  registerTool,
   lookupTool,
+  registerTool,
   unregisterTool,
 } from "@qmilab/lodestar-action-kernel"
-import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
+import { z } from "zod"
 import type { ToolContractDefaults } from "./config.js"
 import type { DownstreamConnection } from "./downstream.js"
-import {
-  MCP_TOOL_RESULT_SCHEMA_KEY,
-  type MCPToolResultObservationPayload,
-} from "./observation.js"
+import { type MCPToolResultObservationPayload, MCP_TOOL_RESULT_SCHEMA_KEY } from "./observation.js"
 import { stripReservedLodestarMeta } from "./policy-result.js"
 
 /**
@@ -67,16 +64,12 @@ const SEGMENT_RE = /^[a-z][a-z0-9_]*$/
 export function namespacedToolName(serverName: string, toolName: string): string {
   if (!SEGMENT_RE.test(serverName)) {
     throw new Error(
-      `mcp-proxy: downstream server name '${serverName}' must match ${SEGMENT_RE} ` +
-        `(lowercase, alphanumeric, underscore; starts with a letter). ` +
-        `Rename the downstream in the proxy config.`,
+      `mcp-proxy: downstream server name '${serverName}' must match ${SEGMENT_RE} (lowercase, alphanumeric, underscore; starts with a letter). Rename the downstream in the proxy config.`,
     )
   }
   if (!SEGMENT_RE.test(toolName)) {
     throw new Error(
-      `mcp-proxy: downstream tool name '${toolName}' from server '${serverName}' ` +
-        `must match ${SEGMENT_RE} to satisfy the action-kernel registry's naming rule. ` +
-        `The downstream server is exposing a tool with characters Lodestar cannot represent.`,
+      `mcp-proxy: downstream tool name '${toolName}' from server '${serverName}' must match ${SEGMENT_RE} to satisfy the action-kernel registry's naming rule. The downstream server is exposing a tool with characters Lodestar cannot represent.`,
     )
   }
   return `mcp.${serverName}.${toolName}`
@@ -101,13 +94,7 @@ export function buildLodestarToolForMCP(args: {
   mcpTool: MCPTool
   defaults: ToolContractDefaults
 }): LodestarTool<Record<string, unknown>, MCPToolResultObservationPayload> {
-  const {
-    lodestarName,
-    downstreamName,
-    downstream,
-    mcpTool,
-    defaults,
-  } = args
+  const { lodestarName, downstreamName, downstream, mcpTool, defaults } = args
 
   // Permissions must be assigned at registration; sandbox is a string
   // enum that the kernel uses to compose runtime restrictions. Both
@@ -122,9 +109,7 @@ export function buildLodestarToolForMCP(args: {
     effects: [
       {
         kind: "external_call",
-        description:
-          `forwards to MCP server '${downstreamName}' tool '${mcpTool.name}'` +
-          (mcpTool.description ? `: ${mcpTool.description}` : ""),
+        description: `forwards to MCP server '${downstreamName}' tool '${mcpTool.name}'${mcpTool.description ? `: ${mcpTool.description}` : ""}`,
       },
     ],
     reversibility: defaults.reversibility,
@@ -133,10 +118,7 @@ export function buildLodestarToolForMCP(args: {
     sandbox,
     preconditions: () => [],
     execute: async (inputs): Promise<MCPToolResultObservationPayload> => {
-      const downstreamResult: CallToolResult = await downstream.callTool(
-        mcpTool.name,
-        inputs,
-      )
+      const downstreamResult: CallToolResult = await downstream.callTool(mcpTool.name, inputs)
       return shapeMCPCallToolResultAsObservation({
         toolName: lodestarName,
         downstreamServer: downstreamName,
@@ -164,103 +146,95 @@ function shapeMCPCallToolResultAsObservation(input: {
   args: Record<string, unknown>
   result: CallToolResult
 }): MCPToolResultObservationPayload {
-  const content: MCPToolResultObservationPayload["content"] = input.result.content.map(
-    (block) => {
-      // The MCP types are wide unions. Each variant copies the
-      // documented fields, then spreads the remaining keys (such as
-      // `annotations`, `_meta`, future spec additions) via
-      // `copyExtras` so the catchall on the observation schema
-      // preserves them. Pre-fix, the mapper cherry-picked only the
-      // documented fields, which silently dropped any block-level
-      // metadata a downstream relied on.
-      if (block.type === "text") {
-        const raw = block as Record<string, unknown>
-        const out: Record<string, unknown> = {
-          type: "text" as const,
-          text: typeof raw.text === "string" ? raw.text : "",
-        }
-        copyExtras(raw, out, ["type", "text"])
-        return out as MCPToolResultObservationPayload["content"][number]
+  const content: MCPToolResultObservationPayload["content"] = input.result.content.map((block) => {
+    // The MCP types are wide unions. Each variant copies the
+    // documented fields, then spreads the remaining keys (such as
+    // `annotations`, `_meta`, future spec additions) via
+    // `copyExtras` so the catchall on the observation schema
+    // preserves them. Pre-fix, the mapper cherry-picked only the
+    // documented fields, which silently dropped any block-level
+    // metadata a downstream relied on.
+    if (block.type === "text") {
+      const raw = block as Record<string, unknown>
+      const out: Record<string, unknown> = {
+        type: "text" as const,
+        text: typeof raw.text === "string" ? raw.text : "",
       }
-      if (block.type === "image") {
-        const raw = block as Record<string, unknown>
-        const out: Record<string, unknown> = {
-          type: "image" as const,
-          data: typeof raw.data === "string" ? raw.data : "",
-          mimeType:
-            typeof raw.mimeType === "string"
-              ? raw.mimeType
-              : "application/octet-stream",
-        }
-        copyExtras(raw, out, ["type", "data", "mimeType"])
-        return out as MCPToolResultObservationPayload["content"][number]
+      copyExtras(raw, out, ["type", "text"])
+      return out as MCPToolResultObservationPayload["content"][number]
+    }
+    if (block.type === "image") {
+      const raw = block as Record<string, unknown>
+      const out: Record<string, unknown> = {
+        type: "image" as const,
+        data: typeof raw.data === "string" ? raw.data : "",
+        mimeType: typeof raw.mimeType === "string" ? raw.mimeType : "application/octet-stream",
       }
-      if (block.type === "audio") {
-        const raw = block as Record<string, unknown>
-        const out: Record<string, unknown> = {
-          type: "audio" as const,
-          data: typeof raw.data === "string" ? raw.data : "",
-          mimeType:
-            typeof raw.mimeType === "string"
-              ? raw.mimeType
-              : "application/octet-stream",
-        }
-        copyExtras(raw, out, ["type", "data", "mimeType"])
-        return out as MCPToolResultObservationPayload["content"][number]
+      copyExtras(raw, out, ["type", "data", "mimeType"])
+      return out as MCPToolResultObservationPayload["content"][number]
+    }
+    if (block.type === "audio") {
+      const raw = block as Record<string, unknown>
+      const out: Record<string, unknown> = {
+        type: "audio" as const,
+        data: typeof raw.data === "string" ? raw.data : "",
+        mimeType: typeof raw.mimeType === "string" ? raw.mimeType : "application/octet-stream",
       }
-      if (block.type === "resource") {
-        const raw = block as Record<string, unknown>
-        const rawResource = (raw.resource ?? {}) as Record<string, unknown>
-        const resource: Record<string, unknown> = {
-          uri: typeof rawResource.uri === "string" ? rawResource.uri : "",
-        }
-        if (typeof rawResource.mimeType === "string") resource.mimeType = rawResource.mimeType
-        if (typeof rawResource.text === "string") resource.text = rawResource.text
-        if (typeof rawResource.blob === "string") resource.blob = rawResource.blob
-        // Preserve any extra resource-level fields (e.g. resource._meta).
-        copyExtras(rawResource, resource, ["uri", "mimeType", "text", "blob"])
-        const out: Record<string, unknown> = {
-          type: "resource" as const,
-          resource,
-        }
-        // Preserve any extra block-level fields (annotations, _meta, …).
-        copyExtras(raw, out, ["type", "resource"])
-        return out as MCPToolResultObservationPayload["content"][number]
+      copyExtras(raw, out, ["type", "data", "mimeType"])
+      return out as MCPToolResultObservationPayload["content"][number]
+    }
+    if (block.type === "resource") {
+      const raw = block as Record<string, unknown>
+      const rawResource = (raw.resource ?? {}) as Record<string, unknown>
+      const resource: Record<string, unknown> = {
+        uri: typeof rawResource.uri === "string" ? rawResource.uri : "",
       }
-      if (block.type === "resource_link") {
-        const raw = block as Record<string, unknown>
-        const out: Record<string, unknown> = {
-          type: "resource_link" as const,
-          uri: typeof raw.uri === "string" ? raw.uri : "",
-          name: typeof raw.name === "string" ? raw.name : "",
-        }
-        if (typeof raw.title === "string") out.title = raw.title
-        if (typeof raw.description === "string") out.description = raw.description
-        if (typeof raw.mimeType === "string") out.mimeType = raw.mimeType
-        if (typeof raw.size === "number") out.size = raw.size
-        // Preserve any additional fields (annotations, _meta, icons, …).
-        copyExtras(raw, out, ["type", "uri", "name", "title", "description", "mimeType", "size"])
-        return out as MCPToolResultObservationPayload["content"][number]
+      if (typeof rawResource.mimeType === "string") resource.mimeType = rawResource.mimeType
+      if (typeof rawResource.text === "string") resource.text = rawResource.text
+      if (typeof rawResource.blob === "string") resource.blob = rawResource.blob
+      // Preserve any extra resource-level fields (e.g. resource._meta).
+      copyExtras(rawResource, resource, ["uri", "mimeType", "text", "blob"])
+      const out: Record<string, unknown> = {
+        type: "resource" as const,
+        resource,
       }
-      // Forward-compat: the SDK's TypeScript union is closed at compile
-      // time, but a future SDK release could ship a new content kind
-      // before Lodestar's handlers learn about it. Defend via cast.
-      //
-      // Trust-boundary precaution (Codex round 13): deep-strip the
-      // reserved `_lodestar` key from every `_meta` reachable inside
-      // the raw block before persisting. Known content blocks get
-      // this treatment via `copyExtras`; without doing it here too,
-      // a hostile downstream could smuggle a forged
-      // `_meta._lodestar` marker into the observation payload via
-      // an unrecognised content kind's nested metadata.
-      const fallback = block as { type?: unknown }
-      return {
-        type: "unknown" as const,
-        original_type: String(fallback.type),
-        raw: stripReservedLodestarMetaDeep(block),
+      // Preserve any extra block-level fields (annotations, _meta, …).
+      copyExtras(raw, out, ["type", "resource"])
+      return out as MCPToolResultObservationPayload["content"][number]
+    }
+    if (block.type === "resource_link") {
+      const raw = block as Record<string, unknown>
+      const out: Record<string, unknown> = {
+        type: "resource_link" as const,
+        uri: typeof raw.uri === "string" ? raw.uri : "",
+        name: typeof raw.name === "string" ? raw.name : "",
       }
-    },
-  )
+      if (typeof raw.title === "string") out.title = raw.title
+      if (typeof raw.description === "string") out.description = raw.description
+      if (typeof raw.mimeType === "string") out.mimeType = raw.mimeType
+      if (typeof raw.size === "number") out.size = raw.size
+      // Preserve any additional fields (annotations, _meta, icons, …).
+      copyExtras(raw, out, ["type", "uri", "name", "title", "description", "mimeType", "size"])
+      return out as MCPToolResultObservationPayload["content"][number]
+    }
+    // Forward-compat: the SDK's TypeScript union is closed at compile
+    // time, but a future SDK release could ship a new content kind
+    // before Lodestar's handlers learn about it. Defend via cast.
+    //
+    // Trust-boundary precaution (Codex round 13): deep-strip the
+    // reserved `_lodestar` key from every `_meta` reachable inside
+    // the raw block before persisting. Known content blocks get
+    // this treatment via `copyExtras`; without doing it here too,
+    // a hostile downstream could smuggle a forged
+    // `_meta._lodestar` marker into the observation payload via
+    // an unrecognised content kind's nested metadata.
+    const fallback = block as { type?: unknown }
+    return {
+      type: "unknown" as const,
+      original_type: String(fallback.type),
+      raw: stripReservedLodestarMetaDeep(block),
+    }
+  })
 
   const observation: MCPToolResultObservationPayload = {
     tool_name: input.toolName,
@@ -292,7 +266,6 @@ function shapeMCPCallToolResultAsObservation(input: {
   }
   return observation
 }
-
 
 /**
  * Build a sanitised version of a downstream MCP tool that is safe to
@@ -327,11 +300,7 @@ export function sanitizeAdvertisedTool(args: {
   lodestarName: string
   downstreamName: string
 }): MCPTool {
-  const safeDescription =
-    `Tool '${args.lodestarName}' (proxied from downstream '${args.downstreamName}'). ` +
-    `The original description is recorded in the Lodestar event log; it is not ` +
-    `forwarded to the wrapped agent's prompt to prevent prompt-injection text in ` +
-    `downstream tool metadata from reaching the model.`
+  const safeDescription = `Tool '${args.lodestarName}' (proxied from downstream '${args.downstreamName}'). The original description is recorded in the Lodestar event log; it is not forwarded to the wrapped agent's prompt to prevent prompt-injection text in downstream tool metadata from reaching the model.`
   const inputSchema = sanitizeSchema(args.mcpTool.inputSchema) as MCPTool["inputSchema"]
   const out: Record<string, unknown> = {
     name: args.lodestarName,
@@ -676,8 +645,8 @@ export function registerDownstreamToolsWithKernel(args: {
       // conformant name (e.g. `long-running` with a hyphen) does
       // not tank the whole downstream — the sibling sync tools
       // still register cleanly.
-      const taskSupport = (mcpTool as { execution?: { taskSupport?: string } })
-        .execution?.taskSupport
+      const taskSupport = (mcpTool as { execution?: { taskSupport?: string } }).execution
+        ?.taskSupport
       if (taskSupport === "required") {
         args.onTaskRequiredSkipped?.({
           downstreamName: args.downstream.config.name,
@@ -686,18 +655,10 @@ export function registerDownstreamToolsWithKernel(args: {
         })
         continue
       }
-      const lodestarName = namespacedToolName(
-        args.downstream.config.name,
-        mcpTool.name,
-      )
+      const lodestarName = namespacedToolName(args.downstream.config.name, mcpTool.name)
       if (lookupTool(lodestarName) !== undefined) {
         throw new Error(
-          `mcp-proxy: tool '${lodestarName}' is already registered in the ` +
-            `action-kernel. This usually means a prior MCPProxy instance ` +
-            `did not call stop() (which deregisters its tools), or two ` +
-            `proxies are coexisting in the same process for the same ` +
-            `downstream name. Stop the prior proxy or rename the ` +
-            `downstream server in your config.`,
+          `mcp-proxy: tool '${lodestarName}' is already registered in the action-kernel. This usually means a prior MCPProxy instance did not call stop() (which deregisters its tools), or two proxies are coexisting in the same process for the same downstream name. Stop the prior proxy or rename the downstream server in your config.`,
         )
       }
       const defaults = args.defaultsByTool[lodestarName] ?? fallback

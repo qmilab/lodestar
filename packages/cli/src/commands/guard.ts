@@ -1,10 +1,10 @@
 import { resolve } from "node:path"
 import {
+  type AgentLoop,
+  type GuardConfig,
   alwaysHoldsChecker,
   autoApprovePolicy,
   runGuarded,
-  type AgentLoop,
-  type GuardConfig,
 } from "@qmilab/lodestar-guard"
 import { defaultLogRoot } from "@qmilab/lodestar-trace"
 
@@ -51,8 +51,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
       const parsed = next ? Number.parseInt(next, 10) : Number.NaN
       if (!Number.isFinite(parsed) || parsed < 0 || parsed > 4) {
         process.stderr.write(
-          `--auto-approve-up-to must be an integer in [0,4]; got '${next}'. ` +
-            `L5 is prohibited and cannot be auto-approved.\n`,
+          `--auto-approve-up-to must be an integer in [0,4]; got '${next}'. L5 is prohibited and cannot be auto-approved.\n`,
         )
         return 2
       }

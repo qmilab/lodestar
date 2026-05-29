@@ -15,9 +15,6 @@ export function describeEvent(event: EventEnvelope): string {
  * Locate an event in a stream by id, returning the envelope if found.
  * Pure function; the caller is responsible for loading the stream.
  */
-export function findEventById(
-  events: EventEnvelope[],
-  id: string,
-): EventEnvelope | undefined {
+export function findEventById(events: EventEnvelope[], id: string): EventEnvelope | undefined {
   return events.find((e) => e.id === id)
 }

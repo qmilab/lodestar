@@ -1,6 +1,6 @@
 import { z } from "zod"
-import { TimestampSchema } from "./common.js"
 import { TruthStatusSchema } from "./belief.js"
+import { TimestampSchema } from "./common.js"
 
 /**
  * What triggered a reflection pass.
@@ -139,14 +139,20 @@ export const ReflectionCompletedPayloadSchema = z.object({
   triggered_by: ReflectionTriggerSchema,
   cursor: z.object({
     from_seq: z.number().int().min(-1).describe("-1 if this is the first pass for the partition"),
-    to_seq: z.number().int().min(-1).describe(
-      "Equal to from_seq when the window is empty — the pass ran but observed no new events. " +
-        "Encoded explicitly (rather than skipping emission) so the audit chain can distinguish " +
-        "'reflection ran and was silent' from 'reflection did not run.'",
-    ),
+    to_seq: z
+      .number()
+      .int()
+      .min(-1)
+      .describe(
+        "Equal to from_seq when the window is empty — the pass ran but observed no new events. " +
+          "Encoded explicitly (rather than skipping emission) so the audit chain can distinguish " +
+          "'reflection ran and was silent' from 'reflection did not run.'",
+      ),
   }),
   observed_event_ids: z.array(z.string()),
-  proposals: z.array(ReflectionProposalSchema).min(1, "every reflection pass emits at least one proposal (no_op counts)"),
+  proposals: z
+    .array(ReflectionProposalSchema)
+    .min(1, "every reflection pass emits at least one proposal (no_op counts)"),
   started_at: TimestampSchema,
   finished_at: TimestampSchema,
 })

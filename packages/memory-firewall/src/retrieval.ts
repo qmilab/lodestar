@@ -32,8 +32,10 @@ export class GatedRetrieval {
    * context.
    */
   async retrieve(query: RetrievalQuery, policy: ContextPolicy): Promise<RetrievalResult> {
-    const { accepted, rejected, uncertainties } =
-      await this.computeAcceptedCandidates(query, policy)
+    const { accepted, rejected, uncertainties } = await this.computeAcceptedCandidates(
+      query,
+      policy,
+    )
 
     let contradictions: Belief[] = []
     if (policy.include_contradictions) {
@@ -71,10 +73,7 @@ export class GatedRetrieval {
    * is true. Callable directly by sentinels and reflection that need to
    * inspect contradictions specifically.
    */
-  async retrieveContradictions(
-    query: RetrievalQuery,
-    policy: ContextPolicy,
-  ): Promise<Belief[]> {
+  async retrieveContradictions(query: RetrievalQuery, policy: ContextPolicy): Promise<Belief[]> {
     const { accepted } = await this.computeAcceptedCandidates(query, policy)
     return this.contradictionsForAccepted(accepted, query, policy)
   }
@@ -120,9 +119,7 @@ export class GatedRetrieval {
     })
 
     const now = Date.now()
-    const maxAge = policy.freshness_max_age
-      ? parseDurationToMs(policy.freshness_max_age)
-      : null
+    const maxAge = policy.freshness_max_age ? parseDurationToMs(policy.freshness_max_age) : null
 
     const accepted: Belief[] = []
     const rejected: BeliefRejection[] = []
@@ -192,9 +189,7 @@ export class GatedRetrieval {
     })
 
     const now = Date.now()
-    const maxAge = policy.freshness_max_age
-      ? parseDurationToMs(policy.freshness_max_age)
-      : null
+    const maxAge = policy.freshness_max_age ? parseDurationToMs(policy.freshness_max_age) : null
 
     const result: Belief[] = []
     for (const belief of rawContradicted) {
@@ -207,11 +202,7 @@ export class GatedRetrieval {
       const isAssertedPriority =
         (belief.authority === "user_asserted" && policy.user_asserted_takes_priority) ||
         (belief.authority === "policy_asserted" && policy.policy_asserted_takes_priority)
-      if (
-        belief.confidence < 0.5 &&
-        !policy.include_uncertainties &&
-        !isAssertedPriority
-      ) {
+      if (belief.confidence < 0.5 && !policy.include_uncertainties && !isAssertedPriority) {
         continue
       }
       // Subject-relation join

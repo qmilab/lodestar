@@ -27,6 +27,7 @@ import {
   Reflection,
   type ReflectionEmitter,
 } from "@qmilab/lodestar-cognitive-core"
+import type { Belief, Claim, EvidenceSet, ReflectionProposal } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
@@ -34,12 +35,6 @@ import {
   MemoryFirewall,
   authoritiesFor,
 } from "@qmilab/lodestar-memory-firewall"
-import type {
-  Belief,
-  Claim,
-  EvidenceSet,
-  ReflectionProposal,
-} from "@qmilab/lodestar-core"
 
 interface ProbeResult {
   passed: boolean
@@ -51,7 +46,9 @@ async function run(): Promise<ProbeResult> {
 
   // ── Assertion (a): table-level invariant ──────────────────────────────
   const authorities = authoritiesFor("retrieval_status", "restricted", "normal")
-  details.push(`authoritiesFor(retrieval_status, restricted → normal) = [${authorities.join(", ")}]`)
+  details.push(
+    `authoritiesFor(retrieval_status, restricted → normal) = [${authorities.join(", ")}]`,
+  )
   if (authorities.includes("reflection")) {
     return {
       passed: false,
@@ -220,8 +217,7 @@ async function run(): Promise<ProbeResult> {
       passed: false,
       details: [
         ...details,
-        `FAIL: Reflection.applyProposal threw, but the error did not name the table-level rejection. ` +
-          `Got: ${reflectionErrorMessage}. Expected the firewall's transition-not-allowed message.`,
+        `FAIL: Reflection.applyProposal threw, but the error did not name the table-level rejection. Got: ${reflectionErrorMessage}. Expected the firewall's transition-not-allowed message.`,
       ],
     }
   }
@@ -292,17 +288,14 @@ async function run(): Promise<ProbeResult> {
   })
   const offenders = ruleSetResult.payload.proposals.filter(
     (p) =>
-      p.kind === "belief_transition" &&
-      p.axis === "retrieval_status" &&
-      p.to_value === "normal",
+      p.kind === "belief_transition" && p.axis === "retrieval_status" && p.to_value === "normal",
   )
   if (offenders.length > 0) {
     return {
       passed: false,
       details: [
         ...details,
-        `FAIL: reflection's own rule set produced ${offenders.length} proposal(s) ` +
-          "targeting retrieval_status: normal. This rule should not exist.",
+        `FAIL: reflection's own rule set produced ${offenders.length} proposal(s) targeting retrieval_status: normal. This rule should not exist.`,
       ],
     }
   }
@@ -320,7 +313,8 @@ async function run(): Promise<ProbeResult> {
     subject_id: seed.id,
     audience: "audit",
     summary: "Probe: stale-source belief_transition proposal",
-    full_text: "Probe verifies a belief_transition proposal whose from_value no longer matches the belief is rejected.",
+    full_text:
+      "Probe verifies a belief_transition proposal whose from_value no longer matches the belief is rejected.",
     claims_used: [claim.id],
     evidence_used: [evidence.id],
   })

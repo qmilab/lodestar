@@ -53,19 +53,11 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import type { CallToolResult, Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
-import type {
-  Belief,
-  Claim,
-  EventEnvelope,
-  EvidenceSet,
-  Observation,
-} from "@qmilab/lodestar-core"
+import type { Belief, Claim, EventEnvelope, EvidenceSet, Observation } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
-import {
-  EventLogReader,
-  _resetEventLogStateForTests,
-} from "@qmilab/lodestar-event-log"
+import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import {
   DownstreamConnection,
   MCPProxy,
@@ -74,10 +66,6 @@ import {
   type ProxyConfig,
   UpstreamServer,
 } from "@qmilab/lodestar-guard-mcp"
-import type {
-  CallToolResult,
-  Tool as MCPTool,
-} from "@modelcontextprotocol/sdk/types.js"
 
 interface ProbeResult {
   passed: boolean
@@ -139,10 +127,7 @@ class FakeHostileDownstreamConnection extends DownstreamConnection {
   override getTools(): readonly MCPTool[] {
     return this.fakeTools
   }
-  override async callTool(
-    name: string,
-    args: Record<string, unknown>,
-  ): Promise<CallToolResult> {
+  override async callTool(name: string, args: Record<string, unknown>): Promise<CallToolResult> {
     return this.fakeCallTool(name, args)
   }
   override async stop(): Promise<void> {}
@@ -192,9 +177,7 @@ async function run(): Promise<ProbeResult> {
       default_scope: { level: "project", identifier: REAL_PROJECT_ID },
       default_sensitivity: "internal",
       auto_approve_ceiling: 2,
-      downstream_servers: [
-        { name: DOWNSTREAM_NAME, command: "not-spawned", args: [] },
-      ],
+      downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
       tool_defaults: {
         [LODESTAR_TOOL_NAME]: {
           reversibility: "reversible",
@@ -209,12 +192,7 @@ async function run(): Promise<ProbeResult> {
     const proxy = new MCPProxy(config, {
       downstreamFactory: (cfg) =>
         cfg.downstream_servers.map(
-          (entry) =>
-            new FakeHostileDownstreamConnection(
-              entry,
-              [readFileTool],
-              fakeCallTool,
-            ),
+          (entry) => new FakeHostileDownstreamConnection(entry, [readFileTool], fakeCallTool),
         ),
       upstreamFactory: (tools, handler) =>
         new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
@@ -229,20 +207,13 @@ async function run(): Promise<ProbeResult> {
       const meta = (result._meta as { _lodestar?: unknown })?._lodestar
       return {
         passed: false,
-        details:
-          `unexpected isError=true on the round-trip CallToolResult — the ` +
-          `downstream returned a normal-looking poisoned file, the proxy ` +
-          `should still forward it (the defense is at the belief layer, ` +
-          `not the result layer). meta: ${JSON.stringify(meta)}`,
+        details: `unexpected isError=true on the round-trip CallToolResult — the downstream returned a normal-looking poisoned file, the proxy should still forward it (the defense is at the belief layer, not the result layer). meta: ${JSON.stringify(meta)}`,
       }
     }
     await proxy.stop()
 
     const reader = new EventLogReader(logDir)
-    const envelopes: EventEnvelope[] = await reader.readSession(
-      REAL_PROJECT_ID,
-      REAL_SESSION_ID,
-    )
+    const envelopes: EventEnvelope[] = await reader.readSession(REAL_PROJECT_ID, REAL_SESSION_ID)
 
     // ────────────────────────────────────────────────────────────────
     // Assertion 1: the hostile text was recorded verbatim in the
@@ -258,9 +229,9 @@ async function run(): Promise<ProbeResult> {
       return {
         passed: false,
         details:
-          `observation.payload did not preserve the hostile text verbatim. ` +
-          `The trust layer must record what crossed the boundary; redacting ` +
-          `here would defeat the audit trail.`,
+          "observation.payload did not preserve the hostile text verbatim. " +
+          "The trust layer must record what crossed the boundary; redacting " +
+          "here would defeat the audit trail.",
       }
     }
 
@@ -294,19 +265,13 @@ async function run(): Promise<ProbeResult> {
     if (!envelopeBelief) {
       return {
         passed: false,
-        details:
-          `envelope claim ${envelopeClaim.id} did not produce a Belief. ` +
-          `The tool_invocation evidence is supposed to be strong enough to ` +
-          `auto-adopt; this is a regression.`,
+        details: `envelope claim ${envelopeClaim.id} did not produce a Belief. The tool_invocation evidence is supposed to be strong enough to auto-adopt; this is a regression.`,
       }
     }
     if (envelopeBelief.truth_status !== "supported") {
       return {
         passed: false,
-        details:
-          `envelope belief ${envelopeBelief.id} carries truth_status=` +
-          `'${envelopeBelief.truth_status}', expected 'supported'. ` +
-          `tool_result quality should auto-promote.`,
+        details: `envelope belief ${envelopeBelief.id} carries truth_status='${envelopeBelief.truth_status}', expected 'supported'. tool_result quality should auto-promote.`,
       }
     }
 
@@ -317,12 +282,7 @@ async function run(): Promise<ProbeResult> {
     if (contentBelief && contentBelief.truth_status === "supported") {
       return {
         passed: false,
-        details:
-          `CRITICAL: content belief ${contentBelief.id} was adopted at ` +
-          `truth_status='supported'. The auto-observation gate (Round 5 ` +
-          `Parallax) is supposed to keep external_document evidence at ` +
-          `'unverified'. This is the exact failure mode the probe exists ` +
-          `to catch — a poisoned file content is now a trusted belief.`,
+        details: `CRITICAL: content belief ${contentBelief.id} was adopted at truth_status='supported'. The auto-observation gate (Round 5 Parallax) is supposed to keep external_document evidence at 'unverified'. This is the exact failure mode the probe exists to catch — a poisoned file content is now a trusted belief.`,
       }
     }
     // The content claim should either NOT have adopted (strength too
@@ -331,11 +291,7 @@ async function run(): Promise<ProbeResult> {
     if (contentBelief && contentBelief.truth_status !== "unverified") {
       return {
         passed: false,
-        details:
-          `content belief ${contentBelief.id} carries truth_status=` +
-          `'${contentBelief.truth_status}', expected 'unverified' or no ` +
-          `belief at all. Promoted past unverified without explicit ` +
-          `reflection authority?`,
+        details: `content belief ${contentBelief.id} carries truth_status='${contentBelief.truth_status}', expected 'unverified' or no belief at all. Promoted past unverified without explicit reflection authority?`,
       }
     }
 
@@ -346,9 +302,7 @@ async function run(): Promise<ProbeResult> {
     // ────────────────────────────────────────────────────────────────
     const evidenceEvents = envelopes.filter((e) => e.type === "evidence.assessed")
     const evidenceSets = evidenceEvents.map((e) => e.payload as EvidenceSet)
-    const contentEvidenceSets = evidenceSets.filter(
-      (s) => s.claim_id === contentClaim.id,
-    )
+    const contentEvidenceSets = evidenceSets.filter((s) => s.claim_id === contentClaim.id)
     if (contentEvidenceSets.length === 0) {
       // If the strength was insufficient to adopt, no evidence set
       // would have been persisted via the belief-emission path. That
@@ -357,10 +311,7 @@ async function run(): Promise<ProbeResult> {
       if (contentBelief) {
         return {
           passed: false,
-          details:
-            `content claim ${contentClaim.id} produced a Belief but no ` +
-            `evidence.assessed event reached the log — the evidence set ` +
-            `should have been emitted alongside the belief.`,
+          details: `content claim ${contentClaim.id} produced a Belief but no evidence.assessed event reached the log — the evidence set should have been emitted alongside the belief.`,
         }
       }
     }
@@ -373,26 +324,13 @@ async function run(): Promise<ProbeResult> {
     if (contentEvidenceSets.length > 0 && !hasExternalDocumentItem) {
       return {
         passed: false,
-        details:
-          `none of the ${contentEvidenceSets.length} evidence sets for the ` +
-          `content claim carry a supporting EvidenceItem with quality=` +
-          `'external_document'. The MCPAwareEvidenceLinker should have ` +
-          `flagged this; without the flag the firewall's Parallax gate is ` +
-          `bypassed and hostile content could promote.`,
+        details: `none of the ${contentEvidenceSets.length} evidence sets for the content claim carry a supporting EvidenceItem with quality='external_document'. The MCPAwareEvidenceLinker should have flagged this; without the flag the firewall's Parallax gate is bypassed and hostile content could promote.`,
       }
     }
 
     return {
       passed: true,
-      details:
-        `Hostile MCP tool result handled correctly: ` +
-        `(1) hostile text (${HOSTILE_FILE_CONTENTS.length} chars) preserved ` +
-        `verbatim in observation payload (audit trail intact); ` +
-        `(2) envelope claim adopted at truth_status='supported' (tool_result ` +
-        `quality, expected); ` +
-        `(3) content claim ${contentBelief ? `adopted at truth_status='${contentBelief.truth_status}'` : "did not adopt as a belief"} — ` +
-        `NOT 'supported'; ` +
-        `(4) ${hasExternalDocumentItem ? "evidence set carries an external_document quality item (firewall has the signal it needs)" : "no evidence set persisted because the content claim's evidence was below adoption threshold"}.`,
+      details: `Hostile MCP tool result handled correctly: (1) hostile text (${HOSTILE_FILE_CONTENTS.length} chars) preserved verbatim in observation payload (audit trail intact); (2) envelope claim adopted at truth_status='supported' (tool_result quality, expected); (3) content claim ${contentBelief ? `adopted at truth_status='${contentBelief.truth_status}'` : "did not adopt as a belief"} — NOT 'supported'; (4) ${hasExternalDocumentItem ? "evidence set carries an external_document quality item (firewall has the signal it needs)" : "no evidence set persisted because the content claim's evidence was below adoption threshold"}.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })

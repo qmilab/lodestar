@@ -1,5 +1,10 @@
 import { z } from "zod"
-import { PredicateSchema, ResourceScopeSchema, SensitivitySchema, TimestampSchema } from "./common.js"
+import {
+  PredicateSchema,
+  ResourceScopeSchema,
+  SensitivitySchema,
+  TimestampSchema,
+} from "./common.js"
 
 /**
  * How a claim was extracted from observation(s).
@@ -36,7 +41,9 @@ export const ClaimSchema = z.object({
   id: z.string(),
   statement: z.string().describe("human-readable claim"),
   structured_predicate: PredicateSchema.optional().describe("for queryable claims"),
-  source_observation_ids: z.array(z.string()).min(1, "a claim must reference at least one observation"),
+  source_observation_ids: z
+    .array(z.string())
+    .min(1, "a claim must reference at least one observation"),
   extraction_method: ExtractionMethodSchema,
   extracted_by: z.string().describe("actor_id of the extractor"),
   status: ClaimStatusSchema,
@@ -60,12 +67,12 @@ export type Claim = z.infer<typeof ClaimSchema>
  * a scoring function.
  */
 export const EvidenceQualitySchema = z.enum([
-  "direct_observation",   // tool output describing world state
-  "tool_result",          // computed result from a tool
-  "human_assertion",      // user said so
-  "model_inference",      // an LLM concluded so from other context
-  "external_document",    // file, webpage, email — high risk for poisoning
-  "synthetic_probe",      // from a Harness probe; never affects real beliefs
+  "direct_observation", // tool output describing world state
+  "tool_result", // computed result from a tool
+  "human_assertion", // user said so
+  "model_inference", // an LLM concluded so from other context
+  "external_document", // file, webpage, email — high risk for poisoning
+  "synthetic_probe", // from a Harness probe; never affects real beliefs
 ])
 export type EvidenceQuality = z.infer<typeof EvidenceQualitySchema>
 

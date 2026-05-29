@@ -1,7 +1,7 @@
+import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
-import { spawn } from "node:child_process"
 
 /**
  * `lodestar probe <name>`

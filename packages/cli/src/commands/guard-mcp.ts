@@ -1,5 +1,5 @@
 import { resolve } from "node:path"
-import { loadProxyConfig, MCPProxy } from "@qmilab/lodestar-guard-mcp"
+import { MCPProxy, loadProxyConfig } from "@qmilab/lodestar-guard-mcp"
 
 /**
  * `lodestar guard mcp-proxy --config <path>`
@@ -46,7 +46,7 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
   }
 
   const resolved = resolve(process.cwd(), configPath)
-  let config
+  let config: Awaited<ReturnType<typeof loadProxyConfig>>
   try {
     config = await loadProxyConfig(resolved)
   } catch (err) {

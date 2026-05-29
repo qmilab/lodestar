@@ -1,4 +1,9 @@
-import type { FreshnessStatus, RetrievalStatus, SecurityStatus, TruthStatus } from "@qmilab/lodestar-core"
+import type {
+  FreshnessStatus,
+  RetrievalStatus,
+  SecurityStatus,
+  TruthStatus,
+} from "@qmilab/lodestar-core"
 import type { LifecycleAxis } from "./stores/belief-store.js"
 
 /**
@@ -15,13 +20,13 @@ import type { LifecycleAxis } from "./stores/belief-store.js"
  */
 
 export type TransitionAuthority =
-  | "user"            // explicit user confirmation
-  | "policy"          // policy configuration
-  | "probe"           // harness probe verified
-  | "sentinel"        // sentinel raised a finding
-  | "reflection"      // reflection pass with confirming evidence
+  | "user" // explicit user confirmation
+  | "policy" // policy configuration
+  | "probe" // harness probe verified
+  | "sentinel" // sentinel raised a finding
+  | "reflection" // reflection pass with confirming evidence
   | "auto_observation" // narrow auto-promotion from fresh tool observation
-  | "system"          // freshness decay, etc.
+  | "system" // freshness decay, etc.
 
 export interface Transition<T extends string> {
   from: T
@@ -31,11 +36,23 @@ export interface Transition<T extends string> {
 
 export const TRUTH_TRANSITIONS: Transition<TruthStatus>[] = [
   // Promotion paths
-  { from: "unverified", to: "supported", authorities: ["user", "probe", "reflection", "auto_observation"] },
-  { from: "unverified", to: "contradicted", authorities: ["user", "probe", "sentinel", "reflection"] },
+  {
+    from: "unverified",
+    to: "supported",
+    authorities: ["user", "probe", "reflection", "auto_observation"],
+  },
+  {
+    from: "unverified",
+    to: "contradicted",
+    authorities: ["user", "probe", "sentinel", "reflection"],
+  },
 
   // Counter-promotion: anyone with evidence can contradict
-  { from: "supported", to: "contradicted", authorities: ["user", "probe", "sentinel", "reflection"] },
+  {
+    from: "supported",
+    to: "contradicted",
+    authorities: ["user", "probe", "sentinel", "reflection"],
+  },
 
   // Supersession requires a successor belief
   { from: "supported", to: "superseded", authorities: ["user", "reflection"] },
@@ -110,9 +127,7 @@ export function isTransitionAllowed(
   authority: TransitionAuthority,
 ): boolean {
   const table = TABLES[axis]
-  return table.some(
-    (t) => t.from === from && t.to === to && t.authorities.includes(authority),
-  )
+  return table.some((t) => t.from === from && t.to === to && t.authorities.includes(authority))
 }
 
 /**

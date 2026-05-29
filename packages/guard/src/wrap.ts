@@ -1,13 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
-import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import { ActionKernel, lookupTool } from "@qmilab/lodestar-action-kernel"
-import {
-  InMemoryBeliefStore,
-  InMemoryClaimStore,
-  InMemoryEvidenceStore,
-  MemoryFirewall,
-} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   EvidenceLinker,
@@ -26,6 +19,13 @@ import type {
   Reversibility,
   Sensitivity,
 } from "@qmilab/lodestar-core"
+import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import {
+  InMemoryBeliefStore,
+  InMemoryClaimStore,
+  InMemoryEvidenceStore,
+  MemoryFirewall,
+} from "@qmilab/lodestar-memory-firewall"
 import type {
   AgentLoop,
   CallToolOptions,
@@ -73,9 +73,7 @@ function ensureExtractors(): void {
  * and policy gates that gate on `data_sensitivity === "secret"` never
  * fire.
  */
-function actionSensitivityFor(
-  sensitivity: Sensitivity,
-): "public" | "private" | "secret" {
+function actionSensitivityFor(sensitivity: Sensitivity): "public" | "private" | "secret" {
   switch (sensitivity) {
     case "public":
       return "public"
@@ -176,9 +174,7 @@ function clampReversibility(
  * inspect the session via the second return value if needed for
  * tests/probes.
  */
-export function wrap<T>(
-  loop: AgentLoop<T>,
-): (config: GuardConfig) => Promise<GuardRunResult<T>> {
+export function wrap<T>(loop: AgentLoop<T>): (config: GuardConfig) => Promise<GuardRunResult<T>> {
   return async (config: GuardConfig) => runGuarded(loop, config)
 }
 
@@ -242,7 +238,11 @@ export async function runGuarded<T>(
     // event id this way (design doc Q4).
     const causal_parent_ids =
       "causal_parent_ids" in event && event.causal_parent_ids ? event.causal_parent_ids : undefined
-    await emit(`firewall.${event.kind}`, event, causal_parent_ids ? { causal_parent_ids } : undefined)
+    await emit(
+      `firewall.${event.kind}`,
+      event,
+      causal_parent_ids ? { causal_parent_ids } : undefined,
+    )
   })
   const linker = new EvidenceLinker(evidence, beliefs)
   const explanations = new ExplanationGenerator(config.actor_id)
@@ -364,9 +364,7 @@ export async function runGuarded<T>(
     // than session-level Sensitivity. Map deliberately so a `secret`
     // session does not silently emit `private` actions; policy gates
     // gating on secret data must see the secret classification.
-    const defaultActionSensitivity = actionSensitivityFor(
-      config.default_sensitivity,
-    )
+    const defaultActionSensitivity = actionSensitivityFor(config.default_sensitivity)
 
     const contract: ActionContract = {
       required_level: overrides.required_level ?? tool.required_trust_level,
@@ -391,16 +389,11 @@ export async function runGuarded<T>(
     await emit("action.proposed", proposed)
 
     const arbitrated = await kernel.arbitrate(proposed)
-    await emit(
-      arbitrated.phase === "approved" ? "action.approved" : "action.rejected",
-      arbitrated,
-    )
+    await emit(arbitrated.phase === "approved" ? "action.approved" : "action.rejected", arbitrated)
 
     if (arbitrated.phase !== "approved") {
       const reason = arbitrated.approval?.reason ?? "no reason given"
-      throw new Error(
-        `guard.callTool: action '${toolName}' rejected by policy: ${reason}`,
-      )
+      throw new Error(`guard.callTool: action '${toolName}' rejected by policy: ${reason}`)
     }
 
     captureBox.current = undefined
@@ -540,16 +533,11 @@ export async function runGuarded<T>(
   }
 }
 
-function takeCapture<C>(
-  box: { current: C | undefined },
-  toolName: string,
-): C {
+function takeCapture<C>(box: { current: C | undefined }, toolName: string): C {
   const value = box.current
   box.current = undefined
   if (value === undefined) {
-    throw new Error(
-      `guard.callTool: tool '${toolName}' completed without producing an observation`,
-    )
+    throw new Error(`guard.callTool: tool '${toolName}' completed without producing an observation`)
   }
   return value
 }

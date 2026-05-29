@@ -1,20 +1,15 @@
 import { randomUUID } from "node:crypto"
-import type {
-  Claim,
-  EvidenceSet,
-  Explanation,
-  Observation,
-} from "@qmilab/lodestar-core"
+import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
 import {
-  AdapterImportOptionsSchema,
-  notImplementedFor,
   type AdapterImportOptions,
+  AdapterImportOptionsSchema,
   type AdapterImportResult,
   type EvidenceStore,
   type ExternalMemoryAdapter,
   type MemoryFirewall,
+  notImplementedFor,
 } from "@qmilab/lodestar-memory-firewall"
-import { LettaBlockSchema, LettaEnvelopeSchema, type LettaBlock } from "./schema.js"
+import { type LettaBlock, LettaBlockSchema, LettaEnvelopeSchema } from "./schema.js"
 
 export { LettaExportSchema, LettaBlockSchema } from "./schema.js"
 export type { LettaExport, LettaBlock } from "./schema.js"
@@ -39,10 +34,7 @@ export class LettaAdapter implements ExternalMemoryAdapter {
     private readonly evidence: EvidenceStore,
   ) {}
 
-  async importMemories(
-    raw: unknown,
-    options: AdapterImportOptions,
-  ): Promise<AdapterImportResult> {
+  async importMemories(raw: unknown, options: AdapterImportOptions): Promise<AdapterImportResult> {
     const opts = AdapterImportOptionsSchema.parse(options)
     // Validate the envelope's shape but treat each block as unknown so
     // per-record schema failures can be reported via rejection_reasons
@@ -101,9 +93,7 @@ export class LettaAdapter implements ExternalMemoryAdapter {
     options: AdapterImportOptions,
   ): Promise<{ claim: Claim; beliefId?: string }> {
     const projectId =
-      typeof options.scope.identifier === "string"
-        ? options.scope.identifier
-        : "imported"
+      typeof options.scope.identifier === "string" ? options.scope.identifier : "imported"
 
     const observation: Observation = {
       id: randomUUID(),
@@ -146,9 +136,7 @@ export class LettaAdapter implements ExternalMemoryAdapter {
           relation: "supports",
           quality: "external_document",
           freshness: "unknown",
-          notes:
-            `Letta block id=${block.id} label=${block.label}` +
-            (block.agent_id ? `, agent_id=${block.agent_id}` : ""),
+          notes: `Letta block id=${block.id} label=${block.label}${block.agent_id ? `, agent_id=${block.agent_id}` : ""}`,
         },
       ],
       assessed_by: options.source_actor_id,
@@ -162,9 +150,7 @@ export class LettaAdapter implements ExternalMemoryAdapter {
       subject_id: "pending",
       audience: "audit",
       summary: `Letta block import: ${block.label}`,
-      full_text:
-        `Imported from Letta block ${block.id}. ` +
-        `External-document evidence cannot auto-promote.`,
+      full_text: `Imported from Letta block ${block.id}. External-document evidence cannot auto-promote.`,
       claims_used: [claim.id],
       evidence_used: [evidenceSet.id],
       uncertainties: [

@@ -18,19 +18,11 @@
  * Real demo with PR creation, calibration, and probes arrives in week 8.
  */
 
-import { resolve } from "node:path"
 import { randomUUID } from "node:crypto"
-import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import { resolve } from "node:path"
 import { ActionKernel, type PolicyDecision } from "@qmilab/lodestar-action-kernel"
 import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
 import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
-import type { Observation } from "@qmilab/lodestar-core"
-import {
-  InMemoryBeliefStore,
-  InMemoryClaimStore,
-  InMemoryEvidenceStore,
-  MemoryFirewall,
-} from "@qmilab/lodestar-memory-firewall"
 import {
   CognitiveCore,
   EvidenceLinker,
@@ -38,6 +30,14 @@ import {
   InMemoryWorldModel,
   registerBuiltInExtractors,
 } from "@qmilab/lodestar-cognitive-core"
+import type { Observation } from "@qmilab/lodestar-core"
+import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import {
+  InMemoryBeliefStore,
+  InMemoryClaimStore,
+  InMemoryEvidenceStore,
+  MemoryFirewall,
+} from "@qmilab/lodestar-memory-firewall"
 import { TELENOTES_TOOL_POLICIES } from "./policy.lodestar.js"
 
 const PROJECT_ID = "telenotes-governed-dev"
@@ -72,9 +72,7 @@ function policyForTool(toolName: string): { default_level: number } {
   return found
 }
 
-async function policyGate(
-  action: import("@qmilab/lodestar-core").Action,
-): Promise<PolicyDecision> {
+async function policyGate(action: import("@qmilab/lodestar-core").Action): Promise<PolicyDecision> {
   const policy = policyForTool(action.tool)
   if (action.contract.required_level < policy.default_level) {
     return {
@@ -168,10 +166,7 @@ async function main(): Promise<void> {
   await emit("action.proposed", action)
 
   const arbitrated = await kernel.arbitrate(action)
-  await emit(
-    arbitrated.phase === "approved" ? "action.approved" : "action.rejected",
-    arbitrated,
-  )
+  await emit(arbitrated.phase === "approved" ? "action.approved" : "action.rejected", arbitrated)
 
   if (arbitrated.phase !== "approved") {
     console.error(`[telenotes-example] action rejected: ${arbitrated.approval?.reason}`)
@@ -179,10 +174,7 @@ async function main(): Promise<void> {
   }
 
   const executed = await kernel.execute(arbitrated)
-  await emit(
-    executed.phase === "completed" ? "action.completed" : "action.failed",
-    executed,
-  )
+  await emit(executed.phase === "completed" ? "action.completed" : "action.failed", executed)
 
   console.log(`[telenotes-example] action ${executed.phase}`)
 

@@ -1,6 +1,6 @@
-import { readdir, readFile } from "node:fs/promises"
-import { join } from "node:path"
 import { existsSync } from "node:fs"
+import { readFile, readdir } from "node:fs/promises"
+import { join } from "node:path"
 import { type EventEnvelope, EventEnvelopeSchema } from "@qmilab/lodestar-core"
 
 /**
@@ -19,9 +19,7 @@ export class EventLogReader {
     const projectDir = join(this.rootDir, projectId)
     if (!existsSync(projectDir)) return []
 
-    const files = (await readdir(projectDir))
-      .filter((f) => f.endsWith(".ndjson"))
-      .sort()
+    const files = (await readdir(projectDir)).filter((f) => f.endsWith(".ndjson")).sort()
 
     const events: EventEnvelope[] = []
     for (const file of files) {

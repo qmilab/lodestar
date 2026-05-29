@@ -56,14 +56,16 @@ async function run(): Promise<ProbeResult> {
   }
   const hashAInMemory = canonicalHash(payloadA)
   const hashARoundTrip = canonicalHash(JSON.parse(JSON.stringify(payloadA)))
-  details.push(`A: in-memory hash=${hashAInMemory.slice(0, 12)} round-trip hash=${hashARoundTrip.slice(0, 12)}`)
+  details.push(
+    `A: in-memory hash=${hashAInMemory.slice(0, 12)} round-trip hash=${hashARoundTrip.slice(0, 12)}`,
+  )
   if (hashAInMemory !== hashARoundTrip) {
     return {
       passed: false,
       details: [
         ...details,
-        `FAIL A: canonicalHash diverges across the JSON.stringify boundary for a payload ` +
-          `with a top-level undefined field. Persisted hash will not verify against persisted payload.`,
+        "FAIL A: canonicalHash diverges across the JSON.stringify boundary for a payload " +
+          "with a top-level undefined field. Persisted hash will not verify against persisted payload.",
       ],
     }
   }
@@ -74,14 +76,16 @@ async function run(): Promise<ProbeResult> {
   }
   const hashBInMemory = canonicalHash(payloadB)
   const hashBRoundTrip = canonicalHash(JSON.parse(JSON.stringify(payloadB)))
-  details.push(`B: in-memory hash=${hashBInMemory.slice(0, 12)} round-trip hash=${hashBRoundTrip.slice(0, 12)}`)
+  details.push(
+    `B: in-memory hash=${hashBInMemory.slice(0, 12)} round-trip hash=${hashBRoundTrip.slice(0, 12)}`,
+  )
   if (hashBInMemory !== hashBRoundTrip) {
     return {
       passed: false,
       details: [
         ...details,
-        `FAIL B: canonicalHash diverges for arrays containing undefined. ` +
-          `JSON.stringify renders undefined elements as null; canonicalHash must mirror that.`,
+        "FAIL B: canonicalHash diverges for arrays containing undefined. " +
+          "JSON.stringify renders undefined elements as null; canonicalHash must mirror that.",
       ],
     }
   }
@@ -128,14 +132,16 @@ async function run(): Promise<ProbeResult> {
   }
   const stored = readBack[0]!
   const recomputed = canonicalHash(stored.payload)
-  details.push(`C: stored hash=${envelope.payload_hash.slice(0, 12)} recomputed=${recomputed.slice(0, 12)}`)
+  details.push(
+    `C: stored hash=${envelope.payload_hash.slice(0, 12)} recomputed=${recomputed.slice(0, 12)}`,
+  )
   if (stored.payload_hash !== recomputed) {
     return {
       passed: false,
       details: [
         ...details,
         `FAIL C: stored payload_hash does not verify against the persisted payload's canonical hash. ` +
-          `This is the load-bearing replay-grade invariant — every envelope must round-trip.`,
+          "This is the load-bearing replay-grade invariant — every envelope must round-trip.",
       ],
     }
   }

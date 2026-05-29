@@ -23,10 +23,7 @@ export interface RenderOptions {
   raw_event_limit?: number
 }
 
-export function renderReport(
-  projection: ChainProjection,
-  options: RenderOptions = {},
-): string {
+export function renderReport(projection: ChainProjection, options: RenderOptions = {}): string {
   const title = options.title ?? "Lodestar trust report"
   const lines: string[] = []
 
@@ -152,12 +149,10 @@ function renderEvidence(
   const lines: string[] = []
   for (const set of evidence_sets) {
     const claim = claimById.get(set.claim_id)
-    const heading =
-      claim?.statement ?? `(claim ${set.claim_id.slice(0, 8)})`
+    const heading = claim?.statement ?? `(claim ${set.claim_id.slice(0, 8)})`
     lines.push(`- **${heading}**`)
     for (const item of set.items) {
-      const indep =
-        item.independence_group ? ` · indep \`${item.independence_group}\`` : ""
+      const indep = item.independence_group ? ` · indep \`${item.independence_group}\`` : ""
       const notes = item.notes ? ` — ${item.notes}` : ""
       lines.push(
         `    - ${item.relation} · quality \`${item.quality}\` · freshness \`${item.freshness}\`${indep}${notes}`,
@@ -205,9 +200,7 @@ function renderDecisions(decisions: ChainProjection["decisions"]): string[] {
         .map((b) => `\`${b.slice(0, 8)}\``)
         .join(", ")
       const more =
-        d.belief_dependencies.length > 4
-          ? `, …${d.belief_dependencies.length - 4} more`
-          : ""
+        d.belief_dependencies.length > 4 ? `, …${d.belief_dependencies.length - 4} more` : ""
       lines.push(`    - belief dependencies: ${ids}${more}`)
     }
     if (d.made_by) {
@@ -251,9 +244,7 @@ function renderActions(actions: ProjectedAction[]): string[] {
     if (action.approval) {
       const decision = action.approval.approved ? "approved" : "rejected"
       const reason = action.approval.reason ?? "(no reason given)"
-      lines.push(
-        `    - **${decision}** by \`${action.approval.approver_id}\`: ${reason}`,
-      )
+      lines.push(`    - **${decision}** by \`${action.approval.approver_id}\`: ${reason}`)
     }
     if (outcome) {
       lines.push(`    - outcome: ${describeOutcome(outcome)}`)
@@ -297,7 +288,7 @@ function renderTransitions(transitions: FirewallTransition[]): string[] {
           `authority=\`${t.by_authority ?? "?"}\``,
       )
     } else {
-      lines.push(`- \`firewall.unknown\``)
+      lines.push("- `firewall.unknown`")
     }
   }
   return lines
@@ -311,21 +302,21 @@ function renderCognitiveSummaries(summaries: ChainProjection["cognitive_summarie
     const beliefCount = s.belief_count ?? 0
     const keys = s.world_model_keys ?? []
     lines.push(
-      `- observation \`${(s.observation_id ?? "?").slice(0, 8)}\`: ` +
-        `${claimCount} claim(s), ${beliefCount} belief(s)` +
-        (keys.length > 0 ? `, world-model keys [${keys.join(", ")}]` : ""),
+      `- observation \`${(s.observation_id ?? "?").slice(0, 8)}\`: ${claimCount} claim(s), ${beliefCount} belief(s)${keys.length > 0 ? `, world-model keys [${keys.join(", ")}]` : ""}`,
     )
   }
   return lines
 }
 
 function describeOutcome(outcome: Outcome): string {
-  const effects = outcome.effect_observation_ids.length > 0
-    ? `, ${outcome.effect_observation_ids.length} effect observation(s)`
-    : ""
-  const sideEffects = outcome.side_effects_observed.length > 0
-    ? `, side effects: ${outcome.side_effects_observed.join(", ")}`
-    : ""
+  const effects =
+    outcome.effect_observation_ids.length > 0
+      ? `, ${outcome.effect_observation_ids.length} effect observation(s)`
+      : ""
+  const sideEffects =
+    outcome.side_effects_observed.length > 0
+      ? `, side effects: ${outcome.side_effects_observed.join(", ")}`
+      : ""
   return `\`${outcome.result}\` in ${outcome.duration_ms}ms${effects}${sideEffects}`
 }
 
@@ -338,4 +329,3 @@ function lastAuditFailure(action: Action): string | undefined {
   }
   return undefined
 }
-

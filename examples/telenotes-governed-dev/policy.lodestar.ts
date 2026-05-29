@@ -36,9 +36,7 @@ export const TELENOTES_TOOL_POLICIES: ToolPolicy[] = [
   {
     tool: "git.push",
     default_level: 4,
-    scope_overrides: [
-      { scope_match: "branch:main", level: 5, reason: "main branch is PR-only" },
-    ],
+    scope_overrides: [{ scope_match: "branch:main", level: 5, reason: "main branch is PR-only" }],
   },
   { tool: "github.pr.create", default_level: 4 },
   { tool: "github.pr.merge", default_level: 4, notes: "main only; dual-confirm" },

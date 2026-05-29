@@ -1,3 +1,5 @@
+import type { PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
+import type { IngestResult } from "@qmilab/lodestar-cognitive-core"
 import type {
   Action,
   ActionContract,
@@ -5,8 +7,6 @@ import type {
   ResourceScope,
   Sensitivity,
 } from "@qmilab/lodestar-core"
-import type { PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
-import type { IngestResult } from "@qmilab/lodestar-cognitive-core"
 
 /**
  * Configuration for a guarded session.

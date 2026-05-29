@@ -47,7 +47,9 @@ export class InMemoryClaimStore implements ClaimStore {
 
   async put(claim: Claim): Promise<void> {
     if (this.claims.has(claim.id)) {
-      throw new Error(`ClaimStore: claim ${claim.id} already exists; use transition() for status changes`)
+      throw new Error(
+        `ClaimStore: claim ${claim.id} already exists; use transition() for status changes`,
+      )
     }
     this.claims.set(claim.id, claim)
     this.transitions.set(claim.id, [])

@@ -25,9 +25,10 @@
  *   bun run examples/doc-insight/index.ts examples/doc-insight/sample.md
  */
 
+import { randomUUID } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { resolve } from "node:path"
-import { randomUUID } from "node:crypto"
+import { ExplanationGenerator, InMemoryWorldModel } from "@qmilab/lodestar-cognitive-core"
 import type {
   Belief,
   Claim,
@@ -37,18 +38,14 @@ import type {
   Sensitivity,
 } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
-import { z } from "zod"
+import type { EvidenceItem, EvidenceSet } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import type { EvidenceItem, EvidenceSet } from "@qmilab/lodestar-core"
-import {
-  ExplanationGenerator,
-  InMemoryWorldModel,
-} from "@qmilab/lodestar-cognitive-core"
+import { z } from "zod"
 
 // -----------------------------------------------------------------------------
 // Register the doc.parse@1 schema
@@ -233,11 +230,7 @@ function extractSemanticClaims(
 // Evidence linker that distinguishes tool_result vs model_inference
 // -----------------------------------------------------------------------------
 
-function buildEvidence(
-  claim: Claim,
-  obs: Observation,
-  assessorId: string,
-): EvidenceSet {
+function buildEvidence(claim: Claim, obs: Observation, assessorId: string): EvidenceSet {
   // The claim's extraction_method tells us which evidence quality to use.
   // "tool" extraction → tool_result evidence (deterministic parsing)
   // "llm" extraction → model_inference evidence (pattern-matched standin)
@@ -266,9 +259,7 @@ function buildEvidence(
 // Auto_observation decision (mirrors cognitive-core logic)
 // -----------------------------------------------------------------------------
 
-function decideTransitionAuthority(
-  evidence: EvidenceSet,
-): "auto_observation" | "reflection" {
+function decideTransitionAuthority(evidence: EvidenceSet): "auto_observation" | "reflection" {
   // External_document and model_inference cannot auto-promote. Other
   // qualities can.
   const blocking = evidence.items.find(

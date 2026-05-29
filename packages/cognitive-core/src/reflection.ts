@@ -10,6 +10,7 @@ import {
   REFLECTION_COMPLETED_EVENT_TYPE,
   REFLECTION_COMPLETED_SCHEMA_VERSION,
 } from "@qmilab/lodestar-core"
+import type { EventLogReader } from "@qmilab/lodestar-event-log"
 import type {
   BeliefStore,
   ClaimStore,
@@ -17,7 +18,6 @@ import type {
   LifecycleAxis,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import type { EventLogReader } from "@qmilab/lodestar-event-log"
 import type { ExplanationGenerator } from "./explanation.js"
 
 /**
@@ -242,10 +242,7 @@ export class Reflection {
         subject: { kind: "belief", id: `partition:${this.inputs.context.session_id}` },
         rationale_id: this.buildNoOpExplanation({
           summary: "reflection pass observed no actionable cascades",
-          full_text:
-            `Reflection pass ${pass_id} considered ${window.length} event(s) ` +
-            `with seq > ${since_seq} and found no contradicted beliefs with ` +
-            `dependent decisions in scope.`,
+          full_text: `Reflection pass ${pass_id} considered ${window.length} event(s) with seq > ${since_seq} and found no contradicted beliefs with dependent decisions in scope.`,
         }).id,
       })
     }
@@ -376,12 +373,7 @@ export class Reflection {
           subject_id: decision.id,
           audience: "audit",
           summary: `Decision ${decision.id.slice(0, 8)} depended on belief ${belief_id.slice(0, 8)}, now contradicted`,
-          full_text:
-            `Belief ${belief_id} transitioned from truth_status='${previousTruthStatus}' to 'contradicted' ` +
-            `in event ${event.id}. Decision ${decision.id} ("${decision.question}") recorded this belief ` +
-            `in its belief_dependencies at the time it was made. Reflection proposes flagging the ` +
-            `Decision so a downstream Revision can re-examine whether the selected option still ` +
-            `holds under the updated belief state.`,
+          full_text: `Belief ${belief_id} transitioned from truth_status='${previousTruthStatus}' to 'contradicted' in event ${event.id}. Decision ${decision.id} ("${decision.question}") recorded this belief in its belief_dependencies at the time it was made. Reflection proposes flagging the Decision so a downstream Revision can re-examine whether the selected option still holds under the updated belief state.`,
           claims_used: [],
           evidence_used: [],
         })
@@ -401,11 +393,7 @@ export class Reflection {
           subject_id: belief_id,
           audience: "audit",
           summary: `Belief ${belief_id.slice(0, 8)} contradicted; no dependent decisions found`,
-          full_text:
-            `Belief ${belief_id} transitioned from truth_status='${previousTruthStatus}' to 'contradicted' ` +
-            `in event ${event.id}. No past Decision in the partition history named this belief in its ` +
-            `belief_dependencies. Reflection inspected the contradiction and concluded no cascade is ` +
-            `required, recording this no_op so the audit chain shows the belief was considered.`,
+          full_text: `Belief ${belief_id} transitioned from truth_status='${previousTruthStatus}' to 'contradicted' in event ${event.id}. No past Decision in the partition history named this belief in its belief_dependencies. Reflection inspected the contradiction and concluded no cascade is required, recording this no_op so the audit chain shows the belief was considered.`,
           claims_used: [],
           evidence_used: [],
         })
@@ -455,14 +443,13 @@ export class Reflection {
       (proposal.kind === "decision_dependency_flagged" && this.inputs.emitter !== undefined)
     if (wouldMutate && reflection_event_id === undefined) {
       throw new Error(
-        `Reflection: applying a '${proposal.kind}' proposal requires a reflection_event_id so the ` +
-          `mutation cites a reflection.completed event in the audit chain. Run via run() (which emits ` +
-          `the pass record first), or pass the id of an already-emitted reflection.completed event.`,
+        `Reflection: applying a '${proposal.kind}' proposal requires a reflection_event_id so the mutation cites a reflection.completed event in the audit chain. Run via run() (which emits the pass record first), or pass the id of an already-emitted reflection.completed event.`,
       )
     }
     switch (proposal.kind) {
       case "belief_transition": {
-        if (!this.inputs.firewall) throw new Error("Reflection: belief_transition requires a firewall")
+        if (!this.inputs.firewall)
+          throw new Error("Reflection: belief_transition requires a firewall")
         const explanation = await this.materializeExplanation(proposal.rationale_id)
         // The schema keeps `to_value` as a plain string because the
         // valid set depends on `axis` — that relationship isn't
@@ -473,7 +460,9 @@ export class Reflection {
         await this.inputs.firewall.transitionAxis({
           belief_id: proposal.belief_id,
           axis: proposal.axis as LifecycleAxis,
-          to_value: proposal.to_value as Parameters<MemoryFirewall["transitionAxis"]>[0]["to_value"],
+          to_value: proposal.to_value as Parameters<
+            MemoryFirewall["transitionAxis"]
+          >[0]["to_value"],
           by_authority: "reflection",
           by_actor_id: this.inputs.context.actor_id,
           rationale: explanation,
@@ -522,7 +511,8 @@ export class Reflection {
         return "applied"
       }
       case "belief_supersession": {
-        if (!this.inputs.firewall) throw new Error("Reflection: belief_supersession requires a firewall")
+        if (!this.inputs.firewall)
+          throw new Error("Reflection: belief_supersession requires a firewall")
         // `markSuperseded` does both halves: transition the old
         // belief's truth_status under `reflection` authority AND
         // stamp `superseded_by = new_belief_id` on the old belief
@@ -596,10 +586,7 @@ export class Reflection {
     return []
   }
 
-  private async resolveSinceSeq(
-    input: RunInput,
-    events: EventEnvelope[],
-  ): Promise<number> {
+  private async resolveSinceSeq(input: RunInput, events: EventEnvelope[]): Promise<number> {
     if (input.since_seq !== undefined) return input.since_seq
     // The cursor is the highest `cursor.to_seq` any prior pass
     // recorded — i.e. the highest DOMAIN event seq already observed.
@@ -700,18 +687,15 @@ function collectDecisions(events: EventEnvelope[]): DecisionLike[] {
       envelope_id: e.id,
       seq: e.seq,
       question: typeof decision.question === "string" ? decision.question : "(no question)",
-      belief_dependencies: decision.belief_dependencies.filter((x): x is string => typeof x === "string"),
+      belief_dependencies: decision.belief_dependencies.filter(
+        (x): x is string => typeof x === "string",
+      ),
     })
   }
   return out
 }
 
-const TRUTH_STATUSES = new Set<string>([
-  "unverified",
-  "supported",
-  "contradicted",
-  "superseded",
-])
+const TRUTH_STATUSES = new Set<string>(["unverified", "supported", "contradicted", "superseded"])
 
 function isTruthStatus(value: string): value is import("@qmilab/lodestar-core").TruthStatus {
   return TRUTH_STATUSES.has(value)
@@ -732,7 +716,8 @@ function isTruthStatus(value: string): value is import("@qmilab/lodestar-core").
 function extractContradictionTransition(
   event: EventEnvelope,
 ): { belief_id: string; from_value: string } | null {
-  if (event.type !== "belief.transitioned" && event.type !== "firewall.belief.transitioned") return null
+  if (event.type !== "belief.transitioned" && event.type !== "firewall.belief.transitioned")
+    return null
   const payload = event.payload as
     | { belief_id?: unknown; axis?: unknown; to_value?: unknown; from_value?: unknown }
     | undefined

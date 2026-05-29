@@ -1,5 +1,5 @@
-import { z } from "zod"
 import { ResourceScopeSchema, SensitivitySchema } from "@qmilab/lodestar-core"
+import { z } from "zod"
 
 /**
  * Common contract for memory-store import/export adapters.
@@ -75,10 +75,7 @@ export interface ExternalMemoryAdapter {
    * The `raw` value is adapter-specific. Each adapter validates `raw`
    * with its own Zod schema before constructing claims.
    */
-  importMemories(
-    raw: unknown,
-    options: AdapterImportOptions,
-  ): Promise<AdapterImportResult>
+  importMemories(raw: unknown, options: AdapterImportOptions): Promise<AdapterImportResult>
 
   /**
    * Export the firewall's current beliefs into the upstream store's

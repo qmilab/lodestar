@@ -1,8 +1,4 @@
-import type {
-  Explanation,
-  ExplanationAudience,
-  ExplanationSubject,
-} from "@qmilab/lodestar-core"
+import type { Explanation, ExplanationAudience, ExplanationSubject } from "@qmilab/lodestar-core"
 
 /**
  * Generates structured Explanation records.

@@ -1,20 +1,15 @@
 import { randomUUID } from "node:crypto"
-import type {
-  Claim,
-  EvidenceSet,
-  Explanation,
-  Observation,
-} from "@qmilab/lodestar-core"
+import type { Claim, EvidenceSet, Explanation, Observation } from "@qmilab/lodestar-core"
 import {
-  AdapterImportOptionsSchema,
-  notImplementedFor,
   type AdapterImportOptions,
+  AdapterImportOptionsSchema,
   type AdapterImportResult,
   type EvidenceStore,
   type ExternalMemoryAdapter,
   type MemoryFirewall,
+  notImplementedFor,
 } from "@qmilab/lodestar-memory-firewall"
-import { Mem0EnvelopeSchema, Mem0RecordSchema, type Mem0Record } from "./schema.js"
+import { Mem0EnvelopeSchema, type Mem0Record, Mem0RecordSchema } from "./schema.js"
 
 export { Mem0ExportSchema, Mem0RecordSchema } from "./schema.js"
 export type { Mem0Export, Mem0Record } from "./schema.js"
@@ -53,10 +48,7 @@ export class Mem0Adapter implements ExternalMemoryAdapter {
     private readonly evidence: EvidenceStore,
   ) {}
 
-  async importMemories(
-    raw: unknown,
-    options: AdapterImportOptions,
-  ): Promise<AdapterImportResult> {
+  async importMemories(raw: unknown, options: AdapterImportOptions): Promise<AdapterImportResult> {
     const opts = AdapterImportOptionsSchema.parse(options)
     // Validate the envelope's shape but treat each record as unknown
     // so per-record schema failures can be reported via
@@ -116,9 +108,7 @@ export class Mem0Adapter implements ExternalMemoryAdapter {
   ): Promise<{ claim: Claim; beliefId?: string }> {
     const observationId = randomUUID()
     const projectId =
-      typeof options.scope.identifier === "string"
-        ? options.scope.identifier
-        : "imported"
+      typeof options.scope.identifier === "string" ? options.scope.identifier : "imported"
 
     const observation: Observation = {
       id: observationId,
@@ -161,10 +151,7 @@ export class Mem0Adapter implements ExternalMemoryAdapter {
           relation: "supports",
           quality: "external_document",
           freshness: "unknown",
-          notes:
-            `mem0 record ${record.id}` +
-            (record.user_id ? `, user_id=${record.user_id}` : "") +
-            (record.created_at ? `, created_at=${record.created_at}` : ""),
+          notes: `mem0 record ${record.id}${record.user_id ? `, user_id=${record.user_id}` : ""}${record.created_at ? `, created_at=${record.created_at}` : ""}`,
         },
       ],
       assessed_by: options.source_actor_id,
@@ -178,9 +165,7 @@ export class Mem0Adapter implements ExternalMemoryAdapter {
       subject_id: "pending",
       audience: "audit",
       summary: `mem0 import of record ${record.id}`,
-      full_text:
-        `Imported from mem0. Trust baseline ${options.trust_baseline.toFixed(2)}. ` +
-        `External-document evidence cannot auto-promote — landing at unverified/restricted.`,
+      full_text: `Imported from mem0. Trust baseline ${options.trust_baseline.toFixed(2)}. External-document evidence cannot auto-promote — landing at unverified/restricted.`,
       claims_used: [claim.id],
       evidence_used: [evidenceSet.id],
       uncertainties: [

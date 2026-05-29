@@ -30,15 +30,10 @@ import {
   ActionKernel,
   type PolicyGate,
   type PreconditionChecker,
-  registerTool,
   _resetToolsForTests,
+  registerTool,
 } from "@qmilab/lodestar-action-kernel"
-import type {
-  Action,
-  ActionContract,
-  EventEnvelope,
-  Observation,
-} from "@qmilab/lodestar-core"
+import type { Action, ActionContract, EventEnvelope, Observation } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import { EventLogReader, EventLogWriter } from "@qmilab/lodestar-event-log"
 import { z } from "zod"
@@ -106,12 +101,10 @@ async function run(): Promise<ProbeResult> {
 
     // Explicit kernel context — no stub fallback. This is the API
     // the MCP proxy will use (it'll pass the per-MCP-request session).
-    const kernel = new ActionKernel(
-      policyGate,
-      preconditionChecker,
-      observationSink,
-      { session_id: REAL_SESSION_ID, project_id: REAL_PROJECT_ID },
-    )
+    const kernel = new ActionKernel(policyGate, preconditionChecker, observationSink, {
+      session_id: REAL_SESSION_ID,
+      project_id: REAL_PROJECT_ID,
+    })
 
     const contract: ActionContract = {
       required_level: 0,
@@ -198,10 +191,7 @@ async function run(): Promise<ProbeResult> {
       if (env.session_id === "session-stub" || env.project_id === "project-stub") {
         return {
           passed: false,
-          details:
-            `event log envelope ${env.id} carries a stub id ` +
-            `(session_id='${env.session_id}', project_id='${env.project_id}'). ` +
-            `The kernel stub fallback is leaking into persisted events.`,
+          details: `event log envelope ${env.id} carries a stub id (session_id='${env.session_id}', project_id='${env.project_id}'). The kernel stub fallback is leaking into persisted events.`,
         }
       }
       if (env.session_id !== REAL_SESSION_ID) {
@@ -224,11 +214,7 @@ async function run(): Promise<ProbeResult> {
 
     return {
       passed: true,
-      details:
-        `Kernel constructed with explicit { session_id, project_id }; the ` +
-        `host-provided values propagated through the observation context ` +
-        `and into all ${envelopes.length} persisted event log envelopes. ` +
-        `No stub leak.`,
+      details: `Kernel constructed with explicit { session_id, project_id }; the host-provided values propagated through the observation context and into all ${envelopes.length} persisted event log envelopes. No stub leak.`,
     }
   } finally {
     await rm(logDir, { recursive: true, force: true })

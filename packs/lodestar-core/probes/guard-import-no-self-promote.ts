@@ -36,6 +36,7 @@
  * explicitly promotes them.
  */
 
+import type { Explanation } from "@qmilab/lodestar-core"
 import {
   InMemoryBeliefStore,
   InMemoryClaimStore,
@@ -43,7 +44,6 @@ import {
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
 import { Mem0Adapter } from "@qmilab/lodestar-memory-firewall-mem0"
-import type { Explanation } from "@qmilab/lodestar-core"
 
 interface ProbeResult {
   passed: boolean
@@ -99,18 +99,13 @@ async function run(): Promise<ProbeResult> {
   if (belief.truth_status !== "unverified") {
     return {
       passed: false,
-      details:
-        `adapter adopted an imported belief at truth_status='${belief.truth_status}'. ` +
-        `Imports must land at 'unverified' because the evidence is external_document. ` +
-        `If this regressed, the adapter family is leaking the no-self-promotion invariant.`,
+      details: `adapter adopted an imported belief at truth_status='${belief.truth_status}'. Imports must land at 'unverified' because the evidence is external_document. If this regressed, the adapter family is leaking the no-self-promotion invariant.`,
     }
   }
   if (belief.retrieval_status !== "restricted") {
     return {
       passed: false,
-      details:
-        `imported belief at retrieval_status='${belief.retrieval_status}' (expected 'restricted'). ` +
-        `Imports may not enter normal retrieval without explicit promotion.`,
+      details: `imported belief at retrieval_status='${belief.retrieval_status}' (expected 'restricted'). Imports may not enter normal retrieval without explicit promotion.`,
     }
   }
 
@@ -188,9 +183,7 @@ async function run(): Promise<ProbeResult> {
   if (!/retrieval/i.test(rejectionMessage)) {
     return {
       passed: false,
-      details:
-        `firewall rejected the elevation attempt but not via the retrieval gate. ` +
-        `Expected a message mentioning 'retrieval'; got: ${rejectionMessage}`,
+      details: `firewall rejected the elevation attempt but not via the retrieval gate. Expected a message mentioning 'retrieval'; got: ${rejectionMessage}`,
     }
   }
 
