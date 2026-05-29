@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs fourteen probes end-to-end. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs seventeen probes end-to-end. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -69,7 +69,7 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 - ✅ `packages/memory-firewall/adapters/zep/` — adapter for Zep (same shape)
 - ✅ Reorganised CLI: `lodestar report` is the headline command; niche commands under `guard`, `action`, `trace`, `probe` prefixes
 - ✅ `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown agent loop, producing a useful trust report
-- ✅ New probe `research/probes/guard-import-no-self-promote.ts` — enforces that adapter-imported memories cannot land at `truth_status: supported`
+- ✅ New probe `packs/lodestar-core/probes/guard-import-no-self-promote.ts` — enforces that adapter-imported memories cannot land at `truth_status: supported`
 
 **Out of scope**: Harness infrastructure (that's Batch 4), MCP wrapper (Batch 3), real memory-layer integrations beyond stubs (later).
 
@@ -101,9 +101,9 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 ### Batch 4 — Harness infrastructure
 
-**Status**: next.
+**Status**: in progress (reflection pass, probe-pack format + loader, and probe repackaging have landed; runner, sentinels, calibrator, and the three new probes are still ahead).
 
-**Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from "fourteen TS files in `research/probes/`" to an installable surface external packs can plug into.
+**Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from loose TS files in `research/probes/` to an installable surface external packs can plug into.
 
 **Deliverables**:
 
@@ -111,11 +111,11 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - `Probe` base class and execution runner. Each probe declares its name, threat-model description, and expected pass/fail criteria; the runner records every probe invocation as a `synthetic_probe`-quality observation in the event log so probe runs are themselves auditable.
 - `Sentinel` base class with hooks into the firewall transition stream. Sentinels watch for patterns (low-confidence actions, suspicious memory-origin combinations, anomalous tool sequences) and emit `sentinel.alerted` events.
 - `Calibrator` that consumes the event log and produces per-class accuracy tables (ECE, Brier score) suitable for the calibration paper drafts.
-- Probe pack format (`lodestar.probe-pack.json` manifest + probe files; the manifest declares pack name, version, declared coverage areas, and which Lodestar invariants it exercises).
+- ✅ Probe pack format (`lodestar.probe-pack.json` manifest + probe files; the manifest declares pack name, version, declared coverage areas, and which Lodestar invariants it exercises). Schema in `@qmilab/lodestar-core` (`ProbePackManifestSchema`); the v0 loader in `@qmilab/lodestar-harness` resolves `local` packs and rejects path-traversal / symlink escapes.
 - `lodestar harness run --pack <name>` CLI command (registered under the existing `lodestar` binary, not a new bin).
 
 *Probe pack repackaging*:
-- Move the 14 existing probes from `research/probes/` into a first-party pack `packs/lodestar-core/` so they ride the same loader path external packs will use. The probes themselves don't change; the pack manifest is new.
+- ✅ Moved the 17 existing probes from `research/probes/` into a first-party pack `packs/lodestar-core/` so they ride the same loader path external packs will use. The probes themselves did not change; the `lodestar.probe-pack.json` manifest is new and loads through `@qmilab/lodestar-harness`. (Count grew 14→17 in Batch 4's reflection-pass step before the move: `reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`.)
 
 *Three new probes (the threat-model gaps Batch 3 surfaced but couldn't close)*:
 - `prompt-injection-cross-tool` — observation chain where injected instructions in one tool's output try to manipulate a subsequent tool's invocation. Stronger than `mcp-proxy-injection-defense` because it spans two calls.
@@ -195,9 +195,9 @@ ChatGPT's review of the v0.2 scaffold identified that the current memory-poisoni
 
 **Code fixes to land alongside these probes**:
 
-- ✅ **ContextPolicy contradiction routing** (landed pre-Batch 3): `MemoryFirewall.retrieveContradictions(query, policy)` returns contradicted beliefs whose claim shares the same `structured_predicate.{subject, relation}` as one of the accepted-set candidates the standard retrieval would surface under the same policy. Subject-only join would lump unrelated relations together; the (subject, relation) join is the natural one. Claims without a structured predicate are intentionally excluded — surface only what we can prove related. Probe: `research/probes/context-policy-contradiction-routing.ts`.
-- ✅ **Kernel context propagation** (landed pre-Batch 3): `ActionKernel` takes a required `KernelContext` argument — either a resolver function, a static `{ session_id, project_id }` pair, or `{ useStubsForTests: true }` for test scaffolding. The old silent stub fallback no longer exists; production hosts (Guard, the MCP proxy) cannot accidentally reach it. Probe: `research/probes/kernel-context-propagation.ts` verifies real values flow through to every event-log envelope.
-- ✅ **Event log single-writer enforcement** (landed pre-Batch 3): per-partition async mutex (`sharedAppendLocks`) serializes concurrent appends to the same `${rootDir, project_id}` partition within a single process. Multiple writer instances (Guard's `runGuarded`-per-session pattern) keep working — they share the queue. Cross-process safety remains deferred (the MCP proxy is single-process per this roadmap; a file-lock layer can be added on top later without breaking the interface). Probe: `research/probes/event-log-single-writer.ts` fans out 100 concurrent appends with 8 KiB payloads and verifies no duplicate seq, no torn writes, contiguous monotonic sequence.
+- ✅ **ContextPolicy contradiction routing** (landed pre-Batch 3): `MemoryFirewall.retrieveContradictions(query, policy)` returns contradicted beliefs whose claim shares the same `structured_predicate.{subject, relation}` as one of the accepted-set candidates the standard retrieval would surface under the same policy. Subject-only join would lump unrelated relations together; the (subject, relation) join is the natural one. Claims without a structured predicate are intentionally excluded — surface only what we can prove related. Probe: `packs/lodestar-core/probes/context-policy-contradiction-routing.ts`.
+- ✅ **Kernel context propagation** (landed pre-Batch 3): `ActionKernel` takes a required `KernelContext` argument — either a resolver function, a static `{ session_id, project_id }` pair, or `{ useStubsForTests: true }` for test scaffolding. The old silent stub fallback no longer exists; production hosts (Guard, the MCP proxy) cannot accidentally reach it. Probe: `packs/lodestar-core/probes/kernel-context-propagation.ts` verifies real values flow through to every event-log envelope.
+- ✅ **Event log single-writer enforcement** (landed pre-Batch 3): per-partition async mutex (`sharedAppendLocks`) serializes concurrent appends to the same `${rootDir, project_id}` partition within a single process. Multiple writer instances (Guard's `runGuarded`-per-session pattern) keep working — they share the queue. Cross-process safety remains deferred (the MCP proxy is single-process per this roadmap; a file-lock layer can be added on top later without breaking the interface). Probe: `packs/lodestar-core/probes/event-log-single-writer.ts` fans out 100 concurrent appends with 8 KiB payloads and verifies no duplicate seq, no torn writes, contiguous monotonic sequence.
 
 These fixes are scoped tightly. Most can land in a single focused session in Batch 2 before any of the larger Guard/Trace package work begins.
 

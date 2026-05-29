@@ -3,8 +3,9 @@
  *
  * The Lodestar Harness: probe packs, sentinels, and calibrators that
  * exercise and audit the epistemic chain. This is the developer entry
- * point that turns the probe scripts in `research/probes/` into an
- * installable, packageable surface external authors can plug into.
+ * point that turns the probe scripts (now the first-party pack
+ * `packs/lodestar-core/`) into an installable, packageable surface
+ * external authors can plug into.
  *
  * Batch 4 step 3 ships the probe-pack format: the loader here reads and
  * validates a `lodestar.probe-pack.json` manifest (schema in

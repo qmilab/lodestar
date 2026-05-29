@@ -166,10 +166,10 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning
 bun install
 bun run example:telenotes                            # homegrown agent pipeline
 bun run examples/claude-code-wrapped/index.ts        # MCP proxy wrap-an-agent demo
-bun run probes:all                                   # all 14 probes
+bun run probes:all                                   # all 17 probes
 ```
 
-All fourteen probes pass. The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
+All seventeen probes pass. The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
 
 ---
 

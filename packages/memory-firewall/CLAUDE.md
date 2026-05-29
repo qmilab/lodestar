@@ -59,5 +59,5 @@ Don't. The four axes (truth, retrieval, security, freshness) are stable. If you 
 ## When adding a new transition rule
 
 1. Update `transitions.ts` with the new allowed pair (from, to, authority required).
-2. Add a test in `research/probes/` that exercises both the allowed transition and a rejected one.
+2. Add a test in `packs/lodestar-core/probes/` (declared in the pack manifest) that exercises both the allowed transition and a rejected one.
 3. Document the rule in this CLAUDE.md.

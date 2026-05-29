@@ -1,0 +1,62 @@
+{
+  "name": "lodestar-core",
+  "version": "0.2.0",
+  "spec_version": "1",
+  "source_type": "local",
+  "description": "First-party probe pack: the core Lodestar epistemic-chain, Memory Firewall, Guard, and event-log invariants.",
+  "coverage_areas": [
+    "epistemic_chain",
+    "memory_firewall",
+    "auto_observation_gate",
+    "guard_contract",
+    "action_kernel",
+    "event_log",
+    "mcp_proxy",
+    "reflection"
+  ],
+  "invariants": [
+    "no_self_promotion",
+    "retrieval_gates",
+    "sensitivity_ceiling",
+    "contradiction_routing",
+    "kernel_context_propagation",
+    "event_log_single_writer",
+    "event_log_canonical_hash",
+    "precondition_revalidation",
+    "contract_invariants",
+    "injection_defense",
+    "reflection_cannot_promote_alone",
+    "contradicted_belief_cascade"
+  ],
+  "probes": [
+    { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
+    { "name": "epistemic-chain-smoke", "file": "probes/epistemic-chain-smoke.ts" },
+    { "name": "external-document-not-normal", "file": "probes/external-document-not-normal.ts" },
+    { "name": "quarantined-not-retrievable", "file": "probes/quarantined-not-retrievable.ts" },
+    { "name": "sensitivity-ceiling", "file": "probes/sensitivity-ceiling.ts" },
+    { "name": "auto-observation-gate", "file": "probes/auto-observation-gate.ts" },
+    { "name": "guard-import-no-self-promote", "file": "probes/guard-import-no-self-promote.ts" },
+    {
+      "name": "guard-precondition-revalidation",
+      "file": "probes/guard-precondition-revalidation.ts"
+    },
+    { "name": "guard-contract-invariants", "file": "probes/guard-contract-invariants.ts" },
+    {
+      "name": "context-policy-contradiction-routing",
+      "file": "probes/context-policy-contradiction-routing.ts"
+    },
+    { "name": "kernel-context-propagation", "file": "probes/kernel-context-propagation.ts" },
+    { "name": "event-log-single-writer", "file": "probes/event-log-single-writer.ts" },
+    { "name": "mcp-proxy-roundtrip", "file": "probes/mcp-proxy-roundtrip.ts" },
+    { "name": "mcp-proxy-injection-defense", "file": "probes/mcp-proxy-injection-defense.ts" },
+    {
+      "name": "reflection-cannot-promote-to-normal-alone",
+      "file": "probes/reflection-cannot-promote-to-normal-alone.ts"
+    },
+    {
+      "name": "contradicted-belief-flags-dependent-decisions",
+      "file": "probes/contradicted-belief-flags-dependent-decisions.ts"
+    },
+    { "name": "event-log-canonical-hash", "file": "probes/event-log-canonical-hash.ts" }
+  ]
+}

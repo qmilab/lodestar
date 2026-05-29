@@ -30,8 +30,8 @@ that takes correctness seriously, so this guide is short and concrete.
 
 ## Probes are spec, not test scaffolding
 
-The probes in `research/probes/` describe the security and correctness
-invariants Lodestar is built to defend. **If a probe fails, the change
+The probes in `packs/lodestar-core/probes/` describe the security and
+correctness invariants Lodestar is built to defend. **If a probe fails, the change
 is wrong — not the probe.** Do not edit a probe to match changed code;
 either the change is broken, or the invariant has shifted (in which
 case raise it as a design discussion before touching the probe).
@@ -47,7 +47,7 @@ against the fix.
 ```sh
 bun install                       # workspace install
 bun run typecheck                 # strict-TS check across all packages
-bun run probes:all                # all 9 probes must stay green
+bun run probes:all                # all 17 probes must stay green
 bun run example:telenotes         # 11-event audit trail (regression check)
 bun run examples/coding-agent-greenfield/index.ts
                                   # guard.wrap() demo end-to-end
