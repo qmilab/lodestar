@@ -247,36 +247,43 @@ async function run(): Promise<ProbeResult> {
 
     await proxy.start()
 
-    // Call 1: the agent reads the poisoned notes file.
-    const call1 = await proxy.handleCallTool({
-      name: LODESTAR_TOOL_NAME,
-      arguments: { path: NOTES_PATH },
-    })
-    if (call1.isError === true) {
-      return {
-        passed: false,
-        details: [
-          `call 1 (read ${NOTES_PATH}) came back isError=true; the proxy should forward a normal-looking poisoned read. meta: ${JSON.stringify((call1._meta as { _lodestar?: unknown })?._lodestar)}`,
-        ],
+    // Always stop the proxy before the outer finally removes logDir,
+    // even if a call throws or an isError early-return fires. Removing
+    // the log dir out from under a still-running proxy would race its
+    // event-log writes and surface as an unhandled ENOENT that masks
+    // the real failure.
+    try {
+      // Call 1: the agent reads the poisoned notes file.
+      const call1 = await proxy.handleCallTool({
+        name: LODESTAR_TOOL_NAME,
+        arguments: { path: NOTES_PATH },
+      })
+      if (call1.isError === true) {
+        return {
+          passed: false,
+          details: [
+            `call 1 (read ${NOTES_PATH}) came back isError=true; the proxy should forward a normal-looking poisoned read. meta: ${JSON.stringify((call1._meta as { _lodestar?: unknown })?._lodestar)}`,
+          ],
+        }
       }
-    }
 
-    // Call 2: the (naive) agent follows the injection and reads the
-    // secret file. Same proxy session — shared firewall + belief store.
-    const call2 = await proxy.handleCallTool({
-      name: LODESTAR_TOOL_NAME,
-      arguments: { path: SECRET_PATH },
-    })
-    if (call2.isError === true) {
-      return {
-        passed: false,
-        details: [
-          `call 2 (read ${SECRET_PATH}) came back isError=true; the steered read should forward like any other read. meta: ${JSON.stringify((call2._meta as { _lodestar?: unknown })?._lodestar)}`,
-        ],
+      // Call 2: the (naive) agent follows the injection and reads the
+      // secret file. Same proxy session — shared firewall + belief store.
+      const call2 = await proxy.handleCallTool({
+        name: LODESTAR_TOOL_NAME,
+        arguments: { path: SECRET_PATH },
+      })
+      if (call2.isError === true) {
+        return {
+          passed: false,
+          details: [
+            `call 2 (read ${SECRET_PATH}) came back isError=true; the steered read should forward like any other read. meta: ${JSON.stringify((call2._meta as { _lodestar?: unknown })?._lodestar)}`,
+          ],
+        }
       }
+    } finally {
+      await proxy.stop()
     }
-
-    await proxy.stop()
 
     const reader = new EventLogReader(logDir)
     const envelopes: EventEnvelope[] = await reader.readSession(REAL_PROJECT_ID, REAL_SESSION_ID)

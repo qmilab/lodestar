@@ -199,18 +199,25 @@ async function run(): Promise<ProbeResult> {
     })
 
     await proxy.start()
-    const result = await proxy.handleCallTool({
-      name: LODESTAR_TOOL_NAME,
-      arguments: { path: "notes.md" },
-    })
-    if (result.isError === true) {
-      const meta = (result._meta as { _lodestar?: unknown })?._lodestar
-      return {
-        passed: false,
-        details: `unexpected isError=true on the round-trip CallToolResult — the downstream returned a normal-looking poisoned file, the proxy should still forward it (the defense is at the belief layer, not the result layer). meta: ${JSON.stringify(meta)}`,
+    // Stop the proxy before the outer finally removes logDir, even if
+    // the call throws or the isError early-return fires — otherwise rm()
+    // could race a still-running proxy's event-log writes and surface as
+    // an unhandled ENOENT that masks the real failure.
+    try {
+      const result = await proxy.handleCallTool({
+        name: LODESTAR_TOOL_NAME,
+        arguments: { path: "notes.md" },
+      })
+      if (result.isError === true) {
+        const meta = (result._meta as { _lodestar?: unknown })?._lodestar
+        return {
+          passed: false,
+          details: `unexpected isError=true on the round-trip CallToolResult — the downstream returned a normal-looking poisoned file, the proxy should still forward it (the defense is at the belief layer, not the result layer). meta: ${JSON.stringify(meta)}`,
+        }
       }
+    } finally {
+      await proxy.stop()
     }
-    await proxy.stop()
 
     const reader = new EventLogReader(logDir)
     const envelopes: EventEnvelope[] = await reader.readSession(REAL_PROJECT_ID, REAL_SESSION_ID)
