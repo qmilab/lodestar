@@ -34,5 +34,8 @@ export * from "./schemas/reflection.js"
 // Probe pack format (Batch 4) — the lodestar.probe-pack.json manifest contract
 export * from "./schemas/probe-pack.js"
 
+// Sentinels (Batch 4) — the sentinel.alerted@1 alert wire format
+export * from "./schemas/sentinel.js"
+
 // Schema registry
 export * as registry from "./registry.js"

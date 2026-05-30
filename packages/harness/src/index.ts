@@ -19,9 +19,13 @@
  *   `lodestar harness run`.
  * - Event-log recorder (`eventLogRecorder`) — records each probe run as a
  *   synthetic `observation.recorded` event so runs are themselves auditable.
+ * - Sentinel surface (`Sentinel`, `SentinelRunner`, the three first-party
+ *   sentinels, `eventLogAlertSink`) — an async tail of the event stream
+ *   that emits `sentinel.alerted@1` events. Non-blocking by design; see
+ *   `docs/architecture/sentinels.md`.
  *
- * Still to come (do not pre-build): the Sentinel base class + sentinels,
- * and the Calibrator. See `docs/roadmap.md` (Batch 4).
+ * Still to come (do not pre-build): the Calibrator. See `docs/roadmap.md`
+ * (Batch 4).
  */
 
 export {
@@ -49,6 +53,30 @@ export {
 } from "./runner.js"
 
 export { eventLogRecorder, type EventLogRecorderConfig } from "./recorder.js"
+
+export {
+  Sentinel,
+  SentinelRunner,
+  type SentinelAlert,
+  type SentinelAlertSink,
+  type SentinelFinding,
+  type SentinelRunnerOptions,
+  asActionView,
+  asBeliefView,
+  asDecisionView,
+  asEvidenceSetView,
+} from "./sentinel.js"
+
+export {
+  LowConfidenceActionSentinel,
+  SuspiciousMemoryOriginSentinel,
+  AnomalousToolSequenceSentinel,
+  DEFAULT_SUSPICIOUS_SEQUENCES,
+  type SuspiciousSequence,
+  type ToolStepMatcher,
+} from "./sentinels/index.js"
+
+export { eventLogAlertSink, type EventLogAlertSinkConfig } from "./sentinel-recorder.js"
 
 export {
   buildProbeRunObservation,

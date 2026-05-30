@@ -16,9 +16,11 @@ pack `packs/lodestar-core/` and load through the
 `@qmilab/lodestar-harness` pack loader; `lodestar harness run` drives the
 whole pack and `probes:all` now points at it. Batches 1–3 are complete;
 Batch 4 is in progress (reflection pass, probe-pack format, probe
-repackaging, and the `Probe` base class + pack runner + `lodestar
-harness run` CLI have landed; sentinels and the calibrator are still
-ahead). `@qmilab/lodestar-guard-mcp` lives in this
+repackaging, the `Probe` base class + pack runner + `lodestar
+harness run` CLI, and the `Sentinel` base class + the three sentinels
+— `low-confidence-action`, `suspicious-memory-origin`,
+`anomalous-tool-sequence` — have landed; the Postgres stores and the
+calibrator are still ahead). `@qmilab/lodestar-guard-mcp` lives in this
 repo and will publish to npm in a follow-up mini-marathon. Subsequent
 batches are tracked in `docs/roadmap.md`.
 
@@ -74,7 +76,7 @@ packages/
   guard/               # (exists) meta-package + guard.wrap() helper
   trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
-  harness/             # (exists, Batch 4) probe-pack loader + Probe base class + pack runner (lodestar harness run); sentinels, calibrator still to come
+  harness/             # (exists, Batch 4) probe-pack loader + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels; calibrator + Postgres stores still to come
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
   otel-exporter/       # (Batch 5+) OTel GenAI semantic conventions bridge
   adapters/
