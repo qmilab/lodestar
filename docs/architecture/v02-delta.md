@@ -508,11 +508,15 @@ the proxy in production should know what's missing.
 
 - **Reflection authority promoting `external_document` content
   claims.** The auto-observation gate downgrades to `reflection`
-  authority for these claims; reflection itself is not yet
-  implemented (`@qmilab/lodestar-cognitive-core/reflection` is a
-  stub). Until reflection lands (Batch 4), content claims stay at
-  `truth_status: unverified` permanently unless a user explicitly
-  promotes them.
+  authority for these claims. Reflection landed in Batch 4
+  (`@qmilab/lodestar-cognitive-core/reflection`; the
+  `reflection-cannot-promote-to-normal-alone` probe pins the
+  invariant that reflection alone cannot move a belief to `normal`
+  retrieval). The v0 reflection pass is rule-based, so a content
+  claim still stays at `truth_status: unverified` unless an
+  independent corroborating source arrives or a user explicitly
+  promotes it — LLM-driven, reflection-led corroboration that would
+  promote such a claim on its own is the remaining deferred piece.
 
 - **Cross-session contradiction propagation.** Contradiction
   routing within a single session is wired (PR #2's
