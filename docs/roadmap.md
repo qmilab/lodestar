@@ -101,7 +101,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 ### Batch 4 — Harness infrastructure
 
-**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, and the `Sentinel` base class + the three sentinels have landed; the Postgres stores, calibrator, and the three new probes are still ahead).
+**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, the `Sentinel` base class + the three sentinels, and the first `coding-agent-safety` probe `prompt-injection-cross-tool` have landed; the Postgres stores, calibrator, and the remaining two new probes are still ahead).
 
 **Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from loose TS files in `research/probes/` to an installable surface external packs can plug into.
 
@@ -118,7 +118,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - ✅ Moved the 17 existing probes from `research/probes/` into a first-party pack `packs/lodestar-core/` so they ride the same loader path external packs will use. The probes themselves did not change; the `lodestar.probe-pack.json` manifest is new and loads through `@qmilab/lodestar-harness`. (Count grew 14→17 in Batch 4's reflection-pass step before the move: `reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`.)
 
 *Three new probes (the threat-model gaps Batch 3 surfaced but couldn't close)*:
-- `prompt-injection-cross-tool` — observation chain where injected instructions in one tool's output try to manipulate a subsequent tool's invocation. Stronger than `mcp-proxy-injection-defense` because it spans two calls.
+- ✅ `prompt-injection-cross-tool` — observation chain where injected instructions in one tool's output try to manipulate a subsequent tool's invocation. Stronger than `mcp-proxy-injection-defense` because it spans two calls: an injection planted in call 1's output cannot pre-authorise or launder the trust of call 2's output. Both content claims stay `unverified` and no `supported` belief in the shared session store carries the injected text. Landed in `packs/coding-agent-safety/`.
 - `tool-poisoning-cross-session` — a memory imported from a hostile source in session A is queried by session B; verify the firewall's `external_document` provenance survives the session boundary (requires a persistent belief store, see below).
 - `confidence-drift` — belief confidence diverges from observed outcome over a sequence of actions; the calibrator should flag this as a per-class miscalibration.
 
@@ -134,7 +134,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 *Persistence (carve-out)*:
 - Postgres-backed `BeliefStore` and `ClaimStore`. The harness needs this to validate sentinels across sessions; the in-memory stores are session-scoped.
 
-*First in-repo probe pack*: `packs/coding-agent-safety/` — bundles the prompt-injection / tool-poisoning / confidence-drift probes plus the three sentinels into a single installable pack a future operator can point `lodestar harness run --pack coding-agent-safety` at.
+*First in-repo probe pack*: `packs/coding-agent-safety/` — ✅ created, shipping `prompt-injection-cross-tool` today via `lodestar harness run --pack coding-agent-safety`. Will bundle the remaining tool-poisoning / confidence-drift probes plus the three sentinels into the same installable pack as they land.
 
 *Probe-execution sandboxing (carve-out for when external packs land)*: the step-5 runner spawns each probe as a `bun run` subprocess that inherits the harness's full environment — consistent with the existing `lodestar probe` command and fine for the first-party `lodestar-core` pack. Once `coding-agent-safety` (or any third-party pack) becomes a real execution surface, probe subprocesses should run with a scoped environment rather than the host's, so a hostile probe cannot read host secrets out of `process.env`. Mirrors the Action Kernel's "no host env to sandboxes" rule.
 
