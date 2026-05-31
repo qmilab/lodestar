@@ -4,25 +4,29 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Seventeen probes pass under
-strict TypeScript: six firewall probes, three guard / contract
+publishing), v0.2 architecture locked. Eighteen probes pass under
+strict TypeScript. Seventeen live in the first-party pack
+`packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
 (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`), and three
 Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
 `contradicted-belief-flags-dependent-decisions`,
-`event-log-canonical-hash`). The probes now live in the first-party
-pack `packs/lodestar-core/` and load through the
-`@qmilab/lodestar-harness` pack loader; `lodestar harness run` drives the
-whole pack and `probes:all` now points at it. Batches 1–3 are complete;
-Batch 4 is in progress (reflection pass, probe-pack format, probe
-repackaging, the `Probe` base class + pack runner + `lodestar
-harness run` CLI, and the `Sentinel` base class + the three sentinels
+`event-log-canonical-hash`). The eighteenth, `prompt-injection-cross-tool`,
+is the first probe in the first non-core pack `packs/coding-agent-safety/`.
+All load through the `@qmilab/lodestar-harness` pack loader; `lodestar
+harness run --pack <name>` drives a pack, `probes:all` points at
+`lodestar-core` and `probes:safety` at `coding-agent-safety`. Batches 1–3
+are complete; Batch 4 is in progress (reflection pass, probe-pack format,
+probe repackaging, the `Probe` base class + pack runner + `lodestar
+harness run` CLI, the `Sentinel` base class + the three sentinels
 — `low-confidence-action`, `suspicious-memory-origin`,
-`anomalous-tool-sequence` — have landed; the Postgres stores and the
-calibrator are still ahead). `@qmilab/lodestar-guard-mcp` lives in this
-repo and will publish to npm in a follow-up mini-marathon. Subsequent
-batches are tracked in `docs/roadmap.md`.
+`anomalous-tool-sequence` —, and the first `coding-agent-safety` probe
+`prompt-injection-cross-tool` have landed; the remaining two new probes
+`tool-poisoning-cross-session` and `confidence-drift`, the Postgres
+stores, and the calibrator are still ahead). `@qmilab/lodestar-guard-mcp`
+lives in this repo and will publish to npm in a follow-up mini-marathon.
+Subsequent batches are tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
@@ -95,7 +99,9 @@ examples/
 packs/
   lodestar-core/             # (exists, Batch 4) first-party probe pack: 17 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
-  coding-agent-safety/       # (later, Batch 4) prompt-injection / tool-poisoning / drift probes + sentinels
+  coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
+                             #   prompt-injection-cross-tool today. tool-poisoning-cross-session,
+                             #   confidence-drift, + bundled sentinels still ahead
 
 docs/
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5

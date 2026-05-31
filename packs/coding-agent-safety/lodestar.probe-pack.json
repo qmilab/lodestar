@@ -1,0 +1,21 @@
+{
+  "name": "coding-agent-safety",
+  "version": "0.1.0",
+  "spec_version": "1",
+  "source_type": "local",
+  "description": "Adversarial probes (and, later, sentinels) for the 'wrap a coding agent' story: prompt injection, tool poisoning, and confidence drift across tool calls and sessions.",
+  "coverage_areas": [
+    "prompt_injection",
+    "tool_poisoning",
+    "cross_tool_manipulation",
+    "auto_observation_gate",
+    "mcp_proxy"
+  ],
+  "invariants": ["injection_defense", "no_self_promotion", "cross_tool_injection_does_not_promote"],
+  "probes": [
+    {
+      "name": "prompt-injection-cross-tool",
+      "file": "probes/prompt-injection-cross-tool.ts"
+    }
+  ]
+}

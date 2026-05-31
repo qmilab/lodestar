@@ -30,7 +30,7 @@ jobs:
         run: bun run typecheck
 
       - name: Run probes
-        run: bun run probes:all
+        run: bun run probes:ci
 
       - name: Setup Node (for npm publish)
         uses: actions/setup-node@v4

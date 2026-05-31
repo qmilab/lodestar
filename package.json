@@ -35,7 +35,10 @@
     "probe:reflection-retrieval": "bun run packs/lodestar-core/probes/reflection-cannot-promote-to-normal-alone.ts",
     "probe:reflection-cascade": "bun run packs/lodestar-core/probes/contradicted-belief-flags-dependent-decisions.ts",
     "probe:canonical-hash": "bun run packs/lodestar-core/probes/event-log-canonical-hash.ts",
+    "probe:cross-tool": "bun run packs/coding-agent-safety/probes/prompt-injection-cross-tool.ts",
     "probes:all": "bun run lodestar harness run --pack lodestar-core --no-record",
+    "probes:safety": "bun run lodestar harness run --pack coding-agent-safety --no-record",
+    "probes:ci": "bun run probes:all && bun run probes:safety",
     "lodestar": "bun run packages/cli/src/index.ts"
   },
   "devDependencies": {
