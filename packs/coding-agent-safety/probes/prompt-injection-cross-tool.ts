@@ -459,7 +459,23 @@ async function run(): Promise<ProbeResult> {
       [secretClaim, "call-2 steered secret"],
     ] as const) {
       const sets = evidenceSets.filter((s) => s.claim_id === claim.id)
-      if (sets.length === 0) continue // claim didn't adopt → no set persisted; acceptable.
+      if (sets.length === 0) {
+        // No evidence set is acceptable ONLY when the claim never adopted
+        // a belief (the proxy emits evidence.assessed alongside adopted
+        // beliefs). An adopted content claim with no evidence set is an
+        // evidence-emission regression — the firewall would be flying
+        // blind — so fail rather than silently passing.
+        if (beliefByClaim.has(claim.id)) {
+          return {
+            passed: false,
+            details: [
+              ...details,
+              `${label}: content claim adopted a belief but no evidence.assessed event was emitted for it. The external_document signal the Parallax gate depends on is missing.`,
+            ],
+          }
+        }
+        continue // claim didn't adopt → no set persisted; acceptable.
+      }
       const hasExternalDoc = sets.some((s) =>
         s.items.some((i) => i.relation === "supports" && i.quality === "external_document"),
       )
