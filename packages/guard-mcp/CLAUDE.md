@@ -106,6 +106,43 @@ Cognitive Core. The resulting event log is renderable by
    `stderr` only — never to `stdout`, which the upstream MCP
    client owns.
 
+9. **The proxy never opens a database connection.** Durable
+   persistence is wired by *injecting* already-constructed stores
+   (`MCPProxyOverrides.stores`), never by the proxy reaching for
+   `bun:sql` itself. This keeps the Postgres dependency out of this
+   package's import graph and leaves connection lifecycle with the
+   host that owns the process (the CLI). A `persistence: postgres`
+   config that reaches the proxy with no injected stores is a wiring
+   bug and `start()` throws rather than silently running in-memory.
+
+## Persistence
+
+By default the proxy builds fresh in-memory firewall stores per
+session — all a single-session audit needs. For cross-session state
+(two proxy runs that see each other's beliefs), point it at Postgres.
+
+There are two ways in, and they meet at the same seam:
+
+- **Injected stores** (`MCPProxyOverrides.stores`): pass
+  `{ claims, beliefs, evidence }` built from
+  `createPostgresStores(...)` (`@qmilab/lodestar-memory-firewall/postgres`).
+  The proxy uses them verbatim and treats them as caller-owned — it
+  never calls `ensureSchema()` or `close()`. This is the seam the
+  `tool-poisoning-cross-session` probe drives directly.
+- **Config-driven** (`ProxyConfig.persistence`): set
+  `{ backend: "postgres", connection_string_env: "LODESTAR_DATABASE_URL" }`.
+  The connection string is read from the *named environment variable*,
+  never embedded in the config file (a DSN usually carries a password;
+  secrets stay in the environment, off disk and out of VCS). The
+  `lodestar guard mcp-proxy` CLI resolves the variable, constructs the
+  Postgres stores, `ensureSchema()`s them, injects them via the seam
+  above, and `close()`s the connection when the session ends (clean
+  exit, error, or signal). The proxy itself only validates the field
+  and refuses to run a `postgres` config without injected stores.
+
+Omitting `persistence` (or `{ backend: "memory" }`) is the in-memory
+default. The field is optional, so existing configs are unchanged.
+
 ## Tool registration model
 
 Each downstream MCP tool is registered as a Lodestar `Tool` at proxy

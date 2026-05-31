@@ -41,6 +41,7 @@
     "@qmilab/lodestar-core": "workspace:*",
     "@qmilab/lodestar-event-log": "workspace:*",
     "@qmilab/lodestar-action-kernel": "workspace:*",
+    "@qmilab/lodestar-memory-firewall": "workspace:*",
     "@qmilab/lodestar-guard": "workspace:*",
     "@qmilab/lodestar-guard-mcp": "workspace:*",
     "@qmilab/lodestar-harness": "workspace:*",

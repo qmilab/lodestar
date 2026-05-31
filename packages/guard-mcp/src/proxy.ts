@@ -18,6 +18,9 @@ import type { Action, ActionContract, Observation, Reversibility } from "@qmilab
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import { alwaysHoldsChecker, autoApprovePolicy } from "@qmilab/lodestar-guard"
 import {
+  type BeliefStore,
+  type ClaimStore,
+  type EvidenceStore,
   InMemoryBeliefStore,
   InMemoryClaimStore,
   InMemoryEvidenceStore,
@@ -85,6 +88,26 @@ export interface MCPProxyOverrides {
    * preconditions; a future batch may add some).
    */
   preconditionChecker?: PreconditionChecker
+  /**
+   * Inject the firewall's belief/claim/evidence stores instead of the
+   * default per-session in-memory ones. This is the seam that gives a
+   * proxy durable, cross-session state: point two proxy sessions at the
+   * same Postgres-backed stores (via
+   * `createPostgresStores` from `@qmilab/lodestar-memory-firewall/postgres`)
+   * and session B sees the beliefs session A persisted. The
+   * `tool-poisoning-cross-session` probe uses this, and so does the CLI
+   * when `config.persistence.backend === "postgres"`.
+   *
+   * The proxy treats injected stores as caller-owned: it never opens or
+   * closes their underlying connection. Whoever constructs them (the
+   * probe, the CLI) is responsible for `ensureSchema()` beforehand and
+   * `close()` after `stop()`.
+   */
+  stores?: {
+    claims: ClaimStore
+    beliefs: BeliefStore
+    evidence: EvidenceStore
+  }
 }
 
 /**
@@ -105,9 +128,10 @@ export class MCPProxy {
   private readonly policyGate: PolicyGate
   private readonly preconditionChecker: PreconditionChecker
   private readonly upstreamFactory?: MCPProxyOverrides["upstreamFactory"]
+  private readonly injectedStores?: MCPProxyOverrides["stores"]
 
   private firewall?: MemoryFirewall
-  private evidenceStore?: InMemoryEvidenceStore
+  private evidenceStore?: EvidenceStore
   private cognitive?: CognitiveCore
   private kernel?: ActionKernel
   private upstream?: UpstreamServer
@@ -170,6 +194,23 @@ export class MCPProxy {
     if (overrides?.upstreamFactory !== undefined) {
       this.upstreamFactory = overrides.upstreamFactory
     }
+    if (overrides?.stores !== undefined) {
+      this.injectedStores = overrides.stores
+    }
+    // A `persistence: postgres` config with no injected stores is a wiring
+    // bug: the proxy deliberately does not open database connections itself
+    // (that keeps `bun:sql` out of this package's import graph and leaves
+    // connection lifecycle with the host that owns the process). Fail fast
+    // at construction rather than silently running in-memory and losing the
+    // cross-session durability the operator asked for.
+    if (config.persistence?.backend === "postgres" && this.injectedStores === undefined) {
+      throw new Error(
+        "MCPProxy: config.persistence.backend is 'postgres' but no stores were injected. " +
+          "Construct the Postgres stores (createPostgresStores from " +
+          "@qmilab/lodestar-memory-firewall/postgres) and pass them via " +
+          "MCPProxyOverrides.stores. The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
   }
 
   /**
@@ -207,11 +248,17 @@ export class MCPProxy {
     //    cognitive-core registries. Idempotent across calls.
     registerMCPProxyExtractors()
 
-    // 2. Build the in-memory firewall/cognitive stack. One per
-    //    session.
-    const claims = new InMemoryClaimStore()
-    const beliefs = new InMemoryBeliefStore()
-    const evidence = new InMemoryEvidenceStore()
+    // 2. Build the firewall/cognitive stack. One per session.
+    //    Stores are either injected (durable, caller-owned — e.g. the
+    //    Postgres stores the CLI wires up for a `persistence: postgres`
+    //    config, or the shared stores the cross-session probe passes)
+    //    or fresh in-memory ones (the single-session default). The
+    //    constructor already rejected a `persistence: postgres` config
+    //    that arrived without injected stores, so by here the pairing is
+    //    consistent.
+    const claims = this.injectedStores?.claims ?? new InMemoryClaimStore()
+    const beliefs = this.injectedStores?.beliefs ?? new InMemoryBeliefStore()
+    const evidence = this.injectedStores?.evidence ?? new InMemoryEvidenceStore()
     this.evidenceStore = evidence
     const worldModel = new InMemoryWorldModel()
     this.firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {

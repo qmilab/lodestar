@@ -87,8 +87,11 @@ require.
   duplicate-`put` and `from_value` mismatch errors) — the probes that treat the
   in-memory store as spec hold here too.
 - **Additive**: the proxy and `guard.wrap()` still default to the in-memory
-  stores. Swapping the Postgres backend into the proxy lands with the
-  cross-session probe.
+  stores. The Postgres backend is now wired into both — the proxy via
+  `MCPProxyOverrides.stores` (config-driven through `persistence` +
+  resolved by the `lodestar guard mcp-proxy` CLI) and `guard.wrap()` via
+  `GuardConfig.stores`. The `tool-poisoning-cross-session` probe
+  (`packs/coding-agent-safety/`) exercises that wiring end to end.
 - **Tests**: `postgres-stores.test.ts` is gated on `LODESTAR_TEST_DATABASE_URL`
   (skipped when unset). CI runs them against a `postgres:16` service; locally,
   point the var at a throwaway `postgres:16` container.

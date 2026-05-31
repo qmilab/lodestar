@@ -8,14 +8,24 @@
     "prompt_injection",
     "tool_poisoning",
     "cross_tool_manipulation",
+    "cross_session_persistence",
     "auto_observation_gate",
     "mcp_proxy"
   ],
-  "invariants": ["injection_defense", "no_self_promotion", "cross_tool_injection_does_not_promote"],
+  "invariants": [
+    "injection_defense",
+    "no_self_promotion",
+    "cross_tool_injection_does_not_promote",
+    "cross_session_provenance_survives"
+  ],
   "probes": [
     {
       "name": "prompt-injection-cross-tool",
       "file": "probes/prompt-injection-cross-tool.ts"
+    },
+    {
+      "name": "tool-poisoning-cross-session",
+      "file": "probes/tool-poisoning-cross-session.ts"
     }
   ]
 }

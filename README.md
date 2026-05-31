@@ -169,10 +169,10 @@ bun run example:telenotes                            # homegrown agent pipeline
 bun run examples/claude-code-wrapped/index.ts        # MCP proxy wrap-an-agent demo
 bun run probes:all                                   # 17 lodestar-core probes
 bun run probes:safety                                # coding-agent-safety pack
-bun run probes:ci                                    # all 18 probes (both packs)
+bun run probes:ci                                    # all 19 probes (both packs)
 ```
 
-All eighteen probes pass. The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
+All nineteen probes pass. (One — `tool-poisoning-cross-session` — needs a Postgres test database: it reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when that is unset; CI runs it against a `postgres:16` service.) The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
 
 ---
 
