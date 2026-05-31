@@ -22,8 +22,8 @@ reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when
 that is unset; CI runs it against a `postgres:16` service.
 All load through the `@qmilab/lodestar-harness` pack loader; `lodestar
 harness run --pack <name>` drives a pack, `probes:all` points at
-`lodestar-core` and `probes:safety` at `coding-agent-safety`. Batches 1–3
-are complete; Batch 4 is in progress (reflection pass, probe-pack format,
+`lodestar-core` and `probes:safety` at `coding-agent-safety`. Batches 1–4
+are complete (reflection pass, probe-pack format,
 probe repackaging, the `Probe` base class + pack runner + `lodestar
 harness run` CLI, the `Sentinel` base class + the three sentinels
 — `low-confidence-action`, `suspicious-memory-origin`,
@@ -32,11 +32,13 @@ harness run` CLI, the `Sentinel` base class + the three sentinels
 stores, `tool-poisoning-cross-session` together with the
 proxy/`guard.wrap()` Postgres wiring it rides on, and now the
 `Calibrator` (per-class ECE / Brier / calibration-gap tables) together
-with the `confidence-drift` probe it gates, have all landed; the only
-remaining Batch 4 item is folding the three sentinels into the
-`coding-agent-safety` pack). `@qmilab/lodestar-guard-mcp`
+with the `confidence-drift` probe it gates, and finally the three
+sentinels folded into the `coding-agent-safety` pack — the manifest
+declares them under a `sentinels` field and the loader resolves each id
+against the first-party `FIRST_PARTY_SENTINELS` registry — have all
+landed). `@qmilab/lodestar-guard-mcp`
 lives in this repo and will publish to npm in a follow-up mini-marathon.
-Subsequent batches are tracked in `docs/roadmap.md`.
+Batch 5 and subsequent batches are tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
@@ -90,7 +92,7 @@ packages/
   guard/               # (exists) meta-package + guard.wrap() helper
   trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
-  harness/             # (exists, Batch 4) probe-pack loader + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + Calibrator (per-class ECE/Brier)
+  harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier)
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
   otel-exporter/       # (Batch 5+) OTel GenAI semantic conventions bridge
   adapters/
@@ -111,7 +113,8 @@ packs/
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
-                             #   and confidence-drift. Bundling the three sentinels still ahead
+                             #   and confidence-drift, plus all three sentinels declared
+                             #   under the manifest's `sentinels` field (resolved by id)
 
 docs/
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
