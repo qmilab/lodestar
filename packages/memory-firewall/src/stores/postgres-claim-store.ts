@@ -6,6 +6,7 @@ import type {
   ClaimTransition,
   ClaimTransitionInput,
 } from "./claim-store.js"
+import { isUniqueViolation } from "./postgres-errors.js"
 
 /**
  * Postgres-backed ClaimStore (Bun's native `Bun.SQL`).
@@ -131,8 +132,4 @@ export class PostgresClaimStore implements ClaimStore {
 
 function parseClaim(data: string): Claim {
   return ClaimSchema.parse(typeof data === "string" ? JSON.parse(data) : data)
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { errno?: string }).errno === "23505"
 }

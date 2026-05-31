@@ -6,6 +6,7 @@ import type {
   BeliefFilter,
   BeliefStore,
 } from "./belief-store.js"
+import { isUniqueViolation } from "./postgres-errors.js"
 
 const SENSITIVITY_ORDER: Sensitivity[] = ["public", "internal", "confidential", "secret"]
 
@@ -183,10 +184,6 @@ function parseBelief(data: string): Belief {
 
 function toIso(at: Date | string): string {
   return at instanceof Date ? at.toISOString() : new Date(at).toISOString()
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { errno?: string }).errno === "23505"
 }
 
 /** Load a belief row inside a transaction with a row lock. Throws if absent. */

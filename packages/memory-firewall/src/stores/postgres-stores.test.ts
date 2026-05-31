@@ -335,3 +335,17 @@ describe.skipIf(!url)("Postgres stores (integration)", () => {
     })
   })
 })
+
+// Structural guard — runs with or without a database. The Bun-only Postgres
+// backend must stay OFF the package root so Node/npm consumers of the in-memory
+// stores never transitively `import "bun"`. It lives behind the `/postgres`
+// subpath; if someone re-adds it to the root, this test fails.
+describe("package export surface", () => {
+  test("the package root does not re-export the Bun-only Postgres stores", async () => {
+    const root = await import("../index.js")
+    expect("createPostgresStores" in root).toBe(false)
+    expect("PostgresBeliefStore" in root).toBe(false)
+    // the in-memory stores stay on the root, Node-safe.
+    expect("InMemoryBeliefStore" in root).toBe(true)
+  })
+})

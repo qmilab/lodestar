@@ -50,10 +50,11 @@ src/
 │   ├── evidence-store.ts     # interface + in-memory impl
 │   ├── memory-store.ts       # interface + in-memory impl (typed memories)
 │   ├── postgres-schema.ts    # DDL + ensureSchema / dropSchema / truncateAll
+│   ├── postgres-errors.ts    # isUniqueViolation (shared 23505 detection)
 │   ├── postgres-belief-store.ts    # PostgresBeliefStore
 │   ├── postgres-claim-store.ts     # PostgresClaimStore
 │   ├── postgres-evidence-store.ts  # PostgresEvidenceStore
-│   ├── postgres.ts           # createPostgresStores() factory
+│   ├── postgres.ts           # createPostgresStores() factory (subpath export)
 │   └── postgres-stores.test.ts     # env-gated integration tests
 └── transitions.ts            # allowed state transitions per axis
 ```
@@ -67,10 +68,17 @@ at the same database see each other's claims/beliefs/evidence, which is what
 cross-session provenance checks (e.g. the `tool-poisoning-cross-session` probe)
 require.
 
+- **Import from the `/postgres` subpath**, not the package root:
+  `import { createPostgresStores } from "@qmilab/lodestar-memory-firewall/postgres"`.
+  The subpath is deliberate — these stores depend on Bun's native `bun:sql`, so
+  keeping them off the root export means Node/npm consumers who only use the
+  in-memory stores never transitively `import "bun"`.
 - **Wire it up** with `createPostgresStores(connectionString)` → `{ sql, claims,
   beliefs, evidence, ensureSchema, close }`. Call `await stores.ensureSchema()`
   once at startup (idempotent `create table if not exists`), then hand the three
   stores to `new MemoryFirewall(...)` exactly as you would the in-memory ones.
+  `close()` only ends connections the factory opened (from a string); a
+  caller-supplied `SQL` handle is left to its owner.
 - **Storage model**: each row keeps the full Zod-validated object as `data
   jsonb` (re-parsed on read) plus mirrored scalar columns for the `*Filter`
   dimensions; mirrored columns and `data` are always written together, and

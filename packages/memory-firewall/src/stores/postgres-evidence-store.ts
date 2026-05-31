@@ -1,6 +1,7 @@
 import { type EvidenceItem, type EvidenceSet, EvidenceSetSchema } from "@qmilab/lodestar-core"
 import type { SQL } from "bun"
 import type { EvidenceStore } from "./evidence-store.js"
+import { isUniqueViolation } from "./postgres-errors.js"
 
 /**
  * Postgres-backed EvidenceStore (Bun's native `Bun.SQL`).
@@ -62,8 +63,4 @@ export class PostgresEvidenceStore implements EvidenceStore {
 
 function parseEvidence(data: string): EvidenceSet {
   return EvidenceSetSchema.parse(typeof data === "string" ? JSON.parse(data) : data)
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { errno?: string }).errno === "23505"
 }

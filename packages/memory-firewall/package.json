@@ -32,6 +32,12 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./postgres": {
+      "bun": "./src/stores/postgres.ts",
+      "types": "./dist/stores/postgres.d.ts",
+      "import": "./dist/stores/postgres.js",
+      "default": "./dist/stores/postgres.js"
     }
   },
   "files": ["dist", "src", "README.md", "LICENSE"],
