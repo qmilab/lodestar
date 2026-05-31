@@ -10,13 +10,16 @@
     "cross_tool_manipulation",
     "cross_session_persistence",
     "auto_observation_gate",
-    "mcp_proxy"
+    "mcp_proxy",
+    "confidence_calibration"
   ],
   "invariants": [
     "injection_defense",
     "no_self_promotion",
     "cross_tool_injection_does_not_promote",
-    "cross_session_provenance_survives"
+    "cross_session_provenance_survives",
+    "miscalibration_flagged_per_class",
+    "synthetic_beliefs_excluded_from_calibration"
   ],
   "probes": [
     {
@@ -26,6 +29,10 @@
     {
       "name": "tool-poisoning-cross-session",
       "file": "probes/tool-poisoning-cross-session.ts"
+    },
+    {
+      "name": "confidence-drift",
+      "file": "probes/confidence-drift.ts"
     }
   ]
 }

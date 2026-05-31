@@ -7,9 +7,10 @@ and share.
 
 Batch 4 lands the harness incrementally. What ships today is the
 **probe-pack format and loader**, the **`Probe` authoring surface**, the
-**pack runner**, the **`lodestar harness run` CLI**, and the
-**`Sentinel` surface** (base class, runner, three first-party sentinels).
-The calibrator follows.
+**pack runner**, the **`lodestar harness run` CLI**, the **`Sentinel`
+surface** (base class, runner, three first-party sentinels), and the
+**`Calibrator`** (per-class ECE / Brier / calibration-gap tables). The
+remaining Batch 4 step is folding the sentinels into an installable pack.
 
 ## Probe pack format
 
@@ -183,10 +184,50 @@ The three first-party sentinels:
 To author your own, subclass `Sentinel` (or return a `SentinelFinding[]` from
 `inspect`). The runner stamps the alert id, timestamp, and routing.
 
+## Calibrator
+
+The calibrator is an offline read over the event log that asks: *when the
+agent said it was p confident, was it right p of the time?* It pairs each
+belief's stated `confidence` against the outcome the world later revealed,
+groups by `calibration_class`, and returns per-class ECE / Brier /
+calibration-gap tables — flagging a class that is materially miscalibrated.
+It **measures, it does not enforce**: acting on a flag (downweighting an
+overconfident class) is the Policy Kernel's job. Design lock:
+`docs/architecture/calibrator.md`.
+
+```ts
+import { calibrate, formatCalibrationReport } from "@qmilab/lodestar-harness"
+import { EventLogReader } from "@qmilab/lodestar-event-log"
+
+const events = await new EventLogReader(root).readSession(project, session)
+const report = calibrate(events)
+// report.classes[]   — per-class { metrics, reliability_bins, flagged, flag_reason }
+// report.overall     — pooled ECE / Brier / gap
+// report.flagged_classes[]
+
+console.log(formatCalibrationReport(report, { title: "Session calibration" }))
+```
+
+Two outcome signals feed it, each toggleable via `outcomeSources`: an
+**action outcome** (a belief → decision → action chain's terminal phase, or
+an explicit `Outcome` event) and a **`truth_status` transition** (the
+firewall adjudicating the belief). A class is flagged only with
+`n ≥ minSamples` *and* ECE or |gap| over threshold — the `minSamples` guard
+keeps thin data from raising a false alarm. `authority: "synthetic"` beliefs
+are excluded by default so probe artefacts never pollute a real class.
+
+The pure math (`brierScore`, `expectedCalibrationError`, `reliabilityBins`,
+`computeMetrics`) is exported too, for callers that already hold
+`(confidence, correct)` points.
+
 ## What it does not do (yet)
 
 - Resolve `source_type: "npm"` packs.
-- The calibrator.
+- Emit a `calibration.computed@1` event or expose a `lodestar harness
+  calibrate` CLI — the calibrator is a library return-value surface in v0;
+  both graduate when the Policy Kernel consumes calibration verdicts.
 - *Consume* sentinel alerts in the Action Kernel's `arbitrate` step — alerts
   are audit signal until the Policy Kernel lands the (additive) hook.
 - Persist sentinel state across sessions (in-memory for now).
+- Bundle the three sentinels into an installable pack (the manifest declares
+  probes today, not sentinels).

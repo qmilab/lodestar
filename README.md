@@ -143,8 +143,8 @@ What ships today:
 - ✅ `@qmilab/lodestar-trace` — `lodestar report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
 - ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`, `lodestar harness run --pack <name>`
-- ✅ `@qmilab/lodestar-harness` (Batch 4) — probe-pack format + loader, the `Probe` base class + pack runner driven by `lodestar harness run`, the `Sentinel` base class, and three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`). Reflection has landed in the cognitive core.
-- ✅ **Eighteen** passing probes under strict TypeScript across two packs. Seventeen in the first-party pack `packs/lodestar-core/`: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), two MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the centerpiece of Batch 3), and three Batch 4 probes (`reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`). The eighteenth, `prompt-injection-cross-tool`, is the first probe in the first non-core pack `packs/coding-agent-safety/`.
+- ✅ `@qmilab/lodestar-harness` (Batch 4) — probe-pack format + loader, the `Probe` base class + pack runner driven by `lodestar harness run`, the `Sentinel` base class and three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), and the `Calibrator` (per-class ECE / Brier / calibration-gap tables). Reflection has landed in the cognitive core.
+- ✅ **Twenty** passing probes under strict TypeScript across two packs. Seventeen in the first-party pack `packs/lodestar-core/`: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), two MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the centerpiece of Batch 3), and three Batch 4 probes (`reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`). The other three live in the first non-core pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`, `tool-poisoning-cross-session`, and `confidence-drift` (the one that drives the Calibrator).
 - ✅ End-to-end examples:
   - `examples/telenotes-governed-dev/` — full pipeline producing an 11-event audit trail
   - `examples/doc-insight/` — auto-observation gate demo
@@ -153,7 +153,7 @@ What ships today:
 
 What's coming:
 
-- **Batch 4** (in progress) — remaining Harness infrastructure: the calibrator and two more `coding-agent-safety` probes (`tool-poisoning-cross-session`, `confidence-drift`), plus folding the three sentinels into the pack. (Postgres-backed belief/claim/evidence stores have landed.)
+- **Batch 4** (in progress) — the Calibrator and the `confidence-drift` probe that drives it have now landed (the Postgres-backed belief/claim/evidence stores did too). The only remaining Harness item is folding the three sentinels into the `coding-agent-safety` pack.
 - **Batch 5** — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning.md`](./docs/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.
@@ -169,10 +169,10 @@ bun run example:telenotes                            # homegrown agent pipeline
 bun run examples/claude-code-wrapped/index.ts        # MCP proxy wrap-an-agent demo
 bun run probes:all                                   # 17 lodestar-core probes
 bun run probes:safety                                # coding-agent-safety pack
-bun run probes:ci                                    # all 19 probes (both packs)
+bun run probes:ci                                    # all 20 probes (both packs)
 ```
 
-All nineteen probes pass. (One — `tool-poisoning-cross-session` — needs a Postgres test database: it reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when that is unset; CI runs it against a `postgres:16` service.) The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
+All twenty probes pass. (One — `tool-poisoning-cross-session` — needs a Postgres test database: it reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when that is unset; CI runs it against a `postgres:16` service.) The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
 
 ---
 

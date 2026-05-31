@@ -42,13 +42,26 @@ Batch 4; see `docs/roadmap.md` (Batch 4) and the kickoff/sequencing in
 - `src/sentinel-recorder.ts` — `eventLogAlertSink()`. The injected sink
   that appends each alert as a `sentinel.alerted@1` event. Mirrors the
   probe-run `eventLogRecorder`; the runner core stays I/O-free.
+- `src/calibration/` — the `Calibrator`. An offline read over the event
+  log that scores stated belief `confidence` against realised outcome per
+  `calibration_class` and returns a `CalibrationReport` (per-class ECE /
+  Brier / calibration-gap tables, the reliability bins, and the flagged
+  classes). `metrics.ts` is the pure, unit-tested math; `samples.ts`
+  resolves `(confidence, correct)` pairs from the log through tolerant
+  views (both an action's terminal phase / `Outcome` events and
+  `truth_status` transitions); `calibrator.ts` aggregates and flags;
+  `format.ts` renders the markdown table a calibration-paper draft pastes.
+  It measures, never enforces. Design lock:
+  `docs/architecture/calibrator.md`.
 
 Coming in later Batch 4 steps (do not pre-build):
 
-- `Calibrator`.
 - The `arbitrate` hook that *consumes* sentinel alerts (lands with the
   Policy Kernel; see `docs/architecture/sentinels.md` "What's wired").
 - Cross-session persistence for sentinels (Postgres stores, step 7).
+- Folding the three sentinels into the `coding-agent-safety` pack (the
+  manifest declares probes today, not sentinels — that is the remaining
+  Batch 4 deliverable).
 
 ## Invariants
 
@@ -93,6 +106,23 @@ Coming in later Batch 4 steps (do not pre-build):
     Like `reflection.completed@1`, its payload is the event payload
     directly and is NOT in the observation registry. Recording is injected
     (`eventLogAlertSink`), same discipline as the probe recorder.
+11. **The Calibrator measures; it never enforces.** `calibrate()` reads the
+    log and returns a `CalibrationReport`. It does not write a revision,
+    transition a belief, or emit an event. Acting on a flag (downweighting
+    an overconfident class) is the Policy Kernel's job, deferred like the
+    sentinels' `arbitrate` hook. Do not add a write path from the
+    calibrator.
+12. **Synthetic beliefs are excluded from calibration by default.** A
+    belief with `authority: "synthetic"` is a probe artefact and must not
+    pollute a real `calibration_class` — the same isolation the firewall
+    enforces ("synthetic-probe evidence cannot adopt a real belief").
+    `includeSyntheticAuthority` opts in; do not flip the default.
+13. **The calibrator reads the stream defensively, same as sentinels.**
+    Its sample resolver projects through loose `.passthrough()` views and
+    skips a payload that lacks the minimum. `calibrate()` is a pure,
+    deterministic function of `(events, config)` — no clock, no scope
+    inference — so a report is reproducible and the math is testable in
+    isolation (`metrics.test.ts`).
 
 ## When extending the pack format
 
