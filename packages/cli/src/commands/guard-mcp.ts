@@ -89,13 +89,26 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
       // package's deliberate split.
       const { createPostgresStores } = await import("@qmilab/lodestar-memory-firewall/postgres")
       const pg = createPostgresStores(connectionString)
+      // Register the close BEFORE ensureSchema: the connection is open
+      // now, so if ensureSchema() throws the catch below must still tear
+      // it down. (A dynamic-import failure leaves `closeStores` unset, so
+      // the catch correctly skips closing a connection that never opened.)
+      closeStores = () => pg.close()
       await pg.ensureSchema()
       storeOverride = { claims: pg.claims, beliefs: pg.beliefs, evidence: pg.evidence }
-      closeStores = () => pg.close()
       process.stderr.write(`[mcp-proxy] persistence postgres (connection from $${envName})\n`)
     } catch (err) {
+      // Close anything ensureSchema() opened before it failed, so an init
+      // error can't leak the connection.
+      if (closeStores) {
+        await closeStores()
+        closeStores = undefined
+      }
+      const raw = err instanceof Error ? err.message : String(err)
+      // Redact the DSN (which usually carries a password) before it
+      // reaches stderr / CI logs — driver errors routinely echo it back.
       process.stderr.write(
-        `[mcp-proxy] failed to initialise postgres persistence: ${err instanceof Error ? err.message : String(err)}\n`,
+        `[mcp-proxy] failed to initialise postgres persistence: ${redactDsn(raw, connectionString)}\n`,
       )
       return 1
     }
@@ -156,4 +169,15 @@ function writeUsage(stream: NodeJS.WritableStream): void {
       "       The wrapped agent spawns this process; configure your agent's MCP\n" +
       "       server list to point at `lodestar guard mcp-proxy --config <path>`.\n",
   )
+}
+
+/**
+ * Strip a Postgres connection string out of a free-text error message so
+ * the credentials it usually carries (`postgres://user:password@host/db`)
+ * don't land in stderr / CI logs. Redacts the exact DSN we hold, then any
+ * `scheme://userinfo@` shape the driver may have reconstructed.
+ */
+function redactDsn(message: string, dsn: string): string {
+  const withoutExact = dsn.length > 0 ? message.split(dsn).join("[redacted-dsn]") : message
+  return withoutExact.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1[redacted]@")
 }

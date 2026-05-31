@@ -182,9 +182,17 @@ function claimText(claim: Claim | undefined): string {
   return claim.statement
 }
 
-/** A short, unique suffix so concurrent/repeat runs never collide in a shared DB. */
+/**
+ * A run-unique suffix. A full UUID, deliberately NOT truncated: it keys
+ * the `project_id` (hence the belief/claim/evidence scope), so a globally
+ * unique value means every row this run touches lives in a scope no other
+ * run or process could have written. That is what makes the session-A
+ * "persisted" check sound on a shared DB — any belief in this project
+ * scope provably came from this run's session A (session B only reads),
+ * with no chance of a stale row from a colliding earlier run satisfying it.
+ */
 function runSuffix(): string {
-  return crypto.randomUUID().slice(0, 8)
+  return crypto.randomUUID()
 }
 
 async function run(): Promise<ProbeResult> {
