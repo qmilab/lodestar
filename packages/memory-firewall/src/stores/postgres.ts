@@ -18,7 +18,12 @@ export interface PostgresStores {
   evidence: PostgresEvidenceStore
   /** Create the tables/indexes if absent (idempotent). */
   ensureSchema(): Promise<void>
-  /** Close the connection pool. */
+  /**
+   * Close the connection — but only if this factory opened it. When the caller
+   * passed in their own `SQL` handle, they own its lifecycle and `close()` is a
+   * no-op, so closing the stores never tears down a connection still in use
+   * elsewhere.
+   */
   close(): Promise<void>
 }
 
@@ -31,8 +36,8 @@ export interface PostgresStores {
  * `connectionString` see each other's writes.
  *
  * Accepts either a connection string (a new `Bun.SQL` is created and owned by
- * the returned object) or an existing `SQL` handle (the caller retains
- * ownership; `close()` will still end it).
+ * the returned object, so `close()` ends it) or an existing `SQL` handle (the
+ * caller retains ownership; `close()` leaves it open).
  *
  * @example
  * const stores = createPostgresStores(process.env.DATABASE_URL!)
@@ -40,13 +45,16 @@ export interface PostgresStores {
  * const firewall = new MemoryFirewall(stores.claims, stores.beliefs, stores.evidence, sink)
  */
 export function createPostgresStores(connection: string | SQL): PostgresStores {
-  const sql = typeof connection === "string" ? new SQL(connection) : connection
+  const owned = typeof connection === "string"
+  const sql = owned ? new SQL(connection) : connection
   return {
     sql,
     claims: new PostgresClaimStore(sql),
     beliefs: new PostgresBeliefStore(sql),
     evidence: new PostgresEvidenceStore(sql),
     ensureSchema: () => ensureSchema(sql),
-    close: () => sql.end(),
+    close: async () => {
+      if (owned) await sql.end()
+    },
   }
 }

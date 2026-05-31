@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
 import type { Belief, Claim, EvidenceSet } from "@qmilab/lodestar-core"
+import { SQL } from "bun"
 import { type PostgresStores, createPostgresStores, dropSchema, truncateAll } from "./postgres.js"
 
 /**
@@ -309,6 +310,27 @@ describe.skipIf(!url)("Postgres stores (integration)", () => {
         expect(await sessionB.claims.get("claim-x")).toBeTruthy()
       } finally {
         await sessionB.close()
+      }
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // Connection ownership: close() must only end connections this factory opened.
+  // ---------------------------------------------------------------------------
+
+  describe("connection ownership", () => {
+    test("a caller-supplied SQL handle survives close()", async () => {
+      const handle = new SQL(url as string)
+      try {
+        const wrapped = createPostgresStores(handle)
+        await wrapped.ensureSchema()
+        // Closing the stores must NOT tear down the caller's connection.
+        await wrapped.close()
+        // The handle is still usable by its owner.
+        const rows = (await handle`select 1 as one`) as Array<{ one: number }>
+        expect(rows[0]?.one).toBe(1)
+      } finally {
+        await handle.end()
       }
     })
   })
