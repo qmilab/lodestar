@@ -262,6 +262,37 @@ describe("source gating and explicit Outcome events", () => {
     ]
     expect(calibrate(events).sample_count).toBe(0)
   })
+
+  test("an explicit partial/unknown outcome suppresses the action's terminal phase", () => {
+    // The teeth: each action reaches a *terminal* phase (completed), so the
+    // phase alone would manufacture a success sample. An explicit non-binary
+    // outcome must override that and yield nothing — otherwise calibration is
+    // biased by results the host itself declared inconclusive.
+    const chain = (beliefId: string, decisionId: string, actionId: string): EventEnvelope[] => [
+      evt("belief.adopted", {
+        id: beliefId,
+        confidence: 0.9,
+        calibration_class: "c",
+        authority: "inferred",
+      }),
+      evt("decision.made", { id: decisionId, belief_dependencies: [beliefId] }),
+      evt("action.completed", { id: actionId, decision_id: decisionId, phase: "completed" }),
+    ]
+    const events = [
+      // completed phase + explicit partial → suppressed
+      ...chain("bp", "dp", "ap"),
+      evt("outcome.observed", { action_id: "ap", result: "partial" }),
+      // completed phase + explicit unknown (via the legacy event name) → suppressed
+      ...chain("bu", "du", "au"),
+      evt("action.outcome", { action_id: "au", result: "unknown" }),
+      // completed phase + explicit success → still a sample (resolver works)
+      ...chain("bs", "ds", "as"),
+      evt("outcome.observed", { action_id: "as", result: "success" }),
+    ]
+    const report = calibrate(events)
+    expect(report.sample_count).toBe(1)
+    expect(report.classes[0]?.metrics.empirical_accuracy).toBe(1)
+  })
 })
 
 describe("report shape + formatter", () => {

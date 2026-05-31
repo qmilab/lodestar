@@ -98,7 +98,10 @@ differ:
 
 `partial` / `unknown` outcomes and `rejected` actions are **not labels** —
 a policy rejection is not evidence the belief was wrong, and a partial
-result is not a clean binary. They are skipped, not coerced.
+result is not a clean binary. They are skipped, not coerced. An explicit
+`partial` / `unknown` outcome also *suppresses* a terminal phase on the
+same action: the host declared the result inconclusive, so the phase
+cannot quietly stand in for it.
 
 A belief used across N actions yields N samples. That is the point: a
 belief class held at high confidence whose actions keep failing

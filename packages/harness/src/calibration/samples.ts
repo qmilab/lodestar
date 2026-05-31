@@ -124,9 +124,12 @@ function resolveActionOutcomeSamples(
   const decisionDeps = new Map<string, string[]>()
   // action id → { decision it came from, realised success from phase }
   const actionInfo = new Map<string, { decision_id?: string; success?: boolean }>()
-  // action id → realised success from an explicit Outcome event (wins
-  // over phase, since it is the host's considered verdict)
-  const explicitOutcome = new Map<string, boolean>()
+  // action id → the host's explicit Outcome verdict, which wins over the
+  // terminal phase. `true`/`false` are binary labels; `null` records that a
+  // non-binary outcome (`partial` / `unknown`) was seen — it is NOT a label,
+  // but it must SUPPRESS the phase-derived fallback below rather than let the
+  // terminal phase manufacture a spurious success/failure sample.
+  const explicitOutcome = new Map<string, boolean | null>()
 
   for (const event of events) {
     const { type, payload } = event
@@ -144,7 +147,12 @@ function resolveActionOutcomeSamples(
       if (parsed.success && parsed.data.action_id) {
         if (parsed.data.result === "success") explicitOutcome.set(parsed.data.action_id, true)
         else if (parsed.data.result === "failure") explicitOutcome.set(parsed.data.action_id, false)
-        // partial / unknown are not clean binary labels — skip.
+        else if (parsed.data.result === "partial" || parsed.data.result === "unknown") {
+          // Not a clean binary label, but the host explicitly saw a
+          // non-binary result — remember it (as null) so the phase fallback
+          // cannot turn this action into a success/failure sample.
+          explicitOutcome.set(parsed.data.action_id, null)
+        }
       }
       continue
     }
@@ -164,7 +172,17 @@ function resolveActionOutcomeSamples(
   }
 
   for (const [actionId, info] of actionInfo) {
-    const success = explicitOutcome.has(actionId) ? explicitOutcome.get(actionId) : info.success
+    let success: boolean | undefined
+    if (explicitOutcome.has(actionId)) {
+      const verdict = explicitOutcome.get(actionId)
+      // A non-binary explicit outcome (null) suppresses the phase fallback:
+      // the host saw the result and it wasn't a clean success/failure, so
+      // this action contributes no sample at all.
+      if (verdict === null || verdict === undefined) continue
+      success = verdict
+    } else {
+      success = info.success
+    }
     if (success === undefined) continue // no realised result for this action
     if (!info.decision_id) continue // can't reach the backing beliefs
     const deps = decisionDeps.get(info.decision_id)
