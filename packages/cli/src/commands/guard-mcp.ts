@@ -98,10 +98,16 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
       storeOverride = { claims: pg.claims, beliefs: pg.beliefs, evidence: pg.evidence }
       process.stderr.write(`[mcp-proxy] persistence postgres (connection from $${envName})\n`)
     } catch (err) {
-      // Close anything ensureSchema() opened before it failed, so an init
-      // error can't leak the connection.
+      // Best-effort close of anything ensureSchema() opened before it
+      // failed, so an init error can't leak the connection. Guard the
+      // close itself: a rejecting pg.close() must not mask the original
+      // init error (the useful one) or skip the redacted report below.
       if (closeStores) {
-        await closeStores()
+        try {
+          await closeStores()
+        } catch {
+          // ignore — the init error we're about to report is what matters
+        }
         closeStores = undefined
       }
       const raw = err instanceof Error ? err.message : String(err)
@@ -174,10 +180,17 @@ function writeUsage(stream: NodeJS.WritableStream): void {
 /**
  * Strip a Postgres connection string out of a free-text error message so
  * the credentials it usually carries (`postgres://user:password@host/db`)
- * don't land in stderr / CI logs. Redacts the exact DSN we hold, then any
- * `scheme://userinfo@` shape the driver may have reconstructed.
+ * don't land in stderr / CI logs. Three layers, because drivers echo the
+ * DSN back in more than one shape:
+ *   1. the exact DSN literal we hold;
+ *   2. any `scheme://userinfo@` URL form (the DSN reconstructed/reordered);
+ *   3. libpq key/value form — `password=secret`, `pass='se cret'` — which a
+ *      driver may emit even when the operator passed a URL DSN.
+ * Only the password is scrubbed in (3); the host/user/db stay for debugging.
  */
 function redactDsn(message: string, dsn: string): string {
-  const withoutExact = dsn.length > 0 ? message.split(dsn).join("[redacted-dsn]") : message
-  return withoutExact.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1[redacted]@")
+  let out = dsn.length > 0 ? message.split(dsn).join("[redacted-dsn]") : message
+  out = out.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/@\s]+@/gi, "$1[redacted]@")
+  out = out.replace(/(\bpass(?:word)?\s*=\s*)('[^']*'|"[^"]*"|\S+)/gi, "$1[redacted]")
+  return out
 }
