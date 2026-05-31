@@ -129,7 +129,7 @@ Future commercial offerings from Machinise will include hosted dashboard, team a
 
 ## Status
 
-**v0.1.5 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1, 2, and 3 complete.**
+**v0.1.5 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1, 2, and 3 complete; Batch 4 in progress.**
 
 What ships today:
 
@@ -142,17 +142,18 @@ What ships today:
 - ✅ `@qmilab/lodestar-guard-mcp` — **stdio MCP proxy** that wraps any MCP-speaking agent (Claude Code, Cursor, Aider) without code changes to the agent. Every `tools/call` runs through the Action Kernel; every result through the Cognitive Core. (Batch 3.)
 - ✅ `@qmilab/lodestar-trace` — `lodestar report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
-- ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`
-- ✅ **Fourteen** passing probes under strict TypeScript: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), plus two new MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the injection-defense probe is the centerpiece of Batch 3)
+- ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`, `lodestar harness run --pack <name>`
+- ✅ `@qmilab/lodestar-harness` (Batch 4) — probe-pack format + loader, the `Probe` base class + pack runner driven by `lodestar harness run`, the `Sentinel` base class, and three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`). Reflection has landed in the cognitive core.
+- ✅ **Eighteen** passing probes under strict TypeScript across two packs. Seventeen in the first-party pack `packs/lodestar-core/`: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), two MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the centerpiece of Batch 3), and three Batch 4 probes (`reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`). The eighteenth, `prompt-injection-cross-tool`, is the first probe in the first non-core pack `packs/coding-agent-safety/`.
 - ✅ End-to-end examples:
   - `examples/telenotes-governed-dev/` — full pipeline producing an 11-event audit trail
   - `examples/doc-insight/` — auto-observation gate demo
   - `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown coding-agent loop
   - `examples/claude-code-wrapped/` — MCP proxy wrapping a stand-in agent that talks to `@modelcontextprotocol/server-filesystem`; produces a demo-quality trust report
 
-What's coming in the next two batches:
+What's coming:
 
-- **Batch 4** — Harness infrastructure (sentinel base, calibrator, probe pack format)
+- **Batch 4** (in progress) — remaining Harness infrastructure: Postgres-backed belief/claim stores, the calibrator, and two more `coding-agent-safety` probes (`tool-poisoning-cross-session`, `confidence-drift`), plus folding the three sentinels into the pack
 - **Batch 5** — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning.md`](./docs/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.
@@ -166,10 +167,12 @@ See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning
 bun install
 bun run example:telenotes                            # homegrown agent pipeline
 bun run examples/claude-code-wrapped/index.ts        # MCP proxy wrap-an-agent demo
-bun run probes:all                                   # all 17 probes
+bun run probes:all                                   # 17 lodestar-core probes
+bun run probes:safety                                # coding-agent-safety pack
+bun run probes:ci                                    # all 18 probes (both packs)
 ```
 
-All seventeen probes pass. The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
+All eighteen probes pass. The Telenotes example produces an 11-event audit trail; the claude-code-wrapped example runs an MCP-speaking stand-in agent through the proxy against a real `@modelcontextprotocol/server-filesystem` downstream and prints a complete trust report.
 
 ---
 

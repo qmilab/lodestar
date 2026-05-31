@@ -444,8 +444,8 @@ Restate the contributions in §1.3 with the benefit of the technical sections ha
 ### 11.5 Future work
 
 Map to the roadmap in `docs/roadmap.md`:
-- Batch 3: full Harness infrastructure
-- Batch 4: MCP proxy mode for wrapping existing agents
+- Batch 3 (done): MCP proxy mode for wrapping existing agents
+- Batch 4 (in progress): full Harness infrastructure — probe packs, sentinels, calibrator
 - Batch 5: end-to-end thesis demo with a real coding agent
 - Beyond: hosted operation, multi-tenant deployments, signed skill manifests, formal threat model verification
 

@@ -47,7 +47,7 @@ against the fix.
 ```sh
 bun install                       # workspace install
 bun run typecheck                 # strict-TS check across all packages
-bun run probes:all                # all 17 probes must stay green
+bun run probes:ci                 # all 18 probes (both packs) must stay green
 bun run example:telenotes         # 11-event audit trail (regression check)
 bun run examples/coding-agent-greenfield/index.ts
                                   # guard.wrap() demo end-to-end
