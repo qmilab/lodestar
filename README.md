@@ -136,7 +136,7 @@ What ships today:
 - ✅ Full schema layer for the epistemic chain (Observation, Claim, Evidence, Belief, Decision, Action, Outcome, Revision, Explanation)
 - ✅ Append-only NDJSON event log with monotonic sequence numbers, payload hashes, and per-partition append serialization
 - ✅ Two-phase action execution with precondition revalidation and required `KernelContext` (no silent stub fallback)
-- ✅ Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
+- ✅ Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing — with in-memory **and** Postgres (`Bun.SQL`) store backends behind one interface, so belief/claim/evidence state can persist and be shared across sessions
 - ✅ Cognitive core: claim extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - ✅ `@qmilab/lodestar-guard` — `wrap()` helper that drives a homegrown agent loop through the full trust layer
 - ✅ `@qmilab/lodestar-guard-mcp` — **stdio MCP proxy** that wraps any MCP-speaking agent (Claude Code, Cursor, Aider) without code changes to the agent. Every `tools/call` runs through the Action Kernel; every result through the Cognitive Core. (Batch 3.)
@@ -153,7 +153,7 @@ What ships today:
 
 What's coming:
 
-- **Batch 4** (in progress) — remaining Harness infrastructure: Postgres-backed belief/claim stores, the calibrator, and two more `coding-agent-safety` probes (`tool-poisoning-cross-session`, `confidence-drift`), plus folding the three sentinels into the pack
+- **Batch 4** (in progress) — remaining Harness infrastructure: the calibrator and two more `coding-agent-safety` probes (`tool-poisoning-cross-session`, `confidence-drift`), plus folding the three sentinels into the pack. (Postgres-backed belief/claim/evidence stores have landed.)
 - **Batch 5** — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning.md`](./docs/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.

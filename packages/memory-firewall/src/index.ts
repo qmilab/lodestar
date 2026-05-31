@@ -33,6 +33,13 @@ export {
   aggregateStrength,
 } from "./stores/evidence-store.js"
 
+// NOTE: the Postgres-backed stores are deliberately NOT re-exported here.
+// They depend on Bun's native `bun:sql`, so importing them eagerly from the
+// package root would break Node/npm consumers of the published `import`/
+// `default` path who only use the in-memory stores. They live behind the
+// `@qmilab/lodestar-memory-firewall/postgres` subpath instead (see package.json
+// exports), so only callers that opt into the Postgres backend pull in `bun`.
+
 export {
   type TransitionAuthority,
   type Transition,
