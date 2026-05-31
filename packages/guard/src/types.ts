@@ -7,6 +7,7 @@ import type {
   ResourceScope,
   Sensitivity,
 } from "@qmilab/lodestar-core"
+import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 
 /**
  * Configuration for a guarded session.
@@ -37,6 +38,24 @@ export interface GuardConfig {
 
   policy_gate: PolicyGate
   precondition_checker: PreconditionChecker
+
+  /**
+   * Inject the firewall's belief/claim/evidence stores instead of the
+   * fresh in-memory ones this session would otherwise build. Pass the
+   * three Postgres-backed stores (from
+   * `@qmilab/lodestar-memory-firewall/postgres`) to give a guarded run
+   * durable state that other sessions — guarded or proxied — can see.
+   *
+   * Stores are caller-owned: `runGuarded` never opens or closes their
+   * connection. The same handles are returned on `GuardRunResult.internals`
+   * so a probe or embedder can inspect what was persisted. Omit for the
+   * single-session in-memory default.
+   */
+  stores?: {
+    claims: ClaimStore
+    beliefs: BeliefStore
+    evidence: EvidenceStore
+  }
 }
 
 /**
@@ -120,9 +139,11 @@ export type AgentLoop<T> = (ctx: GuardContext) => Promise<T>
  */
 export interface GuardInternals {
   readonly firewall: import("@qmilab/lodestar-memory-firewall").MemoryFirewall
-  readonly claims: import("@qmilab/lodestar-memory-firewall").InMemoryClaimStore
-  readonly beliefs: import("@qmilab/lodestar-memory-firewall").InMemoryBeliefStore
-  readonly evidence: import("@qmilab/lodestar-memory-firewall").InMemoryEvidenceStore
+  // The store interfaces, not the in-memory classes: a guarded run can be
+  // pointed at injected (e.g. Postgres-backed) stores via `GuardConfig.stores`.
+  readonly claims: ClaimStore
+  readonly beliefs: BeliefStore
+  readonly evidence: EvidenceStore
   readonly cognitive: import("@qmilab/lodestar-cognitive-core").CognitiveCore
   readonly worldModel: import("@qmilab/lodestar-cognitive-core").InMemoryWorldModel
   readonly kernel: import("@qmilab/lodestar-action-kernel").ActionKernel

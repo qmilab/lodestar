@@ -110,6 +110,14 @@ lodestar report latest
       "sandbox": "write-local",
       "required_trust_level": 3
     }
+  },
+  // Optional. Omit (or use { "backend": "memory" }) for the in-memory,
+  // single-session default. Use "postgres" to share durable belief/claim/
+  // evidence state across sessions — the connection string is read from
+  // the named env var, never embedded here (it usually carries a password).
+  "persistence": {
+    "backend": "postgres",
+    "connection_string_env": "LODESTAR_DATABASE_URL"
   }
 }
 ```
@@ -118,6 +126,13 @@ Tools that the downstream server advertises but the config does not
 mention fall through to a conservative default (`irreversible`,
 `controlled-shell` sandbox, L3 trust). That biases the proxy toward
 "refuse unless approved" rather than "approve unless caught."
+
+When `persistence.backend` is `postgres`, the CLI resolves the named
+environment variable, opens the Postgres-backed firewall stores
+(`@qmilab/lodestar-memory-firewall/postgres`), ensures their schema,
+and closes the connection when the session ends. Two proxy sessions
+pointed at the same database see each other's beliefs — the substrate
+the `tool-poisoning-cross-session` probe exercises.
 
 ## License
 

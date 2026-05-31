@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs eighteen probes end-to-end across two packs (`probes:ci`). v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs nineteen probes end-to-end across two packs (`probes:ci`). The nineteenth, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -17,8 +17,8 @@ Concrete state:
 - Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
-- **Harness (Batch 4, in progress): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), reflection in the cognitive core, and the Postgres-backed belief/claim/evidence stores have all landed. The calibrator and the remaining two probes are still ahead.
-- Eighteen passing probes — seventeen in the first-party pack `packs/lodestar-core/`:
+- **Harness (Batch 4, in progress): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), reflection in the cognitive core, the Postgres-backed belief/claim/evidence stores, and `tool-poisoning-cross-session` (with the proxy/`guard.wrap()` Postgres wiring it rides on) have all landed. The calibrator and the remaining probe (`confidence-drift`) are still ahead.
+- Nineteen passing probes — seventeen in the first-party pack `packs/lodestar-core/`:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -36,8 +36,9 @@ Concrete state:
   - reflection-cannot-promote-to-normal-alone (reflection cannot self-promote a belief to normal retrievability)
   - contradicted-belief-flags-dependent-decisions (a contradicted belief cascades a flag to decisions that depended on it)
   - event-log-canonical-hash (canonical-hash determinism over the event log)
-- ...and the eighteenth in the first non-core pack `packs/coding-agent-safety/`:
+- ...and two in the first non-core pack `packs/coding-agent-safety/`:
   - prompt-injection-cross-tool (an injection planted in one tool call's output cannot pre-authorise or launder the trust of a subsequent call's output across a shared proxy session)
+  - tool-poisoning-cross-session (a poisoned memory written by one proxy session into a shared Postgres store cannot launder its trust by surviving into a second session — it stays `unverified` with `external_document` provenance, and the planner gate still keeps it out of trusted context across the boundary; needs a Postgres test database, runs in CI)
 - End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server)
 
 ---
@@ -107,7 +108,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 ### Batch 4 — Harness infrastructure
 
-**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, the `Sentinel` base class + the three sentinels, the first `coding-agent-safety` probe `prompt-injection-cross-tool`, and the Postgres-backed stores have landed; the calibrator and the remaining two new probes are still ahead).
+**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, the `Sentinel` base class + the three sentinels, the first `coding-agent-safety` probe `prompt-injection-cross-tool`, the Postgres-backed stores, and `tool-poisoning-cross-session` plus the proxy/`guard.wrap()` Postgres wiring have landed; the calibrator and the remaining new probe `confidence-drift` are still ahead).
 
 **Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from loose TS files in `research/probes/` to an installable surface external packs can plug into.
 
@@ -125,7 +126,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 *Three new probes (the threat-model gaps Batch 3 surfaced but couldn't close)*:
 - ✅ `prompt-injection-cross-tool` — observation chain where injected instructions in one tool's output try to manipulate a subsequent tool's invocation. Stronger than `mcp-proxy-injection-defense` because it spans two calls: an injection planted in call 1's output cannot pre-authorise or launder the trust of call 2's output. Both content claims stay `unverified` and no `supported` belief in the shared session store carries the injected text. Landed in `packs/coding-agent-safety/`.
-- `tool-poisoning-cross-session` — a memory imported from a hostile source in session A is queried by session B; verify the firewall's `external_document` provenance survives the session boundary (requires a persistent belief store, see below).
+- ✅ `tool-poisoning-cross-session` — a memory imported from a hostile source in session A is queried by session B; the firewall's `external_document` provenance and `unverified` truth status survive the session boundary, and the planner gate still keeps the poisoned memory out of trusted context in session B. Landed in `packs/coding-agent-safety/`, backed by the Postgres stores and the proxy store-injection seam (`MCPProxyOverrides.stores`). Skips when `LODESTAR_TEST_DATABASE_URL` is unset; runs in CI against `postgres:16`.
 - `confidence-drift` — belief confidence diverges from observed outcome over a sequence of actions; the calibrator should flag this as a per-class miscalibration.
 
 *Two firewall invariants deferred from earlier batches* (now unblocked because reflection lands here):
@@ -138,9 +139,9 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - ✅ **Anomalous tool sequence sentinel** (`anomalous-tool-sequence`). Pattern-matches executed actions per session against known suspicious sequences as an ordered subsequence that must complete at the current event; ships the `read → external-egress → write` exfiltration pattern by default (egress keyed off `blast_radius: external`). Matched steps are consumed so the pattern alerts once per genuine completion.
 
 *Persistence (carve-out)*:
-- ✅ Postgres-backed `BeliefStore`, `ClaimStore`, **and** `EvidenceStore` (`packages/memory-firewall/src/stores/postgres-*.ts`, via `createPostgresStores()`). Same interfaces as the in-memory stores, backed by Bun's native `Bun.SQL` (zero new deps); two sessions pointed at the same database see each other's state. Integration tests are gated on `LODESTAR_TEST_DATABASE_URL` and run against a `postgres:16` service in CI. Still ahead: wiring the proxy/`guard.wrap()` to use them (lands with `tool-poisoning-cross-session`).
+- ✅ Postgres-backed `BeliefStore`, `ClaimStore`, **and** `EvidenceStore` (`packages/memory-firewall/src/stores/postgres-*.ts`, via `createPostgresStores()`). Same interfaces as the in-memory stores, backed by Bun's native `Bun.SQL` (zero new deps); two sessions pointed at the same database see each other's state. Integration tests are gated on `LODESTAR_TEST_DATABASE_URL` and run against a `postgres:16` service in CI. ✅ Wiring landed: the MCP proxy takes injected stores via `MCPProxyOverrides.stores` (config-driven through `persistence: { backend: "postgres", connection_string_env }`, resolved and lifecycle-owned by the `lodestar guard mcp-proxy` CLI), and `guard.wrap()` takes them via `GuardConfig.stores`. The `tool-poisoning-cross-session` probe rides this seam.
 
-*First in-repo probe pack*: `packs/coding-agent-safety/` — ✅ created, shipping `prompt-injection-cross-tool` today via `lodestar harness run --pack coding-agent-safety`. Will bundle the remaining tool-poisoning / confidence-drift probes plus the three sentinels into the same installable pack as they land.
+*First in-repo probe pack*: `packs/coding-agent-safety/` — ✅ created, now shipping `prompt-injection-cross-tool` and `tool-poisoning-cross-session` via `lodestar harness run --pack coding-agent-safety`. Will bundle the remaining `confidence-drift` probe plus the three sentinels into the same installable pack as they land.
 
 *Probe-execution sandboxing (carve-out for when external packs land)*: the step-5 runner spawns each probe as a `bun run` subprocess that inherits the harness's full environment — consistent with the existing `lodestar probe` command and fine for the first-party `lodestar-core` pack. Once `coding-agent-safety` (or any third-party pack) becomes a real execution surface, probe subprocesses should run with a scoped environment rather than the host's, so a hostile probe cannot read host secrets out of `process.env`. Mirrors the Action Kernel's "no host env to sandboxes" rule.
 

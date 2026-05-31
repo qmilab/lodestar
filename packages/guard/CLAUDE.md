@@ -25,9 +25,14 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
    must be invoked by name with explicit parameters — Guard never
    auto-approves on the caller's behalf.
 2. **One session per `runGuarded` call.** Each invocation constructs a
-   new event-log writer, new in-memory stores, and a new session_id.
-   The package does not currently support reusing a guarded context
-   across multiple loop invocations.
+   new event-log writer and a new session_id, and builds fresh in-memory
+   firewall stores — *unless* the caller injects their own via
+   `GuardConfig.stores` (e.g. the Postgres stores from
+   `@qmilab/lodestar-memory-firewall/postgres`, to share durable state
+   across sessions). Injected stores are caller-owned: `runGuarded` never
+   opens or closes their connection, and returns the same handles on
+   `GuardRunResult.internals`. The package does not currently support
+   reusing a guarded *context* across multiple loop invocations.
 3. **Sequential tool calls within a session.** Two parallel `callTool`s
    in the same `GuardContext` may race on the shared observation-sink
    capture. Multi-process / parallel-tool safety is a Batch 3 concern

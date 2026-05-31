@@ -4,16 +4,21 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Eighteen probes pass under
-strict TypeScript. Seventeen live in the first-party pack
+publishing), v0.2 architecture locked. Nineteen probes pass under
+strict TypeScript (the nineteenth needs a Postgres test database — see
+below). Seventeen live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
 (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`), and three
 Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
 `contradicted-belief-flags-dependent-decisions`,
-`event-log-canonical-hash`). The eighteenth, `prompt-injection-cross-tool`,
-is the first probe in the first non-core pack `packs/coding-agent-safety/`.
+`event-log-canonical-hash`). The other two live in the first non-core
+pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool` and
+`tool-poisoning-cross-session`. The latter exercises the proxy's
+Postgres backend across two sessions, so it needs a real database: it
+reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when
+that is unset; CI runs it against a `postgres:16` service.
 All load through the `@qmilab/lodestar-harness` pack loader; `lodestar
 harness run --pack <name>` drives a pack, `probes:all` points at
 `lodestar-core` and `probes:safety` at `coding-agent-safety`. Batches 1–3
@@ -21,11 +26,12 @@ are complete; Batch 4 is in progress (reflection pass, probe-pack format,
 probe repackaging, the `Probe` base class + pack runner + `lodestar
 harness run` CLI, the `Sentinel` base class + the three sentinels
 — `low-confidence-action`, `suspicious-memory-origin`,
-`anomalous-tool-sequence` —, and the first `coding-agent-safety` probe
-`prompt-injection-cross-tool`, and the Postgres-backed belief/claim/evidence
-stores have landed; the remaining two new probes
-`tool-poisoning-cross-session` and `confidence-drift` and the
-calibrator are still ahead). `@qmilab/lodestar-guard-mcp`
+`anomalous-tool-sequence` —, the first `coding-agent-safety` probe
+`prompt-injection-cross-tool`, the Postgres-backed belief/claim/evidence
+stores, and now `tool-poisoning-cross-session` together with the
+proxy/`guard.wrap()` Postgres wiring it rides on, have all landed; the
+remaining new probe `confidence-drift` and the calibrator are still
+ahead). `@qmilab/lodestar-guard-mcp`
 lives in this repo and will publish to npm in a follow-up mini-marathon.
 Subsequent batches are tracked in `docs/roadmap.md`.
 
@@ -176,7 +182,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Eighteen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
+- **Nineteen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (The nineteenth, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

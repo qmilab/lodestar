@@ -207,9 +207,12 @@ export async function runGuarded<T>(
   const log_root = config.log_root ?? resolve(process.cwd(), ".lodestar", "events")
   const writer = new EventLogWriter(log_root)
 
-  const claims = new InMemoryClaimStore()
-  const beliefs = new InMemoryBeliefStore()
-  const evidence = new InMemoryEvidenceStore()
+  // Caller-injected stores (e.g. Postgres, for cross-session durability)
+  // take precedence over the per-session in-memory default. `runGuarded`
+  // never owns an injected store's connection — the caller closes it.
+  const claims = config.stores?.claims ?? new InMemoryClaimStore()
+  const beliefs = config.stores?.beliefs ?? new InMemoryBeliefStore()
+  const evidence = config.stores?.evidence ?? new InMemoryEvidenceStore()
   const worldModel = new InMemoryWorldModel()
 
   const emit = async (

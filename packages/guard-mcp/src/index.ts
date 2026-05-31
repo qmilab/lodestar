@@ -2,6 +2,8 @@ export {
   type DownstreamServerConfig,
   DownstreamServerConfigSchema,
   loadProxyConfig,
+  type PersistenceConfig,
+  PersistenceConfigSchema,
   type ProxyConfig,
   ProxyConfigSchema,
   type ToolContractDefaults,

@@ -67,6 +67,45 @@ export const ToolContractDefaultsSchema = z.object({
 export type ToolContractDefaults = z.infer<typeof ToolContractDefaultsSchema>
 
 /**
+ * Belief/claim/evidence persistence backend for the proxy session.
+ *
+ * `memory` (the default) keeps the firewall stores in-process: state
+ * lives and dies with the proxy, which is all a single-session audit
+ * needs. `postgres` points the three firewall stores at a shared
+ * database so two proxy sessions see each other's beliefs — the
+ * substrate the `tool-poisoning-cross-session` probe exercises and the
+ * only backend under which cross-session provenance checks are
+ * meaningful.
+ *
+ * The connection string is taken from an environment variable named by
+ * `connection_string_env`, never embedded in the config file. A DB DSN
+ * usually carries a password; keeping it in the environment (not on
+ * disk, not in VCS) mirrors the package-wide rule that secrets stay out
+ * of declared config. The CLI reads the named variable at startup and
+ * fails loudly if it is unset.
+ *
+ * The `MCPProxy` itself never opens a connection: persistence is wired
+ * by injecting already-constructed stores (`MCPProxyOverrides.stores`).
+ * The CLI is what reads this field, builds the Postgres stores from the
+ * env var, and owns their lifecycle. A `postgres` config that reaches a
+ * proxy with no injected stores is a wiring error and the proxy throws
+ * rather than silently falling back to in-memory.
+ */
+export const PersistenceConfigSchema = z.discriminatedUnion("backend", [
+  z.object({ backend: z.literal("memory") }),
+  z.object({
+    backend: z.literal("postgres"),
+    /**
+     * Name of the environment variable holding the Postgres
+     * connection string (e.g. `LODESTAR_DATABASE_URL`). The value is
+     * resolved by the CLI at startup, never stored here.
+     */
+    connection_string_env: z.string().min(1),
+  }),
+])
+export type PersistenceConfig = z.infer<typeof PersistenceConfigSchema>
+
+/**
  * Top-level proxy config. The CLI loads this from a path on disk.
  *
  * Round 5 invariant: the proxy MUST receive a real session_id and
@@ -125,6 +164,14 @@ export const ProxyConfigSchema = z.object({
         "and make tool_defaults ownership + audit trail ambiguous",
     }),
   tool_defaults: z.record(ToolContractDefaultsSchema).default({}),
+  /**
+   * Where the firewall's belief/claim/evidence stores live. Omitted (or
+   * `{ backend: "memory" }`) means in-memory, single-session — the
+   * default. Set `{ backend: "postgres", connection_string_env: "..." }`
+   * for a session that shares durable state with other sessions. See
+   * {@link PersistenceConfigSchema}.
+   */
+  persistence: PersistenceConfigSchema.optional(),
 })
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>
 

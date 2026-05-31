@@ -1,5 +1,5 @@
 import { resolve } from "node:path"
-import { MCPProxy, loadProxyConfig } from "@qmilab/lodestar-guard-mcp"
+import { MCPProxy, type MCPProxyOverrides, loadProxyConfig } from "@qmilab/lodestar-guard-mcp"
 
 /**
  * `lodestar guard mcp-proxy --config <path>`
@@ -17,9 +17,17 @@ import { MCPProxy, loadProxyConfig } from "@qmilab/lodestar-guard-mcp"
  * session ends. stdout is reserved for MCP traffic — never write
  * anything else there.
  *
+ * Persistence: when the config sets `persistence.backend: "postgres"`,
+ * this command resolves the connection string from the named environment
+ * variable, opens the Postgres-backed firewall stores, ensures their
+ * schema, and injects them into the proxy. The proxy never opens a
+ * database connection itself — the CLI owns the connection's lifecycle
+ * and closes it after the session ends (on clean exit, error, or signal).
+ *
  * Exit codes:
  *   0  — session ended cleanly
- *   1  — runtime error (downstream startup failed, config invalid)
+ *   1  — runtime error (downstream startup failed, config invalid,
+ *         postgres env var unset, store init failed)
  *   2  — usage error (missing --config or unknown flag)
  *   3  — config file not found
  */
@@ -59,7 +67,41 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
     return 1
   }
 
-  const proxy = new MCPProxy(config)
+  // Resolve the persistence backend into injected stores. The proxy
+  // itself never opens a database connection (that keeps `bun:sql` out of
+  // its import graph); the CLI owns the connection and closes it when the
+  // session ends. `closeStores` is a no-op for the in-memory default.
+  let storeOverride: MCPProxyOverrides["stores"] | undefined
+  let closeStores: (() => Promise<void>) | undefined
+  if (config.persistence?.backend === "postgres") {
+    const envName = config.persistence.connection_string_env
+    const connectionString = process.env[envName]
+    if (connectionString === undefined || connectionString === "") {
+      process.stderr.write(
+        `[mcp-proxy] persistence.backend is 'postgres' but the connection-string env var '${envName}' is not set\n`,
+      )
+      return 1
+    }
+    try {
+      // Dynamic import so the in-memory default never pulls `bun:sql`
+      // (and so npm consumers of the CLI who never select postgres don't
+      // transitively load it). Subpath export, per the memory-firewall
+      // package's deliberate split.
+      const { createPostgresStores } = await import("@qmilab/lodestar-memory-firewall/postgres")
+      const pg = createPostgresStores(connectionString)
+      await pg.ensureSchema()
+      storeOverride = { claims: pg.claims, beliefs: pg.beliefs, evidence: pg.evidence }
+      closeStores = () => pg.close()
+      process.stderr.write(`[mcp-proxy] persistence postgres (connection from $${envName})\n`)
+    } catch (err) {
+      process.stderr.write(
+        `[mcp-proxy] failed to initialise postgres persistence: ${err instanceof Error ? err.message : String(err)}\n`,
+      )
+      return 1
+    }
+  }
+
+  const proxy = new MCPProxy(config, storeOverride ? { stores: storeOverride } : undefined)
   process.stderr.write(`[mcp-proxy] session ${proxy.session_id}\n`)
   process.stderr.write(`[mcp-proxy] log root ${proxy.log_root}\n`)
   // Always include `--project` and `--log-root` in the hint so the
@@ -80,6 +122,7 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
     stopping = true
     process.stderr.write(`[mcp-proxy] received ${signal}, stopping\n`)
     await proxy.stop()
+    await closeStores?.()
     process.exit(0)
   }
   process.on("SIGINT", () => void shutdown("SIGINT"))
@@ -95,12 +138,14 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
     // exit before the wrapped agent could so much as list a tool.
     await proxy.waitUntilClosed()
     await proxy.stop()
+    await closeStores?.()
     return 0
   } catch (err) {
     process.stderr.write(
       `[mcp-proxy] session failed: ${err instanceof Error ? err.message : String(err)}\n`,
     )
     await proxy.stop()
+    await closeStores?.()
     return 1
   }
 }
