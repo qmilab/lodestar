@@ -23,9 +23,11 @@
  *   sentinels, `eventLogAlertSink`) — an async tail of the event stream
  *   that emits `sentinel.alerted@1` events. Non-blocking by design; see
  *   `docs/architecture/sentinels.md`.
- *
- * Still to come (do not pre-build): the Calibrator. See `docs/roadmap.md`
- * (Batch 4).
+ * - Calibrator surface (`Calibrator`, `calibrate`, the metrics, and
+ *   `formatCalibrationReport`) — an offline read over the event log that
+ *   scores stated confidence against realised outcome per
+ *   `calibration_class` and flags miscalibration. Measures, never
+ *   enforces; see `docs/architecture/calibrator.md`.
  */
 
 export {
@@ -77,6 +79,31 @@ export {
 } from "./sentinels/index.js"
 
 export { eventLogAlertSink, type EventLogAlertSinkConfig } from "./sentinel-recorder.js"
+
+export {
+  Calibrator,
+  calibrate,
+  brierScore,
+  computeMetrics,
+  expectedCalibrationError,
+  reliabilityBins,
+  type ScoredPoint,
+  resolveSamples,
+  formatCalibrationReport,
+  type FormatCalibrationOptions,
+  type CalibrationClassResult,
+  type CalibrationMetrics,
+  type CalibrationReport,
+  CalibrationReportSchema,
+  type CalibrationSample,
+  CalibrationSampleSchema,
+  type CalibratorOptions,
+  DEFAULT_CALIBRATOR_CONFIG,
+  type ReliabilityBin,
+  type ResolvedCalibratorConfig,
+  resolveConfig,
+  type SampleSource,
+} from "./calibration/index.js"
 
 export {
   buildProbeRunObservation,

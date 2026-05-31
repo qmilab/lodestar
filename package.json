@@ -37,6 +37,7 @@
     "probe:canonical-hash": "bun run packs/lodestar-core/probes/event-log-canonical-hash.ts",
     "probe:cross-tool": "bun run packs/coding-agent-safety/probes/prompt-injection-cross-tool.ts",
     "probe:cross-session": "bun run packs/coding-agent-safety/probes/tool-poisoning-cross-session.ts",
+    "probe:confidence-drift": "bun run packs/coding-agent-safety/probes/confidence-drift.ts",
     "probes:all": "bun run lodestar harness run --pack lodestar-core --no-record",
     "probes:safety": "bun run lodestar harness run --pack coding-agent-safety --no-record",
     "probes:ci": "bun run probes:all && bun run probes:safety",
