@@ -9,9 +9,11 @@ Batch 4; see `docs/roadmap.md` (Batch 4) and the kickoff/sequencing in
 
 - `src/pack/loader.ts` — `loadProbePack()`. Reads a
   `lodestar.probe-pack.json` manifest (schema in
-  `@qmilab/lodestar-core`), validates it, and resolves probe files to
-  absolute paths. Returns a `LoadedProbePack`. Raises `ProbePackError`
-  on any failure. Filesystem I/O lives here, not in core.
+  `@qmilab/lodestar-core`), validates it, resolves probe files to
+  absolute paths, and resolves each declared sentinel id against the
+  first-party registry (`LoadedSentinel { id, create }`). Returns a
+  `LoadedProbePack`. Raises `ProbePackError` on any failure. Filesystem
+  I/O lives here, not in core.
 - `src/probe.ts` — the `Probe` authoring surface (`Probe` base class,
   `ProbeSpec`, `ProbeResult`, `runProbeAsScript`, `formatProbeReport`).
   The contract *new* probes declare themselves against. The 17
@@ -38,7 +40,10 @@ Batch 4; see `docs/roadmap.md` (Batch 4) and the kickoff/sequencing in
   `docs/architecture/sentinels.md`.
 - `src/sentinels/` — the three first-party sentinels:
   `low-confidence-action`, `suspicious-memory-origin`,
-  `anomalous-tool-sequence`.
+  `anomalous-tool-sequence`, plus `registry.ts` — the
+  `FIRST_PARTY_SENTINELS` map (`id → factory`) a pack manifest's
+  `sentinels` ids resolve against. Each key equals the constructed
+  sentinel's `name`.
 - `src/sentinel-recorder.ts` — `eventLogAlertSink()`. The injected sink
   that appends each alert as a `sentinel.alerted@1` event. Mirrors the
   probe-run `eventLogRecorder`; the runner core stays I/O-free.
@@ -54,14 +59,19 @@ Batch 4; see `docs/roadmap.md` (Batch 4) and the kickoff/sequencing in
   It measures, never enforces. Design lock:
   `docs/architecture/calibrator.md`.
 
-Coming in later Batch 4 steps (do not pre-build):
+The three sentinels are now folded into the `coding-agent-safety` pack:
+its manifest declares them under `sentinels` (by id), the loader resolves
+them against `FIRST_PARTY_SENTINELS`, and `lodestar harness list` prints
+them. This was the last Batch 4 deliverable.
+
+Coming in later Batch 4+ steps (do not pre-build):
 
 - The `arbitrate` hook that *consumes* sentinel alerts (lands with the
   Policy Kernel; see `docs/architecture/sentinels.md` "What's wired").
 - Cross-session persistence for sentinels (Postgres stores, step 7).
-- Folding the three sentinels into the `coding-agent-safety` pack (the
-  manifest declares probes today, not sentinels — that is the remaining
-  Batch 4 deliverable).
+- Per-pack sentinel construction-option overrides and third-party
+  (file-referenced) sentinels — a later refinement on the registry
+  resolution; v0 resolves first-party ids with default options.
 
 ## Invariants
 

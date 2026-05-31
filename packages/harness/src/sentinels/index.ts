@@ -11,3 +11,4 @@ export {
   type SuspiciousSequence,
   type ToolStepMatcher,
 } from "./anomalous-tool-sequence.js"
+export { FIRST_PARTY_SENTINELS, type SentinelFactory } from "./registry.js"

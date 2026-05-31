@@ -5,13 +5,15 @@ import {
   type ProbePackManifest,
   ProbePackManifestSchema,
 } from "@qmilab/lodestar-core"
+import { FIRST_PARTY_SENTINELS, type SentinelFactory } from "../sentinels/registry.js"
 
 /**
  * Raised for every failure mode of pack loading: missing manifest,
  * malformed JSON, schema-invalid manifest, an unsupported source type,
- * a probe file that escapes the pack root, a missing probe file, or a
- * duplicate probe name. A single typed error lets callers (the CLI, a
- * runner) distinguish "this pack is broken" from an unexpected crash.
+ * a probe file that escapes the pack root, a missing probe file, a
+ * duplicate probe name, or a sentinel that is unknown or declared twice.
+ * A single typed error lets callers (the CLI, a runner) distinguish
+ * "this pack is broken" from an unexpected crash.
  */
 export class ProbePackError extends Error {
   override readonly name = "ProbePackError"
@@ -28,6 +30,22 @@ export interface LoadedProbe {
 }
 
 /**
+ * One sentinel from a loaded pack, resolved to its first-party factory.
+ *
+ * A sentinel is referenced by id, not by file: it is a stateful class the
+ * {@link SentinelRunner} instantiates, not a script the runner spawns. The
+ * loader resolves the id against the built-in registry and exposes the
+ * factory; a host turns these into a runner with
+ * `new SentinelRunner(pack.sentinels.map((s) => s.create()))`.
+ */
+export interface LoadedSentinel {
+  /** Stable sentinel id, as written in the manifest and unique within the pack. */
+  id: string
+  /** Constructs a fresh instance of the sentinel with its default options. */
+  create: SentinelFactory
+}
+
+/**
  * A validated, filesystem-resolved probe pack. This is the harness's
  * runtime representation; the on-disk contract is `ProbePackManifest`
  * in `@qmilab/lodestar-core`. The split is deliberate — core owns the
@@ -40,6 +58,8 @@ export interface LoadedProbePack {
   /** Absolute path to the manifest file itself. */
   manifestPath: string
   probes: LoadedProbe[]
+  /** Sentinels the pack declares, each resolved to its first-party factory. */
+  sentinels: LoadedSentinel[]
 }
 
 // "file" means a *regular* file specifically. A FIFO/socket/device is
@@ -75,8 +95,12 @@ function escapesRoot(rel: string): boolean {
  *
  * The loader validates the manifest against the core schema, resolves
  * every probe file to an absolute path, and verifies each one exists
- * and lives inside the pack root. It does NOT execute probes — running
- * is the runner's job (`runPack` in `../runner.ts`). Passes for
+ * and lives inside the pack root. It also resolves every declared
+ * sentinel id against the built-in first-party registry (failing on an
+ * unknown or duplicated id). It does NOT execute anything — neither
+ * running a probe nor constructing a sentinel; running is the runner's
+ * job (`runPack` in `../runner.ts`) and constructing a sentinel is the
+ * host's (it calls the resolved `create` factory). Passes for
  * `source_type: "npm"` are rejected: the v0 loader resolves `local`
  * packs only.
  *
@@ -189,5 +213,30 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
     probes.push({ name: entry.name, file: entry.file, path: probePath })
   }
 
-  return { manifest, root, manifestPath, probes }
+  // Resolve declared sentinels against the built-in first-party registry.
+  // A sentinel is referenced by id (not file): it is an in-process class,
+  // not a spawnable script. Resolution looks the id up to its factory; it
+  // does not construct the sentinel (that stays the host's call), keeping
+  // loading side-effect-free like the probe path above.
+  const seenSentinels = new Set<string>()
+  const sentinels: LoadedSentinel[] = []
+  for (const entry of manifest.sentinels) {
+    if (seenSentinels.has(entry.id)) {
+      throw new ProbePackError(
+        `Pack '${manifest.name}' declares sentinel id '${entry.id}' more than once.`,
+      )
+    }
+    seenSentinels.add(entry.id)
+
+    const create = FIRST_PARTY_SENTINELS[entry.id]
+    if (!create) {
+      const known = Object.keys(FIRST_PARTY_SENTINELS).join(", ")
+      throw new ProbePackError(
+        `Pack '${manifest.name}' declares unknown sentinel id '${entry.id}'. The v0 harness resolves first-party sentinels only; known ids: ${known}.`,
+      )
+    }
+    sentinels.push({ id: entry.id, create })
+  }
+
+  return { manifest, root, manifestPath, probes, sentinels }
 }
