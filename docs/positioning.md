@@ -201,8 +201,8 @@ These positioning decisions shape the implementation roadmap (`docs/roadmap.md`)
 
 - **Batch 1** (done): positioning, README, roadmap. No code changes.
 - **Batch 2** (done): repackaged existing code into the four developer-facing surfaces (Guard meta-package, Trace CLI, Memory Firewall adapters for mem0/Letta/Zep). Re-exports and adapters.
-- **Batch 3** (done): MCP proxy mode for wrapping existing agents like Claude Code. `lodestar guard mcp-proxy --config <path>` ships; `examples/claude-code-wrapped/` exercises the proxy end-to-end and produces a useful trust report; two new probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`) bring the probe count to fourteen. This is the point at which Lodestar becomes legible outside this design conversation.
-- **Batch 4** (next): build the Harness infrastructure that makes the marketplace possible. Sentinel base class, calibrator, probe pack format. New code.
+- **Batch 3** (done): MCP proxy mode for wrapping existing agents like Claude Code. `lodestar guard mcp-proxy --config <path>` ships; `examples/claude-code-wrapped/` exercises the proxy end-to-end and produces a useful trust report; two new probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`) brought the probe count to fourteen. This is the point at which Lodestar becomes legible outside this design conversation.
+- **Batch 4** (in progress): the Harness infrastructure that makes the marketplace possible. Probe-pack format + loader, the `Probe` base class + pack runner + `lodestar harness run` CLI, the `Sentinel` base class + three sentinels, reflection in the cognitive core, and the first non-core pack `packs/coding-agent-safety/` (shipping `prompt-injection-cross-tool`) have landed — eighteen probes pass across two packs. The Postgres stores, the calibrator, and the remaining two probes (`tool-poisoning-cross-session`, `confidence-drift`) are still ahead.
 - **Batch 5**: assemble the week-8 thesis demo. A coding agent governed end-to-end, producing a trust report.
 
 The architecture does not change. Only its presentation does.

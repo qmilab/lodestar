@@ -175,7 +175,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Seventeen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
+- **Eighteen probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code.
 
 ## Quick references
 

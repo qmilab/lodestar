@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs seventeen probes end-to-end. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs eighteen probes end-to-end across two packs (`probes:ci`). v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -17,7 +17,8 @@ Concrete state:
 - Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
-- Fourteen passing probes:
+- **Harness (Batch 4, in progress): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), and reflection in the cognitive core have all landed. Postgres stores, the calibrator, and the remaining two probes are still ahead.
+- Eighteen passing probes — seventeen in the first-party pack `packs/lodestar-core/`:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -32,6 +33,11 @@ Concrete state:
   - event log single-writer (per-partition mutex, no torn writes under fan-out)
   - mcp-proxy-roundtrip (tool call through the proxy produces the right epistemic chain entries, with real session/project IDs)
   - mcp-proxy-injection-defense (hostile content in a tool result is recorded verbatim but does NOT promote to a supported belief — the headline Batch 3 demonstration)
+  - reflection-cannot-promote-to-normal-alone (reflection cannot self-promote a belief to normal retrievability)
+  - contradicted-belief-flags-dependent-decisions (a contradicted belief cascades a flag to decisions that depended on it)
+  - event-log-canonical-hash (canonical-hash determinism over the event log)
+- ...and the eighteenth in the first non-core pack `packs/coding-agent-safety/`:
+  - prompt-injection-cross-tool (an injection planted in one tool call's output cannot pre-authorise or launder the trust of a subsequent call's output across a shared proxy session)
 - End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server)
 
 ---

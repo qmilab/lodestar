@@ -200,14 +200,14 @@ This is the killer screenshot. It should occupy ~80% of the slide.
 **Visual**: A roadmap timeline with five batches, the first checked off, the others labelled with rough timing.
 
 ```
-✓ Batch 1 — Positioning + scaffold ····· now
-□ Batch 2 — Guard, Trace, Memory adapters ····· +1 week
-□ Batch 3 — Harness infrastructure ····· +3 weeks
-□ Batch 4 — MCP proxy (wrap any coding agent) ····· +5 weeks
-□ Batch 5 — End-to-end thesis demo ····· +6 weeks
+✓ Batch 1 — Positioning + scaffold ····· done
+✓ Batch 2 — Guard, Trace, Memory adapters ····· done
+✓ Batch 3 — MCP proxy (wrap any coding agent) ····· done
+▸ Batch 4 — Harness infrastructure ····· in progress
+□ Batch 5 — End-to-end thesis demo ····· next
 ```
 
-**Headline**: Pre-v0.1. Working scaffold. Two passing probes.
+**Headline**: v0.1.5 on npm. 13 packages published. Eighteen passing probes.
 
 **Body**:
 - Full schema layer for the epistemic chain
