@@ -203,7 +203,7 @@ This is the killer screenshot. It should occupy ~80% of the slide.
 ✓ Batch 1 — Positioning + scaffold ····· done
 ✓ Batch 2 — Guard, Trace, Memory adapters ····· done
 ✓ Batch 3 — MCP proxy (wrap any coding agent) ····· done
-▸ Batch 4 — Harness infrastructure ····· in progress
+▸ Batch 4 — Harness infrastructure ····· done
 □ Batch 5 — End-to-end thesis demo ····· next
 ```
 

@@ -64,6 +64,36 @@ export const ProbeEntrySchema = z.object({
 export type ProbeEntry = z.infer<typeof ProbeEntrySchema>
 
 /**
+ * One sentinel entry in a pack manifest.
+ *
+ * Unlike a probe — a `bun run`-able script the pack carries as a `file` —
+ * a sentinel is a stateful in-process class the harness instantiates and
+ * feeds the event stream. There is no subprocess contract for it, so the
+ * manifest references a sentinel by a stable `id` and the harness resolves
+ * that id against its built-in registry of first-party sentinels
+ * (`FIRST_PARTY_SENTINELS` in `@qmilab/lodestar-harness`). A pack thus
+ * *declares* which built-in sentinels it ships rather than carrying their
+ * source.
+ *
+ * Per-pack construction-option overrides and third-party (file-referenced)
+ * sentinels are a deliberate later refinement — see the harness loader and
+ * `docs/architecture/sentinels.md`. v0 resolves first-party ids only.
+ */
+export const SentinelEntrySchema = z.object({
+  id: z
+    .string()
+    .min(1)
+    .regex(
+      /^[a-z0-9]+(?:-[a-z0-9]+)*$/,
+      "sentinel id must be kebab-case (lowercase alphanumerics separated by single hyphens)",
+    )
+    .describe(
+      "Stable id of a first-party sentinel, resolved by the harness against its built-in registry. Matches the sentinel's own `name`.",
+    ),
+})
+export type SentinelEntry = z.infer<typeof SentinelEntrySchema>
+
+/**
  * A `lodestar.probe-pack.json` manifest.
  *
  * This is the on-disk / on-wire contract every probe pack — first-party
@@ -116,6 +146,18 @@ export const ProbePackManifestSchema = z.object({
     .array(ProbeEntrySchema)
     .min(1, "a pack must declare at least one probe")
     .describe("The probes this pack ships."),
+  // `.optional()` rather than `.default([])` on purpose: a default makes the
+  // field REQUIRED in the `z.infer` *output* type, so external TS code that
+  // constructs a manifest without `sentinels` would fail to compile — breaking
+  // the "additive optional field is free" promise. Keeping it optional leaves
+  // the public type backward-compatible; the loader treats an absent value as
+  // "no sentinels". Do not reintroduce `.default([])`.
+  sentinels: z
+    .array(SentinelEntrySchema)
+    .optional()
+    .describe(
+      "The sentinels this pack ships, referenced by stable id and resolved by the harness against its built-in registry. Optional; an absent field means the pack ships no sentinels. Additive since spec '1' — a manifest without it still loads.",
+    ),
 })
 export type ProbePackManifest = z.infer<typeof ProbePackManifestSchema>
 

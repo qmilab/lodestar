@@ -20,9 +20,10 @@
  * - Event-log recorder (`eventLogRecorder`) — records each probe run as a
  *   synthetic `observation.recorded` event so runs are themselves auditable.
  * - Sentinel surface (`Sentinel`, `SentinelRunner`, the three first-party
- *   sentinels, `eventLogAlertSink`) — an async tail of the event stream
- *   that emits `sentinel.alerted@1` events. Non-blocking by design; see
- *   `docs/architecture/sentinels.md`.
+ *   sentinels, the `FIRST_PARTY_SENTINELS` registry a pack manifest
+ *   resolves its sentinel ids against, `eventLogAlertSink`) — an async
+ *   tail of the event stream that emits `sentinel.alerted@1` events.
+ *   Non-blocking by design; see `docs/architecture/sentinels.md`.
  * - Calibrator surface (`Calibrator`, `calibrate`, the metrics, and
  *   `formatCalibrationReport`) — an offline read over the event log that
  *   scores stated confidence against realised outcome per
@@ -35,6 +36,7 @@ export {
   ProbePackError,
   type LoadedProbe,
   type LoadedProbePack,
+  type LoadedSentinel,
 } from "./pack/loader.js"
 
 export {
@@ -74,6 +76,8 @@ export {
   SuspiciousMemoryOriginSentinel,
   AnomalousToolSequenceSentinel,
   DEFAULT_SUSPICIOUS_SEQUENCES,
+  FIRST_PARTY_SENTINELS,
+  type SentinelFactory,
   type SuspiciousSequence,
   type ToolStepMatcher,
 } from "./sentinels/index.js"

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "spec_version": "1",
   "source_type": "local",
-  "description": "Adversarial probes (and, later, sentinels) for the 'wrap a coding agent' story: prompt injection, tool poisoning, and confidence drift across tool calls and sessions.",
+  "description": "Adversarial probes and online sentinels for the 'wrap a coding agent' story: prompt injection, tool poisoning, and confidence drift across tool calls and sessions, plus the three first-party sentinels that watch the live event stream.",
   "coverage_areas": [
     "prompt_injection",
     "tool_poisoning",
@@ -11,7 +11,10 @@
     "cross_session_persistence",
     "auto_observation_gate",
     "mcp_proxy",
-    "confidence_calibration"
+    "confidence_calibration",
+    "low_confidence_action",
+    "memory_provenance",
+    "anomalous_tool_sequence"
   ],
   "invariants": [
     "injection_defense",
@@ -19,7 +22,10 @@
     "cross_tool_injection_does_not_promote",
     "cross_session_provenance_survives",
     "miscalibration_flagged_per_class",
-    "synthetic_beliefs_excluded_from_calibration"
+    "synthetic_beliefs_excluded_from_calibration",
+    "high_trust_action_on_weak_belief_flagged",
+    "external_document_belief_steers_decision_flagged",
+    "anomalous_tool_sequence_flagged"
   ],
   "probes": [
     {
@@ -34,5 +40,10 @@
       "name": "confidence-drift",
       "file": "probes/confidence-drift.ts"
     }
+  ],
+  "sentinels": [
+    { "id": "low-confidence-action" },
+    { "id": "suspicious-memory-origin" },
+    { "id": "anomalous-tool-sequence" }
   ]
 }

@@ -206,6 +206,44 @@ Two related correctness rules the sentinels enforce, both audit-grade:
     hosts (Guard, the MCP proxy) wire in; a standalone watch command can come
     later without changing the contract.
 
+## Packaging: folding sentinels into a pack (Batch 4, final step)
+
+A probe-pack manifest declares the probes a pack ships; the last Batch 4 step
+extended it to declare **sentinels** too, so the `coding-agent-safety` pack now
+ships all three.
+
+The decision that shaped this: a sentinel is referenced by a stable **id**, not
+by a **file**. A probe is a `bun run`-able script the pack carries as a `file`
+and the runner drives by exit code (harness invariant 6). A sentinel is the
+opposite kind of thing — a stateful in-process class the `SentinelRunner`
+instantiates and feeds events. There is no subprocess contract for it, so making
+the manifest carry sentinel *source* would mean inventing a module-load-and-
+instantiate contract for an in-process watcher. Instead the manifest lists the
+sentinel **ids** it ships, and the harness resolves each id against a built-in
+registry of first-party sentinels (`FIRST_PARTY_SENTINELS`, `id → factory`,
+seeded with the three). The registry key equals each sentinel's own `name`, so
+the manifest id, the registry key, and the `sentinel_name` on every emitted
+alert are the same string.
+
+Mechanics (the additive recipe in the harness CLAUDE.md "When extending the pack
+format"):
+- Core gains an optional `sentinels: [{ id }]` field on
+  `ProbePackManifestSchema` — additive under spec `"1"`, so a manifest without
+  it still loads (it defaults to `[]`). No spec-version bump.
+- The loader resolves each id to its factory, returning
+  `LoadedSentinel { id, create }`, and fails loudly (`ProbePackError`) on an
+  unknown or duplicated id. Resolution does **not** construct the sentinel —
+  loading stays side-effect-free, same as the probe path. A host turns the
+  result into a runner: `new SentinelRunner(pack.sentinels.map((s) => s.create()))`.
+- `lodestar harness list` prints the declared sentinels under the probes.
+
+Deferred, deliberately: **per-pack construction-option overrides** (the
+confidence floor, the suspicious-sequence catalogue — they stay in code with
+sensible defaults) and **third-party / file-referenced sentinels** (a pack
+shipping its own sentinel module). Both are refinements on the registry
+resolution, not part of this step; v0 resolves first-party ids with default
+options.
+
 ## Open questions deferred to later steps
 
 - **De-duplication / alert fatigue across a long-running session.** Each sentinel
