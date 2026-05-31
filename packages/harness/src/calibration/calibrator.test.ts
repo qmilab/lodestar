@@ -293,6 +293,44 @@ describe("source gating and explicit Outcome events", () => {
     expect(report.sample_count).toBe(1)
     expect(report.classes[0]?.metrics.empirical_accuracy).toBe(1)
   })
+
+  test("a terminal action event with no `phase` field is read from the event type", () => {
+    // A minimal host emits `action.completed` / `action.failed` with id +
+    // decision_id but omits the redundant `phase`. The type already encodes
+    // the terminal result, so the calibrator must still resolve a sample —
+    // while a phase-less NON-terminal type (approved) stays a non-label.
+    const events = [
+      evt("belief.adopted", {
+        id: "bc",
+        confidence: 0.9,
+        calibration_class: "k",
+        authority: "inferred",
+      }),
+      evt("decision.made", { id: "dc", belief_dependencies: ["bc"] }),
+      evt("action.completed", { id: "ac", decision_id: "dc" }), // no phase → success from type
+      evt("belief.adopted", {
+        id: "bf",
+        confidence: 0.9,
+        calibration_class: "k",
+        authority: "inferred",
+      }),
+      evt("decision.made", { id: "df", belief_dependencies: ["bf"] }),
+      evt("action.failed", { id: "af", decision_id: "df" }), // no phase → failure from type
+      evt("belief.adopted", {
+        id: "ba",
+        confidence: 0.9,
+        calibration_class: "k",
+        authority: "inferred",
+      }),
+      evt("decision.made", { id: "da", belief_dependencies: ["ba"] }),
+      evt("action.approved", { id: "aa", decision_id: "da" }), // no phase, non-terminal → no sample
+    ]
+    const report = calibrate(events)
+    expect(report.sample_count).toBe(2)
+    const k = report.classes.find((c) => c.calibration_class === "k")
+    expect(k?.metrics.n).toBe(2)
+    expect(k?.metrics.empirical_accuracy).toBe(0.5) // one success, one failure
+  })
 })
 
 describe("report shape + formatter", () => {

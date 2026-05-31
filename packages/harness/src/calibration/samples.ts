@@ -122,7 +122,8 @@ function resolveActionOutcomeSamples(
 ): void {
   // decision id → the beliefs it leaned on
   const decisionDeps = new Map<string, string[]>()
-  // action id → { decision it came from, realised success from phase }
+  // action id → { decision it came from, realised success from the
+  // terminal phase (or, when the payload omits `phase`, the event type) }
   const actionInfo = new Map<string, { decision_id?: string; success?: boolean }>()
   // action id → the host's explicit Outcome verdict, which wins over the
   // terminal phase. `true`/`false` are binary labels; `null` records that a
@@ -162,11 +163,20 @@ function resolveActionOutcomeSamples(
       if (!parsed.success) continue
       const info = actionInfo.get(parsed.data.id) ?? {}
       if (typeof parsed.data.decision_id === "string") info.decision_id = parsed.data.decision_id
-      // Terminal phase is the realised result. `rejected` is a policy
-      // decision, not a tool outcome; `proposed`/`approved`/etc. are not
-      // yet realised — none of those are labels.
-      if (parsed.data.phase === "completed") info.success = true
-      else if (parsed.data.phase === "failed") info.success = false
+      // Terminal phase is the realised result. Prefer the explicit `phase`
+      // field; fall back to the event TYPE when the payload omits it (a
+      // minimal host may emit `action.completed`/`action.failed` whose type
+      // already encodes the terminal phase). `rejected` is a policy
+      // decision, not a tool outcome; `proposed`/`approved`/etc. are not yet
+      // realised — none of those are labels, whether named by phase or type.
+      let result: boolean | undefined
+      if (parsed.data.phase === "completed") result = true
+      else if (parsed.data.phase === "failed") result = false
+      else if (parsed.data.phase === undefined) {
+        if (type === "action.completed") result = true
+        else if (type === "action.failed") result = false
+      }
+      if (result !== undefined) info.success = result
       actionInfo.set(parsed.data.id, info)
     }
   }

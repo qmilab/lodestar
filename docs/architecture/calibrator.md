@@ -94,7 +94,11 @@ differ:
    already tolerated by `@qmilab/lodestar-trace`'s `projectChain`) whose
    `result` is `success` → 1 or `failure` → 0.
 2. Failing that, the action's **terminal phase** as emitted by Guard and
-   the MCP proxy today: `action.completed` → 1, `action.failed` → 0.
+   the MCP proxy today: `action.completed` → 1, `action.failed` → 0. The
+   phase is read from `payload.phase`, falling back to the event *type*
+   when the payload omits it (a minimal host may emit a bare
+   `action.completed` / `action.failed` whose type already encodes the
+   terminal phase) — tolerant reading, same as the sentinels.
 
 `partial` / `unknown` outcomes and `rejected` actions are **not labels** —
 a policy rejection is not evidence the belief was wrong, and a partial
