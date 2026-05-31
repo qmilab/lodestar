@@ -125,7 +125,16 @@ function flag(
   const gapHit = Math.abs(metrics.calibration_gap) >= config.gap_threshold
   if (!eceHit && !gapHit) return { flagged: false, reason: null }
 
-  const direction = metrics.overconfident ? "overconfident" : "underconfident"
+  // Three-way: a class flagged on ECE alone can have a near-zero aggregate
+  // gap (per-bin over- and under-confidence cancelling out). Calling that
+  // "underconfident" just because `overconfident` (gap > 0) is false would
+  // misdescribe correct metrics, so name the neutral/mixed case explicitly.
+  const direction =
+    metrics.calibration_gap > 1e-9
+      ? "overconfident"
+      : metrics.calibration_gap < -1e-9
+        ? "underconfident"
+        : "miscalibrated (mixed)"
   const triggers: string[] = []
   if (gapHit) triggers.push(`gap ${metrics.calibration_gap.toFixed(3)}`)
   if (eceHit) triggers.push(`ECE ${metrics.ece.toFixed(3)}`)

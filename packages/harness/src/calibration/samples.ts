@@ -197,7 +197,11 @@ function resolveActionOutcomeSamples(
     if (!info.decision_id) continue // can't reach the backing beliefs
     const deps = decisionDeps.get(info.decision_id)
     if (!deps) continue
-    for (const beliefId of deps) {
+    // De-duplicate: each distinct belief contributes at most one sample per
+    // action outcome. `DecisionSchema` does not enforce uniqueness, so a
+    // repeated id in `belief_dependencies` would otherwise inflate `n`,
+    // bypass `min_samples`, and skew ECE/Brier for the class.
+    for (const beliefId of new Set(deps)) {
       const belief = beliefById.get(beliefId)
       if (!belief) continue // belief not in this slice (e.g. cross-session)
       if (excludedAuthority(belief, config)) continue

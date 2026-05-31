@@ -82,8 +82,9 @@ The epistemic chain is `Belief → Decision → Action → Outcome`. A decision
 records the beliefs it leaned on (`decision.belief_dependencies`); an
 action records the decision that drove it (`action.decision_id`); the
 action's realised result is its outcome. So for every action with a
-realised result, each belief the deciding decision depended on gets one
-sample:
+realised result, each *distinct* belief the deciding decision depended on
+gets one sample (a repeated id in the dependency list still counts once —
+the schema does not enforce uniqueness):
 
 - `correct = 1` if the action succeeded, `0` if it failed.
 

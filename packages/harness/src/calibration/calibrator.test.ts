@@ -333,6 +333,52 @@ describe("source gating and explicit Outcome events", () => {
   })
 })
 
+describe("dependency de-duplication", () => {
+  test("a repeated belief id in belief_dependencies counts once per action", () => {
+    const events = [
+      evt("belief.adopted", {
+        id: "b1",
+        confidence: 0.9,
+        calibration_class: "k",
+        authority: "inferred",
+      }),
+      evt("belief.adopted", {
+        id: "b2",
+        confidence: 0.9,
+        calibration_class: "k",
+        authority: "inferred",
+      }),
+      // b1 listed twice — DecisionSchema does not enforce uniqueness — but a
+      // single action outcome must yield one sample for b1, not two.
+      evt("decision.made", { id: "d1", belief_dependencies: ["b1", "b1", "b2"] }),
+      evt("action.failed", { id: "a1", decision_id: "d1", phase: "failed" }),
+    ]
+    const report = calibrate(events)
+    expect(report.sample_count).toBe(2) // b1 once + b2 once, not 3
+    const k = report.classes.find((c) => c.calibration_class === "k")
+    expect(k?.metrics.n).toBe(2)
+  })
+})
+
+describe("flag direction", () => {
+  test("an ECE-only flag with a zero aggregate gap reads 'mixed', not under/overconfident", () => {
+    // 5 @ 0.9 all wrong (locally overconfident) + 5 @ 0.1 all right (locally
+    // underconfident): the aggregate gap cancels to 0, but per-bin ECE is high.
+    const report = calibrate([
+      ...classChains("mixed", 0.9, 5, 0),
+      ...classChains("mixed", 0.1, 5, 5),
+    ])
+    const mixed = report.classes.find((c) => c.calibration_class === "mixed")
+    expect(mixed?.metrics.calibration_gap).toBeCloseTo(0, 10)
+    expect(mixed?.metrics.overconfident).toBe(false)
+    expect(mixed?.metrics.ece).toBeGreaterThanOrEqual(0.1)
+    expect(mixed?.flagged).toBe(true) // tripped by ECE, not the gap
+    expect(mixed?.flag_reason).toContain("mixed")
+    expect(mixed?.flag_reason).not.toContain("underconfident")
+    expect(mixed?.flag_reason).not.toContain("overconfident")
+  })
+})
+
 describe("report shape + formatter", () => {
   test("config is echoed and the report validates", () => {
     const report = calibrate(classChains("x", 0.9, 6, 0), { bins: 5, gapThreshold: 0.2 })
