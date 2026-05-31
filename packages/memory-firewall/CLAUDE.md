@@ -4,7 +4,7 @@ This package governs the lifecycle of claims and beliefs. It is the gate between
 
 ## What lives here
 
-- **Stores** (`src/stores/`) — abstract interfaces for claim, belief, and evidence storage. v0 ships an in-memory implementation; v0.2 adds Postgres.
+- **Stores** (`src/stores/`) — abstract interfaces for claim, belief, and evidence storage, with two implementations behind each: an in-memory one (`InMemory*Store`) and a Postgres one (`Postgres*Store`). Both satisfy the same interface, so the firewall, retrieval, and sentinels are agnostic to which backend is in use.
 - **Firewall** (`src/firewall.ts`) — the promotion gate. Decides whether a candidate claim can become a belief, and whether a belief can be promoted across lifecycle states.
 - **Retrieval** (`src/retrieval.ts`) — gated retrieval. Respects ContextPolicy. Returns only beliefs that pass the lifecycle and sensitivity filters.
 
@@ -48,9 +48,42 @@ src/
 │   ├── claim-store.ts        # interface + in-memory impl
 │   ├── belief-store.ts       # interface + in-memory impl
 │   ├── evidence-store.ts     # interface + in-memory impl
-│   └── memory-store.ts       # interface + in-memory impl (typed memories)
+│   ├── memory-store.ts       # interface + in-memory impl (typed memories)
+│   ├── postgres-schema.ts    # DDL + ensureSchema / dropSchema / truncateAll
+│   ├── postgres-belief-store.ts    # PostgresBeliefStore
+│   ├── postgres-claim-store.ts     # PostgresClaimStore
+│   ├── postgres-evidence-store.ts  # PostgresEvidenceStore
+│   ├── postgres.ts           # createPostgresStores() factory
+│   └── postgres-stores.test.ts     # env-gated integration tests
 └── transitions.ts            # allowed state transitions per axis
 ```
+
+## Postgres backend (v0.2)
+
+`Postgres{Belief,Claim,Evidence}Store` implement the same interfaces as the
+in-memory stores, backed by Bun's native `Bun.SQL` (zero npm dependencies).
+They exist so state survives a single session: two `MCPProxy` sessions pointed
+at the same database see each other's claims/beliefs/evidence, which is what
+cross-session provenance checks (e.g. the `tool-poisoning-cross-session` probe)
+require.
+
+- **Wire it up** with `createPostgresStores(connectionString)` → `{ sql, claims,
+  beliefs, evidence, ensureSchema, close }`. Call `await stores.ensureSchema()`
+  once at startup (idempotent `create table if not exists`), then hand the three
+  stores to `new MemoryFirewall(...)` exactly as you would the in-memory ones.
+- **Storage model**: each row keeps the full Zod-validated object as `data
+  jsonb` (re-parsed on read) plus mirrored scalar columns for the `*Filter`
+  dimensions; mirrored columns and `data` are always written together, and
+  `transition()` runs under `select … for update` so concurrent sessions can't
+  tear a transition. Semantics match the in-memory stores exactly (same
+  duplicate-`put` and `from_value` mismatch errors) — the probes that treat the
+  in-memory store as spec hold here too.
+- **Additive**: the proxy and `guard.wrap()` still default to the in-memory
+  stores. Swapping the Postgres backend into the proxy lands with the
+  cross-session probe.
+- **Tests**: `postgres-stores.test.ts` is gated on `LODESTAR_TEST_DATABASE_URL`
+  (skipped when unset). CI runs them against a `postgres:16` service; locally,
+  point the var at a throwaway `postgres:16` container.
 
 ## When adding a new lifecycle state
 

@@ -22,9 +22,10 @@ probe repackaging, the `Probe` base class + pack runner + `lodestar
 harness run` CLI, the `Sentinel` base class + the three sentinels
 — `low-confidence-action`, `suspicious-memory-origin`,
 `anomalous-tool-sequence` —, and the first `coding-agent-safety` probe
-`prompt-injection-cross-tool` have landed; the remaining two new probes
-`tool-poisoning-cross-session` and `confidence-drift`, the Postgres
-stores, and the calibrator are still ahead). `@qmilab/lodestar-guard-mcp`
+`prompt-injection-cross-tool`, and the Postgres-backed belief/claim/evidence
+stores have landed; the remaining two new probes
+`tool-poisoning-cross-session` and `confidence-drift` and the
+calibrator are still ahead). `@qmilab/lodestar-guard-mcp`
 lives in this repo and will publish to npm in a follow-up mini-marathon.
 Subsequent batches are tracked in `docs/roadmap.md`.
 
@@ -70,7 +71,7 @@ packages/
   core/                # (exists) types, schemas, epistemic chain primitives
   event-log/           # (exists) envelope, NDJSON writer/reader, snapshots
   action-kernel/       # (exists) tool registry, two-phase execution, sandbox
-  memory-firewall/     # (exists) lifecycle axes, retrieval gates, promotion, subject-related contradiction routing
+  memory-firewall/     # (exists) lifecycle axes, retrieval gates, promotion, subject-related contradiction routing; in-memory + Postgres (Bun.SQL) store backends
     adapters/
       mem0/            # (exists) mem0 import adapter
       letta/           # (exists) Letta blocks import adapter
@@ -80,7 +81,7 @@ packages/
   guard/               # (exists) meta-package + guard.wrap() helper
   trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
-  harness/             # (exists, Batch 4) probe-pack loader + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels; calibrator + Postgres stores still to come
+  harness/             # (exists, Batch 4) probe-pack loader + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels; calibrator still to come
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
   otel-exporter/       # (Batch 5+) OTel GenAI semantic conventions bridge
   adapters/

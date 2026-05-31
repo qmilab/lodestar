@@ -17,7 +17,7 @@ Concrete state:
 - Memory firewall with four orthogonal lifecycle axes, per-axis transition tables, and subject-related contradiction routing
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
-- **Harness (Batch 4, in progress): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), and reflection in the cognitive core have all landed. Postgres stores, the calibrator, and the remaining two probes are still ahead.
+- **Harness (Batch 4, in progress): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), reflection in the cognitive core, and the Postgres-backed belief/claim/evidence stores have all landed. The calibrator and the remaining two probes are still ahead.
 - Eighteen passing probes — seventeen in the first-party pack `packs/lodestar-core/`:
   - memory poisoning resistance
   - epistemic chain smoke test
@@ -107,7 +107,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 ### Batch 4 — Harness infrastructure
 
-**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, the `Sentinel` base class + the three sentinels, and the first `coding-agent-safety` probe `prompt-injection-cross-tool` have landed; the Postgres stores, calibrator, and the remaining two new probes are still ahead).
+**Status**: in progress (reflection pass, probe-pack format + loader, probe repackaging, the `Probe` base class + pack runner + `lodestar harness run` CLI, the `Sentinel` base class + the three sentinels, the first `coding-agent-safety` probe `prompt-injection-cross-tool`, and the Postgres-backed stores have landed; the calibrator and the remaining two new probes are still ahead).
 
 **Goal**: turn the probe scripts into a real harness with probes, sentinels, and calibrators that can be packaged and shared. This is what the `Lodestar Harness` developer entry point needs to graduate from loose TS files in `research/probes/` to an installable surface external packs can plug into.
 
@@ -138,7 +138,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - ✅ **Anomalous tool sequence sentinel** (`anomalous-tool-sequence`). Pattern-matches executed actions per session against known suspicious sequences as an ordered subsequence that must complete at the current event; ships the `read → external-egress → write` exfiltration pattern by default (egress keyed off `blast_radius: external`). Matched steps are consumed so the pattern alerts once per genuine completion.
 
 *Persistence (carve-out)*:
-- Postgres-backed `BeliefStore` and `ClaimStore`. The harness needs this to validate sentinels across sessions; the in-memory stores are session-scoped.
+- ✅ Postgres-backed `BeliefStore`, `ClaimStore`, **and** `EvidenceStore` (`packages/memory-firewall/src/stores/postgres-*.ts`, via `createPostgresStores()`). Same interfaces as the in-memory stores, backed by Bun's native `Bun.SQL` (zero new deps); two sessions pointed at the same database see each other's state. Integration tests are gated on `LODESTAR_TEST_DATABASE_URL` and run against a `postgres:16` service in CI. Still ahead: wiring the proxy/`guard.wrap()` to use them (lands with `tool-poisoning-cross-session`).
 
 *First in-repo probe pack*: `packs/coding-agent-safety/` — ✅ created, shipping `prompt-injection-cross-tool` today via `lodestar harness run --pack coding-agent-safety`. Will bundle the remaining tool-poisoning / confidence-drift probes plus the three sentinels into the same installable pack as they land.
 

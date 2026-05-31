@@ -14,6 +14,25 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+
+    # Postgres service for the memory-firewall store integration tests. The
+    # suite is gated on LODESTAR_TEST_DATABASE_URL (set on the Test step below);
+    # without it the Postgres tests skip, so this service is what actually
+    # exercises the cross-session store path in CI.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lodestar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +58,8 @@ jobs:
 
       - name: Test
         run: bun test
+        env:
+          LODESTAR_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lodestar_test
 
       - name: Run probes
         run: bun run probes:ci
