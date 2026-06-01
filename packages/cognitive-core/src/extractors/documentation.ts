@@ -203,24 +203,33 @@ function extractSource(
   make: (statement: string, predicate: PredicateShape) => Claim,
 ): Claim[] {
   const claims: Claim[] = []
-  const sigRe = /export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*\(([^)]*)\)/g
-  let match: RegExpExecArray | null = sigRe.exec(payload.contents)
+  // Match the start of each exported function (name + optional generics)
+  // up to the opening paren. The parameter list itself is then read with a
+  // balanced-parenthesis scan, so callback/tuple types that contain `)`
+  // — e.g. `handler: (x: string) => void, opts: Options` — do not truncate
+  // the captured signature.
+  const sigStartRe = /export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\(/g
+  let match: RegExpExecArray | null = sigStartRe.exec(payload.contents)
   let count = 0
   while (match !== null && count < MAX_SIGNATURES) {
     const fnName = match[1] ?? "anonymous"
-    const params = parseParamNames(match[2] ?? "")
-    claims.push(
-      make(
-        `Function \`${fnName}\` in '${payload.path}' takes parameters (${params.join(", ") || "none"}).`,
-        {
-          subject: `function:${fnName}`,
-          relation: "has_signature",
-          object: params,
-        },
-      ),
-    )
-    count++
-    match = sigRe.exec(payload.contents)
+    const openParen = sigStartRe.lastIndex - 1 // index of the matched "("
+    const rawParams = readBalancedParens(payload.contents, openParen)
+    if (rawParams !== undefined) {
+      const params = parseParamNames(rawParams)
+      claims.push(
+        make(
+          `Function \`${fnName}\` in '${payload.path}' takes parameters (${params.join(", ") || "none"}).`,
+          {
+            subject: `function:${fnName}`,
+            relation: "has_signature",
+            object: params,
+          },
+        ),
+      )
+      count++
+    }
+    match = sigStartRe.exec(payload.contents)
   }
   if (claims.length === 0) {
     claims.push(
@@ -235,6 +244,24 @@ function extractSource(
     )
   }
   return claims
+}
+
+/**
+ * Read the text between the parenthesis at `openIdx` (which must be `(`)
+ * and its matching `)`, respecting nested parentheses. Returns the inner
+ * text, or `undefined` if the parentheses never balance.
+ */
+function readBalancedParens(src: string, openIdx: number): string | undefined {
+  let depth = 0
+  for (let i = openIdx; i < src.length; i++) {
+    const ch = src[i]
+    if (ch === "(") depth++
+    else if (ch === ")") {
+      depth--
+      if (depth === 0) return src.slice(openIdx + 1, i)
+    }
+  }
+  return undefined
 }
 
 /**

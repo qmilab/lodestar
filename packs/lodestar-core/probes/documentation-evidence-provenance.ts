@@ -61,6 +61,11 @@ const FIXTURE_PATH = "fixture/widget.ts"
 const FIXTURE_SRC =
   "export function renderWidget(props: WidgetProps, options?: RenderOptions): string {\n" +
   "  return `<div>${props.title}</div>`\n" +
+  "}\n" +
+  "\n" +
+  "// Callback param contains a `)` — a lexical [^)]* capture would truncate here.\n" +
+  "export function configure(handler: (event: string) => void, opts?: ConfigOptions): void {\n" +
+  '  handler("")\n' +
   "}\n"
 
 function ensureDocumentationExtractor(): void {
@@ -141,13 +146,10 @@ async function run(): Promise<ProbeResult> {
 
     // Assertion 1: a semantic signature claim, not an envelope claim.
     const sigClaim = withSeam.ingest.claims.find(
-      (c) => c.structured_predicate?.relation === "has_signature",
+      (c) => c.structured_predicate?.subject === "function:renderWidget",
     )
     if (!sigClaim) {
-      return {
-        passed: false,
-        details: "no `has_signature` claim extracted from the source observation",
-      }
+      return { passed: false, details: "no `has_signature` claim extracted for renderWidget" }
     }
     if (!/renderWidget/.test(sigClaim.statement) || !/props/.test(sigClaim.statement)) {
       return {
@@ -159,6 +161,21 @@ async function run(): Promise<ProbeResult> {
       return {
         passed: false,
         details: "extractor produced an fs.read-style envelope claim, not content",
+      }
+    }
+
+    // Assertion 1b: a parameter list containing a callback type (nested
+    // parens) is captured in full. A lexical `[^)]*` capture would stop at
+    // the callback's `)` and silently drop `opts`.
+    const configureClaim = withSeam.ingest.claims.find(
+      (c) => c.structured_predicate?.subject === "function:configure",
+    )
+    const configureObj = configureClaim?.structured_predicate?.object
+    const configureParams = Array.isArray(configureObj) ? (configureObj as string[]) : []
+    if (configureParams.join(",") !== "handler,opts") {
+      return {
+        passed: false,
+        details: `nested-paren signature mis-parsed: expected params [handler, opts], got [${configureParams.join(", ")}]. The balanced-paren scan must not truncate at a callback type's ')'.`,
       }
     }
 

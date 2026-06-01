@@ -1,5 +1,5 @@
-import { readFile, stat } from "node:fs/promises"
-import { basename, extname, relative, resolve } from "node:path"
+import { readFile, realpath, stat } from "node:fs/promises"
+import { basename, extname, relative, resolve, sep } from "node:path"
 import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
@@ -70,21 +70,30 @@ export function makeDocReadTool(
     sandbox: "read",
     preconditions: () => [],
     execute: async (inputs) => {
-      const fullPath = resolve(root, inputs.path)
-      // Security: refuse paths outside the project root.
-      const rel = relative(root, fullPath)
-      if (rel.startsWith("..") || resolve(root, rel) !== fullPath) {
+      const requested = resolve(root, inputs.path)
+      // Security (lexical): refuse paths that escape the project root.
+      const rel = relative(root, requested)
+      if (rel.startsWith("..") || resolve(root, rel) !== requested) {
         throw new Error(`doc.read: path '${inputs.path}' escapes project root`)
       }
+      // Security (symlink): resolve symlinks and confirm the real target is
+      // still inside the real root. A symlink under the root must not be
+      // able to redirect the read outside it — the lexical check above
+      // cannot see through symlinks.
+      const realRoot = await realpath(root)
+      const realTarget = await realpath(requested)
+      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
+        throw new Error(`doc.read: path '${inputs.path}' resolves outside project root`)
+      }
 
-      const st = await stat(fullPath)
+      const st = await stat(realTarget)
       if (!st.isFile()) {
         throw new Error(`doc.read: '${inputs.path}' is not a regular file`)
       }
 
       const maxBytes = inputs.max_bytes ?? DEFAULT_MAX_BYTES
       const bytes = st.size
-      const raw = await readFile(fullPath, "utf8")
+      const raw = await readFile(realTarget, "utf8")
       const truncated = bytes > maxBytes
       const contents = truncated ? raw.slice(0, maxBytes) : raw
 

@@ -1,5 +1,5 @@
-import { writeFile } from "node:fs/promises"
-import { relative, resolve } from "node:path"
+import { lstat, realpath, writeFile } from "node:fs/promises"
+import { basename, dirname, join, relative, resolve, sep } from "node:path"
 import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
@@ -53,13 +53,33 @@ export function makeDocWriteTool(
     sandbox: "write-local",
     preconditions: () => [],
     execute: async (inputs) => {
-      const fullPath = resolve(root, inputs.path)
-      // Security: refuse paths outside the writable root.
-      const rel = relative(root, fullPath)
-      if (rel.startsWith("..") || resolve(root, rel) !== fullPath) {
+      const requested = resolve(root, inputs.path)
+      // Security (lexical): refuse paths that escape the writable root.
+      const rel = relative(root, requested)
+      if (rel.startsWith("..") || resolve(root, rel) !== requested) {
         throw new Error(`doc.write: path '${inputs.path}' escapes writable root`)
       }
-      await writeFile(fullPath, inputs.contents, "utf8")
+      // Security (symlink): the destination may not exist yet, so resolve the
+      // parent directory's real path and confirm the destination stays inside
+      // the real root even after following symlinks in the directory chain.
+      const realRoot = await realpath(root)
+      const realParent = await realpath(dirname(requested))
+      const realTarget = join(realParent, basename(requested))
+      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
+        throw new Error(`doc.write: path '${inputs.path}' resolves outside writable root`)
+      }
+      // If the destination itself is an existing symlink, writeFile would
+      // follow it out of the root — refuse rather than follow it.
+      let isSymlink = false
+      try {
+        isSymlink = (await lstat(realTarget)).isSymbolicLink()
+      } catch (err) {
+        if ((err as { code?: string }).code !== "ENOENT") throw err
+      }
+      if (isSymlink) {
+        throw new Error(`doc.write: path '${inputs.path}' is a symlink; refusing to follow it`)
+      }
+      await writeFile(realTarget, inputs.contents, "utf8")
       return { path: inputs.path, bytes_written: Buffer.byteLength(inputs.contents, "utf8") }
     },
   }
