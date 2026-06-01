@@ -203,18 +203,24 @@ function extractSource(
   make: (statement: string, predicate: PredicateShape) => Claim,
 ): Claim[] {
   const claims: Claim[] = []
-  // Match the start of each exported function (name + optional generics)
-  // up to the opening paren. The parameter list itself is then read with a
-  // balanced-parenthesis scan, so callback/tuple types that contain `)`
-  // — e.g. `handler: (x: string) => void, opts: Options` — do not truncate
-  // the captured signature.
-  const sigStartRe = /export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\(/g
-  let match: RegExpExecArray | null = sigStartRe.exec(payload.contents)
+  // Mask comments and string/template literals first, so a commented-out or
+  // string-literal `export function …` cannot produce a false signature
+  // claim. The mask preserves character offsets (and newlines), so indices
+  // into `source` line up with `payload.contents`.
+  const source = maskCommentsAndStrings(payload.contents)
+  // Match the start of each exported function (name + optional generics) up
+  // to the opening paren. Anchored to line start (`^[ \t]*`, multiline) so
+  // only real `export function` statements match. The parameter list itself
+  // is then read with a balanced-parenthesis scan, so callback/tuple types
+  // that contain `)` — e.g. `handler: (x: string) => void, opts: Options` —
+  // do not truncate the captured signature.
+  const sigStartRe = /^[ \t]*export\s+(?:async\s+)?function\s+([A-Za-z0-9_]+)\s*(?:<[^>]*>)?\s*\(/gm
+  let match: RegExpExecArray | null = sigStartRe.exec(source)
   let count = 0
   while (match !== null && count < MAX_SIGNATURES) {
     const fnName = match[1] ?? "anonymous"
     const openParen = sigStartRe.lastIndex - 1 // index of the matched "("
-    const rawParams = readBalancedParens(payload.contents, openParen)
+    const rawParams = readBalancedParens(source, openParen)
     if (rawParams !== undefined) {
       const params = parseParamNames(rawParams)
       claims.push(
@@ -229,7 +235,7 @@ function extractSource(
       )
       count++
     }
-    match = sigStartRe.exec(payload.contents)
+    match = sigStartRe.exec(source)
   }
   if (claims.length === 0) {
     claims.push(
@@ -244,6 +250,89 @@ function extractSource(
     )
   }
   return claims
+}
+
+/**
+ * Replace the bytes of line comments, block comments, and single-/double-
+ * quoted and template-literal strings with spaces (newlines preserved), so
+ * downstream scanning sees only real code. Character offsets and line
+ * numbers are unchanged, so indices into the masked string still line up
+ * with the original. This is a lightweight lexer, not a full TypeScript
+ * parser — regex literals are not tracked (a `/…/` containing
+ * `export function` is implausible in a documentation source file), but
+ * commented-out and string-literal `export function` declarations are
+ * neutralised so they cannot mint false signature claims.
+ */
+function maskCommentsAndStrings(src: string): string {
+  const out = src.split("")
+  const n = src.length
+  const blank = (j: number): void => {
+    if (j < n && src.charAt(j) !== "\n") out[j] = " "
+  }
+  let state: "code" | "line" | "block" | "sq" | "dq" | "tpl" = "code"
+  let i = 0
+  while (i < n) {
+    const ch = src.charAt(i)
+    const next = src.charAt(i + 1)
+    if (state === "code") {
+      if (ch === "/" && next === "/") {
+        out[i] = " "
+        out[i + 1] = " "
+        state = "line"
+        i += 2
+      } else if (ch === "/" && next === "*") {
+        out[i] = " "
+        out[i + 1] = " "
+        state = "block"
+        i += 2
+      } else if (ch === "'" || ch === '"' || ch === "`") {
+        out[i] = " "
+        state = ch === "'" ? "sq" : ch === '"' ? "dq" : "tpl"
+        i += 1
+      } else {
+        i += 1
+      }
+      continue
+    }
+    if (state === "line") {
+      if (ch === "\n") state = "code"
+      else blank(i)
+      i += 1
+      continue
+    }
+    if (state === "block") {
+      if (ch === "*" && next === "/") {
+        out[i] = " "
+        out[i + 1] = " "
+        state = "code"
+        i += 2
+      } else {
+        blank(i)
+        i += 1
+      }
+      continue
+    }
+    // string / template states
+    if (ch === "\\") {
+      blank(i)
+      blank(i + 1)
+      i += 2
+      continue
+    }
+    if (
+      (state === "sq" && ch === "'") ||
+      (state === "dq" && ch === '"') ||
+      (state === "tpl" && ch === "`")
+    ) {
+      out[i] = " "
+      state = "code"
+      i += 1
+      continue
+    }
+    blank(i)
+    i += 1
+  }
+  return out.join("")
 }
 
 /**

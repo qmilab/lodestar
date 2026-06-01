@@ -66,7 +66,22 @@ const FIXTURE_SRC =
   "// Callback param contains a `)` — a lexical [^)]* capture would truncate here.\n" +
   "export function configure(handler: (event: string) => void, opts?: ConfigOptions): void {\n" +
   '  handler("")\n' +
-  "}\n"
+  "}\n" +
+  "\n" +
+  "// Decoys: commented-out / string-literal / JSDoc `export function` must NOT\n" +
+  "// produce signature claims.\n" +
+  "// export function ghostCommented(secret: string): void {}\n" +
+  'const snippet = "export function ghostString(x: number): void {}"\n' +
+  "/**\n" +
+  " * Usage:\n" +
+  " * export function ghostDoc(y: number): void {}\n" +
+  " */\n" +
+  // A multi-line template whose interior line *starts* with `export
+  // function` — the line anchor alone can't reject this, so it proves the
+  // comment/string masking is doing the work.
+  "const tpl = `\n" +
+  "export function ghostTemplate(z: number): void {}\n" +
+  "`\n"
 
 function ensureDocumentationExtractor(): void {
   if (
@@ -176,6 +191,21 @@ async function run(): Promise<ProbeResult> {
       return {
         passed: false,
         details: `nested-paren signature mis-parsed: expected params [handler, opts], got [${configureParams.join(", ")}]. The balanced-paren scan must not truncate at a callback type's ')'.`,
+      }
+    }
+
+    // Assertion 1c: commented-out / string-literal / JSDoc `export function`
+    // declarations must NOT mint signature claims — only the two real
+    // exports may appear.
+    const sigSubjects = withSeam.ingest.claims
+      .filter((c) => c.structured_predicate?.relation === "has_signature")
+      .map((c) => c.structured_predicate?.subject)
+      .sort()
+    const expectedSubjects = ["function:configure", "function:renderWidget"]
+    if (JSON.stringify(sigSubjects) !== JSON.stringify(expectedSubjects)) {
+      return {
+        passed: false,
+        details: `signature claims extracted for unexpected subjects: [${sigSubjects.join(", ")}]; expected exactly [${expectedSubjects.join(", ")}]. Commented-out / string-literal exports must be ignored.`,
       }
     }
 
