@@ -42,7 +42,7 @@ Concrete state:
   - tool-poisoning-cross-session (a poisoned memory written by one proxy session into a shared Postgres store cannot launder its trust by surviving into a second session — it stays `unverified` with `external_document` provenance, and the planner gate still keeps it out of trusted context across the boundary; needs a Postgres test database, runs in CI)
   - confidence-drift (belief confidence held high while a sequence of actions fails — the Calibrator flags the class as overconfident, leaves a calibrated control class alone, does not alarm on thin data, and excludes synthetic-authority beliefs; the flagged class's gap / Brier / ECE match a hand-computation)
   - poisoned-file-cannot-hijack-feature-work (the governed-dev framing: a poisoned doc file read during a coding agent's observation phase, alongside a legitimate source file, stays `external_document`/`unverified` and never enters the supported-belief set a planner draws on — so it cannot hijack the feature work; the Batch 5 invariant the Telenotes poison run rests on)
-- End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server), documentation-agent (Batch 5 secondary proving ground: claim/evidence over documentation content via the `DocAwareEvidenceLinker` cognitive seam)
+- End-to-end examples: telenotes-governed-dev (Batch 5 primary proving ground: a coding agent adds a feature through the MCP proxy over two live downstream servers — filesystem + a first-party dev-tools server — with a full epistemic-chain trust report, a poisoned-file run that self-verifies the firewall holds, and a real-Claude-Code recipe), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server), documentation-agent (Batch 5 secondary proving ground: claim/evidence over documentation content via the `DocAwareEvidenceLinker` cognitive seam)
 
 ---
 
@@ -158,18 +158,12 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 
 **Deliverables**:
 
-*Primary proving ground (Telenotes)*:
-- A coding agent (Claude Code, wrapped via the MCP proxy from Batch 3) is asked to add a feature to Telenotes
-- The agent observes the codebase, forms beliefs about the existing architecture, makes a plan, edits files, runs tests, commits
-- Lodestar records the full epistemic chain
-- At the end, `lodestar report` produces a structured markdown report explaining:
-  - What the agent observed
-  - What claims it extracted from those observations
-  - Which beliefs it adopted and at what confidence
-  - Which beliefs informed the action plan
-  - Which actions executed, with what outcomes
-  - What revisions (if any) followed the outcomes
-- A second run with a memory-poisoning probe active demonstrates the firewall blocking the attack
+*Primary proving ground (Telenotes)* — **landed** (`examples/telenotes-governed-dev/`):
+- ✅ A coding agent (a deterministic in-process driver, with a `real-claude-code/` recipe to swap in live Claude Code), wrapped via the MCP proxy from Batch 3, adds a `clientTag` feature to the Telenotes fixture (a small Nostr note-publishing module). The proxy owns two live downstream MCP servers: the official `@modelcontextprotocol/server-filesystem` for read + `write_file`, and a first-party `dev-tools-mcp/` server for `shell_test` / `git_commit` / `git_push`.
+- ✅ The agent observes the codebase, decides on a plan, edits files, runs tests, commits, and attempts to push — observe → decide → edit → test → commit → blocked-push → revise.
+- ✅ Lodestar records the full epistemic chain; `lodestar report` renders a structured markdown report (committed under `reports/scripted-run.report.md`) showing observations, claims (tool-result envelope vs `external_document` content), beliefs at their truth status, the feature decision and the beliefs it cited, every action with its policy verdict and outcome, and the post-block revision. The policy gate has teeth: reads/writes/test/commit auto-approve at ≤ L3; the lone L4 `git_push` is rejected.
+- ✅ A second run (`poison-run/`, report under `reports/poison-run.report.md`) plants a hostile `DEVELOPMENT.md` read during observation and self-verifies the firewall holds — the injected content stays `external_document`/`unverified`, never enters the trusted-belief set the feature decision draws on, and the L4 push stays blocked regardless of the file's "pre-approved" claim. Locked in CI by the `poisoned-file-cannot-hijack-feature-work` probe (`packs/coding-agent-safety/`).
+- ⏳ Remaining human-driven step: capturing evidence from a real Claude Code session against the proxy (the `real-claude-code/RECIPE.md` + configs are in place; the run is billed and non-deterministic, so its `captured/` artifacts are produced by hand, not CI).
 
 *Secondary proving ground (documentation agent)* — **landed** (`examples/documentation-agent/`):
 - ✅ A small agent reads its own `README.md`, `package.json`, and a sample source module via a governed `doc.read` tool

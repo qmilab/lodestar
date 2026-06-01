@@ -41,15 +41,28 @@ declares them under a `sentinels` field and the loader resolves each id
 against the first-party `FIRST_PARTY_SENTINELS` registry — have all
 landed). `@qmilab/lodestar-guard-mcp`
 lives in this repo and will publish to npm in a follow-up mini-marathon.
-Batch 5 (week-8 thesis demo) is underway: the secondary
+Batch 5 (week-8 thesis demo) is underway. The secondary
 documentation-agent proving ground has landed
 (`examples/documentation-agent/`) — it exercises the claim/evidence chain
 on documentation content via a `DocumentationExtractor` +
 `DocAwareEvidenceLinker` in `@qmilab/lodestar-cognitive-core`, the
 `doc.read` tool in `@qmilab/lodestar-adapter-filesystem`, and a new
-`GuardConfig.cognitive.evidenceLinkerFactory` seam on `guard.wrap()`; the
-Telenotes primary demo is next. Batch 5 and subsequent batches are
-tracked in `docs/roadmap.md`.
+`GuardConfig.cognitive.evidenceLinkerFactory` seam on `guard.wrap()`. The
+**Telenotes primary proving ground has also landed**
+(`examples/telenotes-governed-dev/`): a deterministic in-process agent drives
+the Batch-3 MCP proxy through a real feature task on a small Nostr-note fixture
+— observe → decide → edit → test → commit → blocked-L4-push → revise — over two
+live downstream MCP servers (the official filesystem server for read/write and
+a first-party `dev-tools-mcp/` server for `shell_test`/`git_commit`/`git_push`),
+with `lodestar report` rendering the full epistemic chain (committed under
+`reports/`). A second `poison-run/` plants a hostile `DEVELOPMENT.md` and
+self-verifies the firewall holds (poison stays `external_document`/`unverified`,
+never enters trusted context, the L4 push stays blocked), locked in CI by the
+`poisoned-file-cannot-hijack-feature-work` probe. A `real-claude-code/` recipe
++ proxy configs drive the same proxy with a live Claude Code session (the
+built-in-tools-bypass caveat handled by denying Edit/Write/Bash); its captured
+evidence is the one remaining human-driven step. Batch 5 and subsequent batches
+are tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
