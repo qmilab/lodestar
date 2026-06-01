@@ -1,44 +1,90 @@
 # Telenotes governed development — reference demonstration
 
-Status: scaffold. Real demo lands in week 8.
+The Batch 5 primary proving ground. A coding agent, wrapped via the Lodestar
+MCP proxy, is asked to add a feature to **Telenotes** (a tiny Nostr
+note-publishing module). Every tool call it makes flows through the Action
+Kernel and lands in the epistemic chain, and `lodestar report` renders the
+whole thing as a trust report.
 
-This example shows how to use Lodestar to govern an agent that performs development work on the Telenotes codebase (or any codebase). It is a *reference demonstration*, not a core package. Nothing here is imported by `@qmilab/lodestar-core` or other workspace packages.
+This is a *reference demonstration*, not a core package — nothing here is
+imported by `@qmilab/lodestar-*`.
 
-## What this demonstrates
+## What the scripted run shows
 
-By week 8, this example produces the thesis-validation trace described in `docs/architecture/v01-design.md` §11.1:
+`scripted-run/index.ts` drives the proxy through a real feature task: add an
+optional `clientTag` field to `Note` and stamp it on publish. The agent is
+deterministic (an in-process driver, not a live LLM) so the run is
+reproducible, but the architecture under test is real — the proxy owns two live
+downstream MCP servers:
 
-1. Agent reads a GitHub issue (`Observation`).
-2. Agent inspects repo state (`Claim` → `Belief: supported`).
-3. Agent proposes a change (`Decision` over options, with `Explanation`).
-4. Policy allows L3 local write to feature branch; blocks L4 push without approval.
-5. Agent claims tests pass (`Belief` with `calibration_class`).
-6. Calibrator records claim vs eventual outcome.
-7. Synthetic poisoned memory is injected; Memory Firewall rejects retrieval.
-8. Sentinel halts a synthetic anomalous action mid-execution.
-9. PR (L4) opens only after explicit approval.
-10. Final report exports the full epistemic chain trace.
+- `@modelcontextprotocol/server-filesystem` — read + `write_file` (the agent's
+  reads and edits)
+- the first-party `dev-tools-mcp/` server — `shell_test`, `git_commit`,
+  `git_push` (see its CLAUDE.md)
 
-## What this is NOT
+The sequence and what the trust report captures:
 
-- Not a Telenotes feature.
-- Not part of the Lodestar core architecture.
-- Not the only example — other Playground projects (AstroLLM research workflows, Machinise governance) get their own demos later.
+1. **Observe** — list the workspace, read `README.md`, `note.ts`, `publish.ts`.
+   Each read produces a `tool_result` envelope claim (→ belief `supported`) and
+   an `external_document` content claim (→ belief `unverified`: read, not
+   verified).
+2. **Decide** — the agent commits to the `clientTag` plan, citing the
+   (unverified) belief about `Note`'s shape that reading `note.ts` produced.
+3. **Edit** — two governed `write_file` actions (L3, auto-approved).
+4. **Test** — `shell_test` runs the fixture's `bun test` suite (L3); the run
+   records a `success` outcome.
+5. **Commit** — `git_commit` (L3, auto-approved) — a real commit in a throwaway
+   working tree.
+6. **Push → blocked** — `git_push` is L4 (irreversible, external blast radius),
+   above the L3 auto-approve ceiling. The policy gate **denies** it; the agent
+   records the block and revises its plan to "defer to human approval".
+
+The headline: trust comes from the operator's config, not the wire. File
+contents stay `external_document`/`unverified`, and the one L4 action is the one
+the gate stops.
+
+## Run
+
+```sh
+bun run example:telenotes:scripted        # prints the trust report to stdout
+```
+
+A captured snapshot lives at [`reports/scripted-run.report.md`](./reports/scripted-run.report.md).
+Regenerate it (event ids/timestamps differ per run; the snapshot is intentional)
+with:
+
+```sh
+bun run examples/telenotes-governed-dev/scripted-run/index.ts \
+  > examples/telenotes-governed-dev/reports/scripted-run.report.md
+```
 
 ## Layout
 
 ```
 telenotes-governed-dev/
-├── README.md              # this file
-├── index.ts               # entry point for `bun run example:telenotes`
-├── policy.lodestar.ts       # the trust policy for this project
-└── probes/                # Telenotes-specific probes (memory poisoning, etc.)
+├── fixture/telenotes/     # the codebase the agent edits (copied per run)
+├── dev-tools-mcp/         # first-party MCP server: shell_test, git_commit, git_push
+├── scripted-run/
+│   ├── index.ts           # the deterministic agent driver
+│   └── feature/           # the agent's proposed file versions (written via write_file)
+├── reports/               # committed trust-report snapshots
+├── index.ts               # legacy week-1 stub (read-only, in-process)
+└── policy.lodestar.ts     # the aspirational trust table the proxy config realizes
 ```
 
-## Running the week-1 stub
+## Still to come in this batch
 
-```bash
-bun run example:telenotes
-```
+- A second run with a **poisoned file** in the workspace, demonstrating the
+  Memory Firewall keeping injected content out of the agent's trusted beliefs
+  and decisions — plus a `coding-agent-safety` probe locking that invariant.
+- A `real-claude-code/` recipe driving the same proxy with a real Claude Code
+  session, with the resulting report captured as evidence.
 
-In week 1, this just exercises the CLI with the fs.read and git.status adapters. The full thesis demo arrives in week 8.
+## What this is NOT
+
+- Not a Telenotes feature shipped to users — Telenotes is a fixture here.
+- Not part of the Lodestar core architecture.
+- Not calibration / sentinel coverage. The Calibrator only *measures* and
+  sentinels are non-blocking by design (acting on their signals is deferred
+  Policy-Kernel work), so this demo does not claim "the sentinel halted the
+  action." Those overlays are a clean follow-up once the run exists.
