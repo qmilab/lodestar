@@ -14,6 +14,14 @@ export function registerBuiltInExtractors(): void {
 }
 
 export { GitStatusExtractor, FsReadExtractor }
+// DocumentationExtractor is opt-in (not a built-in): consumers that want
+// content-level claims register it explicitly, exactly like any other
+// custom extractor.
+export {
+  DocumentationExtractor,
+  DOCUMENTATION_SOURCE_SCHEMA_KEY,
+  type DocumentationSourcePayload,
+} from "./documentation.js"
 export {
   type ClaimExtractor,
   type ExtractionInput,

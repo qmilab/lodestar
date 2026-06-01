@@ -35,6 +35,7 @@
     "probe:reflection-retrieval": "bun run packs/lodestar-core/probes/reflection-cannot-promote-to-normal-alone.ts",
     "probe:reflection-cascade": "bun run packs/lodestar-core/probes/contradicted-belief-flags-dependent-decisions.ts",
     "probe:canonical-hash": "bun run packs/lodestar-core/probes/event-log-canonical-hash.ts",
+    "probe:doc-provenance": "bun run packs/lodestar-core/probes/documentation-evidence-provenance.ts",
     "probe:cross-tool": "bun run packs/coding-agent-safety/probes/prompt-injection-cross-tool.ts",
     "probe:cross-session": "bun run packs/coding-agent-safety/probes/tool-poisoning-cross-session.ts",
     "probe:confidence-drift": "bun run packs/coding-agent-safety/probes/confidence-drift.ts",

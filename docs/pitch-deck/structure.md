@@ -207,7 +207,7 @@ This is the killer screenshot. It should occupy ~80% of the slide.
 □ Batch 5 — End-to-end thesis demo ····· next
 ```
 
-**Headline**: v0.1.5 on npm. 13 packages published. Twenty passing probes.
+**Headline**: v0.1.5 on npm. 13 packages published. Twenty-one passing probes.
 
 **Body**:
 - Full schema layer for the epistemic chain

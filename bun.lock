@@ -68,6 +68,21 @@
         "typescript": "5.6.3",
       },
     },
+    "examples/documentation-agent": {
+      "name": "@qmilab-examples/documentation-agent",
+      "version": "0.1.0",
+      "dependencies": {
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-adapter-filesystem": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-guard": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
     "examples/telenotes-governed-dev": {
       "name": "@qmilab-examples/telenotes-governed-dev",
       "version": "0.1.0",
@@ -137,6 +152,7 @@
         "@qmilab/lodestar-guard": "workspace:*",
         "@qmilab/lodestar-guard-mcp": "workspace:*",
         "@qmilab/lodestar-harness": "workspace:*",
+        "@qmilab/lodestar-memory-firewall": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "zod": "^3.23.8",
       },
@@ -320,6 +336,8 @@
     "@qmilab-examples/coding-agent-greenfield": ["@qmilab-examples/coding-agent-greenfield@workspace:examples/coding-agent-greenfield"],
 
     "@qmilab-examples/doc-insight": ["@qmilab-examples/doc-insight@workspace:examples/doc-insight"],
+
+    "@qmilab-examples/documentation-agent": ["@qmilab-examples/documentation-agent@workspace:examples/documentation-agent"],
 
     "@qmilab-examples/telenotes-governed-dev": ["@qmilab-examples/telenotes-governed-dev@workspace:examples/telenotes-governed-dev"],
 

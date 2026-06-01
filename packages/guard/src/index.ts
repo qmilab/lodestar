@@ -81,6 +81,9 @@ export type {
 export {
   CognitiveCore,
   EvidenceLinker,
+  DocAwareEvidenceLinker,
+  DocumentationExtractor,
+  DOCUMENTATION_SOURCE_SCHEMA_KEY,
   ExplanationGenerator,
   InMemoryWorldModel,
   registerBuiltInExtractors,
@@ -94,6 +97,9 @@ export type {
   WorldModelEntry,
   ClaimExtractor,
   ExtractionInput,
+  EvidenceLinkerLike,
+  LinkForClaimInput,
+  DocumentationSourcePayload,
 } from "@qmilab/lodestar-cognitive-core"
 
 // Core types (the ones an agent loop typically touches)

@@ -10,9 +10,16 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
   the local helpers below.
 - `src/wrap.ts` — `wrap(loop)` and `runGuarded(loop, config)`. Wires up
   one fresh session per invocation: writer, in-memory stores, firewall,
-  cognitive core, kernel. Calls the loop with a `GuardContext`.
+  cognitive core, kernel. Calls the loop with a `GuardContext`. The
+  evidence linker defaults to `EvidenceLinker` unless the caller supplies
+  `config.cognitive.evidenceLinkerFactory`.
 - `src/types.ts` — `GuardConfig`, `GuardContext`, `CallToolOptions`,
   `CallToolResult`, `GuardRunResult`, `GuardInternals`.
+  `GuardConfig.cognitive.evidenceLinkerFactory` is the additive seam for
+  injecting a custom evidence linker (e.g. `DocAwareEvidenceLinker` for the
+  documentation-agent example), built per session from the session's
+  evidence/belief stores. Mirrors the `stores` seam — add new cognitive
+  overrides under the same `cognitive` bag rather than widening `GuardConfig`.
 - `src/policy-presets.ts` — `autoApprovePolicy` (with explicit ceiling)
   and `alwaysHoldsChecker`. Neither is a default; the helper must be
   called explicitly with the policy ceiling visible at the call site.

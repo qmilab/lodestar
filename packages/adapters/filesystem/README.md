@@ -8,6 +8,12 @@ Registers the `fs.read@1` tool: a sandbox-respecting file read with a
 declared input schema, a Zod-validated output schema, and an
 observation emitter for the epistemic chain.
 
+It also registers `doc.read`: the same sandbox-respecting read, but it
+emits a `documentation.source@1` observation tagged with a `kind`
+(`package_json` | `markdown` | `source`) so the cognitive core's
+`DocumentationExtractor` can read *into* the file content and extract
+documentation claims. Used by `examples/documentation-agent/`.
+
 ## Install
 
 ```sh
@@ -48,6 +54,9 @@ if (arbitrated.phase === "approved") {
   under the name `fs.read` with `output_schema_key: "fs.read@1"`.
 - `FsReadOutputSchema` — Zod schema for the tool's output, registered
   against `fs.read@1` in `@qmilab/lodestar-core`'s schema registry.
+- `makeDocReadTool(projectRoot)` / `registerDocReadTool(projectRoot)` —
+  the `doc.read` tool, plus `DocumentationSourceOutputSchema` registered
+  against `documentation.source@1`.
 
 ## Invariants
 
