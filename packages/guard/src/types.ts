@@ -1,5 +1,5 @@
 import type { PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
-import type { IngestResult } from "@qmilab/lodestar-cognitive-core"
+import type { EvidenceLinkerLike, IngestResult } from "@qmilab/lodestar-cognitive-core"
 import type {
   Action,
   ActionContract,
@@ -55,6 +55,28 @@ export interface GuardConfig {
     claims: ClaimStore
     beliefs: BeliefStore
     evidence: EvidenceStore
+  }
+
+  /**
+   * Override how the Cognitive Core is composed for this session. The one
+   * seam exposed in v0 is `evidenceLinkerFactory`: called once with the
+   * session's evidence/belief stores, it must return an
+   * {@link EvidenceLinkerLike}. Use it to plug in a document-aware,
+   * MCP-aware, or LLM-driven linker without forking `wrap`. When omitted,
+   * the built-in `EvidenceLinker` is used.
+   *
+   * This is the seam the documentation-agent example uses to attach
+   * `DocAwareEvidenceLinker`, which tags file-content claims as
+   * `external_document` (so the Round 5 gate keeps them `unverified`) and
+   * records each claim's source file. The object is intentionally a
+   * nested bag so future cognitive-core overrides can be added without
+   * widening `GuardConfig` again.
+   */
+  cognitive?: {
+    evidenceLinkerFactory?: (deps: {
+      evidence: EvidenceStore
+      beliefs: BeliefStore
+    }) => EvidenceLinkerLike
   }
 }
 

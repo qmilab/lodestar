@@ -1,5 +1,10 @@
 export { CognitiveCore, type IngestInput, type IngestResult } from "./core.js"
-export { EvidenceLinker } from "./evidence-linker.js"
+export {
+  EvidenceLinker,
+  type EvidenceLinkerLike,
+  type LinkForClaimInput,
+} from "./evidence-linker.js"
+export { DocAwareEvidenceLinker } from "./doc-evidence-linker.js"
 export {
   ExplanationGenerator,
   type BuildExplanationInput,
@@ -10,6 +15,9 @@ export {
   lookupExtractor,
   GitStatusExtractor,
   FsReadExtractor,
+  DocumentationExtractor,
+  DOCUMENTATION_SOURCE_SCHEMA_KEY,
+  type DocumentationSourcePayload,
   type ClaimExtractor,
   type ExtractionInput,
 } from "./extractors/index.js"

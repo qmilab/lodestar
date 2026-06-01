@@ -12,7 +12,8 @@
     "action_kernel",
     "event_log",
     "mcp_proxy",
-    "reflection"
+    "reflection",
+    "documentation_provenance"
   ],
   "invariants": [
     "no_self_promotion",
@@ -26,7 +27,8 @@
     "contract_invariants",
     "injection_defense",
     "reflection_cannot_promote_alone",
-    "contradicted_belief_cascade"
+    "contradicted_belief_cascade",
+    "documentation_evidence_provenance"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -57,6 +59,10 @@
       "name": "contradicted-belief-flags-dependent-decisions",
       "file": "probes/contradicted-belief-flags-dependent-decisions.ts"
     },
-    { "name": "event-log-canonical-hash", "file": "probes/event-log-canonical-hash.ts" }
+    { "name": "event-log-canonical-hash", "file": "probes/event-log-canonical-hash.ts" },
+    {
+      "name": "documentation-evidence-provenance",
+      "file": "probes/documentation-evidence-provenance.ts"
+    }
   ]
 }

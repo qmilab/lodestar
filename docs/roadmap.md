@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs twenty probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs twenty-one probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -18,7 +18,7 @@ Concrete state:
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
 - **Harness (Batch 4, done): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), reflection in the cognitive core, the Postgres-backed belief/claim/evidence stores, `tool-poisoning-cross-session` (with the proxy/`guard.wrap()` Postgres wiring it rides on), the `Calibrator` plus the `confidence-drift` probe it gates, and the three sentinels folded into the `coding-agent-safety` pack (declared by id under the manifest's `sentinels` field, resolved against the first-party registry) have all landed.
-- Twenty passing probes — seventeen in the first-party pack `packs/lodestar-core/`:
+- Twenty-one passing probes — eighteen in the first-party pack `packs/lodestar-core/`:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -36,11 +36,12 @@ Concrete state:
   - reflection-cannot-promote-to-normal-alone (reflection cannot self-promote a belief to normal retrievability)
   - contradicted-belief-flags-dependent-decisions (a contradicted belief cascades a flag to decisions that depended on it)
   - event-log-canonical-hash (canonical-hash determinism over the event log)
+  - documentation-evidence-provenance (a claim extracted from a documentation file's *content* is `external_document` evidence stamped with its source file, and the belief it backs stays `unverified` — proven by contrast with the default linker, which would promote the same content to `supported`; this is the invariant the Batch 5 documentation-agent rests on)
 - ...and three in the first non-core pack `packs/coding-agent-safety/`:
   - prompt-injection-cross-tool (an injection planted in one tool call's output cannot pre-authorise or launder the trust of a subsequent call's output across a shared proxy session)
   - tool-poisoning-cross-session (a poisoned memory written by one proxy session into a shared Postgres store cannot launder its trust by surviving into a second session — it stays `unverified` with `external_document` provenance, and the planner gate still keeps it out of trusted context across the boundary; needs a Postgres test database, runs in CI)
   - confidence-drift (belief confidence held high while a sequence of actions fails — the Calibrator flags the class as overconfident, leaves a calibrated control class alone, does not alarm on thin data, and excludes synthetic-authority beliefs; the flagged class's gap / Brier / ECE match a hand-computation)
-- End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server)
+- End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server), documentation-agent (Batch 5 secondary proving ground: claim/evidence over documentation content via the `DocAwareEvidenceLinker` cognitive seam)
 
 ---
 
@@ -169,12 +170,13 @@ This batch moved *before* the full Harness because the public promise is "wrap y
   - What revisions (if any) followed the outcomes
 - A second run with a memory-poisoning probe active demonstrates the firewall blocking the attack
 
-*Secondary proving ground (documentation agent)*:
-- A small agent reads `README.md`, `package.json`, and existing docs
-- The agent updates a docstring or README section based on what it read
-- Lodestar records claims (e.g., "this function takes parameter X") with evidence linked to the source files
-- `lodestar report` shows which source supported each documentation claim
-- This validates the claim/evidence chain beyond `git.status` and code editing, with very low engineering cost
+*Secondary proving ground (documentation agent)* — **landed** (`examples/documentation-agent/`):
+- ✅ A small agent reads its own `README.md`, `package.json`, and a sample source module via a governed `doc.read` tool
+- ✅ It updates a stale docstring through a governed `doc.write` action (hard-scoped to the example's `workspace/`)
+- ✅ Lodestar records content claims (e.g., "`renderWidget` takes `(props, options)`") with evidence linked to the source files. The new `DocumentationExtractor` reads *into* file content (beyond the schema-bound `git.status` / `fs.read` extractors); the new `DocAwareEvidenceLinker` tags that content `external_document` and stamps each item with its source file.
+- ✅ `lodestar report` shows which source supported each documentation claim (via the evidence `independence_group`/`notes`, no renderer change). Because file content is `external_document`, the backing beliefs stay `truth_status: unverified` — the docstring fix is honestly recorded as resting on read-not-verified evidence.
+- ✅ Wired through the headline `guard.wrap()` API via a new, general `GuardConfig.cognitive.evidenceLinkerFactory` seam (mirrors the existing `stores` seam) — any example or product can attach document-aware / MCP-aware / LLM-driven evidence linking the same way. Reusable pieces ship in `@qmilab/lodestar-cognitive-core`; `doc.read` + the `documentation.source@1` schema ship in `@qmilab/lodestar-adapter-filesystem`.
+- ✅ Locked by the `documentation-evidence-provenance` probe (`packs/lodestar-core/`).
 
 - Blog post / video walkthrough of both demos (publishable artifact)
 

@@ -4,16 +4,17 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 External voice: **trust layer for AI agents**.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Twenty probes pass under
+publishing), v0.2 architecture locked. Twenty-one probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Seventeen live in the first-party pack
+below). Eighteen live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
-(`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`), and three
+(`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`), three
 Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
 `contradicted-belief-flags-dependent-decisions`,
-`event-log-canonical-hash`). The other three live in the first non-core
+`event-log-canonical-hash`), and one Batch 5 probe
+(`documentation-evidence-provenance`). The other three live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, and `confidence-drift`. The
 `tool-poisoning-cross-session` probe exercises the proxy's
@@ -38,7 +39,15 @@ declares them under a `sentinels` field and the loader resolves each id
 against the first-party `FIRST_PARTY_SENTINELS` registry — have all
 landed). `@qmilab/lodestar-guard-mcp`
 lives in this repo and will publish to npm in a follow-up mini-marathon.
-Batch 5 and subsequent batches are tracked in `docs/roadmap.md`.
+Batch 5 (week-8 thesis demo) is underway: the secondary
+documentation-agent proving ground has landed
+(`examples/documentation-agent/`) — it exercises the claim/evidence chain
+on documentation content via a `DocumentationExtractor` +
+`DocAwareEvidenceLinker` in `@qmilab/lodestar-cognitive-core`, the
+`doc.read` tool in `@qmilab/lodestar-adapter-filesystem`, and a new
+`GuardConfig.cognitive.evidenceLinkerFactory` seam on `guard.wrap()`; the
+Telenotes primary demo is next. Batch 5 and subsequent batches are
+tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
@@ -107,9 +116,11 @@ examples/
   doc-insight/               # (exists) firewall auto_observation gate demo
   coding-agent-greenfield/   # (exists) guard.wrap() demo on a homegrown agent
   claude-code-wrapped/       # (exists, Batch 3) MCP proxy wrapping a stand-in agent
+  documentation-agent/       # (exists, Batch 5) doc-agent; claim/evidence over docs,
+                             #   DocAwareEvidenceLinker via the guard cognitive seam
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 17 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 18 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -127,7 +138,7 @@ docs/
 
 research/
                        # probes/ moved to packs/lodestar-core/probes/ in Batch 4 —
-                       #   the 17 probes now ship as a loadable pack, not loose files
+                       #   the probes now ship as a loadable pack, not loose files
   benchmarks/          # (later) reproducible evaluation
   datasets/            # (later) logged event traces for analysis
 ```
@@ -188,7 +199,7 @@ These are settled. If a session starts to question them, redirect it.
 - **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Twenty probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Twenty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

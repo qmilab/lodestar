@@ -1,0 +1,5 @@
+# Working copy reset from widget.template.ts on every run.
+workspace/widget.ts
+
+# Event log written by the guarded session.
+.lodestar/

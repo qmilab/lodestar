@@ -8,7 +8,7 @@ import type {
 } from "@qmilab/lodestar-core"
 import type { MemoryFirewall } from "@qmilab/lodestar-memory-firewall"
 import { aggregateStrength } from "@qmilab/lodestar-memory-firewall"
-import type { EvidenceLinker } from "./evidence-linker.js"
+import type { EvidenceLinkerLike } from "./evidence-linker.js"
 import type { ExplanationGenerator } from "./explanation.js"
 import { lookupExtractor } from "./extractors/base.js"
 import type { WorldModel } from "./world-model/index.js"
@@ -28,7 +28,7 @@ import type { WorldModel } from "./world-model/index.js"
 export class CognitiveCore {
   constructor(
     private readonly firewall: MemoryFirewall,
-    private readonly evidenceLinker: EvidenceLinker,
+    private readonly evidenceLinker: EvidenceLinkerLike,
     private readonly explanationGenerator: ExplanationGenerator,
     private readonly worldModel: WorldModel,
   ) {}

@@ -4,9 +4,9 @@ This is where the epistemic chain comes alive. The core consumes typed Observati
 
 ## What lives here
 
-- **Extractors** (`src/extractors/`) — produce Claims from Observations. One extractor per observation schema (or generic LLM-driven extractor for ad-hoc schemas).
+- **Extractors** (`src/extractors/`) — produce Claims from Observations. One extractor per observation schema (or generic LLM-driven extractor for ad-hoc schemas). The opt-in `DocumentationExtractor` (`documentation.source@1`) reads *into* file content — `package.json` deps/version, markdown title/headings/commands, exported function signatures — for the documentation-agent proving ground; it is not a built-in, so consumers register it explicitly.
 - **World model** (`src/world-model/`) — typed key-value store of the agent's current picture of the world. Separate from beliefs (beliefs are *about* world state; the world model captures current observed state).
-- **Evidence linker** (`src/evidence-linker.ts`) — for a new claim, find supporting and contradicting sources from prior observations and beliefs.
+- **Evidence linker** (`src/evidence-linker.ts`) — for a new claim, find supporting and contradicting sources from prior observations and beliefs. `EvidenceLinkerLike` is the interface `CognitiveCore` depends on (so hosts can inject custom linkers); `DocAwareEvidenceLinker` (`src/doc-evidence-linker.ts`) overrides it to tag `documentation.*` observation content as `external_document` and stamp each evidence item with its source file (`independence_group: doc:<path>`), the same stance the MCP proxy takes for tool-result content.
 - **Planner** (`src/planner.ts`) — turns goals into Decisions and Action proposals, respecting ContextPolicy.
 - **Reflection** (`src/reflection.ts`) — on-demand or tail-async; rule-based in v0 (contradicted-belief cascade); produces typed `ReflectionProposal`s and applies them via `MemoryFirewall` with `by_authority: "reflection"`. Stores and the firewall are optional inputs so dry-run inspection (CLI `lodestar reflect`) works without rebuilding live state. Design contract: `docs/architecture/reflection-pass.md`.
 - **Explanation generator** (`src/explanation.ts`) — produces structured Explanation records for governance events.

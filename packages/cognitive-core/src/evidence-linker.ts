@@ -2,6 +2,30 @@ import type { Claim, EvidenceItem, EvidenceSet, Observation } from "@qmilab/lode
 import type { BeliefStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 
 /**
+ * The input an evidence linker assesses for a single claim.
+ */
+export interface LinkForClaimInput {
+  claim: Claim
+  source_observations: Observation[]
+  assessor_actor_id: string
+}
+
+/**
+ * The minimal contract the {@link CognitiveCore} needs from an evidence
+ * linker: turn a claim + its source observations into a persisted
+ * {@link EvidenceSet}.
+ *
+ * Exposing this as an interface (rather than binding the core to the
+ * concrete {@link EvidenceLinker} class) is the seam that lets hosts
+ * inject document-aware, MCP-aware, or LLM-driven linkers. The default
+ * {@link EvidenceLinker} and subclasses like `MCPAwareEvidenceLinker`
+ * and `DocAwareEvidenceLinker` all satisfy it.
+ */
+export interface EvidenceLinkerLike {
+  linkForClaim(input: LinkForClaimInput): Promise<EvidenceSet>
+}
+
+/**
  * The EvidenceLinker constructs an EvidenceSet for a newly extracted Claim.
  *
  * v0 is deliberately simple:
@@ -13,17 +37,13 @@ import type { BeliefStore, EvidenceStore } from "@qmilab/lodestar-memory-firewal
  * The linker is stateless apart from the stores it consults; it is safe
  * to call concurrently.
  */
-export class EvidenceLinker {
+export class EvidenceLinker implements EvidenceLinkerLike {
   constructor(
     private readonly evidence: EvidenceStore,
     private readonly beliefs: BeliefStore,
   ) {}
 
-  async linkForClaim(input: {
-    claim: Claim
-    source_observations: Observation[]
-    assessor_actor_id: string
-  }): Promise<EvidenceSet> {
+  async linkForClaim(input: LinkForClaimInput): Promise<EvidenceSet> {
     const items: EvidenceItem[] = []
 
     // 1. Each source observation contributes a supporting item.
