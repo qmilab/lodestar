@@ -1,0 +1,7 @@
+# Event logs written by demo runs. The rendered trust reports under
+# reports/ are committed as evidence; the raw NDJSON logs are not.
+.lodestar/
+
+# Throwaway working trees, if a run is ever pointed at an in-repo path
+# instead of os.tmpdir().
+.work/

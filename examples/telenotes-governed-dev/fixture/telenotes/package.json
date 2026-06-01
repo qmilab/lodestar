@@ -1,0 +1,11 @@
+{
+  "name": "telenotes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Telenotes — a tiny Nostr note-publishing module. Fixture codebase for the Lodestar governed-dev demo.",
+  "module": "note.ts",
+  "scripts": {
+    "test": "bun test"
+  }
+}
