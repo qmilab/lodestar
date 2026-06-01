@@ -6,7 +6,9 @@
   "main": "./index.ts",
   "scripts": {
     "start": "bun run index.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "devtools:smoke": "bun run dev-tools-mcp/smoke.ts",
+    "fixture:test": "bun test fixture"
   },
   "dependencies": {
     "@qmilab/lodestar-core": "workspace:*",
@@ -16,6 +18,10 @@
     "@qmilab/lodestar-cognitive-core": "workspace:*",
     "@qmilab/lodestar-adapter-filesystem": "workspace:*",
     "@qmilab/lodestar-adapter-git": "workspace:*",
+    "@qmilab/lodestar-guard-mcp": "workspace:*",
+    "@qmilab/lodestar-trace": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/server-filesystem": "^2026.1.14",
     "zod": "^3.23.8"
   },
   "devDependencies": {

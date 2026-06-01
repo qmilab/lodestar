@@ -87,13 +87,17 @@
       "name": "@qmilab-examples/telenotes-governed-dev",
       "version": "0.1.0",
       "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.29.0",
+        "@modelcontextprotocol/server-filesystem": "^2026.1.14",
         "@qmilab/lodestar-action-kernel": "workspace:*",
         "@qmilab/lodestar-adapter-filesystem": "workspace:*",
         "@qmilab/lodestar-adapter-git": "workspace:*",
         "@qmilab/lodestar-cognitive-core": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
         "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-guard-mcp": "workspace:*",
         "@qmilab/lodestar-memory-firewall": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
         "zod": "^3.23.8",
       },
       "devDependencies": {
