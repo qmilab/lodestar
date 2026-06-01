@@ -92,15 +92,21 @@ telenotes-governed-dev/
 ├── poison-run/
 │   ├── index.ts           # poisoned run + self-verification (thin caller)
 │   └── DEVELOPMENT.md      # the planted injection
+├── real-claude-code/      # recipe + configs to drive the proxy with real Claude Code
 ├── reports/               # committed trust-report snapshots
 ├── index.ts               # legacy week-1 stub (read-only, in-process)
 └── policy.lodestar.ts     # the aspirational trust table the proxy config realizes
 ```
 
-## Still to come in this batch
+## Driving it with real Claude Code
 
-- A `real-claude-code/` recipe driving the same proxy with a real Claude Code
-  session, with the resulting report captured as evidence.
+The scripted and poison runs use a deterministic in-process agent. To drive the
+*same* proxy with a live Claude Code session — the non-deterministic,
+walkthrough-grade form — see [`real-claude-code/RECIPE.md`](./real-claude-code/RECIPE.md).
+The load-bearing detail is denying Claude Code's built-in Edit/Write/Bash so its
+only path to the workspace is the governed MCP tools. That run is human-driven
+(billed, non-deterministic) and not part of CI; its captured evidence lands in
+`real-claude-code/captured/`.
 
 ## What this is NOT
 

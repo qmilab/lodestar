@@ -1,0 +1,6 @@
+{
+  "permissions": {
+    "deny": ["Edit", "Write", "MultiEdit", "NotebookEdit", "Bash"],
+    "allow": ["mcp__lodestar__*"]
+  }
+}
