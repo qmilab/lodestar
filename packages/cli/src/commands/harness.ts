@@ -235,6 +235,12 @@ async function harnessList(argv: string[]): Promise<number> {
   for (const p of pack.probes) {
     process.stdout.write(`  ${p.name.padEnd(46)} ${p.file}\n`)
   }
+  if (pack.sentinels.length > 0) {
+    process.stdout.write(`\nsentinels (${pack.sentinels.length}):\n`)
+    for (const s of pack.sentinels) {
+      process.stdout.write(`  ${s.id}\n`)
+    }
+  }
   return 0
 }
 

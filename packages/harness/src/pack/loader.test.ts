@@ -200,4 +200,75 @@ describe("loadProbePack", () => {
     })
     await expect(loadProbePack(dir)).rejects.toThrow(/more than once/)
   })
+
+  test("resolves to an empty sentinels array when the manifest omits the field", async () => {
+    const dir = await makePack({
+      manifest: validManifest(),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    const pack = await loadProbePack(dir)
+    // `sentinels` is an optional manifest field; absent means the pack ships
+    // none, which the loader surfaces as an empty resolved array.
+    expect(pack.sentinels).toEqual([])
+  })
+
+  test("resolves declared sentinels to first-party factories, in manifest order", async () => {
+    const dir = await makePack({
+      manifest: validManifest({
+        sentinels: [{ id: "low-confidence-action" }, { id: "anomalous-tool-sequence" }],
+      }),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    const pack = await loadProbePack(dir)
+
+    expect(pack.sentinels.map((s) => s.id)).toEqual([
+      "low-confidence-action",
+      "anomalous-tool-sequence",
+    ])
+    // The resolved factory constructs the matching sentinel; load itself
+    // never constructs one (it resolves the factory only), so this is the
+    // host's call exercised here.
+    const instance = pack.sentinels[0]?.create()
+    expect(instance?.name).toBe("low-confidence-action")
+  })
+
+  test("rejects an unknown sentinel id with a clear error", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ sentinels: [{ id: "does-not-exist" }] }),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    await expect(loadProbePack(dir)).rejects.toThrow(/unknown sentinel id 'does-not-exist'/)
+  })
+
+  // `constructor` passes the kebab-case id regex and, on a plain-object
+  // registry, would resolve to the inherited Object.prototype.constructor —
+  // slipping past the unknown-id check. The loader must reject it like any
+  // other unknown id rather than producing a bogus non-Sentinel.
+  test("rejects a prototype-polluting sentinel id ('constructor')", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ sentinels: [{ id: "constructor" }] }),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    await expect(loadProbePack(dir)).rejects.toThrow(/unknown sentinel id 'constructor'/)
+  })
+
+  test("rejects duplicate sentinel ids", async () => {
+    const dir = await makePack({
+      manifest: validManifest({
+        sentinels: [{ id: "low-confidence-action" }, { id: "low-confidence-action" }],
+      }),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    await expect(loadProbePack(dir)).rejects.toThrow(
+      /sentinel id 'low-confidence-action' more than once/,
+    )
+  })
+
+  test("rejects a non-kebab-case sentinel id at schema validation", async () => {
+    const dir = await makePack({
+      manifest: validManifest({ sentinels: [{ id: "Not_Kebab" }] }),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+  })
 })

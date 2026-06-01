@@ -5,12 +5,13 @@ exercise and audit the epistemic chain — the surface that turns
 "a folder of probe scripts" into something external authors can package
 and share.
 
-Batch 4 lands the harness incrementally. What ships today is the
-**probe-pack format and loader**, the **`Probe` authoring surface**, the
-**pack runner**, the **`lodestar harness run` CLI**, the **`Sentinel`
-surface** (base class, runner, three first-party sentinels), and the
-**`Calibrator`** (per-class ECE / Brier / calibration-gap tables). The
-remaining Batch 4 step is folding the sentinels into an installable pack.
+Batch 4 lands the harness incrementally, and is now complete. What ships
+is the **probe-pack format and loader**, the **`Probe` authoring
+surface**, the **pack runner**, the **`lodestar harness run` CLI**, the
+**`Sentinel` surface** (base class, runner, three first-party sentinels),
+the **`Calibrator`** (per-class ECE / Brier / calibration-gap tables), and
+the **sentinels folded into an installable pack** — a manifest declares
+them by id and the loader resolves them against a first-party registry.
 
 ## Probe pack format
 
@@ -49,20 +50,45 @@ carries no executable logic. The schema lives in `@qmilab/lodestar-core`
   not validated against a closed list; they drive grouping and the
   "which pack exercises invariant X?" question, not gating.
 
+A pack may also declare **sentinels** — online watchers over the live
+event stream, distinct from offline probes:
+
+```json
+{
+  "probes": [{ "name": "prompt-injection-cross-tool", "file": "probes/prompt-injection-cross-tool.ts" }],
+  "sentinels": [
+    { "id": "low-confidence-action" },
+    { "id": "suspicious-memory-origin" },
+    { "id": "anomalous-tool-sequence" }
+  ]
+}
+```
+
+A probe is a `bun run`-able script the pack carries as a `file`; a
+sentinel is a stateful in-process class the harness instantiates, so it is
+referenced by a stable `id` and resolved against the built-in registry
+(`FIRST_PARTY_SENTINELS`). The `sentinels` field is optional and additive
+under spec `"1"` — a manifest without it still loads. Per-pack
+construction-option overrides and third-party (file-referenced) sentinels
+are a later refinement; v0 resolves first-party ids only.
+
 ## Library
 
 ```ts
 import { loadProbePack, ProbePackError } from "@qmilab/lodestar-harness"
 
 try {
-  const pack = await loadProbePack("./packs/lodestar-core")
+  const pack = await loadProbePack("./packs/coding-agent-safety")
   // pack.manifest — the validated manifest
   // pack.root — absolute pack directory
   // pack.probes — [{ name, file, path }], each path absolute and verified
+  // pack.sentinels — [{ id, create }], each resolved to its factory;
+  //   const runner = new SentinelRunner(pack.sentinels.map((s) => s.create()))
 } catch (err) {
   if (err instanceof ProbePackError) {
     // a broken pack: missing manifest, bad JSON, schema violation,
-    // unsupported source_type, escaping or missing probe file, dup name
+    // unsupported source_type, escaping or missing probe file, dup name,
+    // or an unknown / duplicated sentinel id
   }
   throw err
 }
@@ -180,6 +206,15 @@ The three first-party sentinels:
   match a known-suspicious ordered sequence; ships the `read → external-egress
   → write` exfiltration pattern by default. Configurable via `sequences` /
   `watchPhases` / `windowSize`.
+
+A pack declares the sentinels it ships under `sentinels` (by id); the loader
+resolves each against the first-party registry, so a host can build a runner
+straight from a loaded pack rather than naming the classes by hand:
+
+```ts
+const pack = await loadProbePack("./packs/coding-agent-safety")
+const runner = new SentinelRunner(pack.sentinels.map((s) => s.create()))
+```
 
 To author your own, subclass `Sentinel` (or return a `SentinelFinding[]` from
 `inspect`). The runner stamps the alert id, timestamp, and routing.

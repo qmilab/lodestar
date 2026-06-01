@@ -129,7 +129,7 @@ Future commercial offerings from Machinise will include hosted dashboard, team a
 
 ## Status
 
-**v0.1.5 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1, 2, and 3 complete; Batch 4 in progress.**
+**v0.1.5 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1 through 4 complete; Batch 5 next.**
 
 What ships today:
 
@@ -143,7 +143,7 @@ What ships today:
 - ✅ `@qmilab/lodestar-trace` — `lodestar report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
 - ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`, `lodestar harness run --pack <name>`
-- ✅ `@qmilab/lodestar-harness` (Batch 4) — probe-pack format + loader, the `Probe` base class + pack runner driven by `lodestar harness run`, the `Sentinel` base class and three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), and the `Calibrator` (per-class ECE / Brier / calibration-gap tables). Reflection has landed in the cognitive core.
+- ✅ `@qmilab/lodestar-harness` (Batch 4) — probe-pack format + loader, the `Probe` base class + pack runner driven by `lodestar harness run`, the `Sentinel` base class and three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), and the `Calibrator` (per-class ECE / Brier / calibration-gap tables). The three sentinels are folded into the `coding-agent-safety` pack — the manifest declares them by id under a `sentinels` field and the loader resolves each against the first-party registry. Reflection has landed in the cognitive core.
 - ✅ **Twenty** passing probes under strict TypeScript across two packs. Seventeen in the first-party pack `packs/lodestar-core/`: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), two MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the centerpiece of Batch 3), and three Batch 4 probes (`reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`). The other three live in the first non-core pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`, `tool-poisoning-cross-session`, and `confidence-drift` (the one that drives the Calibrator).
 - ✅ End-to-end examples:
   - `examples/telenotes-governed-dev/` — full pipeline producing an 11-event audit trail
@@ -153,8 +153,7 @@ What ships today:
 
 What's coming:
 
-- **Batch 4** (in progress) — the Calibrator and the `confidence-drift` probe that drives it have now landed (the Postgres-backed belief/claim/evidence stores did too). The only remaining Harness item is folding the three sentinels into the `coding-agent-safety` pack.
-- **Batch 5** — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
+- **Batch 5** (next) — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
 
 See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning.md`](./docs/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.
 
