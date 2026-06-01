@@ -1,8 +1,9 @@
-import { readFile, realpath, stat } from "node:fs/promises"
+import { realpath, stat } from "node:fs/promises"
 import { basename, extname, relative, resolve, sep } from "node:path"
 import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
+import { readBoundedUtf8 } from "./read-bounded.js"
 
 /**
  * doc.read — read a file's contents for documentation-claim extraction.
@@ -93,9 +94,7 @@ export function makeDocReadTool(
 
       const maxBytes = inputs.max_bytes ?? DEFAULT_MAX_BYTES
       const bytes = st.size
-      const raw = await readFile(realTarget, "utf8")
-      const truncated = bytes > maxBytes
-      const contents = truncated ? raw.slice(0, maxBytes) : raw
+      const { contents, truncated } = await readBoundedUtf8(realTarget, bytes, maxBytes)
 
       return { path: inputs.path, kind: classifyKind(inputs.path), contents, bytes, truncated }
     },
