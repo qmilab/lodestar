@@ -14,7 +14,8 @@
     "confidence_calibration",
     "low_confidence_action",
     "memory_provenance",
-    "anomalous_tool_sequence"
+    "anomalous_tool_sequence",
+    "governed_dev_workflow"
   ],
   "invariants": [
     "injection_defense",
@@ -25,7 +26,8 @@
     "synthetic_beliefs_excluded_from_calibration",
     "high_trust_action_on_weak_belief_flagged",
     "external_document_belief_steers_decision_flagged",
-    "anomalous_tool_sequence_flagged"
+    "anomalous_tool_sequence_flagged",
+    "poisoned_file_cannot_hijack_feature_work"
   ],
   "probes": [
     {
@@ -39,6 +41,10 @@
     {
       "name": "confidence-drift",
       "file": "probes/confidence-drift.ts"
+    },
+    {
+      "name": "poisoned-file-cannot-hijack-feature-work",
+      "file": "probes/poisoned-file-cannot-hijack-feature-work.ts"
     }
   ],
   "sentinels": [

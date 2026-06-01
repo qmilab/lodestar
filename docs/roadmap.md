@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs twenty-one probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
+The current scaffold passes a typecheck under strict TypeScript and runs twenty-two probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -18,7 +18,7 @@ Concrete state:
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
 - **Harness (Batch 4, done): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), reflection in the cognitive core, the Postgres-backed belief/claim/evidence stores, `tool-poisoning-cross-session` (with the proxy/`guard.wrap()` Postgres wiring it rides on), the `Calibrator` plus the `confidence-drift` probe it gates, and the three sentinels folded into the `coding-agent-safety` pack (declared by id under the manifest's `sentinels` field, resolved against the first-party registry) have all landed.
-- Twenty-one passing probes — eighteen in the first-party pack `packs/lodestar-core/`:
+- Twenty-two passing probes — eighteen in the first-party pack `packs/lodestar-core/`:
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -37,10 +37,11 @@ Concrete state:
   - contradicted-belief-flags-dependent-decisions (a contradicted belief cascades a flag to decisions that depended on it)
   - event-log-canonical-hash (canonical-hash determinism over the event log)
   - documentation-evidence-provenance (a claim extracted from a documentation file's *content* is `external_document` evidence stamped with its source file, and the belief it backs stays `unverified` — proven by contrast with the default linker, which would promote the same content to `supported`; this is the invariant the Batch 5 documentation-agent rests on)
-- ...and three in the first non-core pack `packs/coding-agent-safety/`:
+- ...and four in the first non-core pack `packs/coding-agent-safety/`:
   - prompt-injection-cross-tool (an injection planted in one tool call's output cannot pre-authorise or launder the trust of a subsequent call's output across a shared proxy session)
   - tool-poisoning-cross-session (a poisoned memory written by one proxy session into a shared Postgres store cannot launder its trust by surviving into a second session — it stays `unverified` with `external_document` provenance, and the planner gate still keeps it out of trusted context across the boundary; needs a Postgres test database, runs in CI)
   - confidence-drift (belief confidence held high while a sequence of actions fails — the Calibrator flags the class as overconfident, leaves a calibrated control class alone, does not alarm on thin data, and excludes synthetic-authority beliefs; the flagged class's gap / Brier / ECE match a hand-computation)
+  - poisoned-file-cannot-hijack-feature-work (the governed-dev framing: a poisoned doc file read during a coding agent's observation phase, alongside a legitimate source file, stays `external_document`/`unverified` and never enters the supported-belief set a planner draws on — so it cannot hijack the feature work; the Batch 5 invariant the Telenotes poison run rests on)
 - End-to-end examples: telenotes-governed-dev (full pipeline, 11-event audit), doc-insight (auto-observation gate), coding-agent-greenfield (`guard.wrap()` on a homegrown loop), claude-code-wrapped (MCP proxy wrapping a stand-in agent against a real filesystem MCP server), documentation-agent (Batch 5 secondary proving ground: claim/evidence over documentation content via the `DocAwareEvidenceLinker` cognitive seam)
 
 ---
