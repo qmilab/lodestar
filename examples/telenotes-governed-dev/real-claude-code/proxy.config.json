@@ -1,0 +1,83 @@
+{
+  "project_id": "telenotes-governed-dev-claude-code",
+  "actor_id": "agent:claude-code",
+  "session_id": "auto",
+  "log_root": ".lodestar/events",
+  "default_scope": { "level": "project", "identifier": "telenotes-governed-dev-claude-code" },
+  "default_sensitivity": "internal",
+  "auto_approve_ceiling": 3,
+  "downstream_servers": [
+    {
+      "name": "fs",
+      "command": "bunx",
+      "args": ["@modelcontextprotocol/server-filesystem", "ABSOLUTE_PATH_TO_WORKSPACE"]
+    },
+    {
+      "name": "devtools",
+      "command": "bun",
+      "args": [
+        "run",
+        "ABSOLUTE_PATH_TO_REPO/examples/telenotes-governed-dev/dev-tools-mcp/bin.ts",
+        "ABSOLUTE_PATH_TO_WORKSPACE"
+      ]
+    }
+  ],
+  "tool_defaults": {
+    "mcp.fs.list_directory": {
+      "reversibility": "reversible",
+      "permissions": ["fs.read"],
+      "sandbox": "read",
+      "required_trust_level": 0,
+      "blast_radius": "self"
+    },
+    "mcp.fs.read_text_file": {
+      "reversibility": "reversible",
+      "permissions": ["fs.read"],
+      "sandbox": "read",
+      "required_trust_level": 0,
+      "blast_radius": "self"
+    },
+    "mcp.fs.read_file": {
+      "reversibility": "reversible",
+      "permissions": ["fs.read"],
+      "sandbox": "read",
+      "required_trust_level": 0,
+      "blast_radius": "self"
+    },
+    "mcp.fs.write_file": {
+      "reversibility": "compensable",
+      "permissions": ["fs.write"],
+      "sandbox": "write-local",
+      "required_trust_level": 3,
+      "blast_radius": "project"
+    },
+    "mcp.fs.edit_file": {
+      "reversibility": "compensable",
+      "permissions": ["fs.write"],
+      "sandbox": "write-local",
+      "required_trust_level": 3,
+      "blast_radius": "project"
+    },
+    "mcp.devtools.shell_test": {
+      "reversibility": "reversible",
+      "permissions": ["shell.exec"],
+      "sandbox": "controlled-shell",
+      "required_trust_level": 3,
+      "blast_radius": "session"
+    },
+    "mcp.devtools.git_commit": {
+      "reversibility": "compensable",
+      "permissions": ["fs.write"],
+      "sandbox": "write-local",
+      "required_trust_level": 3,
+      "blast_radius": "project"
+    },
+    "mcp.devtools.git_push": {
+      "reversibility": "irreversible",
+      "permissions": ["network.egress"],
+      "sandbox": "controlled-shell",
+      "required_trust_level": 4,
+      "blast_radius": "external"
+    }
+  }
+}

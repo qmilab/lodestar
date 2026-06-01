@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "lodestar": {
+      "command": "bun",
+      "args": [
+        "run",
+        "ABSOLUTE_PATH_TO_REPO/packages/cli/src/index.ts",
+        "guard",
+        "mcp-proxy",
+        "--config",
+        "ABSOLUTE_PATH_TO_REPO/examples/telenotes-governed-dev/real-claude-code/proxy.config.json"
+      ]
+    }
+  }
+}
