@@ -4,7 +4,14 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["./*.ts", "./probes/*.ts", "./dev-tools-mcp/*.ts", "./scripted-run/*.ts"],
+  "include": [
+    "./*.ts",
+    "./probes/*.ts",
+    "./dev-tools-mcp/*.ts",
+    "./lib/*.ts",
+    "./scripted-run/*.ts",
+    "./poison-run/*.ts"
+  ],
   "references": [
     { "path": "../../packages/core" },
     { "path": "../../packages/event-log" },
