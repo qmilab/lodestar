@@ -18,6 +18,7 @@
     "lint": "biome check packages examples research packs",
     "format": "biome format --write packages examples research packs",
     "example:telenotes": "bun run examples/telenotes-governed-dev/index.ts",
+    "example:telenotes:scripted": "bun run examples/telenotes-governed-dev/scripted-run/index.ts",
     "probe:poison": "bun run packs/lodestar-core/probes/memory-poisoning-basic.ts",
     "probe:chain": "bun run packs/lodestar-core/probes/epistemic-chain-smoke.ts",
     "probe:external": "bun run packs/lodestar-core/probes/external-document-not-normal.ts",
