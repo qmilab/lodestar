@@ -1,6 +1,17 @@
+---
+title: "Wrap your coding agent, get a trust report"
+description: "A walkthrough of Lodestar — an open trust layer for AI agents — through two runnable demos: a coding agent that records why it did what it did, and a firewall that holds when a file tries to hijack it."
+date: 2026-06-02
+canonical_url: "https://qmilab.com/lodestar/docs/guides/walkthrough/"
+tags: [ai, llm, security, opensource, ai-agents, mcp]
+series: "Lodestar: the trust layer for AI agents"
+series_part: 1
+---
+
 <!--
-Syndication note (for whoever publishes this):
-- Canonical home for this guide is the docs-site URL in `canonical_url` below
+Syndication note (for whoever publishes this). Front-matter MUST stay at the top
+of the file or MkDocs/Jekyll render it as visible text instead of parsing it.
+- Canonical home for this guide is the docs-site URL in `canonical_url` above
   (qmilab.com/lodestar/docs). Every syndicated copy (dev.to, Hashnode) must set
   its canonical_url back to it so two copies don't fight for SEO. (The separate
   first-person motivation essay on nandan.me is its own piece, canonical there.)
@@ -14,15 +25,6 @@ Syndication note (for whoever publishes this):
   (`walkthrough.devto.md`, `PUBLISHING.md`); the devto copy already does this.
 - Suggested syndication tags: #ai #llm #security #opensource
 -->
----
-title: "Wrap your coding agent, get a trust report"
-description: "A walkthrough of Lodestar — an open trust layer for AI agents — through two runnable demos: a coding agent that records why it did what it did, and a firewall that holds when a file tries to hijack it."
-date: 2026-06-02
-canonical_url: "https://qmilab.com/lodestar/docs/guides/walkthrough/"
-tags: [ai, llm, security, opensource, ai-agents, mcp]
-series: "Lodestar: the trust layer for AI agents"
-series_part: 1
----
 
 # Wrap your coding agent, get a trust report
 

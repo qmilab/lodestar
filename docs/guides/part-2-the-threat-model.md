@@ -1,10 +1,3 @@
-<!--
-PLACEHOLDER — not yet written. Part 2 of the Lodestar walkthrough series.
-Draft against docs/internal/walkthrough/BRIEF.md (voice + accuracy guardrails)
-and review through docs/internal/review/personas/dana-reyes.md plus the
-"security evaluator" lens noted there. Keep the public/practitioner voice — the
-research framing stays in the arXiv paper (docs/internal/whitepaper/).
--->
 ---
 title: "How Lodestar holds the line: the agent-safety threat model"
 description: "Part 2 — a closer look at prompt injection and tool poisoning across tools and sessions, the external_document-vs-tool_result boundary in detail, and the trust report as audit evidence."
@@ -15,6 +8,15 @@ tags: [ai, llm, security, opensource, ai-agents, mcp]
 series: "Lodestar: the trust layer for AI agents"
 series_part: 2
 ---
+
+<!--
+PLACEHOLDER — not yet written. Part 2 of the Lodestar walkthrough series.
+(Front-matter must stay at the very top or MkDocs renders it as visible text.)
+Draft against docs/internal/walkthrough/BRIEF.md (voice + accuracy guardrails)
+and review through docs/internal/review/personas/dana-reyes.md plus the
+"security evaluator" lens noted there. Keep the public/practitioner voice — the
+research framing stays in the arXiv paper (docs/internal/whitepaper/).
+-->
 
 # How Lodestar holds the line: the agent-safety threat model
 
