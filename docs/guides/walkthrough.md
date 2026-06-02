@@ -1,8 +1,9 @@
 <!--
 Syndication note (for whoever publishes this):
-- Canonical home is the personal site URL in `canonical_url` below. Every
-  syndicated copy (dev.to, Hashnode, the future docs site) must set its
-  canonical_url back to it so two copies don't fight for SEO.
+- Canonical home for this guide is the docs-site URL in `canonical_url` below
+  (qmilab.com/lodestar/docs). Every syndicated copy (dev.to, Hashnode) must set
+  its canonical_url back to it so two copies don't fight for SEO. (The separate
+  first-person motivation essay on nandan.me is its own piece, canonical there.)
 - This file is self-contained markdown. Code references use absolute GitHub
   links so it reads correctly off-repo. No site-specific includes.
 - Diagrams are inline Mermaid (renders on GitHub and most docs-site generators).
@@ -17,7 +18,7 @@ Syndication note (for whoever publishes this):
 title: "Wrap your coding agent, get a trust report"
 description: "A walkthrough of Lodestar — an open trust layer for AI agents — through two runnable demos: a coding agent that records why it did what it did, and a firewall that holds when a file tries to hijack it."
 date: 2026-06-02
-canonical_url: "https://nandan.me/writing/wrap-your-coding-agent-get-a-trust-report"
+canonical_url: "https://qmilab.com/lodestar/docs/guides/walkthrough/"
 tags: [ai, llm, security, opensource, ai-agents, mcp]
 series: "Lodestar: the trust layer for AI agents"
 series_part: 1

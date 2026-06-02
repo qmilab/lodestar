@@ -1,0 +1,51 @@
+site_name: Lodestar
+site_description: The trust layer for AI agents.
+site_url: https://qmilab.com/lodestar/docs/
+repo_url: https://github.com/qmilab/lodestar
+repo_name: qmilab/lodestar
+docs_dir: docs
+
+theme:
+  name: material
+  language: en
+  font:
+    text: IBM Plex Sans
+    code: IBM Plex Mono
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+    - search.suggest
+  palette:
+    scheme: default
+
+extra_css:
+  - assets/qmilab-theme.css
+
+# Public docs site = reader-facing only. Planning/reference and the not-yet-written
+# series placeholders stay out of the build (flip these as parts ship / if you want
+# architecture+roadmap public).
+exclude_docs: |
+  internal/
+  architecture/
+  roadmap.md
+  guides/part-2-the-threat-model.md
+  guides/part-3-wrap-your-own-agent.md
+
+nav:
+  - Home: index.md
+  - Walkthrough: guides/walkthrough.md
+  - Concepts:
+      - Memory poisoning: concepts/threat-model/memory-poisoning.md
+  - Strategy:
+      - Positioning: strategy/positioning.md
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

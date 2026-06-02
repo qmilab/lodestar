@@ -1,0 +1,21 @@
+/* Match qmilab.com: EB Garamond headings, IBM Plex body/mono, navy + blue palette.
+   Tokens lifted from qmilab.com's stylesheet. Tweak with `mkdocs serve`. */
+
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap');
+
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color:        #1B2A4A;  /* brand navy */
+  --md-primary-fg-color--light: #2E75B6;
+  --md-primary-fg-color--dark:  #142036;
+  --md-accent-fg-color:         #2E75B6;  /* accent blue */
+  --md-typeset-a-color:         #2E75B6;  /* links */
+  --md-default-fg-color:        #2A2A2A;  /* body text */
+}
+
+/* Serif headings like qmilab.com (Material otherwise uses one text font). */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3,
+.md-typeset h4 {
+  font-family: "EB Garamond", Georgia, "Times New Roman", serif;
+}

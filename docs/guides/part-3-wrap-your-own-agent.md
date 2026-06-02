@@ -9,7 +9,7 @@ title: "Wrap your own agent: guard.wrap(), the MCP proxy, policies, and probes"
 description: "Part 3 — a hands-on guide to putting Lodestar around your own coding agent: the library path, the proxy path, writing a policy, and locking an invariant with a probe."
 date: TBD
 draft: true
-canonical_url: "https://nandan.me/writing/wrap-your-own-agent-with-lodestar"
+canonical_url: "https://qmilab.com/lodestar/docs/guides/part-3-wrap-your-own-agent/"
 tags: [ai, llm, security, opensource, ai-agents, mcp]
 series: "Lodestar: the trust layer for AI agents"
 series_part: 3
