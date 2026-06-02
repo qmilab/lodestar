@@ -6,7 +6,11 @@
 
 **Author**: Nandan, QMI Lab. Future co-authors as collaborators join.
 
-**Status**: outline, ready for first-draft work after Batch 2 lands.
+**Status**: outline complete; Batches 1–5 have landed, so the paper is now
+genuinely draftable. See [`arxiv-plan.md`](./arxiv-plan.md) for submission
+logistics (arXiv categories, license, venue) and a readiness update — §10 and
+§1.3 below understate the current state (22 probes, the MCP proxy, and the
+Telenotes/doc-agent worked examples) and should be refreshed before drafting.
 
 ---
 
