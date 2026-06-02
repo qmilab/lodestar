@@ -1,9 +1,3 @@
-<!--
-PLACEHOLDER — not yet written. Part 3 of the Lodestar walkthrough series.
-Draft against docs/internal/walkthrough/BRIEF.md (voice + accuracy guardrails)
-and review through docs/internal/review/personas/dana-reyes.md plus the
-"integrating developer" lens noted there. Every snippet must run as written.
--->
 ---
 title: "Wrap your own agent: guard.wrap(), the MCP proxy, policies, and probes"
 description: "Part 3 — a hands-on guide to putting Lodestar around your own coding agent: the library path, the proxy path, writing a policy, and locking an invariant with a probe."
@@ -14,6 +8,14 @@ tags: [ai, llm, security, opensource, ai-agents, mcp]
 series: "Lodestar: the trust layer for AI agents"
 series_part: 3
 ---
+
+<!--
+PLACEHOLDER — not yet written. Part 3 of the Lodestar walkthrough series.
+(Front-matter must stay at the very top or MkDocs renders it as visible text.)
+Draft against docs/internal/walkthrough/BRIEF.md (voice + accuracy guardrails)
+and review through docs/internal/review/personas/dana-reyes.md plus the
+"integrating developer" lens noted there. Every snippet must run as written.
+-->
 
 # Wrap your own agent: guard.wrap(), the MCP proxy, policies, and probes
 
