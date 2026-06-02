@@ -86,6 +86,6 @@ surface available.
 - Skill manifests, signing, or skill marketplace plumbing (out of scope
   through v1.5).
 - MCP proxy mode for wrapping existing agents — that's
-  `@qmilab/lodestar-guard-mcp`, scheduled for Batch 3.
+  `@qmilab/lodestar-guard-mcp` (shipped).
 - Production-grade policy (trust ladder, approval surfaces) — that's
-  `@qmilab/lodestar-policy-kernel`, scheduled for Batch 4+.
+  `@qmilab/lodestar-policy-kernel`, not yet shipped (still stubbed in the action kernel).

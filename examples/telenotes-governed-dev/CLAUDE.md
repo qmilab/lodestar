@@ -19,13 +19,15 @@ This directory fulfils the long-promised "week-8 thesis demo" the legacy stub
   `git_commit`, `git_push`. Spawned by the proxy as a downstream server
   alongside `@modelcontextprotocol/server-filesystem`. See its CLAUDE.md.
 - `index.ts`, `policy.lodestar.ts` — the legacy week-1 scaffold (read-only,
-  in-process). Retained until the scripted run supersedes it.
+  in-process), kept for reference; the runs below are the live demo.
+- `scripted-run/` — deterministic in-process driver + committed report.
+- `poison-run/` — the firewall-block demo: plants a hostile `DEVELOPMENT.md` and
+  self-verifies the firewall holds.
+- `real-claude-code/` — recipe + captured evidence from a live Claude Code run.
+- `reports/` — committed markdown trust reports.
 
-Planned (later PRs in this batch): `scripted-run/` (deterministic in-process
-driver + committed report), `poison-run/` (the firewall-block demo),
-`real-claude-code/` (recipe + captured evidence), `reports/` (committed
-markdown trust reports), and a `coding-agent-safety` probe locking the
-no-hijack invariant.
+All of the above have landed; the no-hijack invariant is locked in CI by the
+`poisoned-file-cannot-hijack-feature-work` probe (`packs/coding-agent-safety/`).
 
 ## Why two downstream servers
 
