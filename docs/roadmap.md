@@ -173,7 +173,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - ✅ Wired through the headline `guard.wrap()` API via a new, general `GuardConfig.cognitive.evidenceLinkerFactory` seam (mirrors the existing `stores` seam) — any example or product can attach document-aware / MCP-aware / LLM-driven evidence linking the same way. Reusable pieces ship in `@qmilab/lodestar-cognitive-core`; `doc.read` + the `documentation.source@1` schema ship in `@qmilab/lodestar-adapter-filesystem`.
 - ✅ Locked by the `documentation-evidence-provenance` probe (`packs/lodestar-core/`).
 
-- Blog post / video walkthrough of both demos (publishable artifact)
+- Blog post / video walkthrough of both demos (publishable artifact) — plan + venues in `docs/walkthrough/BRIEF.md` (the only Batch 5 item still open)
 
 **Out of scope**: hosted dashboard, team workflows, customer-support or data-analysis examples (deferred to v1.x).
 
@@ -235,7 +235,7 @@ Independent of the implementation roadmap, the research outputs from Lodestar fl
 
 **Reasonable to draft now (outline + position-paper voice)**:
 
-1. **Position paper: epistemic governance as an architectural primitive** — full draft achievable in 2026 once Batch 3 lands. This is design contribution, not empirical evaluation.
+1. **Position paper: epistemic governance as an architectural primitive** — full draft achievable in 2026 once Batch 3 lands. This is design contribution, not empirical evaluation. Outline: `docs/whitepaper/outline.md`; arXiv submission + readiness plan: `docs/whitepaper/arxiv-plan.md`.
 2. **Memory-poisoning threat taxonomy** — design note + structured taxonomy. Publishable as a workshop paper without large empirical claims.
 3. **Probe taxonomy and methodology notes** — short methods paper describing the probe pack format and the criteria for a "good" probe.
 

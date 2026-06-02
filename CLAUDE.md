@@ -224,3 +224,5 @@ These are settled. If a session starts to question them, redirect it.
 - Threat model: `docs/threat-model/memory-poisoning.md`
 - Examples: `examples/telenotes-governed-dev/` (full pipeline), `examples/doc-insight/` (firewall gate focus)
 - Adversarial review history: `docs/review/` (ChatGPT rounds 1–5)
+- Research paper (arXiv position paper): outline `docs/whitepaper/outline.md`, submission + readiness plan `docs/whitepaper/arxiv-plan.md`
+- Batch 5 walkthrough (blog/video) plan + venues: `docs/walkthrough/BRIEF.md`
