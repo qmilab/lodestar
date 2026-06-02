@@ -30,7 +30,7 @@ Platforms that do **not** render Mermaid (dev.to, Hashnode, Medium) need images:
 
 ```sh
 # one-off: bun add -d @mermaid-js/mermaid-cli   (or: npx @mermaid-js/mermaid-cli)
-cd docs/walkthrough/assets
+cd docs/guides/assets
 for f in two-belief-split proxy-topology policy-ladder; do
   mmdc -i "$f.mmd" -o "$f.png" -b transparent
 done

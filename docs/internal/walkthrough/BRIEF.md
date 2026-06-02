@@ -25,8 +25,9 @@ the open questions below, then draft.
 - **Length**: **long (~4000+ words)** — full chain walked link by link, both
   demos in depth, the live-Claude-Code capture analysed, design-rationale +
   open-core note.
-- **Slot**: `docs/walkthrough/`, alongside this BRIEF.
-- **Output files**: [`walkthrough.md`](./walkthrough.md) (the article),
+- **Slot**: `docs/guides/walkthrough.md` (this BRIEF + production artifacts now
+  live in `docs/internal/walkthrough/`).
+- **Output files**: [`walkthrough.md`](../../guides/walkthrough.md) (the article),
   [`video-script.md`](./video-script.md) (the storyboard).
 - On merge, flip the roadmap's "only Batch 5 item still open" line
   (`docs/roadmap.md`) to done.

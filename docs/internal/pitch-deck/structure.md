@@ -135,7 +135,7 @@ Each axis has its own allowed transitions. Highlight the no-self-promotion rule 
 
 ## Slide 7 — Where it fits
 
-**Visual**: The "use X for Y, use Lodestar for Z" table from `docs/positioning.md`:
+**Visual**: The "use X for Y, use Lodestar for Z" table from `docs/strategy/positioning.md`:
 
 | You use… | Lodestar's role |
 | --- | --- |

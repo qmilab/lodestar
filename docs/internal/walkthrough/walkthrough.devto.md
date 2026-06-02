@@ -4,7 +4,7 @@ published: false
 description: A walkthrough of Lodestar — an open trust layer for AI agents — through two runnable demos: a coding agent that records why it did what it did, and a firewall that holds when a file tries to hijack it.
 tags: ai, llm, security, opensource
 canonical_url: https://nandan.me/writing/wrap-your-coding-agent-get-a-trust-report
-cover_image: https://raw.githubusercontent.com/qmilab/lodestar/main/docs/walkthrough/assets/two-belief-split.png
+cover_image: https://raw.githubusercontent.com/qmilab/lodestar/main/docs/guides/assets/two-belief-split.png
 series: Lodestar - the trust layer for AI agents
 ---
 
@@ -154,7 +154,7 @@ of it**, and they are not equally trustworthy:
   tool merely reported it. So the belief about the content is adopted as
   **`unverified`**.
 
-![One tool call yields two beliefs of different trust: the read is supported; the file contents are unverified — same confidence, different truth status.](https://raw.githubusercontent.com/qmilab/lodestar/main/docs/walkthrough/assets/two-belief-split.png)
+![One tool call yields two beliefs of different trust: the read is supported; the file contents are unverified — same confidence, different truth status.](https://raw.githubusercontent.com/qmilab/lodestar/main/docs/guides/assets/two-belief-split.png)
 
 This is enforced by what the architecture calls the **auto-observation gate**:
 `external_document` (and model-inferred) evidence *cannot* automatically promote
@@ -261,7 +261,7 @@ through Lodestar to one of two downstream MCP servers:
 - a small **first-party dev-tools server** for `shell_test`, `git_commit`, and
   `git_push`.
 
-![The Lodestar MCP proxy sits between the coding agent and two downstream MCP servers, governing every call.](https://raw.githubusercontent.com/qmilab/lodestar/main/docs/walkthrough/assets/proxy-topology.png)
+![The Lodestar MCP proxy sits between the coding agent and two downstream MCP servers, governing every call.](https://raw.githubusercontent.com/qmilab/lodestar/main/docs/guides/assets/proxy-topology.png)
 
 The agent thinks it's talking to ordinary MCP tools. It's actually talking to
 the proxy, which governs every call — assigns it a risk level, runs it through
@@ -326,7 +326,7 @@ external and irreversible. This demo runs a simple policy,
 `auto-approve-up-to-3`: anything at level L3 or below auto-approves; anything
 above needs a human.
 
-![The trust ladder: L0 and L3 actions auto-approve under the L3 ceiling; the L4 git_push sits above the ceiling and is blocked.](https://raw.githubusercontent.com/qmilab/lodestar/main/docs/walkthrough/assets/policy-ladder.png)
+![The trust ladder: L0 and L3 actions auto-approve under the L3 ceiling; the L4 git_push sits above the ceiling and is blocked.](https://raw.githubusercontent.com/qmilab/lodestar/main/docs/guides/assets/policy-ladder.png)
 
 Here's the **Actions** section of the report:
 

@@ -155,7 +155,7 @@ What's coming:
 
 - **Batch 5** (next) — Week-8 thesis demo: a coding agent governed end-to-end, with a second proving ground using a documentation-update task
 
-See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/positioning.md`](./docs/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.
+See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/strategy/positioning.md`](./docs/strategy/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.
 
 ---
 

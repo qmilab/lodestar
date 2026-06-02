@@ -1,6 +1,6 @@
 # Lodestar — Roadmap
 
-This roadmap defines the sequence from the current pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). It complements `docs/positioning.md`.
+This roadmap defines the sequence from the current pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). It complements `docs/strategy/positioning.md`.
 
 Last updated: post-strategy review with ChatGPT.
 
@@ -56,7 +56,7 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 
 **Deliverables**:
 - New `README.md` in trust-layer voice (done)
-- `docs/positioning.md` with the four-surface framing and open-core strategy (done)
+- `docs/strategy/positioning.md` with the four-surface framing and open-core strategy (done)
 - `docs/roadmap.md` — this document
 - Update to `docs/architecture/v02-delta.md` noting the positioning shift
 - ChatGPT review prompt for the strategy
@@ -173,7 +173,7 @@ This batch moved *before* the full Harness because the public promise is "wrap y
 - ✅ Wired through the headline `guard.wrap()` API via a new, general `GuardConfig.cognitive.evidenceLinkerFactory` seam (mirrors the existing `stores` seam) — any example or product can attach document-aware / MCP-aware / LLM-driven evidence linking the same way. Reusable pieces ship in `@qmilab/lodestar-cognitive-core`; `doc.read` + the `documentation.source@1` schema ship in `@qmilab/lodestar-adapter-filesystem`.
 - ✅ Locked by the `documentation-evidence-provenance` probe (`packs/lodestar-core/`).
 
-- Blog post / video walkthrough of both demos (publishable artifact) — plan + venues in `docs/walkthrough/BRIEF.md` (the only Batch 5 item still open)
+- ✅ Blog/video walkthrough of both demos (publishable artifact) — DONE (PR #29). Reader guide `docs/guides/walkthrough.md`; plan, video script, and dev.to syndication copy in `docs/internal/walkthrough/`. **Batch 5 is complete.**
 
 **Out of scope**: hosted dashboard, team workflows, customer-support or data-analysis examples (deferred to v1.x).
 
@@ -235,7 +235,7 @@ Independent of the implementation roadmap, the research outputs from Lodestar fl
 
 **Reasonable to draft now (outline + position-paper voice)**:
 
-1. **Position paper: epistemic governance as an architectural primitive** — full draft achievable in 2026 once Batch 3 lands. This is design contribution, not empirical evaluation. Outline: `docs/whitepaper/outline.md`; arXiv submission + readiness plan: `docs/whitepaper/arxiv-plan.md`.
+1. **Position paper: epistemic governance as an architectural primitive** — full draft achievable in 2026 once Batch 3 lands. This is design contribution, not empirical evaluation. Outline: `docs/internal/whitepaper/outline.md`; arXiv submission + readiness plan: `docs/internal/whitepaper/arxiv-plan.md`.
 2. **Memory-poisoning threat taxonomy** — design note + structured taxonomy. Publishable as a workshop paper without large empirical claims.
 3. **Probe taxonomy and methodology notes** — short methods paper describing the probe pack format and the criteria for a "good" probe.
 

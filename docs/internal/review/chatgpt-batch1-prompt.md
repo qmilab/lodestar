@@ -3,10 +3,10 @@
 Use this as the prompt to send to ChatGPT. Attach the following files alongside the prompt itself:
 
 - `README.md`
-- `docs/positioning.md`
+- `docs/strategy/positioning.md`
 - `docs/roadmap.md`
 - `docs/architecture/v02-delta.md` (the full file, including the new "post-implementation positioning shift" section at the bottom)
-- `docs/threat-model/memory-poisoning.md`
+- `docs/concepts/threat-model/memory-poisoning.md`
 - The scaffold tarball `orrery-week2-scaffold.tar.gz` (or a link to the GitHub repo if it's up)
 - A short transcript excerpt showing both probes passing and the Telenotes example's 11-event audit trail
 

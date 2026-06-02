@@ -313,7 +313,7 @@ The architecture in this memo remains correct. The strategic framing around it h
 3. Should the larger part be open source?
 4. Should there be a marketplace?
 
-The conclusion, captured in `docs/positioning.md`:
+The conclusion, captured in `docs/strategy/positioning.md`:
 
 - **External voice changes**, internal voice stays. "Epistemic governance framework" remains the correct technical phrase in this memo and in research artifacts. The homepage and developer-facing surfaces use "trust layer for AI agents" because it is concretely actionable.
 
@@ -567,5 +567,5 @@ where they carry semantic weight:
   the position of the agent's epistemic state over time, supporting
   replay and post-hoc audit.
 
-The original codename Orrery is preserved in `docs/review/` and in
+The original codename Orrery is preserved in `docs/internal/review/` and in
 references to early architectural decisions.
