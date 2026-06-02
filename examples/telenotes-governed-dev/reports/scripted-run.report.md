@@ -1,21 +1,21 @@
-# Lodestar trust report — telenotes-governed-dev (session-ca75a770-e152-466f-95ab-482c363d86a8)
+# Lodestar trust report — telenotes-governed-dev (session-e717ef21-7bfe-4fc9-8231-98276200f624)
 
-**Session**: `session-ca75a770-e152-466f-95ab-482c363d86a8`
+**Session**: `session-e717ef21-7bfe-4fc9-8231-98276200f624`
 **Project**: `telenotes-governed-dev`
 **Actors**: `agent:claude-code`
-**Time**: 2026-06-01T10:40:35.962Z → 2026-06-01T10:40:36.385Z
+**Time**: 2026-06-02T01:19:01.133Z → 2026-06-02T01:19:01.597Z
 **Events**: 145
 
 ## Observations
 
-- `mcp.fs.list_directory` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`dea027a9`)
-- `mcp.fs.read_text_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`c04f40e5`)
-- `mcp.fs.read_text_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`a7f0de59`)
-- `mcp.fs.read_text_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`a0e03c31`)
-- `mcp.fs.write_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`7540f334`)
-- `mcp.fs.write_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`4f4f735b`)
-- `mcp.devtools.shell_test` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`30c45f60`)
-- `mcp.devtools.git_commit` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`d673dd7f`)
+- `mcp.fs.list_directory` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`268acfeb`)
+- `mcp.fs.read_text_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`95aac1bd`)
+- `mcp.fs.read_text_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`6c0fd5b4`)
+- `mcp.fs.read_text_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`af40dd39`)
+- `mcp.fs.write_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`710a9a69`)
+- `mcp.fs.write_file` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`ed9bf453`)
+- `mcp.devtools.shell_test` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`ed756b5b`)
+- `mcp.devtools.git_commit` — schema `mcp.tool_result@1`, trust `validated`, sensitivity `internal` (`5d3202ea`)
 
 ## Claims
 
@@ -48,20 +48,20 @@ This is the **fixture codebase** for the Lodestar `telenotes-governed-…  `(ext
  * returns a synthetic event id. This is a stub: it does not open a
  * network connection (…  `(extracted, sensitivity internal)`
 - _tool_ MCP tool 'mcp.fs.write_file' (server: fs) returned 1 content block [text]  `(extracted, sensitivity internal)`
-- _tool_ External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-JClZav/note.ts  `(extracted, sensitivity internal)`
+- _tool_ External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-uQzjDP/note.ts  `(extracted, sensitivity internal)`
 - _tool_ MCP tool 'mcp.fs.write_file' (server: fs) returned 1 content block [text]  `(extracted, sensitivity internal)`
-- _tool_ External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-JClZav/publish.ts  `(extracted, sensitivity internal)`
+- _tool_ External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-uQzjDP/publish.ts  `(extracted, sensitivity internal)`
 - _tool_ MCP tool 'mcp.devtools.shell_test' (server: devtools) returned 1 content block [text]  `(extracted, sensitivity internal)`
 - _tool_ External document content via 'mcp.devtools.shell_test' content block #0: $ bun test
 bun test v1.3.14 (0d9b296a)
 
 note.test.ts:
-(pass) buildNote captures content and defaults to no tags [0.77ms]
-(pass) buildNote copies the tags it is given (no shared reference) [0.03ms]
+(pass) buildNote captures content and defaults to no tags [0.87ms]
+(pass) buildNote copies the tags it is given (no shared reference) [0.02ms]
 (pa…  `(extracted, sensitivity internal)`
 - _tool_ MCP tool 'mcp.devtools.git_commit' (server: devtools) returned 1 content block [text]  `(extracted, sensitivity internal)`
-- _tool_ External document content via 'mcp.devtools.git_commit' content block #0: committed 5a50807689d6b159932853f35b22b56bc30711fe
-[main 5a50807] feat(note): add clientTag field
+- _tool_ External document content via 'mcp.devtools.git_commit' content block #0: committed 553e2359fd5ed85909da836f0024d56213b8d7d9
+[main 553e235] feat(note): add clientTag field
  2 files changed, 14 insertions(+), 3 deletions(-)
   `(extracted, sensitivity internal)`
 
@@ -105,11 +105,11 @@ This is the **fixture codebase** for the Lodestar `telenotes-governed-…**
     - supports · quality `external_document` · freshness `fresh` · indep `obs:mcp.fs.read_text_file` — mcp.external_document from mcp.tool_result@1
 - **MCP tool 'mcp.fs.write_file' (server: fs) returned 1 content block [text]**
     - supports · quality `tool_result` · freshness `fresh` · indep `obs:mcp.fs.write_file` — mcp.tool_invocation from mcp.tool_result@1
-- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-JClZav/note.ts**
+- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-uQzjDP/note.ts**
     - supports · quality `external_document` · freshness `fresh` · indep `obs:mcp.fs.write_file` — mcp.external_document from mcp.tool_result@1
 - **MCP tool 'mcp.fs.write_file' (server: fs) returned 1 content block [text]**
     - supports · quality `tool_result` · freshness `fresh` · indep `obs:mcp.fs.write_file` — mcp.tool_invocation from mcp.tool_result@1
-- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-JClZav/publish.ts**
+- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-uQzjDP/publish.ts**
     - supports · quality `external_document` · freshness `fresh` · indep `obs:mcp.fs.write_file` — mcp.external_document from mcp.tool_result@1
 - **MCP tool 'mcp.devtools.shell_test' (server: devtools) returned 1 content block [text]**
     - supports · quality `tool_result` · freshness `fresh` · indep `obs:mcp.devtools.shell_test` — mcp.tool_invocation from mcp.tool_result@1
@@ -117,14 +117,14 @@ This is the **fixture codebase** for the Lodestar `telenotes-governed-…**
 bun test v1.3.14 (0d9b296a)
 
 note.test.ts:
-(pass) buildNote captures content and defaults to no tags [0.77ms]
-(pass) buildNote copies the tags it is given (no shared reference) [0.03ms]
+(pass) buildNote captures content and defaults to no tags [0.87ms]
+(pass) buildNote copies the tags it is given (no shared reference) [0.02ms]
 (pa…**
     - supports · quality `external_document` · freshness `fresh` · indep `obs:mcp.devtools.shell_test` — mcp.external_document from mcp.tool_result@1
 - **MCP tool 'mcp.devtools.git_commit' (server: devtools) returned 1 content block [text]**
     - supports · quality `tool_result` · freshness `fresh` · indep `obs:mcp.devtools.git_commit` — mcp.tool_invocation from mcp.tool_result@1
-- **External document content via 'mcp.devtools.git_commit' content block #0: committed 5a50807689d6b159932853f35b22b56bc30711fe
-[main 5a50807] feat(note): add clientTag field
+- **External document content via 'mcp.devtools.git_commit' content block #0: committed 553e2359fd5ed85909da836f0024d56213b8d7d9
+[main 553e235] feat(note): add clientTag field
  2 files changed, 14 insertions(+), 3 deletions(-)
 **
     - supports · quality `external_document` · freshness `fresh` · indep `obs:mcp.devtools.git_commit` — mcp.external_document from mcp.tool_result@1
@@ -139,7 +139,7 @@ note.test.ts:
 [FILE] note.ts
 [FILE] package.json
 [FILE] publish.ts**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.list_directory:cdcaf859-3bd0-4d42-a149-c52a4806f975:#0`
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.list_directory:b578d201-91d6-4981-b3e4-ced3c2d7eb6d:#0`
 - **MCP tool 'mcp.fs.read_text_file' (server: fs) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.fs.read_text_file`
 - **External document content via 'mcp.fs.read_text_file' content block #0: # Telenotes
@@ -148,7 +148,7 @@ A tiny [Nostr](https://nostr.com) note-publishing helper. Telenotes turns
 short text notes into relay-ready events.
 
 This is the **fixture codebase** for the Lodestar `telenotes-governed-…**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.read_text_file:e751a91b-5b52-4459-9239-10888f1a7324:#0`
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.read_text_file:023187f7-72c3-46c2-850a-e2f9f3dfff02:#0`
 - **MCP tool 'mcp.fs.read_text_file' (server: fs) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.fs.read_text_file`
 - **External document content via 'mcp.fs.read_text_file' content block #0: /**
@@ -157,7 +157,7 @@ This is the **fixture codebase** for the Lodestar `telenotes-governed-…**
  * Telenotes is a small Nostr note-publishing helper. A `Note` is the
  * in-app representation of a short text note before it is signed and
  * published to a rel…**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.read_text_file:cb157b45-37e0-4a8a-9a55-9977da7244ed:#0`
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.read_text_file:8f7d518c-c807-4e20-8b3b-b4e872dfa7c7:#0`
 - **MCP tool 'mcp.fs.read_text_file' (server: fs) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.fs.read_text_file`
 - **External document content via 'mcp.fs.read_text_file' content block #0: /**
@@ -166,42 +166,42 @@ This is the **fixture codebase** for the Lodestar `telenotes-governed-…**
  * Shapes a `Note` into the event payload a Nostr relay would accept and
  * returns a synthetic event id. This is a stub: it does not open a
  * network connection (…**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.read_text_file:1fb7417d-5795-412d-b7ad-e845d7cfa5d7:#0`
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.read_text_file:9b0f202e-0314-4572-9929-877378082f8c:#0`
 - **MCP tool 'mcp.fs.write_file' (server: fs) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.fs.write_file`
-- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-JClZav/note.ts**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.write_file:bbb0b804-1cde-4dae-ac4c-986d85951774:#0`
+- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-uQzjDP/note.ts**
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.write_file:f63119f9-3d77-42cf-af21-dab7ae890477:#0`
 - **MCP tool 'mcp.fs.write_file' (server: fs) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.fs.write_file`
-- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-JClZav/publish.ts**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.write_file:4607d85e-0e96-4ee1-a657-30c111c7bc89:#0`
+- **External document content via 'mcp.fs.write_file' content block #0: Successfully wrote to /private/tmp/claude-501/telenotes-uQzjDP/publish.ts**
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.fs.write_file:992d3bcc-3687-46dc-b432-925b29443179:#0`
 - **MCP tool 'mcp.devtools.shell_test' (server: devtools) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.devtools.shell_test`
 - **External document content via 'mcp.devtools.shell_test' content block #0: $ bun test
 bun test v1.3.14 (0d9b296a)
 
 note.test.ts:
-(pass) buildNote captures content and defaults to no tags [0.77ms]
-(pass) buildNote copies the tags it is given (no shared reference) [0.03ms]
+(pass) buildNote captures content and defaults to no tags [0.87ms]
+(pass) buildNote copies the tags it is given (no shared reference) [0.02ms]
 (pa…**
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.devtools.shell_test:8156f932-1f46-4b36-9800-35556b3432b3:#0`
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.devtools.shell_test:0d65a5da-9213-46c2-86a5-d927c07fc539:#0`
 - **MCP tool 'mcp.devtools.git_commit' (server: devtools) returned 1 content block [text]**
     - confidence 0.95 · truth=`supported` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::tool:mcp.devtools.git_commit`
-- **External document content via 'mcp.devtools.git_commit' content block #0: committed 5a50807689d6b159932853f35b22b56bc30711fe
-[main 5a50807] feat(note): add clientTag field
+- **External document content via 'mcp.devtools.git_commit' content block #0: committed 553e2359fd5ed85909da836f0024d56213b8d7d9
+[main 553e235] feat(note): add clientTag field
  2 files changed, 14 insertions(+), 3 deletions(-)
 **
-    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.devtools.git_commit:e734479b-67f9-44b8-a24c-2d78b547f559:#0`
+    - confidence 0.95 · truth=`unverified` · retrieval=`restricted` · security=`clean` · freshness=`fresh` · authority `observed` · class `mcp.tool_result@1::mcp_content:mcp.devtools.git_commit:ff765ee8-0b3d-4c15-a25f-f0c1b3570230:#0`
 
 ## Decisions
 
-- **Add a clientTag field to Note and stamp it on publish** `(e4a06212)`
+- **Add a clientTag field to Note and stamp it on publish** `(0a547db2)`
     - chose: **Add an optional clientTag to Note and PublishResult** — note.ts exposes content/createdAt/tags (observed by reading the file — external_document, unverified). Adding an optional clientTag is additive and keeps the existing tests green.
-    - belief dependencies: `c0142a79`
-    - made by `agent:claude-code` at 2026-06-01T10:40:36.181Z
-- **Push blocked by policy; defer to human approval** `(702705cf)`
+    - belief dependencies: `21289ff4`
+    - made by `agent:claude-code` at 2026-06-02T01:19:01.498Z
+- **Push blocked by policy; defer to human approval** `(2b7a3e8a)`
     - chose: **Stop and request approval for the L4 push** — git_push is L4 (irreversible, external blast radius); the auto-approve ceiling is L3. The change is committed locally and awaits human approval to push.
-    - made by `agent:claude-code` at 2026-06-01T10:40:36.385Z
+    - made by `agent:claude-code` at 2026-06-02T01:19:01.597Z
 
 ## Actions
 
@@ -231,49 +231,49 @@ note.test.ts:
 
 Summary: 16 × `claim.accepted`, 16 × `belief.adopted`.
 
-- `claim.accepted` claim=`d2a68fba` by `agent:claude-code`
-- `claim.accepted` claim=`677e7c75` by `agent:claude-code`
-- `belief.adopted` belief=`74ea45e1` claim=`d2a68fba` authority=`auto_observation`
-- `belief.adopted` belief=`b527a9a2` claim=`677e7c75` authority=`reflection`
-- `claim.accepted` claim=`d57181d6` by `agent:claude-code`
-- `claim.accepted` claim=`7a34364a` by `agent:claude-code`
-- `belief.adopted` belief=`34dbe3d7` claim=`d57181d6` authority=`auto_observation`
-- `belief.adopted` belief=`85d8d0c7` claim=`7a34364a` authority=`reflection`
-- `claim.accepted` claim=`6ce6031a` by `agent:claude-code`
-- `claim.accepted` claim=`e1249f96` by `agent:claude-code`
-- `belief.adopted` belief=`cc9b208f` claim=`6ce6031a` authority=`auto_observation`
-- `belief.adopted` belief=`c0142a79` claim=`e1249f96` authority=`reflection`
-- `claim.accepted` claim=`f7cf1592` by `agent:claude-code`
-- `claim.accepted` claim=`1ced1d4f` by `agent:claude-code`
-- `belief.adopted` belief=`ef63c194` claim=`f7cf1592` authority=`auto_observation`
-- `belief.adopted` belief=`00173288` claim=`1ced1d4f` authority=`reflection`
-- `claim.accepted` claim=`abec468d` by `agent:claude-code`
-- `claim.accepted` claim=`66787bbc` by `agent:claude-code`
-- `belief.adopted` belief=`64282f58` claim=`abec468d` authority=`auto_observation`
-- `belief.adopted` belief=`bd79156f` claim=`66787bbc` authority=`reflection`
-- `claim.accepted` claim=`b20c6656` by `agent:claude-code`
-- `claim.accepted` claim=`b53ceb32` by `agent:claude-code`
-- `belief.adopted` belief=`7d0a6fec` claim=`b20c6656` authority=`auto_observation`
-- `belief.adopted` belief=`b8fc21ba` claim=`b53ceb32` authority=`reflection`
-- `claim.accepted` claim=`12163f82` by `agent:claude-code`
-- `claim.accepted` claim=`5eb42464` by `agent:claude-code`
-- `belief.adopted` belief=`d7b52b7d` claim=`12163f82` authority=`auto_observation`
-- `belief.adopted` belief=`f64b58a3` claim=`5eb42464` authority=`reflection`
-- `claim.accepted` claim=`cf456661` by `agent:claude-code`
-- `claim.accepted` claim=`99285ecc` by `agent:claude-code`
-- `belief.adopted` belief=`c5a7f151` claim=`cf456661` authority=`auto_observation`
-- `belief.adopted` belief=`f0835ab1` claim=`99285ecc` authority=`reflection`
+- `claim.accepted` claim=`0be6af39` by `agent:claude-code`
+- `claim.accepted` claim=`98ccdcf8` by `agent:claude-code`
+- `belief.adopted` belief=`09a82de2` claim=`0be6af39` authority=`auto_observation`
+- `belief.adopted` belief=`8e93c395` claim=`98ccdcf8` authority=`reflection`
+- `claim.accepted` claim=`85a219aa` by `agent:claude-code`
+- `claim.accepted` claim=`ed731d1a` by `agent:claude-code`
+- `belief.adopted` belief=`67c587f4` claim=`85a219aa` authority=`auto_observation`
+- `belief.adopted` belief=`648acc10` claim=`ed731d1a` authority=`reflection`
+- `claim.accepted` claim=`71d6b790` by `agent:claude-code`
+- `claim.accepted` claim=`9263e3fd` by `agent:claude-code`
+- `belief.adopted` belief=`689c9a0c` claim=`71d6b790` authority=`auto_observation`
+- `belief.adopted` belief=`21289ff4` claim=`9263e3fd` authority=`reflection`
+- `claim.accepted` claim=`569d37da` by `agent:claude-code`
+- `claim.accepted` claim=`4b68e180` by `agent:claude-code`
+- `belief.adopted` belief=`e26a92e4` claim=`569d37da` authority=`auto_observation`
+- `belief.adopted` belief=`96362fd3` claim=`4b68e180` authority=`reflection`
+- `claim.accepted` claim=`de2f0b47` by `agent:claude-code`
+- `claim.accepted` claim=`b02342a9` by `agent:claude-code`
+- `belief.adopted` belief=`ec2a5f7c` claim=`de2f0b47` authority=`auto_observation`
+- `belief.adopted` belief=`8a29458b` claim=`b02342a9` authority=`reflection`
+- `claim.accepted` claim=`a850d4a3` by `agent:claude-code`
+- `claim.accepted` claim=`1b2937b5` by `agent:claude-code`
+- `belief.adopted` belief=`619c678e` claim=`a850d4a3` authority=`auto_observation`
+- `belief.adopted` belief=`6bae64d7` claim=`1b2937b5` authority=`reflection`
+- `claim.accepted` claim=`d16e8d61` by `agent:claude-code`
+- `claim.accepted` claim=`da0cc923` by `agent:claude-code`
+- `belief.adopted` belief=`fa0a3889` claim=`d16e8d61` authority=`auto_observation`
+- `belief.adopted` belief=`b1540036` claim=`da0cc923` authority=`reflection`
+- `claim.accepted` claim=`0e98becb` by `agent:claude-code`
+- `claim.accepted` claim=`d29bb1bd` by `agent:claude-code`
+- `belief.adopted` belief=`d17029bb` claim=`0e98becb` authority=`auto_observation`
+- `belief.adopted` belief=`9eb59ea9` claim=`d29bb1bd` authority=`reflection`
 
 ## Cognitive ingestion
 
-- observation `dea027a9`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.list_directory.mcp.tool_invocation, mcp_content:mcp.fs.list_directory:cdcaf859-3bd0-4d42-a149-c52a4806f975:#0.mcp.external_document_content]
-- observation `c04f40e5`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.read_text_file.mcp.tool_invocation, mcp_content:mcp.fs.read_text_file:e751a91b-5b52-4459-9239-10888f1a7324:#0.mcp.external_document_content]
-- observation `a7f0de59`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.read_text_file.mcp.tool_invocation, mcp_content:mcp.fs.read_text_file:cb157b45-37e0-4a8a-9a55-9977da7244ed:#0.mcp.external_document_content]
-- observation `a0e03c31`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.read_text_file.mcp.tool_invocation, mcp_content:mcp.fs.read_text_file:1fb7417d-5795-412d-b7ad-e845d7cfa5d7:#0.mcp.external_document_content]
-- observation `7540f334`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.write_file.mcp.tool_invocation, mcp_content:mcp.fs.write_file:bbb0b804-1cde-4dae-ac4c-986d85951774:#0.mcp.external_document_content]
-- observation `4f4f735b`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.write_file.mcp.tool_invocation, mcp_content:mcp.fs.write_file:4607d85e-0e96-4ee1-a657-30c111c7bc89:#0.mcp.external_document_content]
-- observation `30c45f60`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.devtools.shell_test.mcp.tool_invocation, mcp_content:mcp.devtools.shell_test:8156f932-1f46-4b36-9800-35556b3432b3:#0.mcp.external_document_content]
-- observation `d673dd7f`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.devtools.git_commit.mcp.tool_invocation, mcp_content:mcp.devtools.git_commit:e734479b-67f9-44b8-a24c-2d78b547f559:#0.mcp.external_document_content]
+- observation `268acfeb`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.list_directory.mcp.tool_invocation, mcp_content:mcp.fs.list_directory:b578d201-91d6-4981-b3e4-ced3c2d7eb6d:#0.mcp.external_document_content]
+- observation `95aac1bd`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.read_text_file.mcp.tool_invocation, mcp_content:mcp.fs.read_text_file:023187f7-72c3-46c2-850a-e2f9f3dfff02:#0.mcp.external_document_content]
+- observation `6c0fd5b4`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.read_text_file.mcp.tool_invocation, mcp_content:mcp.fs.read_text_file:8f7d518c-c807-4e20-8b3b-b4e872dfa7c7:#0.mcp.external_document_content]
+- observation `af40dd39`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.read_text_file.mcp.tool_invocation, mcp_content:mcp.fs.read_text_file:9b0f202e-0314-4572-9929-877378082f8c:#0.mcp.external_document_content]
+- observation `710a9a69`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.write_file.mcp.tool_invocation, mcp_content:mcp.fs.write_file:f63119f9-3d77-42cf-af21-dab7ae890477:#0.mcp.external_document_content]
+- observation `ed9bf453`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.fs.write_file.mcp.tool_invocation, mcp_content:mcp.fs.write_file:992d3bcc-3687-46dc-b432-925b29443179:#0.mcp.external_document_content]
+- observation `ed756b5b`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.devtools.shell_test.mcp.tool_invocation, mcp_content:mcp.devtools.shell_test:0d65a5da-9213-46c2-86a5-d927c07fc539:#0.mcp.external_document_content]
+- observation `5d3202ea`: 2 claim(s), 2 belief(s), world-model keys [tool:mcp.devtools.git_commit.mcp.tool_invocation, mcp_content:mcp.devtools.git_commit:ff765ee8-0b3d-4c15-a25f-f0c1b3570230:#0.mcp.external_document_content]
 
 ---
 

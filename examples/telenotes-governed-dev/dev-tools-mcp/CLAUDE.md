@@ -23,18 +23,29 @@ all three into one trust level.
 
 ## Invariants
 
-1. **Allowlisted only.** Each tool runs a fixed command shape. There is no
-   arbitrary command execution — `shell_test` runs only `bun test`, the git
-   tools run only the specific git subcommands. Inputs are Zod-validated.
-2. **No host-env passthrough.** Spawned commands see a scoped environment
-   (`PATH`, `HOME` only), mirroring the Action Kernel's "no host env to
-   sandboxes" rule. Git identity is pinned with `-c` flags so commits do not
-   depend on — or read — the host's global git config.
+1. **Fixed binary + argv, no shell.** Each tool runs a fixed binary (`bun` /
+   `git`) with a fixed argument shape via `Bun.spawn` (an argv array, never a
+   shell string), so tool inputs cannot inject extra commands or arguments.
+   Inputs are Zod-validated. **What this does NOT claim:** `shell_test` runs the
+   workspace's *own* test suite, so it executes whatever test code lives there —
+   it is an audit/governance boundary, not an OS sandbox against the code under
+   test. OS-level sandboxing of executed code is deferred (see
+   `docs/roadmap.md`). `git_commit` runs with repo hooks disabled
+   (`-c core.hooksPath=/dev/null --no-verify`) and host git config neutralised
+   (`GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null`), so the workspace cannot
+   smuggle code execution through a git hook or a planted `~/.gitconfig`.
+2. **No host-env passthrough.** Spawned commands inherit only `PATH`; `HOME` is
+   a fresh empty temp directory (so git/bun read no host dotfiles), and git's
+   global/system config are disabled. Git identity is pinned with `-c` flags.
+   Mirrors the Action Kernel's "no host env to sandboxes" rule.
 3. **stdout is the protocol channel.** This is a stdio MCP server. All logging
    goes to stderr; never write to stdout (the same rule guard-mcp follows).
-4. **`git_push` never pushes here.** It is a no-op that exists purely to be the
-   L4 action the policy gate blocks. Even if invoked directly it must not open a
-   network connection or mutate a remote.
+4. **`git_push` never pushes here — and refuses loudly.** It exists purely to be
+   the L4 action the policy gate blocks; it opens no network connection and
+   mutates no remote. If its implementation is ever reached (called directly, or
+   mis-declared below L4), it returns `isError: true` rather than a
+   success-shaped no-op, so a trust-level misconfiguration cannot hide behind a
+   friendly result.
 
 ## Files
 

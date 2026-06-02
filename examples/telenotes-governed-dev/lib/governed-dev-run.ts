@@ -52,11 +52,17 @@ export interface GovernedDevDemoResult {
   citedBeliefId?: string
 }
 
-export const ARCH_BELIEF_MARKER = "export function buildNote"
+/** The fixture source file the feature decision rests on. */
+export const ARCH_SOURCE_FILE = "note.ts"
 
-interface ClaimLike {
+interface ObservationLike {
+  id?: string
+  payload?: { args?: { path?: unknown } }
+}
+interface ContentClaimLike {
   id: string
-  structured_predicate?: { relation?: string; object?: { text?: unknown } }
+  source_observation_ids?: string[]
+  structured_predicate?: { relation?: string }
 }
 interface ActionLike {
   id: string
@@ -72,12 +78,32 @@ export function contentClaimText(claim: Claim): string {
   return claim.statement
 }
 
-/** The belief id backing an external-document content claim whose text contains `marker`. */
-export function findContentBeliefId(events: EventEnvelope[], marker: string): string | undefined {
-  const claimsById = new Map<string, ClaimLike>()
+/**
+ * The belief id backing the external-document content claim that came from
+ * reading the file whose path ends with `pathSuffix`. Resolved by observation
+ * provenance (the read's tool-call `path` argument), not by marker substring,
+ * so it always cites the belief from the intended file even if another file's
+ * contents happen to share text.
+ */
+export function findContentBeliefIdByPath(
+  events: EventEnvelope[],
+  pathSuffix: string,
+): string | undefined {
+  // Observation ids whose tool call read a path ending in `pathSuffix`.
+  const obsIds = new Set<string>()
+  for (const e of events) {
+    if (e.type !== "observation.recorded") continue
+    const obs = e.payload as ObservationLike
+    const path = obs.payload?.args?.path
+    if (typeof path === "string" && path.endsWith(pathSuffix) && typeof obs.id === "string") {
+      obsIds.add(obs.id)
+    }
+  }
+  if (obsIds.size === 0) return undefined
+  const claimsById = new Map<string, ContentClaimLike>()
   for (const e of events) {
     if (e.type === "claim.extracted") {
-      const claim = e.payload as ClaimLike
+      const claim = e.payload as ContentClaimLike
       claimsById.set(claim.id, claim)
     }
   }
@@ -85,13 +111,8 @@ export function findContentBeliefId(events: EventEnvelope[], marker: string): st
     if (e.type !== "belief.adopted") continue
     const belief = e.payload as Belief
     const claim = claimsById.get(belief.claim_id)
-    const relation = claim?.structured_predicate?.relation
-    const text = claim?.structured_predicate?.object?.text
-    if (
-      relation === "mcp.external_document_content" &&
-      typeof text === "string" &&
-      text.includes(marker)
-    ) {
+    if (claim?.structured_predicate?.relation !== "mcp.external_document_content") continue
+    if ((claim.source_observation_ids ?? []).some((id) => obsIds.has(id))) {
       return belief.id
     }
   }
@@ -121,15 +142,15 @@ function outcomeFor(actionId: string, result: "success" | "failure"): Record<str
   }
 }
 
-async function spawnQuiet(cmd: string[], cwd: string): Promise<void> {
-  await Bun.spawn(cmd, { cwd, stdout: "ignore", stderr: "ignore" }).exited
+async function spawnQuiet(cmd: string[], cwd: string): Promise<number> {
+  return Bun.spawn(cmd, { cwd, stdout: "ignore", stderr: "ignore" }).exited
 }
 
 /** Initialise a throwaway git repo so `git_commit` has somewhere to commit. */
 async function gitInit(cwd: string): Promise<void> {
-  await spawnQuiet(["git", "init", "-q"], cwd)
-  await spawnQuiet(["git", "add", "-A"], cwd)
-  await spawnQuiet(
+  const steps: string[][] = [
+    ["git", "init", "-q"],
+    ["git", "add", "-A"],
     [
       "git",
       "-c",
@@ -141,8 +162,13 @@ async function gitInit(cwd: string): Promise<void> {
       "-m",
       "chore: import Telenotes fixture",
     ],
-    cwd,
-  )
+  ]
+  for (const step of steps) {
+    const code = await spawnQuiet(step, cwd)
+    if (code !== 0) {
+      throw new Error(`workspace git init failed (exit ${code}): ${step.join(" ")}`)
+    }
+  }
 }
 
 class InProcessAgentUpstream extends UpstreamServer {
@@ -294,7 +320,7 @@ export async function runGovernedDevDemo(
 
     // 2. Decide on a plan, citing the (read-not-verified) belief about Note's
     //    shape that reading note.ts produced.
-    citedBeliefId = findContentBeliefId(await loadEvents(), ARCH_BELIEF_MARKER)
+    citedBeliefId = findContentBeliefIdByPath(await loadEvents(), ARCH_SOURCE_FILE)
     if (citedBeliefId === undefined) {
       process.stderr.write("[telenotes] WARN: could not locate the note.ts architecture belief\n")
     }

@@ -11,11 +11,17 @@
  * — the demonstrable teeth of the policy gate. A single shell tool would
  * collapse all three into one trust level.
  *
- * Each tool is allowlisted (no arbitrary command execution), validates its
- * inputs with Zod, runs with a scoped environment (no host-env passthrough
- * beyond PATH/HOME), and pins git identity via `-c` so commits do not depend
- * on the host's global git config. stdout is the MCP protocol channel — all
- * logging goes to stderr.
+ * Each tool runs a fixed binary (`bun` / `git`) with a fixed argv shape via
+ * `Bun.spawn` (an argv array, never a shell string), so tool inputs cannot
+ * inject extra commands or arguments; inputs are Zod-validated. Note the
+ * boundary this does NOT claim: `shell_test` runs the workspace's *own* test
+ * suite, so it executes whatever test code lives in the workspace — it is an
+ * audit/governance boundary, not an OS sandbox against the code under test
+ * (OS-level sandboxing is deferred; see `docs/roadmap.md`). git runs with hooks
+ * and host config disabled so the workspace cannot smuggle code execution
+ * through a git hook or a planted `~/.gitconfig`. Spawned processes inherit
+ * only `PATH` (HOME is a fresh empty dir); stdout is the MCP protocol channel
+ * — all logging goes to stderr.
  *
  * This server is the reusable asset of the Telenotes batch: it finally
  * realizes the write/shell/commit surface `policy.lodestar.ts` has always
@@ -24,6 +30,9 @@
  * into `packages/adapters/{shell,github}`.
  */
 
+import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import {
   CallToolRequestSchema,
@@ -96,22 +105,33 @@ const TOOLS: MCPTool[] = [
   },
 ]
 
-/** Environment variables the spawned tools are allowed to see. */
-const ALLOWED_ENV = ["PATH", "HOME"] as const
-
-function scopedEnv(): Record<string, string> {
-  const env: Record<string, string> = {}
-  for (const key of ALLOWED_ENV) {
-    const value = process.env[key]
-    if (value !== undefined) env[key] = value
+/**
+ * The environment spawned tools see. Only `PATH` is inherited from the host;
+ * `HOME` is a fresh empty directory so git/bun read no host dotfiles, and git's
+ * global/system config are neutralised outright — so an attacker-controlled
+ * `~/.gitconfig` or `/etc/gitconfig` (hook paths, includes, filters, credential
+ * helpers) cannot influence the git commands this server runs. Mirrors the
+ * Action Kernel's "no host env to sandboxes" rule.
+ */
+function scopedEnv(home: string): Record<string, string> {
+  const env: Record<string, string> = {
+    HOME: home,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_SYSTEM: "/dev/null",
   }
+  const path = process.env.PATH
+  if (path !== undefined) env.PATH = path
   return env
 }
 
-async function run(cmd: string[], cwd: string): Promise<{ code: number; output: string }> {
+async function run(
+  cmd: string[],
+  cwd: string,
+  env: Record<string, string>,
+): Promise<{ code: number; output: string }> {
   const proc = Bun.spawn(cmd, {
     cwd,
-    env: scopedEnv(),
+    env,
     stdout: "pipe",
     stderr: "pipe",
   })
@@ -132,6 +152,9 @@ function textResult(text: string, isError = false): CallToolResult {
  * caller connects it to a transport (see `bin.ts` for the stdio entry).
  */
 export function buildDevToolsServer(workspace: string): Server {
+  // A fresh, empty HOME for every spawned subprocess — no host dotfiles leak in.
+  const env = scopedEnv(mkdtempSync(join(tmpdir(), "telenotes-devtools-home-")))
+
   const server = new Server(
     { name: "lodestar-telenotes-dev-tools", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } },
@@ -146,41 +169,51 @@ export function buildDevToolsServer(workspace: string): Server {
         case "shell_test": {
           const input = ShellTestInputSchema.parse(args)
           const cmd = ["bun", "test", ...(input.filter ? ["-t", input.filter] : [])]
-          const { code, output } = await run(cmd, workspace)
+          const { code, output } = await run(cmd, workspace, env)
           return textResult(`$ ${cmd.join(" ")}\n${output}`, code !== 0)
         }
         case "git_commit": {
           const input = GitCommitInputSchema.parse(args)
-          const add = await run(["git", "add", "-A"], workspace)
+          const add = await run(["git", "add", "-A"], workspace, env)
           if (add.code !== 0) return textResult(`git add failed:\n${add.output}`, true)
           const commit = await run(
             [
               "git",
+              // Disable repo hooks so the workspace cannot smuggle code
+              // execution through .git/hooks; pin identity so the commit does
+              // not depend on (now-disabled) host config.
+              "-c",
+              "core.hooksPath=/dev/null",
               "-c",
               "user.email=lodestar-demo@example.invalid",
               "-c",
               "user.name=Lodestar Demo",
               "commit",
+              "--no-verify",
               "-m",
               input.message,
             ],
             workspace,
+            env,
           )
           if (commit.code !== 0) return textResult(`git commit failed:\n${commit.output}`, true)
-          const head = await run(["git", "rev-parse", "HEAD"], workspace)
+          const head = await run(["git", "rev-parse", "HEAD"], workspace, env)
           return textResult(`committed ${head.output.trim()}\n${commit.output}`)
         }
         case "git_push": {
           const input = GitPushInputSchema.parse(args)
-          // Deliberately a no-op: this demo server has no remote. The tool
-          // exists so the proxy's policy gate has a genuine L4, irreversible,
-          // external-blast-radius action to govern. Under the demo's
-          // auto-approve ceiling the call is denied before it ever reaches
-          // here; if it is reached directly it must not perform a real push.
+          // This demo server has no remote and never pushes. git_push exists
+          // only so the proxy's policy gate has a genuine L4, irreversible,
+          // external-blast-radius action to govern; under the demo ceiling the
+          // call is denied before it reaches here. If it IS reached (called
+          // directly, or mis-declared below L4), refuse loudly with
+          // isError:true rather than returning a success-shaped no-op that
+          // would mask the misconfiguration.
           const remote = input.remote ?? "origin"
           const branch = input.branch ?? "(current)"
           return textResult(
-            `git_push is a no-op in the Telenotes dev-tools server (no remote configured). Would push ${branch} to ${remote}.`,
+            `git_push refused: the Telenotes dev-tools server has no remote and never pushes (would have targeted ${branch} → ${remote}). This tool exists only to be governed at L4; reaching its implementation means it was not blocked by policy.`,
+            true,
           )
         }
         default:

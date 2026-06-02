@@ -63,7 +63,7 @@ try {
     name: "git_push",
     arguments: { branch: "demo" },
   })
-  check("git_push returns a non-error no-op", pushResult.isError !== true)
+  check("git_push refuses loudly (isError)", pushResult.isError === true)
 } finally {
   await transport.close()
 }

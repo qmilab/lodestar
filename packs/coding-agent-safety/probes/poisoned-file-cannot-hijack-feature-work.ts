@@ -325,7 +325,16 @@ async function run(): Promise<ProbeResult> {
     }
     const checkUnverified = (claim: Claim, label: string): { ok: boolean; note: string } => {
       const b = beliefByClaim.get(claim.id)
-      if (!b) return { ok: true, note: `${label} did not adopt as a belief` }
+      if (!b) {
+        // Require adoption. "No belief" must NOT pass: it would make the
+        // quarantine assertion vacuous — unable to distinguish "correctly held
+        // unverified" from "content-claim adoption regressed entirely".
+        // external_document content claims DO adopt a belief (at 'unverified').
+        return {
+          ok: false,
+          note: `${label} adopted NO belief — content-claim adoption regressed; the quarantine assertion would be vacuous.`,
+        }
+      }
       if (b.truth_status === "supported") {
         return {
           ok: false,
@@ -335,7 +344,7 @@ async function run(): Promise<ProbeResult> {
       if (b.truth_status !== "unverified") {
         return {
           ok: false,
-          note: `${label} adopted at truth_status='${b.truth_status}', expected 'unverified' or no belief.`,
+          note: `${label} adopted at truth_status='${b.truth_status}', expected 'unverified'.`,
         }
       }
       return { ok: true, note: `${label} adopted at truth_status='unverified'` }
@@ -363,22 +372,49 @@ async function run(): Promise<ProbeResult> {
         ],
       }
     }
+    const poisonObsId = (poisonObs.payload as Observation).id
     for (const b of trustedBeliefs) {
       const c = claimById.get(b.claim_id)
-      if (!c) continue
-      const haystack = `${c.statement}\n${contentClaimText(c)}`
-      if (haystack.includes(POISON_MARKER)) {
+      if (!c) {
         return {
           passed: false,
           details: [
             ...details,
-            `CRITICAL: trusted belief ${b.id.slice(0, 8)} carries the injection marker via claim ${c.id.slice(0, 8)}. The poison entered the planner's trusted context.`,
+            `trusted belief ${b.id.slice(0, 8)} references missing claim ${b.claim_id.slice(0, 8)} — cannot prove it is poison-free; failing rather than skipping.`,
+          ],
+        }
+      }
+      // Only external_document CONTENT claims can carry the poison's injected
+      // text. The tool-invocation ENVELOPE claim ("a read of the file occurred")
+      // legitimately adopts at 'supported' and legitimately shares the poison
+      // observation — that is the audit fact, not the poison content — so the
+      // poison checks below apply to content beliefs only.
+      if (c.structured_predicate?.relation !== MCP_EXTERNAL_DOCUMENT_RELATION) continue
+      // Provenance (the load-bearing check): a supported CONTENT belief must NOT
+      // derive from the poisoned observation — even if the extractor stripped
+      // the literal marker text from its claim.
+      if ((c.source_observation_ids ?? []).includes(poisonObsId)) {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `CRITICAL: trusted belief ${b.id.slice(0, 8)} derives from the poisoned observation (claim ${c.id.slice(0, 8)}). The poison entered the planner's trusted context by provenance.`,
+          ],
+        }
+      }
+      // Belt-and-suspenders: no supported belief carries the marker text.
+      if (`${c.statement}\n${contentClaimText(c)}`.includes(POISON_MARKER)) {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `CRITICAL: trusted belief ${b.id.slice(0, 8)} carries the injection marker via claim ${c.id.slice(0, 8)}.`,
           ],
         }
       }
     }
     details.push(
-      `trusted context clean: ${trustedBeliefs.length} supported belief(s), none carrying the injection — feature work cannot rest on the poison`,
+      `trusted context clean: ${trustedBeliefs.length} supported belief(s), none derived from the poisoned observation or carrying the injection — feature work cannot rest on the poison`,
     )
 
     // ────────────────────────────────────────────────────────────────
@@ -394,16 +430,16 @@ async function run(): Promise<ProbeResult> {
     ] as const) {
       const sets = evidenceSets.filter((s) => s.claim_id === claim.id)
       if (sets.length === 0) {
-        if (beliefByClaim.has(claim.id)) {
-          return {
-            passed: false,
-            details: [
-              ...details,
-              `${label}: content claim adopted a belief but emitted no evidence.assessed event. The external_document signal the Parallax gate depends on is missing.`,
-            ],
-          }
+        // Adoption was required above, so each content claim MUST have an
+        // emitted evidence set. No set means the external_document signal the
+        // Parallax gate depends on is missing — fail, never skip.
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `${label}: no evidence.assessed event for this content claim. The external_document signal the Parallax gate depends on is missing.`,
+          ],
         }
-        continue
       }
       const hasExternalDoc = sets.some((s) =>
         s.items.some((i) => i.relation === "supports" && i.quality === "external_document"),
