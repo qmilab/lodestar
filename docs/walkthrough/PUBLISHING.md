@@ -78,6 +78,25 @@ These point at the canonical/repo; they are not new copies:
   asciinema cast or a GIF.
 - **Targeted subreddits** — r/LocalLLaMA, r/MachineLearning (be norm-aware).
 
+### Headline variants (canonical H1 stays fixed)
+
+The in-post **canonical H1 / slug never changes** (SEO): *"Wrap your coding
+agent, get a trust report"* →
+`…/writing/wrap-your-coding-agent-get-a-trust-report`. For distribution, use a
+punchier headline that **links back to that same canonical URL** — a second post
+title would split SEO; a different *link headline* does not. Marketing back
+pocket:
+
+- **Hook (Show HN / X / Bluesky):** *"Your coding agent read a poisoned file.
+  Here's why it didn't matter."*
+- **Idea-forward (HN title / cross-post headline):** *"Reading isn't believing:
+  a trust layer for AI coding agents."*
+- **Provocation (thread opener / Reddit):** *"What did your coding agent actually
+  believe?"*
+
+Same pattern for parts 2–3: one stable canonical H1, several distribution
+headlines pointing home.
+
 ## Video
 
 Script: [`video-script.md`](./video-script.md). Record the asciinema casts named
