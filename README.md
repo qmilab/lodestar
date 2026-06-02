@@ -18,6 +18,12 @@ Lodestar gives agents a trust layer: claims, evidence, decisions, approvals, mem
 
 Lodestar is a research project of [QMI Lab](https://qmilab.com). Commercial offerings will follow from [Machinise](https://machinise.com).
 
+> **▶ See it in action.** A poisoned file tries to hijack a wrapped coding agent — and the firewall holds. The full [walkthrough](https://qmilab.com/lodestar/docs/guides/walkthrough/) wraps a real agent and gets a trust report.
+
+[![Lodestar — the Telenotes poison run, ending in 'firewall verdict: HELD ✓'](docs/guides/assets/telenotes-poison.gif)](https://qmilab.com/lodestar/docs/guides/walkthrough/)
+
+<sub>Plays inline (interactive) on the [docs site](https://qmilab.com/lodestar/docs/guides/walkthrough/); the source [asciinema cast](docs/guides/assets/telenotes-poison.cast) lives in the repo.</sub>
+
 ---
 
 ## What it does

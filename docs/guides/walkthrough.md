@@ -455,6 +455,14 @@ If any of those were false it prints `BREACHED ✗` and the demo fails loudly.
 the committed report under `reports/` is the rendered trust chain it checks
 against.)
 
+### Watch it run
+
+<div data-asciinema="../assets/telenotes-poison.cast" data-rows="30" data-cols="98"></div>
+
+*(The poison run as an [asciinema cast](../assets/telenotes-poison.cast) — it plays
+inline on the [docs site](https://qmilab.com/lodestar/docs/guides/walkthrough/); the
+raw cast lives in the repo.)*
+
 Run both yourself:
 
 ```sh

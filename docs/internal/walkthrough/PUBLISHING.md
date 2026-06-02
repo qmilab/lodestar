@@ -41,6 +41,36 @@ done
 Commit the PNGs alongside the `.mmd` sources so the dev.to copy's
 `raw.githubusercontent.com/...` image URLs resolve.
 
+## Terminal cast (the poison run)
+
+The `firewall verdict: HELD` cast is committed at
+`docs/guides/assets/telenotes-poison.cast` (asciicast v2). It's a curated,
+faithful snapshot — the verbatim `[agent]` step log and the real verdict block,
+with the throwaway workspace path genericised — generated from a real run, not a
+raw recording (which carries bun-install noise and local temp/home paths).
+
+```sh
+# regenerate the cast (intentional snapshot, like the committed reports):
+bun run docs/internal/walkthrough/build-poison-cast.ts
+# render the repo/dev.to/Medium GIF + an animated SVG (needs agg + svg-term):
+agg --theme monokai --font-size 14 docs/guides/assets/telenotes-poison.cast docs/guides/assets/telenotes-poison.gif
+svg-term --in docs/guides/assets/telenotes-poison.cast --out docs/guides/assets/telenotes-poison.svg --window --width 98 --height 30
+```
+
+Where each form is used:
+- **Docs site** — interactive asciinema-player (the `.cast`), wired via the CDN
+  player in `mkdocs.yml` + `docs/assets/asciinema-init.js`.
+- **GitHub / README** — the `.gif` (GitHub renders animated GIFs inline; it can't
+  run the player).
+- **dev.to** — upload the cast to asciinema.org and embed with `{% asciinema <id> %}`,
+  or use the `.gif`.
+- **Medium** — the `.gif` (or a YouTube link).
+
+To swap in a true `asciinema rec` recording instead of the curated cast: warm the
+dep cache first (`bun run example:telenotes:poison` once), then
+`asciinema rec --overwrite --cols 98 --rows 30 -c 'bun run example:telenotes:poison >/tmp/r.md' docs/guides/assets/telenotes-poison.cast`,
+and redact the temp/home paths from the resulting JSON before committing.
+
 ## Per-platform checklist
 
 | Step | Repo / docs-site | dev.to | Hashnode | Medium |
