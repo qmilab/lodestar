@@ -41,7 +41,7 @@ declares them under a `sentinels` field and the loader resolves each id
 against the first-party `FIRST_PARTY_SENTINELS` registry — have all
 landed). `@qmilab/lodestar-guard-mcp`
 lives in this repo and will publish to npm in a follow-up mini-marathon.
-Batch 5 (week-8 thesis demo) is underway. The secondary
+Batch 5 (week-8 thesis demo) has landed — all of Batches 1–5 are complete. The secondary
 documentation-agent proving ground has landed
 (`examples/documentation-agent/`) — it exercises the claim/evidence chain
 on documentation content via a `DocumentationExtractor` +
@@ -61,8 +61,10 @@ never enters trusted context, the L4 push stays blocked), locked in CI by the
 `poisoned-file-cannot-hijack-feature-work` probe. A `real-claude-code/` recipe
 + proxy configs drive the same proxy with a live Claude Code session (the
 built-in-tools-bypass caveat handled by denying Edit/Write/Bash); its captured
-evidence is the one remaining human-driven step. Batch 5 and subsequent batches
-are tracked in `docs/roadmap.md`.
+evidence has been recorded (committed under `real-claude-code/captured/`). The
+Batch 5 blog/video walkthrough has also shipped — the reader guide is
+`docs/guides/walkthrough.md`, published to the docs site at qmilab.com/lodestar/docs.
+Post-v1 work is tracked in `docs/roadmap.md`.
 
 This file is the entry point for any agent working in this repository. Read this first, then `docs/architecture/v02-delta.md` for current schema (note the Round 5 addendum and the naming-history section at the bottom), then the relevant package's `CLAUDE.md` for implementation details.
 
@@ -118,7 +120,7 @@ packages/
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
   harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier)
   policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
-  otel-exporter/       # (Batch 5+) OTel GenAI semantic conventions bridge
+  otel-exporter/       # (later) OTel GenAI semantic conventions bridge
   adapters/
     git/               # (exists)
     filesystem/        # (exists)

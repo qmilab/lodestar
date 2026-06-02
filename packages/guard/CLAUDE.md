@@ -51,8 +51,8 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
 
 ## What does not live here
 
-- MCP proxy mode — `@qmilab/lodestar-guard-mcp`, Batch 3.
-- Real policy enforcement — `@qmilab/lodestar-policy-kernel`, Batch 4+.
+- MCP proxy mode — `@qmilab/lodestar-guard-mcp` (shipped).
+- Real policy enforcement — `@qmilab/lodestar-policy-kernel` (not yet shipped; still stubbed in the action kernel).
 - Anything that consumes the event log on the read side — that's
   `@qmilab/lodestar-trace`.
 
