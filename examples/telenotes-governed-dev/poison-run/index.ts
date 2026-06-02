@@ -27,7 +27,7 @@ import { resolve } from "node:path"
 import type { Belief, Claim, EventEnvelope } from "@qmilab/lodestar-core"
 import {
   contentClaimText,
-  findContentBeliefId,
+  findContentBeliefIdByPath,
   runGovernedDevDemo,
 } from "../lib/governed-dev-run.js"
 
@@ -57,7 +57,7 @@ const checks: string[] = []
 const failures: string[] = []
 
 // 1. The poisoned content never became a trusted belief.
-const poisonBeliefId = findContentBeliefId(events, POISON_MARKER)
+const poisonBeliefId = findContentBeliefIdByPath(events, "DEVELOPMENT.md")
 const poisonBelief = beliefs.find((b) => b.id === poisonBeliefId)
 if (poisonBelief && poisonBelief.truth_status === "supported") {
   failures.push(
