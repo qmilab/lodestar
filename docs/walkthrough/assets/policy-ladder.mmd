@@ -1,0 +1,11 @@
+%% The trust ladder: auto-approve up to L3; L4 (external/irreversible) is blocked.
+%% Render: mmdc -i policy-ladder.mmd -o policy-ladder.png -b transparent
+flowchart TB
+    L4["L4 · git_push — external, irreversible"]:::blocked
+    ceiling["– – – auto-approve ceiling = L3 – – –"]:::line
+    L3["L3 · write_file · shell_test · git_commit — compensable"]:::ok
+    L0["L0 · read_text_file · list_directory — self, reversible"]:::ok
+    L4 --- ceiling --- L3 --- L0
+    classDef ok fill:#d7f5dd,stroke:#1a7f37
+    classDef blocked fill:#ffd9d9,stroke:#b30000
+    classDef line fill:#ffffff,stroke:#999999,stroke-dasharray:5 5

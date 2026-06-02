@@ -1,0 +1,11 @@
+%% The "one idea": one tool call yields two beliefs of different trust.
+%% Render: mmdc -i two-belief-split.mmd -o two-belief-split.png -b transparent
+flowchart LR
+    T["Tool call:<br/>read note.ts"] --> A["The read happened<br/>evidence: tool_result"]
+    T --> B["What the file said<br/>evidence: external_document"]
+    A --> AS["Belief: <b>supported</b><br/>confidence 0.95"]
+    B --> BS["Belief: <b>unverified</b><br/>confidence 0.95"]
+    classDef ok fill:#d7f5dd,stroke:#1a7f37
+    classDef warn fill:#fff3cd,stroke:#b8860b
+    class AS ok
+    class BS warn

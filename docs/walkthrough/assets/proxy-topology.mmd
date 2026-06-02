@@ -1,0 +1,6 @@
+%% Where governance sits: the MCP proxy between the agent and downstream servers.
+%% Render: mmdc -i proxy-topology.mmd -o proxy-topology.png -b transparent
+flowchart LR
+    A["Coding agent<br/>(Claude Code, Cursor, …)"] -->|MCP| P["Lodestar MCP proxy<br/>· policy gate<br/>· memory firewall<br/>· event log"]
+    P -->|mcp.fs.*| FS["filesystem server<br/>(read / write)"]
+    P -->|mcp.devtools.*| DT["dev-tools server<br/>(shell_test / git_commit / git_push)"]
