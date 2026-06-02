@@ -9,7 +9,8 @@ Syndication note (for whoever publishes this):
   For platforms that don't render Mermaid (dev.to, Hashnode, Medium), pre-render
   the sources in `assets/*.mmd` to PNG/SVG —
   `mmdc -i assets/<name>.mmd -o assets/<name>.png` — and embed the images. The
-  dev.to-ready copy (`walkthrough.devto.md`) already does this. See PUBLISHING.md.
+  dev.to-ready copy and publishing runbook live in `docs/internal/walkthrough/`
+  (`walkthrough.devto.md`, `PUBLISHING.md`); the devto copy already does this.
 - Suggested syndication tags: #ai #llm #security #opensource
 -->
 ---

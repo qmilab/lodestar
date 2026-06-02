@@ -143,13 +143,14 @@ packs/
                              #   under the manifest's `sentinels` field (resolved by id)
 
 docs/
+  guides/              # reader-facing guides (the walkthrough + series)
+  concepts/            # evergreen explainers (e.g. threat model)
+  strategy/            # positioning / go-to-market
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
-  positioning.md       # external voice, four developer entry points
-  roadmap.md           # five-batch sequence to v1
-  threat-model/        # memory poisoning analysis
-  whitepaper/          # outline + drafts
-  pitch-deck/          # 12-slide structure
-  review/              # adversarial review history (ChatGPT rounds 1-5)
+  roadmap.md           # batch sequence to v1
+  internal/            # planning & production, not for the docs site:
+                       #   review/, whitepaper/, pitch-deck/, and walkthrough/
+                       #   (BRIEF, video script, dev.to syndication copy)
 
 research/
                        # probes/ moved to packs/lodestar-core/probes/ in Batch 4 —
@@ -220,9 +221,9 @@ These are settled. If a session starts to question them, redirect it.
 
 - Architecture: `docs/architecture/v02-delta.md` (read the Round 5 addendum and the naming-history section at the bottom)
 - Roadmap: `docs/roadmap.md`
-- Positioning: `docs/positioning.md`
-- Threat model: `docs/threat-model/memory-poisoning.md`
+- Positioning: `docs/strategy/positioning.md`
+- Threat model: `docs/concepts/threat-model/memory-poisoning.md`
 - Examples: `examples/telenotes-governed-dev/` (full pipeline), `examples/doc-insight/` (firewall gate focus)
-- Adversarial review history: `docs/review/` (ChatGPT rounds 1–5)
-- Research paper (arXiv position paper): outline `docs/whitepaper/outline.md`, submission + readiness plan `docs/whitepaper/arxiv-plan.md`
-- Batch 5 walkthrough (blog/video) plan + venues: `docs/walkthrough/BRIEF.md`
+- Adversarial review history: `docs/internal/review/` (ChatGPT rounds 1–5)
+- Research paper (arXiv position paper): outline `docs/internal/whitepaper/outline.md`, submission + readiness plan `docs/internal/whitepaper/arxiv-plan.md`
+- Walkthrough (reader guide): `docs/guides/walkthrough.md` — plan, video script, and dev.to syndication copy in `docs/internal/walkthrough/`

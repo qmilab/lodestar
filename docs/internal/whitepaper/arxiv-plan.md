@@ -74,7 +74,7 @@ honest scoping intact.
 ## Pre-submission checklist
 
 - [ ] Refresh outline §10 + §1.3 with the Batch 3–5 reality above.
-- [ ] Confirm the threat-model section (§8) matches `docs/threat-model/` and the
+- [ ] Confirm the threat-model section (§8) matches `docs/concepts/threat-model/` and the
       `v02-delta.md` Round 5 retraction (no unverifiable CVE claims).
 - [ ] Decide primary arXiv category + target venue (drives the 12pp cut).
 - [ ] Figures (5–7 per outline) — reuse the committed trust reports as listings.
