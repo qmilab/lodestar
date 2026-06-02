@@ -10,7 +10,7 @@ title: "How Lodestar holds the line: the agent-safety threat model"
 description: "Part 2 — a closer look at prompt injection and tool poisoning across tools and sessions, the external_document-vs-tool_result boundary in detail, and the trust report as audit evidence."
 date: TBD
 draft: true
-canonical_url: "https://nandan.me/writing/lodestar-agent-safety-threat-model"
+canonical_url: "https://qmilab.com/lodestar/docs/guides/part-2-the-threat-model/"
 tags: [ai, llm, security, opensource, ai-agents, mcp]
 series: "Lodestar: the trust layer for AI agents"
 series_part: 2

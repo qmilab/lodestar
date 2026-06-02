@@ -3,7 +3,7 @@ title: Wrap your coding agent, get a trust report
 published: false
 description: A walkthrough of Lodestar — an open trust layer for AI agents — through two runnable demos: a coding agent that records why it did what it did, and a firewall that holds when a file tries to hijack it.
 tags: ai, llm, security, opensource
-canonical_url: https://nandan.me/writing/wrap-your-coding-agent-get-a-trust-report
+canonical_url: https://qmilab.com/lodestar/docs/guides/walkthrough/
 cover_image: https://raw.githubusercontent.com/qmilab/lodestar/main/docs/guides/assets/two-belief-split.png
 series: Lodestar - the trust layer for AI agents
 ---

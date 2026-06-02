@@ -15,12 +15,14 @@ series.
 
 ## Canonical-first rule
 
-Pick the long-term-stable URL as canonical and publish it **first** so search
-engines attribute it correctly. Current canonical: the personal-site URL in
-`walkthrough.md`'s front-matter (`nandan.me/writing/…`). When the docs site
-exists, decide whether canonical moves there; if it does, update every copy's
-`canonical_url`. Every syndicated copy must point `canonical_url` back to the
-canonical — otherwise duplicates compete.
+Publish the canonical **first** so search engines attribute it correctly. This
+guide's canonical is the **docs-site URL** in `walkthrough.md`'s front-matter
+(`qmilab.com/lodestar/docs/guides/walkthrough/`). Every syndicated copy (dev.to,
+Hashnode) must point `canonical_url` back to it — otherwise duplicates compete.
+
+Note the two-piece model: nandan.me carries a *separate* first-person motivation
+essay (canonical there), which links to this guide. nandan.me does **not** host a
+copy of this guide, so they never compete.
 
 ## Render the diagrams (once per change)
 
@@ -56,11 +58,12 @@ Commit the PNGs alongside the `.mmd` sources so the dev.to copy's
 2. Copy `walkthrough.devto.md` into a new dev.to article (front-matter is
    already in dev.to format). Tags: max 4, no `#`.
 3. Leave `published: false` until ready; flip to `true` to publish.
-4. Confirm `canonical_url` points at the personal-site URL.
+4. Confirm `canonical_url` points at the docs-site URL
+   (`qmilab.com/lodestar/docs/guides/walkthrough/`).
 
 ### Hashnode (optional)
 
-Import or paste; set the **Canonical URL** field to the personal-site URL. Embed
+Import or paste; set the **Canonical URL** field to the docs-site URL. Embed
 the same PNGs.
 
 ### Medium (skip unless targeting a publication)
@@ -82,7 +85,7 @@ These point at the canonical/repo; they are not new copies:
 
 The in-post **canonical H1 / slug never changes** (SEO): *"Wrap your coding
 agent, get a trust report"* →
-`…/writing/wrap-your-coding-agent-get-a-trust-report`. For distribution, use a
+`qmilab.com/lodestar/docs/guides/walkthrough/`. For distribution, use a
 punchier headline that **links back to that same canonical URL** — a second post
 title would split SEO; a different *link headline* does not. Marketing back
 pocket:
