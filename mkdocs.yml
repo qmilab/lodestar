@@ -21,6 +21,11 @@ theme:
 
 extra_css:
   - assets/qmilab-theme.css
+  - https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.css
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.min.js
+  - assets/asciinema-init.js
 
 # Public docs site = reader-facing only. Planning/reference and the not-yet-written
 # series placeholders stay out of the build (flip these as parts ship / if you want
