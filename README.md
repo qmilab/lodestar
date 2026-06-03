@@ -16,7 +16,7 @@ Agents are becoming powerful enough to change code, call APIs, deploy systems, a
 
 Lodestar gives agents a trust layer: claims, evidence, decisions, approvals, memory governance, and outcome tracking. Every action the agent takes leaves an audit trail that can be replayed, explained, and graded.
 
-Lodestar is a research project of [QMI Lab](https://qmilab.com). Commercial offerings will follow from [Machinise](https://machinise.com).
+Lodestar is a research project of [QMI Lab](https://qmilab.com).
 
 > **▶ See it in action.** A poisoned file tries to hijack a wrapped coding agent — and the firewall holds. The full [walkthrough](https://qmilab.com/lodestar/docs/guides/walkthrough/) wraps a real agent and gets a trust report.
 
