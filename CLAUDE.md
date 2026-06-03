@@ -1,7 +1,6 @@
 # CLAUDE.md — Lodestar monorepo
 
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
-External voice: **trust layer for AI agents**.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
 publishing), v0.2 architecture locked. Twenty-two probes pass under
@@ -147,7 +146,6 @@ packs/
 docs/
   guides/              # reader-facing guides (the walkthrough + series)
   concepts/            # evergreen explainers (e.g. threat model)
-  strategy/            # positioning / go-to-market
   architecture/        # design memos, schema decisions, v0.2 delta with Round 5
   roadmap.md           # batch sequence to v1
   internal/            # planning & production, not for the docs site:
@@ -214,7 +212,6 @@ These are settled. If a session starts to question them, redirect it.
 - **Four orthogonal memory lifecycle axes**: truth, retrieval, security, freshness. Do not collapse.
 - **Auto-observation gate**: `external_document` and `model_inference` evidence cannot promote a claim to `truth_status: supported` automatically. Round 5 invariant.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
-- **Public voice**: "trust layer for AI agents." Internal/research voice: "epistemic governance framework." Do not mix audiences.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
 - **Twenty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
