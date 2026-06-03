@@ -39,9 +39,20 @@ exclude_docs: |
 
 nav:
   - Home: index.md
+  - Get started: guides/get-started.md
   - Walkthrough: guides/walkthrough.md
+  - Use cases: use-cases.md
   - Concepts:
+      - The epistemic chain: concepts/epistemic-chain.md
+      - Reading isn't believing: concepts/reading-isnt-believing.md
+      - The memory firewall: concepts/memory-firewall.md
+      - The trust ladder: concepts/trust-ladder.md
+      - Sentinels and calibration: concepts/sentinels-and-calibration.md
       - Memory poisoning: concepts/threat-model/memory-poisoning.md
+  - Reference:
+      - Architecture: reference/architecture.md
+      - CLI: reference/cli.md
+      - Probe packs: reference/probe-packs.md
   - Strategy:
       - Positioning: strategy/positioning.md
 
