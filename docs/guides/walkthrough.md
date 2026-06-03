@@ -586,12 +586,12 @@ A trust layer that overstates itself is worse than none. So, precisely:
 - **It's not a replacement** for your runtime, your tracer, or your memory
   layer. It's the trust layer beside them.
 
-**Open-core, and the line is firm.** Everything in this post is Apache-2.0 and
-runs locally — nothing here gates the solo-developer workflow. The commercial
-plans (a hosted dashboard, team approval workflows, compliance exports, a
-verified pack registry) are deferred to post-v1 and sit *on top of* the open
-core. A solo developer gets a complete, working trust layer with zero hosted
-dependencies.
+**Free, Apache-2.0, and local.** Everything in this post runs locally — nothing
+here gates the solo-developer workflow, and there's no hosted service or account
+to sign up for. Team-scale pieces (a hosted dashboard, team approval workflows,
+compliance exports, a verified pack registry) are larger, separate surfaces that
+could come later and sit *on top of* the core; a solo developer gets a complete,
+working trust layer with zero hosted dependencies.
 
 ---
 

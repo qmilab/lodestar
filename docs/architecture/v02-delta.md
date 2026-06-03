@@ -189,7 +189,7 @@ lodestar/
 └── biome.json
 ```
 
-No `hosted/` package. If a commercial hosted control plane is ever built, it lives in a separate private repository that imports from `@qmilab/lodestar-core` and the other public packages.
+No `hosted/` package. If a hosted control plane is ever built, it would live in a separate repository that imports from `@qmilab/lodestar-core` and the other public packages.
 
 ---
 
@@ -331,15 +331,15 @@ The conclusion (recorded in the project's positioning notes):
   - `@qmilab/lodestar-guard` — wraps tool calls (write side)
   - `@qmilab/lodestar-trace` — produces audit reports (read side)
   - `@qmilab/lodestar-memory-firewall` — works alongside mem0/Letta/Zep (horizontal)
-  - `@qmilab/lodestar-harness` — probes, sentinels, calibrators (marketplace surface)
+  - `@qmilab/lodestar-harness` — probes, sentinels, calibrators
 
-- **Open-source strategy** follows Langfuse's Model A. Apache 2.0 for primitives, Guard, Trace, Memory Firewall, Harness, adapters, and basic replay. Reserved for future commercial offering: hosted dashboard, team approvals, compliance exports, advanced replay UI, enterprise policy packs, managed marketplace.
+- **Licensing.** Apache 2.0 throughout — primitives, Guard, Trace, Memory Firewall, Harness, adapters, and replay.
 
-- **Marketplace is trust packs, not skill packs**. Policy packs, probe packs, sentinel packs, adapter packs, signed manifests. Sequenced v0 (local examples) → v0.2 (curated packs in repo) → v1 (public registry) → v1.5 (signed manifests) → v2 (paid enterprise packs).
+- **Trust packs, not skill packs.** Policy packs, probe packs, sentinel packs, adapter packs, signed manifests. Sequenced v0 (local examples) → v0.2 (curated packs in repo) → v1 (public registry) → v1.5 (signed manifests).
 
 - **First headline use case is coding agents**, not Telenotes. Telenotes remains the first proving ground, but the marketing story is "wrap your coding agent (Claude Code, Cursor, OpenClaw, etc.) and get a trust report." The Telenotes demo *is* a coding agent building Telenotes — same demo, different framing.
 
-- **Organizational home is QMI Lab** for the research arc and the open-source primary. Commercial extensions follow later.
+- **Organizational home is QMI Lab** for the research arc and the open-source primary.
 
 None of these decisions change the schemas, the firewall rules, the calibration framework, or the threat model. They change how the architecture is presented and which developer-facing entry points it offers.
 
