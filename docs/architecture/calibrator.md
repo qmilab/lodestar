@@ -308,6 +308,7 @@ not a runtime intercept").
     its consumer (Policy Kernel), like the sentinel `arbitrate` hook.
   - The Policy-Kernel feedback loop that downweights a flagged class's
     confidence. The calibrator produces the signal; acting on it is policy.
+    Designed in [policy-kernel.md](./policy-kernel.md) ("The arbitrate hook").
   - A `lodestar harness calibrate --session <id>` CLI and the
     `/lodestar-calibrate` slash command. The calibrator is a library
     surface today; a CLI is additive and can follow without changing the
