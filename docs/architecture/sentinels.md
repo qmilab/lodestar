@@ -209,7 +209,8 @@ Two related correctness rules the sentinels enforce, both audit-grade:
 - **Not wired (deliberately):**
   - The `arbitrate` hook that consumes alerts. Q7 describes it as small and
     additive; it lands when there is a policy to attach to it (Policy Kernel,
-    Batch 4+). Until then, alerts are audit signal.
+    Batch 4+). Until then, alerts are audit signal. Designed in
+    [policy-kernel.md](./policy-kernel.md) ("The arbitrate hook").
   - Cross-session persistence (see above) — Postgres stores (step 7), forced by
     the `tool-poisoning-cross-session` probe (step 8).
   - A `lodestar harness watch` CLI. The sentinels are a library surface that
