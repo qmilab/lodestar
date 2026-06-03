@@ -223,9 +223,6 @@ These are settled. If a session starts to question them, redirect it.
 
 - Architecture: `docs/architecture/v02-delta.md` (read the Round 5 addendum and the naming-history section at the bottom)
 - Roadmap: `docs/roadmap.md`
-- Positioning: `docs/strategy/positioning.md`
 - Threat model: `docs/concepts/threat-model/memory-poisoning.md`
 - Examples: `examples/telenotes-governed-dev/` (full pipeline), `examples/doc-insight/` (firewall gate focus)
-- Adversarial review history: `docs/internal/review/` (ChatGPT rounds 1–5)
-- Research paper (arXiv position paper): outline `docs/internal/whitepaper/outline.md`, submission + readiness plan `docs/internal/whitepaper/arxiv-plan.md`
-- Walkthrough (reader guide): `docs/guides/walkthrough.md` — plan, video script, and dev.to syndication copy in `docs/internal/walkthrough/`
+- Walkthrough (reader guide): `docs/guides/walkthrough.md`

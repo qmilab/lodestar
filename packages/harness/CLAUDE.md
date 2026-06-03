@@ -2,8 +2,7 @@
 
 The Harness developer surface. Probe packs, sentinels, and calibrators
 that exercise and audit the epistemic chain. Built incrementally across
-Batch 4; see `docs/roadmap.md` (Batch 4) and the historical kickoff/sequencing
-note in `docs/internal/batch-4-kickoff.md`.
+Batch 4; see `docs/roadmap.md` (Batch 4).
 
 ## What lives here
 

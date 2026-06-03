@@ -164,7 +164,7 @@ What's coming (post-v1):
 - Hosted/team features (dashboard, cross-team L4 approvals, compliance exports) — the commercial layer on top of the open core
 - The arXiv position paper: epistemic governance as an architectural primitive
 
-Read the docs at **[qmilab.com/lodestar/docs](https://qmilab.com/lodestar/docs)**. See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan, [`docs/strategy/positioning.md`](./docs/strategy/positioning.md) for the strategic framing, and [`docs/architecture/`](./docs/architecture/) for the design memos.
+Read the docs at **[qmilab.com/lodestar/docs](https://qmilab.com/lodestar/docs)**. See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan and [`docs/architecture/`](./docs/architecture/) for the design memos.
 
 ---
 
