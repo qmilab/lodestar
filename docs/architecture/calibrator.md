@@ -2,7 +2,7 @@
 
 Batch 4, step 9 — the last piece. This is the design lock for the
 `Calibrator` and the `confidence-drift` probe that forces it. The kickoff
-note (`docs/architecture/batch-4-kickoff.md`, step 9) places it last
+note (`docs/internal/batch-4-kickoff.md`, step 9) places it last
 ("needs accumulated event-log data to validate"); the roadmap
 (`docs/roadmap.md`, Batch 4) specifies it as *"`Calibrator` that consumes
 the event log and produces per-class accuracy tables (ECE, Brier score)
@@ -19,6 +19,16 @@ calibration_class and can require the Policy Kernel to downweight
 confidence in classes where the agent is historically overconfident."*
 
 Written 2026-05-31.
+
+> **Status (current as of 2026-06-03).** The design below landed and still holds.
+> The `Calibrator` / `calibrate()` API, the metrics (ECE / Brier / calibration
+> gap), the sample resolver (both signals), the markdown formatter, and the
+> `confidence-drift` probe that drives it end-to-end all ship in
+> `@qmilab/lodestar-harness`. It remains **measure-only**: the
+> `calibration.computed@1` wire format, a `lodestar harness calibrate` CLI, and
+> the Policy-Kernel feedback loop that would act on a flagged class are still
+> deferred (see "What's wired, what isn't"). Reader-facing summary:
+> [sentinels & calibration](../concepts/sentinels-and-calibration.md).
 
 ---
 

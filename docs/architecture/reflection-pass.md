@@ -1,10 +1,22 @@
 # Reflection Pass — Design Doc
 
-Batch 4, step 1. This is the design lock for the reflection pass that has been a stub in `packages/cognitive-core/` since v0.2. The kickoff note (`docs/architecture/batch-4-kickoff.md`) names reflection as load-bearing: the Round 5 auto-observation gate downgrades `external_document` and `model_inference` evidence to **reflection authority**, but reflection itself has no semantics yet, so the gate has no working downstream. The rest of Batch 4 hangs off the decisions made here.
+Batch 4, step 1. This is the design lock for the reflection pass that has been a stub in `packages/cognitive-core/` since v0.2. The kickoff note (`docs/internal/batch-4-kickoff.md`) names reflection as load-bearing: the Round 5 auto-observation gate downgrades `external_document` and `model_inference` evidence to **reflection authority**, but reflection itself has no semantics yet, so the gate has no working downstream. The rest of Batch 4 hangs off the decisions made here.
 
 This doc resolves the seven open design questions from the kickoff note. No code lands until each question has an answer recorded here.
 
 Written 2026-05-27.
+
+> **Status (current as of 2026-06-03).** The decisions below landed and still
+> hold. Reflection ships rule-based in
+> `packages/cognitive-core/src/reflection.ts` (the contradicted-belief cascade),
+> driven on demand via `lodestar reflect`; the two probes this doc specifies —
+> `reflection-cannot-promote-to-normal-alone` (Q5) and
+> `contradicted-belief-flags-dependent-decisions` — pass. The "14 existing
+> probes" cited in the acceptance criteria were the suite *at design time*; it
+> has since grown to 22 across two packs. LLM-driven reflection remains the
+> deferred piece (see "Out of scope"). Reader-facing summaries:
+> [the auto-observation gate](../concepts/reading-isnt-believing.md) and
+> [sentinels & calibration](../concepts/sentinels-and-calibration.md).
 
 ---
 
