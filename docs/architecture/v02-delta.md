@@ -4,6 +4,16 @@
 
 This document captures the seven required revisions from round-4 review. It is a delta, not a full rewrite — read v0.1 first, then this.
 
+> **Status (current as of 2026-06-03).** This delta plus its Round 5 addendum
+> (below) is the **authoritative schema** and remains current — Batches 1–5 have
+> landed against it without schema changes (the architecture is locked at
+> v0.2 + Round 5; see `CLAUDE.md`). The repo-layout sketch in §9 is the *original
+> plan*; for what actually shipped see `docs/roadmap.md` and the per-surface
+> design locks in this directory (`reflection-pass.md`, `sentinels.md`,
+> `calibrator.md`). The reader-facing overview of how the packages fit together
+> is [reference/architecture.md](../reference/architecture.md); the project's
+> naming history is in the section at the bottom of this file.
+
 ---
 
 ## 1. Telenotes is a reference demonstration, not a pilot

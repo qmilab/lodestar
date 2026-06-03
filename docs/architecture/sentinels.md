@@ -2,12 +2,22 @@
 
 Batch 4, step 6. This is the design lock for the Sentinel base class and the
 three first-party sentinels. The kickoff note
-(`docs/architecture/batch-4-kickoff.md`, step 6) names them; the roadmap
+(`docs/internal/batch-4-kickoff.md`, step 6) names them; the roadmap
 (`docs/roadmap.md`, Batch 4) specifies the three. The execution model was
 already settled in **Q7 of `docs/architecture/reflection-pass.md`** — this doc
 does not relitigate it, it builds on it.
 
 Written 2026-05-30.
+
+> **Status (current as of 2026-06-03).** The design below landed and still holds.
+> The `Sentinel` base class, the `SentinelRunner`, and the three first-party
+> sentinels (`low-confidence-action`, `suspicious-memory-origin`,
+> `anomalous-tool-sequence`) ship in `@qmilab/lodestar-harness` and fold into the
+> `coding-agent-safety` pack via the manifest's `sentinels` field. They remain
+> **non-blocking**: the `arbitrate` hook that would let an alert gate an action
+> still awaits the Policy Kernel (see "What's wired, what isn't"). Reader-facing
+> summary: [sentinels & calibration](../concepts/sentinels-and-calibration.md);
+> packaging details: [probe packs](../reference/probe-packs.md).
 
 ---
 

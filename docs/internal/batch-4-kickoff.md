@@ -1,5 +1,17 @@
 # Batch 4 — Kickoff Note
 
+> **Historical — retained for provenance.** This is the session-handoff note
+> written at the *start* of Batch 4; it describes the starting state and the
+> planned sequencing as they stood on 2026-05-27 (e.g. "14 probes", probes in
+> `research/probes/`, `packages/harness/` empty). Batch 4 has since landed in
+> full and the suite has grown to 22 probes across two packs. Do not read the
+> snapshot below as current state — it is kept only to show how the sequencing
+> was reasoned. For current state see `docs/roadmap.md` (Batch 4) and the
+> per-surface design locks in `docs/architecture/`
+> (`reflection-pass.md`, `sentinels.md`, `calibrator.md`). Moved here from
+> `docs/architecture/` when the architecture set was rationalised to
+> current-state references.
+
 This is a session-handoff doc, not a re-spec. The full Batch 4 scope lives in `docs/roadmap.md`. This note exists so the next session can pick up without re-deriving sequencing or re-litigating settled design.
 
 Written 2026-05-27, immediately after Batch 3 stabilised through 22 rounds of Codex review.
