@@ -185,7 +185,7 @@ Rationale:
 - The research arc produces publishable artifacts (memory poisoning paper, calibration paper, evaluation methodology paper). QMI Lab is built for this.
 - Research lab branding builds initial credibility in a trust-heavy category. Enterprise commercial branding muddies the message in 2026.
 
-**Machinise will own commercial extensions** later in the arc. Specifically:
+**Commercial extensions** will come later in the arc. Specifically:
 - Hosted Lodestar (dashboard, team approvals, compliance)
 - Enterprise policy/probe packs
 - SOC 2-ready managed deployments
