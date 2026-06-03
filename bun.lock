@@ -19,6 +19,7 @@
         "@qmilab/lodestar-memory-firewall-letta": "workspace:*",
         "@qmilab/lodestar-memory-firewall-mem0": "workspace:*",
         "@qmilab/lodestar-memory-firewall-zep": "workspace:*",
+        "@qmilab/lodestar-policy-kernel": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "@types/bun": "latest",
         "typescript": "5.6.3",
@@ -290,6 +291,18 @@
         "typescript": "5.6.3",
       },
     },
+    "packages/policy-kernel": {
+      "name": "@qmilab/lodestar-policy-kernel",
+      "version": "0.1.5",
+      "dependencies": {
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
     "packages/trace": {
       "name": "@qmilab/lodestar-trace",
       "version": "0.1.5",
@@ -372,6 +385,8 @@
     "@qmilab/lodestar-memory-firewall-mem0": ["@qmilab/lodestar-memory-firewall-mem0@workspace:packages/memory-firewall/adapters/mem0"],
 
     "@qmilab/lodestar-memory-firewall-zep": ["@qmilab/lodestar-memory-firewall-zep@workspace:packages/memory-firewall/adapters/zep"],
+
+    "@qmilab/lodestar-policy-kernel": ["@qmilab/lodestar-policy-kernel@workspace:packages/policy-kernel"],
 
     "@qmilab/lodestar-trace": ["@qmilab/lodestar-trace@workspace:packages/trace"],
 

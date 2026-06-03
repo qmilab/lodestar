@@ -26,6 +26,24 @@ export interface PolicyDecision {
 }
 
 /**
+ * The applied resolution of a held action, handed to {@link ActionKernel.resolve}.
+ *
+ * The Policy Kernel *produces* this by matching an `approval.*` resolution
+ * against the parked action's open `ApprovalRequest.required_authority`; the
+ * Action Kernel *applies* it (the phase transition). This split mirrors
+ * arbitration — the kernel decides nothing about *who* may approve, it only
+ * un-parks the action the outcome describes — so the kernel still never
+ * imports the Policy Kernel.
+ *
+ * `expired` carries no `approver_id`: the deadline passed, not an actor, so
+ * the un-park is attributed to `system`.
+ */
+export type ApprovalOutcome =
+  | { kind: "granted"; approver_id: string; reason?: string; at?: string }
+  | { kind: "denied"; approver_id: string; reason?: string; at?: string }
+  | { kind: "expired"; reason?: string; at?: string }
+
+/**
  * Re-check a precondition. Returns true if the precondition still holds.
  * The PreconditionChecker is provided by the kernel's host so it can
  * interrogate the live world state.
@@ -189,6 +207,32 @@ export class ActionKernel {
       ],
     }
     const decision = await this.policyGate(inArbitration)
+    const at = new Date().toISOString()
+
+    // Three-valued verdict. A gate that returns `approved: false` with
+    // `requires_human_approval: true` is a *hold*, not a rejection: the
+    // action is parked at `pending_approval` and no `approval` event is
+    // recorded yet — it has been neither approved nor rejected. An
+    // ApprovalRequest is opened (by the Policy Kernel host), and only
+    // `resolve()` un-parks it once a resolution arrives. The two-phase
+    // discipline forbids `execute()` from `pending_approval`, exactly as
+    // from `proposed`, so the world stays untouched while it waits.
+    if (!decision.approved && decision.requires_human_approval) {
+      return {
+        ...inArbitration,
+        phase: "pending_approval",
+        audit: [
+          ...inArbitration.audit,
+          {
+            phase: "pending_approval",
+            by_actor_id: decision.approver_id,
+            at,
+            detail: decision.reason,
+          },
+        ],
+      }
+    }
+
     return {
       ...inArbitration,
       phase: decision.approved ? "approved" : "rejected",
@@ -196,17 +240,56 @@ export class ActionKernel {
         approver_id: decision.approver_id,
         approved: decision.approved,
         reason: decision.reason,
-        at: new Date().toISOString(),
+        at,
       },
       audit: [
         ...inArbitration.audit,
         {
           phase: decision.approved ? "approved" : "rejected",
           by_actor_id: decision.approver_id,
-          at: new Date().toISOString(),
+          at,
           detail: decision.reason,
         },
       ],
+    }
+  }
+
+  /**
+   * Un-park a held action. The symmetric counterpart to `arbitrate()`'s
+   * parking branch: it transitions `pending_approval → approved` (on a
+   * granted outcome) or `→ rejected` (on denied / expired), recording the
+   * `ApprovalEvent` and audit entry exactly as `arbitrate()` does.
+   *
+   * Division of duty mirrors arbitration: the **Policy Kernel decides** the
+   * outcome (matching the resolution against the request's
+   * `required_authority`); the **Action Kernel applies** it here. The kernel
+   * still never imports the Policy Kernel.
+   *
+   * A granted action re-enters `execute()` through the normal `approved`
+   * gate, so `must_revalidate_at_execution` preconditions still fire —
+   * approval authorises *intent*, not a stale world. Synchronous: no I/O, no
+   * gate call (the decision already happened upstream).
+   */
+  resolve(action: Action, outcome: ApprovalOutcome): Action {
+    if (action.phase !== "pending_approval") {
+      throw new Error(`action-kernel: cannot resolve from phase '${action.phase}'`)
+    }
+    const granted = outcome.kind === "granted"
+    const phase = granted ? "approved" : "rejected"
+    const approverId = outcome.kind === "expired" ? "system" : outcome.approver_id
+    const reason =
+      outcome.reason ??
+      (outcome.kind === "expired"
+        ? "approval deadline passed with no resolution"
+        : granted
+          ? "approval granted"
+          : "approval denied")
+    const at = outcome.at ?? new Date().toISOString()
+    return {
+      ...action,
+      phase,
+      approval: { approver_id: approverId, approved: granted, reason, at },
+      audit: [...action.audit, { phase, by_actor_id: approverId, at, detail: reason }],
     }
   }
 
@@ -342,7 +425,7 @@ export class ActionKernel {
  * "internal" (the next-strictest Sensitivity value), so an observation
  * derived from a private action carries at least Internal handling.
  */
-function sensitivityForContract(
+export function sensitivityForContract(
   ds: "public" | "private" | "secret",
 ): "public" | "internal" | "confidential" | "secret" {
   switch (ds) {
