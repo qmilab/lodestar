@@ -79,7 +79,7 @@ Out of scope (handled elsewhere):
 
 - Hosted dashboards, team approval workflows, compliance exports,
   enterprise policy packs, managed marketplace — reserved for a
-  future commercial offering from Machinise, in a separate private
+  future commercial offering, in a separate private
   repository. See [`docs/strategy/positioning.md`](./docs/strategy/positioning.md) §4.
 - Telenotes-specific code — lives in
   `examples/telenotes-governed-dev/`, not in `packages/`.

@@ -4,7 +4,7 @@
 
 **Primary use case**: developer evangelism — meetups, tech talks, podcast appearances, dev.to / Substack posts that reuse the slides as illustrations.
 
-**Secondary use case**: investor / partnership conversations once Machinise spins up the commercial layer. The same deck works for both, with two slides swapped at the end (call to action changes).
+**Secondary use case**: investor / partnership conversations once the commercial layer spins up. The same deck works for both, with two slides swapped at the end (call to action changes).
 
 **Visual style notes**:
 - Dark theme, charcoal background, single accent color (teal or amber), Cormorant Garamond for headings, IBM Plex Mono for code samples (matching the AstroLLM aesthetic Nandan already uses)
@@ -283,7 +283,7 @@ Below: "Pull requests welcome. First three external probe packs will be co-autho
 
 **Body**:
 - **Research collaboration** — co-author a probe pack, contribute to the threat model, join the calibration framework working group. Anchor at QMI Lab.
-- **Commercial pilot** — early-access to hosted Lodestar features through Machinise once available. Reach out to discuss.
+- **Commercial pilot** — early-access to hosted Lodestar features once available. Reach out to discuss.
 - **Ecosystem partnership** — build an adapter for your agent runtime or memory layer. Get featured in the first-party adapter set.
 
 **Speaker note**: Use this version only when the audience includes partnership/investment intent. Default to slide 12a for dev-heavy rooms.
@@ -312,7 +312,7 @@ Other potential variants:
 
 - **Conference talk version (20 min slot)**: same 12 slides, expanded with 2-3 deep-dive slides on whatever the conference theme demands
 - **Hallway version (60-second pitch)**: only slides 1, 4, 7, and 12a, used as a printed business-card-sized handout
-- **Investor deep dive (separate deck, ~25 slides)**: built later if/when Machinise needs it
+- **Investor deep dive (separate deck, ~25 slides)**: built later if/when needed
 
 ### What to NOT include in the dev deck
 

@@ -339,7 +339,7 @@ The conclusion, captured in `docs/strategy/positioning.md`:
 
 - **First headline use case is coding agents**, not Telenotes. Telenotes remains the first proving ground, but the marketing story is "wrap your coding agent (Claude Code, Cursor, OpenClaw, etc.) and get a trust report." The Telenotes demo *is* a coding agent building Telenotes — same demo, different framing.
 
-- **Organizational home is QMI Lab** for the research arc and the open-source primary. Machinise owns commercial extensions later.
+- **Organizational home is QMI Lab** for the research arc and the open-source primary. Commercial extensions follow later.
 
 None of these decisions change the schemas, the firewall rules, the calibration framework, or the threat model. They change how the architecture is presented and which developer-facing entry points it offers.
 
