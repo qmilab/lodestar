@@ -37,5 +37,11 @@ export * from "./schemas/probe-pack.js"
 // Sentinels (Batch 4) — the sentinel.alerted@1 alert wire format
 export * from "./schemas/sentinel.js"
 
+// Action policy (Policy Kernel) — the Policy / PolicyRule document wire format
+export * from "./schemas/policy.js"
+
+// Approval workflow (Policy Kernel) — ApprovalRequest + approval.* event payloads
+export * from "./schemas/approval.js"
+
 // Schema registry
 export * as registry from "./registry.js"
