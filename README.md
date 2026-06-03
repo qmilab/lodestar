@@ -129,7 +129,7 @@ The four packages above and their dependencies are licensed under **Apache 2.0**
 - Example probe packs and research benchmarks
 - Policy language and basic replay
 
-Future commercial offerings from Machinise will include hosted dashboard, team approval workflows, compliance exports, advanced replay UI, enterprise policy packs, and a managed registry. These do not gate any developer-adoption workflow.
+Future commercial offerings will include hosted dashboard, team approval workflows, compliance exports, advanced replay UI, enterprise policy packs, and a managed registry. These do not gate any developer-adoption workflow.
 
 ---
 
