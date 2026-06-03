@@ -60,10 +60,27 @@ export type ActionContract = z.infer<typeof ActionContractSchema>
 
 /**
  * Phases an action passes through.
+ *
+ * `pending_approval` is the parked state: arbitration returned a `hold`
+ * (the Policy Kernel's three-valued verdict — see
+ * `docs/architecture/policy-kernel.md`), so the action is neither approved
+ * nor rejected. An `ApprovalRequest` is opened and the world stays
+ * untouched — the two-phase discipline forbids `execute()` from
+ * `pending_approval` exactly as it forbids it from `proposed`. Only an
+ * Action-Kernel `resolve()` un-parks it: `approval.granted` → `approved`
+ * (which then runs the normal `execute()` gate, so TOCTOU revalidation
+ * still fires), `approval.denied` / `approval.expired` → `rejected`.
+ *
+ * Distinct from `halted`, which is a *terminal* mid-execution stop
+ * (`executing → halted`); `pending_approval` is a *pre-execution* wait.
+ *
+ * Additive (ratified 2026-06-03, `policy-kernel.md`): existing logs
+ * without this value still parse; readers gain one case.
  */
 export const ActionPhaseSchema = z.enum([
   "proposed",
   "arbitrating",
+  "pending_approval",
   "approved",
   "rejected",
   "executing",
@@ -100,7 +117,9 @@ export type AuditEvent = z.infer<typeof AuditEventSchema>
  *
  * Actions are the seventh link in the epistemic chain.
  * The phase field tracks the action through propose → arbitrate
- * → approved/rejected → executing → completed/failed/halted.
+ * → approved/rejected/pending_approval → executing
+ * → completed/failed/halted. A `pending_approval` action awaits an
+ * `ApprovalRequest` resolution before it can reach `approved`.
  *
  * Every Action carries an ActionContract. The Policy Kernel evaluates
  * the contract against current trust assignments and approval requirements

@@ -555,6 +555,53 @@ with the v0 MCP proxy should:
 
 ---
 
+## Policy Kernel — additive schema changes (ratified 2026-06-03)
+
+The first implementation step of the Policy Kernel is a set of **additive**
+core-schema additions, ratified in the design session of 2026-06-03
+(`docs/architecture/policy-kernel.md`, "Schema changes this requires"). The
+architecture is otherwise locked at v0.2 + Round 5; these are signed off as the
+sole sanctioned change. None alters an existing field's meaning.
+
+**Schema additions** (`packages/core/`):
+
+1. **`pending_approval` added to `ActionPhaseSchema`.** The parked,
+   pre-execution wait state for an action the Policy Kernel held for approval.
+   Distinct from `halted` (a *terminal mid-execution* stop): a held action has
+   not been approved, rejected, or executed. The two-phase discipline forbids
+   `execute()` from `pending_approval` exactly as from `proposed`; only the
+   Action Kernel's new `resolve()` transition un-parks it (granted → `approved`,
+   denied/expired → `rejected`).
+2. **`Policy`, `PolicyRule`, `PolicyMatch`, `RequiredAuthority`,
+   `ApprovalRequirement`, `PolicyEffect`** — the declarative action-policy
+   document (`schemas/policy.ts`). Wire format only; the engine that compiles a
+   `Policy` into a `PolicyGate` lives in `@qmilab/lodestar-policy-kernel`.
+   Signatures on a policy version remain required *at the gate* (§5); the schema
+   keeps `signature` optional so unsigned drafts parse, and the kernel enforces
+   presence at load.
+3. **`ApprovalRequest` + the four `approval.*` event payloads**
+   (`approval.requested@1`, `approval.granted@1`, `approval.denied@1`,
+   `approval.expired@1`) — `schemas/approval.ts`. Governance events, not
+   Observations: not registered in the observation schema registry, following
+   the `sentinel.alerted@1` / `reflection.completed@1` precedent.
+
+**`schema_version` and migration.** Each new event type ships at
+`schema_version: "1"` (its own `*_SCHEMA_VERSION` constant, grep-safe like the
+sentinel/reflection constants). Per the core CLAUDE.md invariant ("every schema
+change ships with a `schema_version` bump and a migration note"):
+
+> **Migration — no-op for existing logs.** Every change is additive. Existing
+> NDJSON logs contain no `approval.*` events and no `pending_approval` actions,
+> so they replay unchanged; the additive `ActionPhaseSchema` enum value still
+> parses every prior action. No log rewrite, no re-hash, no re-signing. Forward
+> compatibility for consumers is one new case each: trace projection and the
+> MCP proxy gain a `pending_approval` branch and `approval.*` projection when
+> the Policy Kernel ships (those are later implementation steps, not part of
+> this schema addition).
+
+Nothing depends on these schemas until the Policy Kernel engine lands; the
+additions are inert wire formats that downstream packages opt into.
+
 ## Naming history
 
 The project was originally developed under the codename **Orrery**.
