@@ -8,3 +8,13 @@ build/
 # for the agent guidance and slash commands, but never commit the
 # per-machine bash-permission allowlists.
 .claude/settings.local.json
+
+# Strategy / internal planning docs — kept local, not committed to this
+# open-source repo (positioning, pitch deck, whitepaper planning, review
+# notes, walkthrough production, batch kickoffs). The cast-build tooling
+# under walkthrough/ stays tracked.
+/docs/strategy/
+/docs/internal/*
+!/docs/internal/walkthrough/
+/docs/internal/walkthrough/*
+!/docs/internal/walkthrough/build-poison-cast.ts

@@ -1,8 +1,8 @@
 # Sentinels — Design Doc
 
 Batch 4, step 6. This is the design lock for the Sentinel base class and the
-three first-party sentinels. The kickoff note
-(`docs/internal/batch-4-kickoff.md`, step 6) names them; the roadmap
+three first-party sentinels. The Batch-4 kickoff note
+(step 6) names them; the roadmap
 (`docs/roadmap.md`, Batch 4) specifies the three. The execution model was
 already settled in **Q7 of `docs/architecture/reflection-pass.md`** — this doc
 does not relitigate it, it builds on it.

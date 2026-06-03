@@ -101,7 +101,7 @@ Everything above runs on one laptop, free, fully inspectable — that's the poin
 a trust layer. Team-scale concerns (shared approval queues, cross-team dashboards,
 compliance exports, a verified pack registry) are the commercial layer planned on
 top; they add operations for teams and auditors but never gate the solo-developer
-workflow. See [positioning](strategy/positioning.md) for where that line is drawn.
+workflow.
 
 ## Related
 

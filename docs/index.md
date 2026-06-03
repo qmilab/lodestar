@@ -30,5 +30,4 @@ become "fact."
 More in the walkthrough series — *the threat model* and *wrapping your own agent* —
 coming soon.
 
-Strategy: [positioning](strategy/positioning.md) ·
 Code: [github.com/qmilab/lodestar](https://github.com/qmilab/lodestar)

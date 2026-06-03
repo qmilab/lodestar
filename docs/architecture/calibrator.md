@@ -1,8 +1,8 @@
 # Calibrator — Design Doc
 
 Batch 4, step 9 — the last piece. This is the design lock for the
-`Calibrator` and the `confidence-drift` probe that forces it. The kickoff
-note (`docs/internal/batch-4-kickoff.md`, step 9) places it last
+`Calibrator` and the `confidence-drift` probe that forces it. The Batch-4 kickoff
+note (step 9) places it last
 ("needs accumulated event-log data to validate"); the roadmap
 (`docs/roadmap.md`, Batch 4) specifies it as *"`Calibrator` that consumes
 the event log and produces per-class accuracy tables (ECE, Brier score)

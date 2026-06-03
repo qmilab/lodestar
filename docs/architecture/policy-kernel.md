@@ -37,8 +37,7 @@ Written 2026-06-03.
 > schema edit itself the first implementation step, not done in this doc (see
 > "Schema changes this requires"). Related locks:
 > [sentinels](./sentinels.md), [calibrator](./calibrator.md); reader-facing
-> overview: [reference/architecture.md](../reference/architecture.md);
-> open-core boundary: `docs/strategy/positioning.md`.
+> overview: [reference/architecture.md](../reference/architecture.md).
 
 ---
 
@@ -487,9 +486,9 @@ choice a governed, logged decision; it does not by itself make the box real.
 
 ## Open-core boundary
 
-Drawn along the line in `docs/strategy/positioning.md` (Langfuse Model A) and the
-[[project-open-core-boundary]] decision — **the format and the solo-dev workflow
-are never gated; the team/registry/compliance surfaces are commercial.**
+Drawn along the open-core line (Langfuse Model A) — **the format and the
+solo-dev workflow are never gated; the team/registry/compliance surfaces are
+commercial.**
 
 - **Open-core (Apache 2.0, in this repo):** the `Policy`/`PolicyRule`/
   `ApprovalRequest` schemas, the engine, signature verification, the in-process
@@ -654,4 +653,3 @@ manifest:
 - `packages/guard/src/policy-presets.ts` — the `autoApprovePolicy` stand-in this
   replaces and graduates.
 - `packages/trace/src/` — the projection the read-side viewer reuses.
-- `docs/strategy/positioning.md` — the open-core line the UI split follows.

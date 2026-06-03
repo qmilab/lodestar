@@ -32,6 +32,7 @@ extra_javascript:
 # architecture+roadmap public).
 exclude_docs: |
   internal/
+  strategy/
   architecture/
   roadmap.md
   guides/part-2-the-threat-model.md
@@ -53,8 +54,6 @@ nav:
       - Architecture: reference/architecture.md
       - CLI: reference/cli.md
       - Probe packs: reference/probe-packs.md
-  - Strategy:
-      - Positioning: strategy/positioning.md
 
 markdown_extensions:
   - admonition
