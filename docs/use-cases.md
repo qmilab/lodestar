@@ -99,9 +99,9 @@ Probes are spec, not scaffolding.
 
 Everything above runs on one laptop, free, fully inspectable — that's the point of
 a trust layer. Team-scale concerns (shared approval queues, cross-team dashboards,
-compliance exports, a verified pack registry) are the commercial layer planned on
-top; they add operations for teams and auditors but never gate the solo-developer
-workflow.
+compliance exports, a verified pack registry) are larger, separate surfaces that
+could be built on top later; they would add operations for teams and auditors but
+never gate the solo-developer workflow.
 
 ## Related
 

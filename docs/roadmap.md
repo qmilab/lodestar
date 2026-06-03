@@ -56,7 +56,7 @@ The work is partitioned into five batches. Each batch is scoped to land cleanly,
 
 **Deliverables**:
 - New `README.md` in trust-layer voice (done)
-- Positioning doc with the four-surface framing and open-core strategy (done)
+- Positioning doc with the four-surface framing (done)
 - `docs/roadmap.md` — this document
 - Update to `docs/architecture/v02-delta.md` noting the positioning shift
 - ChatGPT review prompt for the strategy

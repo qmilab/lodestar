@@ -97,8 +97,8 @@ Cognitive Core. The resulting event log is renderable by
    HTTP comes in a later batch when the deployment story needs it.
 
 7. **One proxy, one wrapped agent, one event log.** The proxy is
-   not multi-tenant. Multi-tenancy is a hosted-product concern,
-   not part of the open-source core.
+   not multi-tenant. Multi-tenancy is out of scope here — it would be a
+   separate layer above this, not part of this package.
 
 8. **No `console.log`.** The event log is the observability
    channel. If you need debugging output during development, gate

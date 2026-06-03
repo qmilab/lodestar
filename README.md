@@ -113,7 +113,7 @@ lodestar harness run --pack memory-poisoning
 
 ---
 
-## Open-source strategy
+## License
 
 The four packages above and their dependencies are licensed under **Apache 2.0**:
 
@@ -127,9 +127,9 @@ The four packages above and their dependencies are licensed under **Apache 2.0**
 - `@qmilab/lodestar-harness`
 - All built-in adapters (Git, GitHub, filesystem, shell, Langfuse, Phoenix, OTel)
 - Example probe packs and research benchmarks
-- Policy language and basic replay
+- Policy language and replay
 
-Future commercial offerings will include hosted dashboard, team approval workflows, compliance exports, advanced replay UI, enterprise policy packs, and a managed registry. These do not gate any developer-adoption workflow.
+Everything runs locally — free, Apache-2.0, no hosted service and no account required.
 
 ---
 
@@ -161,7 +161,6 @@ What ships today:
 What's coming (post-v1):
 
 - A public registry for policy / probe / sentinel packs, with signed, verifiable manifests
-- Hosted/team features (dashboard, cross-team L4 approvals, compliance exports) — the commercial layer on top of the open core
 - The arXiv position paper: epistemic governance as an architectural primitive
 
 Read the docs at **[qmilab.com/lodestar/docs](https://qmilab.com/lodestar/docs)**. See [`docs/roadmap.md`](./docs/roadmap.md) for the full plan and [`docs/architecture/`](./docs/architecture/) for the design memos.

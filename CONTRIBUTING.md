@@ -78,9 +78,8 @@ In scope for this repository:
 Out of scope (handled elsewhere):
 
 - Hosted dashboards, team approval workflows, compliance exports,
-  enterprise policy packs, managed marketplace — reserved for a
-  future commercial offering, in a separate private
-  repository.
+  enterprise policy packs, a managed marketplace — out of scope for
+  this repository; if built, they would live separately.
 - Telenotes-specific code — lives in
   `examples/telenotes-governed-dev/`, not in `packages/`.
 

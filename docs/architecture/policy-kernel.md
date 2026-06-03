@@ -31,7 +31,7 @@ Written 2026-06-03.
 > into a signed, packageable document, (b) gives the gate a third outcome —
 > `hold` — and a first-class approval workflow, (c) finally wires the deferred
 > `arbitrate` hook so alerts and calibration flags have teeth, and (d) designs
-> the governing UI along the open-core line. It needs **additive core-schema
+> the governing UI. It needs **additive core-schema
 > additions** (a `pending_approval` Action phase plus new `Policy` /
 > `ApprovalRequest` schemas) — **ratified as decisions 2026-06-03**, with the
 > schema edit itself the first implementation step, not done in this doc (see
@@ -114,8 +114,8 @@ already assumes:
   a policy version must be a first-class, addressable, hashable artifact.
 - `v02-delta.md` §5 lists **policy versions** among the things that *require*
   Ed25519 signatures. A function cannot be signed; a document can.
-- The marketplace sells **policy packs** (`v02-delta.md`, positioning shift). A
-  pack ships portable artifacts, not compiled closures.
+- **Policy packs** ship as portable artifacts (`v02-delta.md`), not compiled
+  closures.
 
 So the Policy Kernel introduces a declarative `Policy` document in
 `@qmilab/lodestar-core`, and the kernel *compiles* a `Policy` into a `PolicyGate`.
@@ -295,7 +295,7 @@ hold:
   duplicating the verdict on the wire.
 - **`required_authority` is data, not a callback.** It says *what* an approver
   must be (trust baseline, clearance, scope), checked against the resolver's
-  `Actor`. This is what lets the commercial approval surface route a request to
+  `Actor`. This is what lets the team approval surface route a request to
   the right person without the Policy Kernel knowing anything about people.
 - **The clearance check spans two alphabets and must map between them.** An
   action's `data_sensitivity` is the 3-value `public | private | secret`; an
@@ -484,36 +484,35 @@ choice a governed, logged decision; it does not by itself make the box real.
 - **`@qmilab/lodestar-trace`** — gains projection + render for the new events and
   the `pending_approval` phase (read-only, tolerant projection, as always).
 
-## Open-core boundary
+## What ships here, and what's a separate team surface
 
-Drawn along the open-core line (Langfuse Model A) — **the format and the
-solo-dev workflow are never gated; the team/registry/compliance surfaces are
-commercial.**
+The split is technical, not a sales line: the format and the solo-developer
+workflow run entirely in this repo; the team-scale surface is a larger, separate
+piece that could be built later.
 
-- **Open-core (Apache 2.0, in this repo):** the `Policy`/`PolicyRule`/
-  `ApprovalRequest` schemas, the engine, signature verification, the in-process
-  `ApprovalResolver` seam **and a minimal reference resolver** — a
-  `lodestar approve`-style CLI that lists pending `approval.requested@1` events and
-  writes `approval.granted@1` / `approval.denied@1` — plus `autoApprovePolicy`, the
-  arbitrate hook, and the read-side viewer (below). The reference resolver is the
-  load-bearing guarantee that **the solo workflow is never gated**: a single
-  developer can author a policy, hit a held L4, approve it from their own terminal,
-  and see the whole chain — free, local, no account. Without it the commercial UI
-  would be the *only* way to resolve a hold, every open-core L4 would time out to a
-  denial, and the solo path would be gated — which the open-core line forbids.
-- **Commercial (separate private repo, imports the public packages):**
-  multi-approver workflows, team routing of `required_authority` to real people,
-  the hosted approval surface, audit/compliance exports of the approval trail,
-  and managed/curated enterprise **policy packs**. The thing sold is the team
-  workflow and the registry, not the policy format.
+- **In this repo (Apache 2.0):** the `Policy`/`PolicyRule`/`ApprovalRequest`
+  schemas, the engine, signature verification, the in-process `ApprovalResolver`
+  seam **and a minimal reference resolver** — a `lodestar approve`-style CLI that
+  lists pending `approval.requested@1` events and writes `approval.granted@1` /
+  `approval.denied@1` — plus `autoApprovePolicy`, the arbitrate hook, and the
+  read-side viewer (below). The reference resolver is the load-bearing guarantee
+  that **the solo workflow is never gated**: a single developer can author a
+  policy, hit a held L4, approve it from their own terminal, and see the whole
+  chain — free, local, no account. Without it a team UI would be the *only* way to
+  resolve a hold, every held L4 would time out to a denial, and the solo path
+  would be gated.
+- **A separate team surface (if built, lives elsewhere):** multi-approver
+  workflows, team routing of `required_authority` to real people, a hosted
+  approval surface, audit/compliance exports of the approval trail, and
+  curated/managed policy packs. None of it gates the local workflow.
 
 ## Governing UI
 
-Two layers, sequenced by the open-core line — the read side is open-core and
-built first; the write side (resolving approvals) is the commercial surface and
-depends on the Policy Kernel.
+Two layers — the read side ships here and is built first; the write side
+(resolving approvals across a team) is a larger separate surface that depends on
+the Policy Kernel.
 
-### (a) Read-side trust-report viewer — open-core, build first
+### (a) Read-side trust-report viewer — ships here, build first
 
 A local web UI over the NDJSON event log that renders the same projection
 `lodestar report` already produces. It does **not** depend on the Policy Kernel
@@ -531,10 +530,10 @@ and can ship before it.
 - **It can show pending approvals read-only** — "here is what is waiting, and
   why" — surfacing `approval.requested@1` events without offering a button.
   Showing the queue is read-side; *resolving* it is the write-side surface below.
-  That keeps the open-core/commercial seam at the natural place: observation is
-  free, the action on it is the product.
+  That keeps the seam at the natural place: observing is local; acting on it
+  across a team is the larger surface.
 
-### (b) Approval surface — commercial / team, depends on the Policy Kernel
+### (b) Approval surface — team-scale, depends on the Policy Kernel
 
 The interactive write side: a human (or team) sees the pending `ApprovalRequest`
 queue, with the full epistemic chain behind each one (this is *the* payoff of the
@@ -544,8 +543,8 @@ and why it decided, not just "approve y/n"), and resolves it.
 - Resolving writes an `approval.granted@1` / `approval.denied@1` event, which is
   exactly the out-of-band signal the in-process `ApprovalResolver` awaits and the
   proxy's hold loop polls. The UI is one concrete implementation of
-  `ApprovalResolver`; the open-core `lodestar approve` CLI is another, a CI
-  auto-rule a third. What the commercial surface adds over the CLI is *team* —
+  `ApprovalResolver`; the local `lodestar approve` CLI is another, a CI
+  auto-rule a third. What the team surface adds over the CLI is *team* —
   routing, multi-approver, the queue view — not the ability to approve at all.
 - `required_authority` on the request is what routes it: the surface shows a
   request only to an approver whose `Actor` clears its trust baseline, sensitivity
@@ -606,8 +605,8 @@ manifest:
     proxy timeout. v0 treats a timed-out hold as a soft denial to re-propose.
   - **Synchronous pre-flight sentinel pass** — closing the alert-latency race in
     the arbitrate hook; v0 reads landed alerts (eventually-consistent).
-  - **Multi-approver / team routing / hosted approval surface** — commercial,
-    separate repo.
+  - **Multi-approver / team routing / hosted approval surface** — a separate
+    team-scale surface, out of scope here.
   - **Cross-session policy state** — a held approval surviving a process restart
     needs the persistent stores; in-scope only where the Postgres stores already
     are.
