@@ -2,12 +2,15 @@ import type { PolicyDecision, PolicyGate } from "@qmilab/lodestar-action-kernel"
 import {
   type Action,
   type ActionContract,
+  type Belief,
   type BlastRadius,
   type Policy,
   type PolicyMatch,
   PolicySchema,
   type RequiredAuthority,
   type ResourceScope,
+  type SentinelAlertPayload,
+  type SentinelSeverity,
 } from "@qmilab/lodestar-core"
 import { canonicalPolicyHash } from "./hash.js"
 
@@ -37,6 +40,112 @@ export interface PolicyEvaluation {
    *  `openApprovalRequest()` enriches this with the action's mapped
    *  `data_sensitivity` before the request is written. */
   required_authority?: RequiredAuthority
+  /**
+   * Present iff the {@link ArbitrationContext arbitrate hook} *strengthened* the
+   * base verdict (a sentinel alert, calibration flag, or low-confidence belief
+   * lifting `allow → hold`, or `→ deny`). `from` is the contract+rule verdict
+   * the floor/rules/default produced; `fired` is every signal that escalated.
+   * The top-level `verdict`/`reason` already reflect the decisive (strictest)
+   * one — this field is the audit trail showing *both* "the rule allowed it" (in
+   * {@link PolicyEvaluation.matched matched}) and "the alert held it". Absent when
+   * no signal fired, when no context was supplied, or when the base verdict was
+   * already at least as strict (the hook never weakens — see {@link applyArbitration}).
+   */
+  escalation?: {
+    from: PolicyVerdict
+    fired: ArbitrationSignalRecord[]
+  }
+}
+
+/**
+ * One signal the arbitrate hook found and the effect it forced. Audit-facing:
+ * the decisive record is the strictest `effect` in {@link PolicyEvaluation.escalation}'s
+ * `fired` list; the rest are recorded so a report can show every reason the
+ * action was strengthened, not only the winning one.
+ */
+export interface ArbitrationSignalRecord {
+  /** Which of the three hook inputs produced it. */
+  signal: "sentinel_alert" | "calibration_flag" | "low_confidence_belief"
+  /** The effect this signal forced. `none` signals are never recorded. */
+  effect: "hold" | "deny"
+  /** Human-legible account of what tripped, for the audit log. */
+  reason: string
+  /** Signal-specific structured context (alert id, flagged classes, weak beliefs). */
+  detail?: Record<string, unknown>
+}
+
+/** The effect a single arbitrate signal forces. `none` ⇒ ignore the signal. */
+export type EscalationEffect = "none" | "hold" | "deny"
+
+/**
+ * A backing belief, projected down to exactly the fields the arbitrate hook
+ * reads. A full core {@link Belief} is structurally assignable, so a host hands
+ * its resolved beliefs straight in. The host does the
+ * `action.decision_id → decision.belief_dependencies → belief` resolution
+ * (store I/O); the gate stays pure given the result.
+ */
+export type BackingBelief = Pick<Belief, "id" | "calibration_class" | "confidence" | "truth_status">
+
+/**
+ * The single field of a harness `CalibrationReport` the gate consults. Declared
+ * structurally *on purpose*: it keeps `@qmilab/lodestar-policy-kernel` from
+ * importing `@qmilab/lodestar-harness`, preserving the layering the design
+ * protects — the calibrator measures and the Policy Kernel reads its output; the
+ * harness never depends on the kernel. A full `CalibrationReport` is assignable.
+ */
+export interface CalibrationSnapshot {
+  readonly flagged_classes: readonly string[]
+}
+
+/**
+ * The read-only snapshot the arbitrate hook consults for one action. Every
+ * field is optional; an absent field simply disables that signal. The host
+ * resolves it (the open question in `policy-kernel.md` is settled host-injected:
+ * the host that runs the `SentinelRunner` and `calibrate()` owns freshness and
+ * scoping) and the gate is a pure function of `(policy, action, context)` given
+ * it. Two honesty caveats carried from the design: alerts are the ones that have
+ * *already landed* on the sentinel tail (a not-yet-landed alert does not gate —
+ * the gate fails open on that one signal while the contract rules still apply),
+ * and a calibration class needs `≥ min_samples` before it can flag.
+ */
+export interface ArbitrationContext {
+  /** Beliefs backing the action — see {@link BackingBelief}. */
+  beliefs?: readonly BackingBelief[]
+  /** Recent, host-scoped `sentinel.alerted@1` payloads; the gate filters them to
+   *  this action's own subjects (its beliefs / id / a tool_sequence). */
+  alerts?: readonly SentinelAlertPayload[]
+  /** Latest calibration snapshot for the action's project; `null` ⇒ inactive. */
+  calibration?: CalibrationSnapshot | null
+}
+
+/**
+ * Host configuration that turns the arbitrate hook on. Supplying it is the only
+ * thing that activates alert/calibration/low-confidence escalation; omitting it
+ * leaves the gate at its pure contract+rule behaviour (every pre-slice-2 probe
+ * stays green). The `resolveContext` resolver may be async (it does store/log
+ * reads); a throw propagates — the hook fails *closed* (the action does not
+ * proceed) rather than silently disabling enforcement, per the repo's
+ * "no silent defaults for security-relevant settings" norm.
+ */
+export interface ArbitrationConfig {
+  resolveContext: (action: Action) => ArbitrationContext | Promise<ArbitrationContext>
+  escalation?: EscalationConfig
+}
+
+/**
+ * The escalation thresholds. Every knob is overridable because escalation *is*
+ * policy (`policy-kernel.md`, open question 4); the defaults are the doc's fixed
+ * table (`critical → deny`, `warning → hold`, `info → none`) and the
+ * low-confidence-action sentinel's own floor (`< 0.5` at level `≥ 3`).
+ */
+export interface EscalationConfig {
+  /** Map an alert's severity to the effect it forces. Default {@link defaultSeverityEffect}. */
+  severityEffect?: (severity: SentinelSeverity) => EscalationEffect
+  /** A backing belief below this confidence escalates to a hold. Default `0.5`. */
+  low_confidence_floor?: number
+  /** Only actions at/above this `required_level` get the synchronous
+   *  low-confidence check. Default `3` (mirrors the sentinel's `minLevel`). */
+  low_confidence_min_level?: number
 }
 
 /** A policy compiled into a gate plus its pure evaluator. */
@@ -44,8 +153,16 @@ export interface CompiledPolicy {
   readonly policy: Policy
   /** The `PolicyGate` the Action Kernel calls at arbitration. */
   readonly gate: PolicyGate
-  /** The pure verdict, re-runnable by the host (no I/O, no clock). */
-  evaluate(action: Action): PolicyEvaluation
+  /**
+   * The pure verdict, re-runnable by the host (no I/O, no clock). With no
+   * `context`, returns the contract+rule verdict alone (the pre-slice-2
+   * behaviour). With a {@link ArbitrationContext} — the same snapshot the gate
+   * resolved — it additionally applies the arbitrate hook. A host that wires
+   * `arbitration` and needs to re-derive a hold's `required_authority` after a
+   * park must re-run with the *same* context, since an escalation-induced hold
+   * is invisible to a contract-only re-run.
+   */
+  evaluate(action: Action, context?: ArbitrationContext): PolicyEvaluation
 }
 
 export interface CompileOptions {
@@ -65,6 +182,15 @@ export interface CompileOptions {
    * payload-hash match (tamper-evidence) alone.
    */
   verifySignature?: (policy: Policy) => boolean
+  /**
+   * Wires the {@link ArbitrationContext arbitrate hook} into the gate: at
+   * arbitration the gate resolves a read-only snapshot (recent alerts, the
+   * calibration report, the action's backing beliefs) and lets it *strengthen*
+   * the contract+rule verdict. Omit it and the gate behaves exactly as it did
+   * before this slice. This is the piece that finally gives sentinel alerts and
+   * calibration flags teeth — they only observe until a Policy Kernel reads them.
+   */
+  arbitration?: ArbitrationConfig
 }
 
 /** Raised when a policy cannot be compiled (e.g. an unsigned active policy). */
@@ -115,8 +241,20 @@ export function compile(policy: Policy, options: CompileOptions): CompiledPolicy
   const parsed = PolicySchema.parse(policy)
   verifyPolicySignature(parsed, options)
   const decider_id = options.decider_id
-  const evaluate = (action: Action): PolicyEvaluation => evaluatePolicy(parsed, action, decider_id)
-  const gate: PolicyGate = async (action) => decisionOf(evaluate(action))
+  const escalation = resolveEscalationConfig(options.arbitration?.escalation)
+  const evaluate = (action: Action, context?: ArbitrationContext): PolicyEvaluation => {
+    const base = evaluatePolicy(parsed, action, decider_id)
+    return context ? applyArbitration(base, action, context, escalation) : base
+  }
+  const gate: PolicyGate = async (action) => {
+    // The async boundary: the host resolver does any store/log I/O, then the
+    // pure `evaluate` applies the snapshot. No `arbitration` ⇒ no context ⇒ the
+    // pre-slice-2 contract+rule verdict, unchanged.
+    const context = options.arbitration
+      ? await options.arbitration.resolveContext(action)
+      : undefined
+    return decisionOf(evaluate(action, context))
+  }
   return { policy: parsed, gate, evaluate }
 }
 
@@ -242,6 +380,189 @@ function evaluatePolicy(policy: Policy, action: Action, decider_id: string): Pol
     reason: `no policy rule matched action '${action.tool}' (L${level}); structural deny default`,
     decider_id,
     matched: { source: "default" },
+  }
+}
+
+// -----------------------------------------------------------------------------
+// The arbitrate hook: alerts + calibration + low-confidence give the verdict teeth
+//
+// Sentinels still only emit `sentinel.alerted@1`, the calibrator still only
+// returns a `CalibrationReport` — the observe/measure boundary the harness
+// guards does not move. The Policy Kernel is what *reads* those signals here and
+// decides. The hook can only ever *strengthen* the contract+rule verdict
+// (`allow → hold → deny`), never weaken it — the same discipline the L4 floor
+// follows. See `docs/architecture/policy-kernel.md` "The arbitrate hook".
+// -----------------------------------------------------------------------------
+
+/** Strictness order: a higher rank may replace a lower one, never the reverse. */
+const VERDICT_RANK: Record<PolicyVerdict, number> = { allow: 0, hold: 1, deny: 2 }
+
+const DEFAULT_LOW_CONFIDENCE_FLOOR = 0.5
+const DEFAULT_LOW_CONFIDENCE_MIN_LEVEL = 3
+
+/** The doc's fixed table: `critical → deny`, `warning → hold`, `info → none`. */
+function defaultSeverityEffect(severity: SentinelSeverity): EscalationEffect {
+  if (severity === "critical") return "deny"
+  if (severity === "warning") return "hold"
+  return "none"
+}
+
+interface ResolvedEscalation {
+  severityEffect: (severity: SentinelSeverity) => EscalationEffect
+  lowConfidenceFloor: number
+  lowConfidenceMinLevel: number
+}
+
+function resolveEscalationConfig(config?: EscalationConfig): ResolvedEscalation {
+  return {
+    severityEffect: config?.severityEffect ?? defaultSeverityEffect,
+    lowConfidenceFloor: config?.low_confidence_floor ?? DEFAULT_LOW_CONFIDENCE_FLOOR,
+    lowConfidenceMinLevel: config?.low_confidence_min_level ?? DEFAULT_LOW_CONFIDENCE_MIN_LEVEL,
+  }
+}
+
+/**
+ * Does this alert's subject name *this* action? Encodes the design's
+ * "which subjects can gate" table directly:
+ * - `belief` — the load-bearing case: gates iff the alert names one of the
+ *   action's backing beliefs (`suspicious-memory-origin`).
+ * - `decision` — scoped to the action's deciding context (no v0 sentinel emits
+ *   one, but the scoping is the conservative answer if one ever does).
+ * - `tool_sequence` — names a *completed* flagged sequence; it is meant to gate
+ *   *subsequent* actions. The host scopes the alert window (session / recency),
+ *   so a flagged sequence present in the snapshot gates the next action.
+ * - `action` — `low-confidence-action` names the action itself and fires on the
+ *   very event (`action.proposed`) that would gate it, so its alert cannot
+ *   reliably pre-exist arbitration. The alert stays an audit tripwire;
+ *   *enforcement* of the same condition is the synchronous belief check below,
+ *   not a wait on this alert. So an action-subject alert does **not** gate here.
+ */
+function alertGatesAction(
+  alert: SentinelAlertPayload,
+  action: Action,
+  backingBeliefIds: ReadonlySet<string>,
+): boolean {
+  const subject = alert.subject
+  switch (subject.kind) {
+    case "belief":
+      return backingBeliefIds.has(subject.id)
+    case "decision":
+      return action.decision_id !== undefined && subject.id === action.decision_id
+    case "tool_sequence":
+      return true
+    case "action":
+      return false
+  }
+}
+
+/**
+ * Apply the arbitrate hook to a base verdict. Pure: a function of
+ * `(base, action, context, escalation)`, no I/O, no clock — so a host can
+ * re-run it deterministically. Collects every fired signal, then takes the
+ * strictest effect; returns the base unchanged when nothing fired or when the
+ * base was already at least as strict (the hook never weakens).
+ */
+function applyArbitration(
+  base: PolicyEvaluation,
+  action: Action,
+  context: ArbitrationContext,
+  escalation: ResolvedEscalation,
+): PolicyEvaluation {
+  // `deny` is already the strictest verdict; nothing can strengthen it, and the
+  // hook must not weaken it. Short-circuit so an L5 / deny-rule reason survives.
+  if (base.verdict === "deny") return base
+
+  const beliefs = context.beliefs ?? []
+  const backingIds = new Set(beliefs.map((b) => b.id))
+  const fired: ArbitrationSignalRecord[] = []
+
+  // (A) Sentinel alerts, scoped to this action's own subjects.
+  for (const alert of context.alerts ?? []) {
+    if (!alertGatesAction(alert, action, backingIds)) continue
+    const effect = escalation.severityEffect(alert.severity)
+    if (effect === "none") continue
+    fired.push({
+      signal: "sentinel_alert",
+      effect,
+      reason:
+        `sentinel '${alert.sentinel_name}' (${alert.severity}) flagged ` +
+        `${alert.subject.kind} ${alert.subject.id}: ${alert.message}`,
+      detail: {
+        alert_id: alert.alert_id,
+        sentinel_name: alert.sentinel_name,
+        rule: alert.rule,
+        severity: alert.severity,
+        subject: alert.subject,
+      },
+    })
+  }
+
+  // (B) Calibration flags, scoped to the action's backing belief classes.
+  const flagged = new Set(context.calibration?.flagged_classes ?? [])
+  if (flagged.size > 0) {
+    const hits = beliefs.filter((b) => flagged.has(b.calibration_class))
+    if (hits.length > 0) {
+      const classes = [...new Set(hits.map((b) => b.calibration_class))]
+      const classList = classes.map((c) => `'${c}'`).join(", ")
+      fired.push({
+        signal: "calibration_flag",
+        effect: "hold",
+        reason: `backing belief(s) in calibrator-flagged class(es) ${classList} — confidence is historically miscalibrated, approval required`,
+        detail: { flagged_classes: classes, belief_ids: hits.map((b) => b.id) },
+      })
+    }
+  }
+
+  // (C) Synchronous low-confidence belief check — the enforcement of the
+  // low-confidence-action condition that does NOT wait on its (racy) alert.
+  if (action.contract.required_level >= escalation.lowConfidenceMinLevel) {
+    const weak = beliefs.filter(
+      (b) =>
+        (typeof b.confidence === "number" && b.confidence < escalation.lowConfidenceFloor) ||
+        b.truth_status === "unverified",
+    )
+    if (weak.length > 0) {
+      fired.push({
+        signal: "low_confidence_belief",
+        effect: "hold",
+        reason:
+          `action at L${action.contract.required_level} rests on under-supported ` +
+          `belief(s) ${weak.map((b) => b.id).join(", ")} ` +
+          `(confidence < ${escalation.lowConfidenceFloor} or unverified) — approval required`,
+        detail: {
+          floor: escalation.lowConfidenceFloor,
+          weak_beliefs: weak.map((b) => ({
+            id: b.id,
+            confidence: b.confidence,
+            truth_status: b.truth_status,
+          })),
+        },
+      })
+    }
+  }
+
+  if (fired.length === 0) return base
+
+  // Strictest fired effect wins; the hook only strengthens.
+  const effect: PolicyVerdict = fired.some((f) => f.effect === "deny") ? "deny" : "hold"
+  if (VERDICT_RANK[effect] <= VERDICT_RANK[base.verdict]) return base
+
+  const decisive = fired.find((f) => f.effect === effect)
+  // `effect` is derived from `fired` (non-empty), so a matching record always
+  // exists; the guard is for the type-checker, not a reachable branch.
+  if (!decisive) return base
+
+  return {
+    verdict: effect,
+    reason: decisive.reason,
+    decider_id: base.decider_id,
+    // `matched` keeps where the *base* verdict came from — the audit shows both
+    // "the rule allowed it" and, in `escalation`, "the alert held it".
+    matched: base.matched,
+    // An escalation-induced hold has no rule authority to inherit (the base was
+    // allow); default to `{}` — any approver — exactly as the floor's allow→hold.
+    required_authority: effect === "hold" ? (base.required_authority ?? {}) : undefined,
+    escalation: { from: base.verdict, fired },
   }
 }
 

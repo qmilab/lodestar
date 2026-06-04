@@ -104,9 +104,10 @@ Coming in later Batch 4+ steps (do not pre-build):
 8. **Sentinels alert; they never block.** A sentinel emits a
    `sentinel.alerted@1` event and stops there. It does not call back into
    the Action Kernel and cannot stop an action mid-flight (Q7 of the
-   reflection design doc). The consuming `arbitrate` hook is a separate,
-   additive piece that does not exist yet — do not add a blocking path
-   from a sentinel.
+   reflection design doc). The consuming `arbitrate` hook now exists, but it
+   lives in `@qmilab/lodestar-policy-kernel` (it *reads* landed alerts and
+   escalates the next dependent action) — the harness boundary did not move.
+   Do not add a blocking path from a sentinel here.
 9. **Sentinels read the stream defensively.** Event payloads are
    `z.unknown()` and hosts emit varying completeness. Sentinels project
    through loose views (`asActionView` etc.), never the strict core
@@ -118,9 +119,10 @@ Coming in later Batch 4+ steps (do not pre-build):
 11. **The Calibrator measures; it never enforces.** `calibrate()` reads the
     log and returns a `CalibrationReport`. It does not write a revision,
     transition a belief, or emit an event. Acting on a flag (downweighting
-    an overconfident class) is the Policy Kernel's job, deferred like the
-    sentinels' `arbitrate` hook. Do not add a write path from the
-    calibrator.
+    an overconfident class) is the Policy Kernel's job — its arbitrate hook
+    now consumes `CalibrationReport.flagged_classes` to escalate a backing
+    action, the same way it reads sentinel alerts. The calibrator stays
+    return-value-only; do not add a write path from it.
 12. **Synthetic beliefs are excluded from calibration by default.** A
     belief with `authority: "synthetic"` is a probe artefact and must not
     pollute a real `calibration_class` — the same isolation the firewall
