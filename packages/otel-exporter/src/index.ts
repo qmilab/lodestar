@@ -35,6 +35,7 @@ export { isoToUnixNano, spanIdFor, traceIdFor } from "./ids.js"
 export {
   contentSensitivityForAction,
   isAboveCeiling,
+  isSensitivity,
   SENSITIVITY_ORDER,
   sensitivityRank,
 } from "./sensitivity.js"

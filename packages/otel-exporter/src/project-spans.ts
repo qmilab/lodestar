@@ -6,7 +6,13 @@ import type {
   ProjectedDecision,
 } from "@qmilab/lodestar-trace"
 import { isoToUnixNano, spanIdFor, traceIdFor } from "./ids.js"
-import { contentSensitivityForAction, isAboveCeiling, sensitivityRank } from "./sensitivity.js"
+import {
+  SENSITIVITY_ORDER,
+  contentSensitivityForAction,
+  isAboveCeiling,
+  isSensitivity,
+  sensitivityRank,
+} from "./sensitivity.js"
 
 /**
  * Neutral, OTel-free intermediate representation of a trace.
@@ -109,7 +115,16 @@ export function buildTrace(
   projection: ChainProjection,
   opts: BuildTraceOptions = {},
 ): LodestarTrace {
-  const ceiling: Sensitivity = opts.sensitivityCeiling ?? "internal"
+  const ceiling = opts.sensitivityCeiling ?? "internal"
+  // Validate the ceiling at runtime: a typo'd / config-derived value would
+  // otherwise rank above every real level (see `sensitivityRank`) and make
+  // the gate fail open — exporting even `secret` content. Fail loud instead.
+  if (!isSensitivity(ceiling)) {
+    throw new Error(
+      `invalid sensitivity ceiling: ${JSON.stringify(ceiling)} ` +
+        `(expected one of ${SENSITIVITY_ORDER.join(", ")})`,
+    )
+  }
   const gate: GateState = { ceiling, redacted: 0 }
 
   const session = projection.session_id

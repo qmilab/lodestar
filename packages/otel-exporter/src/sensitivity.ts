@@ -13,8 +13,24 @@ import { type Sensitivity, SensitivitySchema } from "@qmilab/lodestar-core"
 export const SENSITIVITY_ORDER: readonly Sensitivity[] = SensitivitySchema.options
 
 /**
- * Rank of a sensitivity level. Unknown values fail closed (treated as
- * maximally sensitive) so a future enum value can never leak by default.
+ * Runtime type guard for a sensitivity level. TypeScript types do not
+ * survive into a JS caller or an env/config-derived value, so the export
+ * ceiling must be validated at runtime before it is used as a gate.
+ */
+export function isSensitivity(value: unknown): value is Sensitivity {
+  return typeof value === "string" && (SENSITIVITY_ORDER as readonly string[]).includes(value)
+}
+
+/**
+ * Rank of a sensitivity level.
+ *
+ * Unknown values rank *above* every real level (maximally sensitive).
+ * That is fail-closed for a content **source** — an unrecognised source is
+ * withheld, so a future enum value can never leak by default. It is the
+ * WRONG behaviour for the **ceiling**, where ranking an unknown value at
+ * the top would make nothing exceed it and silently export everything;
+ * the ceiling must therefore be validated with {@link isSensitivity}
+ * before it reaches the gate (see `buildTrace`).
  */
 export function sensitivityRank(s: Sensitivity): number {
   const i = SENSITIVITY_ORDER.indexOf(s)

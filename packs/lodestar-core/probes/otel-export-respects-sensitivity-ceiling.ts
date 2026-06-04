@@ -213,6 +213,27 @@ async function run(): Promise<ProbeResult> {
       "D: at ceiling=secret the marker reappears (the ceiling is the gate, redacted_count=0)",
     )
 
+    // E — an invalid ceiling (a typo from a JS caller / env-derived config
+    // that bypassed the type system) must THROW, not silently fail open and
+    // export the secret. Without runtime validation, an unknown ceiling
+    // ranks above every real level and nothing is ever withheld.
+    const badOpts = {
+      sessionId: SESSION,
+      projectId: PROJECT,
+      logRoot: rootDir,
+      sensitivityCeiling: "internl",
+    } as unknown as Parameters<typeof exportSession>[0]
+    let threw = false
+    try {
+      await exportSession(badOpts)
+    } catch {
+      threw = true
+    }
+    if (!threw) {
+      return fail(details, "an invalid sensitivity ceiling did NOT throw — the gate can fail open")
+    }
+    details.push("E: an invalid ceiling throws (the gate fails closed, not open)")
+
     return {
       passed: true,
       details: [
