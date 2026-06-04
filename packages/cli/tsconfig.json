@@ -15,6 +15,7 @@
     { "path": "../harness" },
     { "path": "../trace" },
     { "path": "../viewer" },
+    { "path": "../otel-exporter" },
     { "path": "../cognitive-core" },
     { "path": "../adapters/filesystem" },
     { "path": "../adapters/git" }

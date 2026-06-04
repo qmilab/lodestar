@@ -25,6 +25,7 @@ import { guardMCPProxyCommand } from "./commands/guard-mcp.js"
 import { guardWrapCommand } from "./commands/guard.js"
 import { harnessCommand } from "./commands/harness.js"
 import { HELP_TEXT } from "./commands/help.js"
+import { otelCommand } from "./commands/otel.js"
 import { probeCommand } from "./commands/probe.js"
 import { reflectCommand } from "./commands/reflect.js"
 import { reportCommand } from "./commands/report.js"
@@ -66,6 +67,9 @@ async function dispatch(): Promise<number> {
 
     case "view":
       return viewCommand(sub === undefined ? [] : [sub, ...rest])
+
+    case "otel":
+      return otelCommand(sub === undefined ? [] : [sub, ...rest])
 
     case "guard":
       if (sub === "wrap") return guardWrapCommand(rest)

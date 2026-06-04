@@ -36,7 +36,9 @@ projects it into the epistemic chain, then renders markdown.
 ## What does not live here
 
 - Live event streaming or subscription — Batch 3 / harness territory.
-- OTel export — see the future `@qmilab/lodestar-otel-exporter` package.
+- OTel export — see the `@qmilab/lodestar-otel-exporter` package, which
+  reuses this package's `projectChain()` to project a session into OTel
+  GenAI spans (`lodestar otel export`).
 - Snapshot reconstruction (replay-grade re-derivation of belief stores
   from events) — out of scope until snapshots ship.
 

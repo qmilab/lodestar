@@ -183,6 +183,11 @@ jobs:
             // first publish needs the manual trusted-publisher mini-marathon
             // before CI can stage-publish it through this path.
             "packages/viewer",
+            // otel-exporter depends on core + trace; the CLI depends on it
+            // (`lodestar otel export`), so it publishes before `cli`. Like
+            // viewer, its first publish needs the manual trusted-publisher
+            // mini-marathon before CI can stage-publish it through this path.
+            "packages/otel-exporter",
             "packages/cli",
           ];
 
@@ -224,7 +229,7 @@ jobs:
       # both the order array there AND the array here — the verifier
       # will catch divergence.
       #
-      # 17 packages today; an explicit list stays reviewable up to ~25.
+      # 18 packages today; an explicit list stays reviewable up to ~25.
       # Past that, factor into a shared JSON file both steps read.
       #
       # Failures are NOT swallowed. If any single publish fails, the
@@ -258,6 +263,9 @@ jobs:
             # viewer is a CLI dependency; publishes before `cli`. Like
             # guard-mcp, its first publish needs the manual bootstrap.
             packages/viewer
+            # otel-exporter is a CLI dependency (`lodestar otel export`);
+            # publishes before `cli`. First publish needs the manual bootstrap.
+            packages/otel-exporter
             packages/cli
           )
 

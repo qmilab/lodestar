@@ -1,0 +1,400 @@
+import type { ActionPhase, Belief, Claim, Observation, Sensitivity } from "@qmilab/lodestar-core"
+import type {
+  ChainProjection,
+  FirewallTransition,
+  ProjectedAction,
+  ProjectedDecision,
+} from "@qmilab/lodestar-trace"
+import { isoToUnixNano, spanIdFor, traceIdFor } from "./ids.js"
+import { contentSensitivityForAction, isAboveCeiling, sensitivityRank } from "./sensitivity.js"
+
+/**
+ * Neutral, OTel-free intermediate representation of a trace.
+ *
+ * `project-spans` is the heart of the package and carries no OpenTelemetry
+ * dependency: it turns a {@link ChainProjection} into this IR, which
+ * `otlp.ts` then serialises to the wire format. Keeping the mapping pure
+ * makes it trivially testable and keeps the sensitivity gate in one place.
+ */
+
+/** An OTLP-compatible attribute value (scalar or homogeneous array). */
+export type AttrValue = string | number | boolean | string[] | number[] | boolean[]
+
+export interface LodestarSpanEvent {
+  name: string
+  time_unix_nano: string
+  attributes: Record<string, AttrValue>
+}
+
+export type SpanStatusCode = "unset" | "ok" | "error"
+
+export interface LodestarSpan {
+  name: string
+  span_id: string
+  parent_span_id?: string
+  kind: "internal"
+  start_unix_nano: string
+  end_unix_nano: string
+  status: { code: SpanStatusCode; message?: string }
+  attributes: Record<string, AttrValue>
+  events: LodestarSpanEvent[]
+}
+
+export interface LodestarTrace {
+  trace_id: string
+  resource_attributes: Record<string, AttrValue>
+  spans: LodestarSpan[]
+  /** Number of content attributes withheld by the sensitivity gate. */
+  redacted_count: number
+}
+
+export interface BuildTraceOptions {
+  /** Content whose source sensitivity outranks this is withheld. Default "internal". */
+  sensitivityCeiling?: Sensitivity
+}
+
+// ── The sensitivity gate ─────────────────────────────────────────────────
+
+interface GateState {
+  ceiling: Sensitivity
+  redacted: number
+}
+
+/**
+ * Accumulates a span / event's attribute bag, enforcing the sensitivity
+ * gate. `put` is for structural metadata (always emitted); `putContent`
+ * is for anything derived from claim / observation / input *content* —
+ * it is withheld (and replaced by a `*.redacted` + `*.payload_hash`
+ * marker) when its source sensitivity outranks the ceiling.
+ */
+class Attrs {
+  readonly bag: Record<string, AttrValue> = {}
+  constructor(private readonly gate: GateState) {}
+
+  put(key: string, value: AttrValue | undefined): this {
+    if (value !== undefined) this.bag[key] = value
+    return this
+  }
+
+  putContent(
+    key: string,
+    value: AttrValue | undefined,
+    source: Sensitivity,
+    payloadHash?: string,
+  ): this {
+    if (value === undefined) return this
+    if (isAboveCeiling(source, this.gate.ceiling)) {
+      this.bag[`${key}.redacted`] = true
+      if (payloadHash) this.bag[`${key}.payload_hash`] = payloadHash
+      this.gate.redacted++
+    } else {
+      this.bag[key] = value
+    }
+    return this
+  }
+}
+
+// ── Public entry point ───────────────────────────────────────────────────
+
+/**
+ * Project an epistemic-chain {@link ChainProjection} into the neutral
+ * trace IR, applying the sensitivity gate. Pure: no I/O, deterministic
+ * ids, no wall clock.
+ *
+ * Action-centric model: the session is the root `invoke_agent` span; each
+ * governed Action is an `execute_tool` child span; observations, beliefs,
+ * decisions, and firewall transitions ride as span events on the root.
+ */
+export function buildTrace(
+  projection: ChainProjection,
+  opts: BuildTraceOptions = {},
+): LodestarTrace {
+  const ceiling: Sensitivity = opts.sensitivityCeiling ?? "internal"
+  const gate: GateState = { ceiling, redacted: 0 }
+
+  const session = projection.session_id
+  const trace_id = traceIdFor(session)
+  const rootSpanId = spanIdFor(session, `session:${session}`)
+
+  const meta = buildMetaIndex(projection)
+  const claimById = new Map<string, Claim>()
+  for (const c of projection.claims) claimById.set(c.id, c)
+
+  // ── Root span: the session ──────────────────────────────────────────
+  const rootAttrs = new Attrs(gate)
+  rootAttrs
+    .put("gen_ai.operation.name", "invoke_agent")
+    .put("gen_ai.conversation.id", session)
+    .put("lodestar.session.id", session)
+    .put("lodestar.project.id", projection.project_id)
+    .put("lodestar.actor_ids", [...projection.actor_ids])
+    .put("lodestar.event_count", projection.event_count)
+  const model = singleModel(projection)
+  if (model) rootAttrs.put("gen_ai.request.model", model)
+
+  const rootEvents: LodestarSpanEvent[] = []
+  for (const obs of projection.observations) rootEvents.push(observationEvent(obs, meta, gate))
+  for (const b of projection.beliefs) rootEvents.push(beliefEvent(b, claimById, meta, gate))
+  for (const d of projection.decisions) rootEvents.push(decisionEvent(d, meta, gate))
+  for (const t of projection.transitions) rootEvents.push(transitionEvent(t, gate))
+  rootEvents.sort(byTime)
+
+  const anyFailed = projection.actions.some((a) => isErrorPhase(a.terminal_phase))
+
+  const rootSpan: LodestarSpan = {
+    name: `invoke_agent ${projection.project_id || session}`,
+    span_id: rootSpanId,
+    kind: "internal",
+    start_unix_nano: isoToUnixNano(projection.first_event_at),
+    end_unix_nano: isoToUnixNano(projection.last_event_at ?? projection.first_event_at),
+    status: { code: anyFailed ? "error" : "unset" },
+    attributes: rootAttrs.bag,
+    events: rootEvents,
+  }
+
+  const spans: LodestarSpan[] = [rootSpan]
+
+  // ── Action spans: execute_tool ──────────────────────────────────────
+  for (const pa of projection.actions) {
+    const span = actionSpan(pa, session, rootSpanId, meta, gate)
+    if (span) spans.push(span)
+  }
+
+  const resource_attributes: Record<string, AttrValue> = {
+    "service.name": "lodestar",
+    "lodestar.project.id": projection.project_id,
+  }
+
+  return { trace_id, resource_attributes, spans, redacted_count: gate.redacted }
+}
+
+// ── Span / event builders ────────────────────────────────────────────────
+
+function actionSpan(
+  pa: ProjectedAction,
+  session: string,
+  parentSpanId: string,
+  meta: Map<string, RecordMeta>,
+  gate: GateState,
+): LodestarSpan | undefined {
+  const action = pa.action
+  // Outcome-only entries (an outcome seen before/without its action) have
+  // no tool or proposed_at — there is no span to render.
+  if (!action) return undefined
+
+  const a = new Attrs(gate)
+  a.put("gen_ai.operation.name", "execute_tool")
+    .put("gen_ai.tool.name", action.tool)
+    .put("gen_ai.tool.call.id", action.id)
+    .put("lodestar.action.phase", pa.terminal_phase)
+    .put("lodestar.policy.verdict", policyVerdict(pa.terminal_phase))
+    .put("lodestar.trust.required_level", action.contract.required_level)
+    .put("lodestar.blast_radius", action.contract.blast_radius)
+    .put("lodestar.reversibility", action.contract.reversibility)
+    .put("lodestar.data_sensitivity", action.contract.data_sensitivity)
+  if (action.decision_id) a.put("lodestar.decision_id", action.decision_id)
+
+  // Content: intent + inputs, gated on the action's data_sensitivity.
+  const src = contentSensitivityForAction(action.contract.data_sensitivity)
+  const hash = meta.get(action.id)?.hash
+  a.putContent("lodestar.action.intent", action.intent, src, hash)
+  a.putContent("lodestar.action.inputs", safeJson(action.inputs), src, hash)
+
+  if (pa.outcome) {
+    a.put("lodestar.outcome.result", pa.outcome.result)
+    a.put("lodestar.outcome.duration_ms", pa.outcome.duration_ms)
+  }
+
+  const status: { code: SpanStatusCode; message?: string } = isErrorPhase(pa.terminal_phase)
+    ? { code: "error", message: pa.outcome?.result ?? pa.terminal_phase }
+    : { code: pa.terminal_phase === "completed" ? "ok" : "unset" }
+
+  return {
+    name: `execute_tool ${action.tool}`,
+    span_id: spanIdFor(session, action.id),
+    parent_span_id: parentSpanId,
+    kind: "internal",
+    start_unix_nano: isoToUnixNano(action.proposed_at),
+    end_unix_nano: isoToUnixNano(pa.outcome?.observed_at ?? action.proposed_at),
+    status,
+    attributes: a.bag,
+    events: [],
+  }
+}
+
+function observationEvent(
+  obs: Observation,
+  meta: Map<string, RecordMeta>,
+  gate: GateState,
+): LodestarSpanEvent {
+  const a = new Attrs(gate)
+  const m = meta.get(obs.id)
+  a.put("lodestar.observation.id", obs.id)
+    .put("lodestar.observation.schema", obs.schema)
+    .put("lodestar.observation.tool", obs.source.tool)
+    .put("lodestar.trust", obs.trust)
+    .put("lodestar.sensitivity", obs.sensitivity)
+  a.putContent("lodestar.observation.payload", safeJson(obs.payload), obs.sensitivity, m?.hash)
+  return {
+    name: "observation.recorded",
+    time_unix_nano: isoToUnixNano(m?.timestamp ?? obs.source.captured_at),
+    attributes: a.bag,
+  }
+}
+
+function beliefEvent(
+  b: Belief,
+  claimById: Map<string, Claim>,
+  meta: Map<string, RecordMeta>,
+  gate: GateState,
+): LodestarSpanEvent {
+  const a = new Attrs(gate)
+  const m = meta.get(b.id)
+  a.put("lodestar.belief.id", b.id)
+    .put("lodestar.belief.claim_id", b.claim_id)
+    .put("lodestar.truth_status", b.truth_status)
+    .put("lodestar.retrieval_status", b.retrieval_status)
+    .put("lodestar.security_status", b.security_status)
+    .put("lodestar.freshness_status", b.freshness_status)
+    .put("lodestar.sensitivity", b.sensitivity)
+    .put("lodestar.confidence", b.confidence)
+    .put("lodestar.calibration_class", b.calibration_class)
+    .put("lodestar.authority", b.authority)
+
+  // The claim statement is content. Gate by the stricter of the belief's
+  // and the claim's sensitivity (fail closed), and point the redaction
+  // marker at the claim's own payload hash — that is the content withheld.
+  const claim = claimById.get(b.claim_id)
+  if (claim) {
+    const src = stricter(b.sensitivity, claim.sensitivity)
+    const claimHash = meta.get(claim.id)?.hash ?? m?.hash
+    a.putContent("lodestar.belief.statement", claim.statement, src, claimHash)
+  }
+
+  return {
+    name: "belief.adopted",
+    time_unix_nano: isoToUnixNano(m?.timestamp ?? b.observed_at),
+    attributes: a.bag,
+  }
+}
+
+function decisionEvent(
+  d: ProjectedDecision,
+  meta: Map<string, RecordMeta>,
+  gate: GateState,
+): LodestarSpanEvent {
+  const a = new Attrs(gate)
+  const m = d.id ? meta.get(d.id) : undefined
+  if (d.id) a.put("lodestar.decision.id", d.id)
+  if (d.belief_dependencies) {
+    a.put("lodestar.decision.belief_dependencies", d.belief_dependencies)
+    a.put("lodestar.decision.belief_dependency_count", d.belief_dependencies.length)
+  }
+  if (d.made_by) a.put("lodestar.decision.made_by", d.made_by)
+  // Decisions carry no sensitivity in v0; treat the question as "internal"
+  // (the default tool-output level) so it ships under the default ceiling
+  // but is withheld when the operator lowers the ceiling to "public".
+  if (d.question !== undefined) {
+    a.putContent("lodestar.decision.question", d.question, "internal", m?.hash)
+  }
+  return {
+    name: "decision.made",
+    time_unix_nano: isoToUnixNano(m?.timestamp ?? d.made_at),
+    attributes: a.bag,
+  }
+}
+
+function transitionEvent(t: FirewallTransition, gate: GateState): LodestarSpanEvent {
+  const a = new Attrs(gate)
+  // Firewall transitions carry only ids/axes — structural, no gating.
+  a.put("lodestar.transition.kind", t.kind)
+  if (t.claim_id) a.put("lodestar.transition.claim_id", t.claim_id)
+  if (t.belief_id) a.put("lodestar.transition.belief_id", t.belief_id)
+  if (t.axis) a.put("lodestar.transition.axis", t.axis)
+  if (t.from_value) a.put("lodestar.transition.from", t.from_value)
+  if (t.to_value) a.put("lodestar.transition.to", t.to_value)
+  if (t.by_authority) a.put("lodestar.transition.by_authority", t.by_authority)
+  return {
+    name: `firewall.${t.kind}`,
+    time_unix_nano: isoToUnixNano(t.at),
+    attributes: a.bag,
+  }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+interface RecordMeta {
+  hash: string
+  timestamp: string
+}
+
+/**
+ * Index `{ payload_hash, timestamp }` by the payload's `id`, so events can
+ * be timed off the real envelope and redaction markers can carry the
+ * tamper-evident hash of the withheld content.
+ */
+function buildMetaIndex(projection: ChainProjection): Map<string, RecordMeta> {
+  const m = new Map<string, RecordMeta>()
+  for (const ev of projection.raw_events) {
+    const p = ev.payload
+    if (p && typeof p === "object" && typeof (p as { id?: unknown }).id === "string") {
+      const id = (p as { id: string }).id
+      // Keep the first envelope seen for an id (its creation), which is
+      // the most stable timestamp for ordering.
+      if (!m.has(id)) m.set(id, { hash: ev.payload_hash, timestamp: ev.timestamp })
+    }
+  }
+  return m
+}
+
+function isErrorPhase(phase: ActionPhase): boolean {
+  return phase === "failed" || phase === "rejected" || phase === "halted"
+}
+
+function policyVerdict(phase: ActionPhase): string {
+  switch (phase) {
+    case "rejected":
+      return "deny"
+    case "pending_approval":
+      return "hold"
+    case "approved":
+    case "executing":
+    case "completed":
+    case "failed":
+      // Policy allowed it; "failed" is a runtime failure, not a denial.
+      return "allow"
+    case "halted":
+      return "halt"
+    default:
+      return "unknown"
+  }
+}
+
+function stricter(a: Sensitivity, b: Sensitivity): Sensitivity {
+  return sensitivityRank(a) >= sensitivityRank(b) ? a : b
+}
+
+function singleModel(projection: ChainProjection): string | undefined {
+  const models = new Set<string>()
+  for (const ev of projection.raw_events) {
+    const mdl = ev.versions?.model
+    if (mdl) models.add(mdl)
+  }
+  return models.size === 1 ? [...models][0] : undefined
+}
+
+function safeJson(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined
+  if (typeof value === "string") return value
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return undefined
+  }
+}
+
+function byTime(a: LodestarSpanEvent, b: LodestarSpanEvent): number {
+  const x = BigInt(a.time_unix_nano)
+  const y = BigInt(b.time_unix_nano)
+  return x < y ? -1 : x > y ? 1 : 0
+}

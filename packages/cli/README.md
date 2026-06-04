@@ -16,6 +16,24 @@ lodestar report session-1779551238212 --out trust.md
 lodestar report session-1779551238212 --raw-events 25
 ```
 
+### `lodestar otel export <session-id>` — OpenTelemetry bridge
+
+Project a session's event log into OpenTelemetry GenAI spans and emit them
+as OTLP/HTTP JSON, so the epistemic chain shows up in Langfuse, Phoenix,
+Jaeger, or Tempo. With `--endpoint`, the trace is POSTed to a collector;
+with `--out`, it is written to a file; with neither (or `--stdout`), it is
+printed to stdout — a dry run that needs no collector. Content above
+`--sensitivity-ceiling` (default `internal`) is withheld: the span ships
+with structural metadata and the payload hash only.
+
+```sh
+lodestar otel export session-1779551238212 --stdout
+lodestar otel export session-1779551238212 --endpoint http://localhost:4318
+lodestar otel export session-1779551238212 \
+  --sensitivity-ceiling confidential \
+  --header "authorization=Bearer $TOKEN" --out trace.json
+```
+
 ### `lodestar guard wrap --target <module>` — programmatic surface
 
 Import a TS module that default-exports an `AgentLoop` and run it

@@ -15,7 +15,8 @@
     "reflection",
     "documentation_provenance",
     "policy_kernel",
-    "governing_ui"
+    "governing_ui",
+    "otel_export"
   ],
   "invariants": [
     "no_self_promotion",
@@ -39,7 +40,9 @@
     "granted_approval_revalidates",
     "hold_resolves_in_process",
     "proxy_hold_times_out_or_resolves",
-    "read_only_viewer"
+    "read_only_viewer",
+    "otel_export_sensitivity_ceiling",
+    "otel_action_span_projection"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -121,6 +124,14 @@
       "name": "proxy-hold-carries-rule-authority",
       "file": "probes/proxy-hold-carries-rule-authority.ts"
     },
-    { "name": "viewer-is-read-only", "file": "probes/viewer-is-read-only.ts" }
+    { "name": "viewer-is-read-only", "file": "probes/viewer-is-read-only.ts" },
+    {
+      "name": "otel-export-respects-sensitivity-ceiling",
+      "file": "probes/otel-export-respects-sensitivity-ceiling.ts"
+    },
+    {
+      "name": "otel-export-projects-action-spans",
+      "file": "probes/otel-export-projects-action-spans.ts"
+    }
   ]
 }
