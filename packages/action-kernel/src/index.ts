@@ -16,6 +16,8 @@ export {
 
 export {
   ActionKernel,
+  sensitivityForContract,
+  type ApprovalOutcome,
   type KernelContext,
   type PolicyGate,
   type PolicyDecision,

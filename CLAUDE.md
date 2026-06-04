@@ -118,7 +118,7 @@ packages/
   trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
   harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier)
-  policy-kernel/       # (Batch 4+) trust ladder, action contracts, approvals — stubbed in action-kernel for now
+  policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle. Arbitrate hook (sentinel/calibration) + host wiring still pending
   otel-exporter/       # (later) OTel GenAI semantic conventions bridge
   adapters/
     git/               # (exists)

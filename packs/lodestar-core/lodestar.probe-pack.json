@@ -13,7 +13,8 @@
     "event_log",
     "mcp_proxy",
     "reflection",
-    "documentation_provenance"
+    "documentation_provenance",
+    "policy_kernel"
   ],
   "invariants": [
     "no_self_promotion",
@@ -28,7 +29,13 @@
     "injection_defense",
     "reflection_cannot_promote_alone",
     "contradicted_belief_cascade",
-    "documentation_evidence_provenance"
+    "documentation_evidence_provenance",
+    "trust_ladder_floor",
+    "l4_floor_is_lower_bound",
+    "pending_approval_no_execute",
+    "structural_deny_default",
+    "policy_signature_required",
+    "granted_approval_revalidates"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -63,6 +70,31 @@
     {
       "name": "documentation-evidence-provenance",
       "file": "probes/documentation-evidence-provenance.ts"
+    },
+    { "name": "l4-action-requires-approval", "file": "probes/l4-action-requires-approval.ts" },
+    {
+      "name": "l4-floor-preserves-stricter-rule",
+      "file": "probes/l4-floor-preserves-stricter-rule.ts"
+    },
+    {
+      "name": "pending-approval-cannot-execute",
+      "file": "probes/pending-approval-cannot-execute.ts"
+    },
+    {
+      "name": "ladder-floor-overrides-allow-rule",
+      "file": "probes/ladder-floor-overrides-allow-rule.ts"
+    },
+    {
+      "name": "unmatched-action-defaults-to-deny",
+      "file": "probes/unmatched-action-defaults-to-deny.ts"
+    },
+    {
+      "name": "policy-version-signature-required",
+      "file": "probes/policy-version-signature-required.ts"
+    },
+    {
+      "name": "granted-approval-still-revalidates-preconditions",
+      "file": "probes/granted-approval-still-revalidates-preconditions.ts"
     }
   ]
 }

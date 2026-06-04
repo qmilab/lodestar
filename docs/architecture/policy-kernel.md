@@ -169,11 +169,32 @@ would auto-approve an L4 push and silently skip the entire approval workflow. So
 the kernel applies the floor *first*, structurally, and no rule can lift it:
 
 ```
-ladder floor (evaluated before the rule list):
+ladder floor:
   required_level == 5  → deny             (always; prohibited)
-  required_level == 4  → require_approval (always; never auto-approves)
-  required_level <= 3  → fall through to the rule list
+  required_level == 4  → require_approval is a LOWER BOUND, not a fixed verdict
+  required_level <= 3  → the rule list decides, over a structural deny default
 ```
+
+**The L4 floor is a lower bound, not a fixed verdict** (implementation note,
+clarified after a review caught the subtlety). "No rule can *lift* it" means a
+rule may make an L4 action *more* restrictive but never less. So the rule list
+is still consulted for L4, and the floor only blocks a downgrade to `allow`:
+
+- a matching `deny` rule → **deny** (stricter than the floor; honoured — the
+  floor must not soften an explicit deny into an approvable hold);
+- a matching `require_approval` rule → **hold**, with the rule's stricter
+  `required_authority` *preserved* into the opened `ApprovalRequest` (so a
+  policy demanding a senior approver is not silently downgraded to the floor's
+  empty authority);
+- a matching `allow` rule → **hold** (the floor lifts `allow` → require
+  approval; `allow` is impotent at L4);
+- no matching rule → **hold** (the floor's baseline — L4 is the
+  human-in-the-loop tier, so it does *not* fall to the structural deny default
+  the way L0–L3 do).
+
+A naïve "L4 → hold, ignore the rules" floor would under-enforce: it silently
+drops a stricter rule's `deny` or `required_authority`. The floor strengthens,
+never weakens.
 
 This is why `autoApprovePolicy`'s ceiling tops out at L3 — auto-approving L4 is
 not expressible, by design. Today's preset accepts a ceiling of 4 and
