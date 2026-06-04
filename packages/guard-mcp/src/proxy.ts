@@ -15,6 +15,7 @@ import {
   InMemoryWorldModel,
   type IngestResult,
 } from "@qmilab/lodestar-cognitive-core"
+import { ApprovalDeniedPayloadSchema, ApprovalGrantedPayloadSchema } from "@qmilab/lodestar-core"
 import type {
   Action,
   ActionContract,
@@ -187,6 +188,13 @@ export class MCPProxy {
    */
   private readonly registeredToolNames: Set<string> = new Set()
   private started = false
+  /**
+   * Set true at the very start of `stop()` so an in-flight approval wait
+   * (`waitForResolution`) bails promptly instead of resolving/executing against
+   * a half-torn-down proxy (tools deregistered, session ended). Distinct from
+   * `started`, which `stop()` only clears after teardown completes.
+   */
+  private stopping = false
 
   constructor(
     public readonly config: ProxyConfig,
@@ -257,6 +265,7 @@ export class MCPProxy {
       throw new Error("MCPProxy: already started")
     }
     this.started = true
+    this.stopping = false
 
     // 1. Register the MCP-specific schema + extractor with the
     //    cognitive-core registries. Idempotent across calls.
@@ -706,8 +715,13 @@ export class MCPProxy {
     // inferred from `approval.requested`.
     await this.emit("action.pending_approval", parked)
 
-    const timeoutMs = this.config.approval_timeout_ms
-    const deadline = timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : undefined
+    // Coalesce defensively: the field is required on the parsed config, but a
+    // JS caller or a cast literal can reach the constructor without it, and an
+    // `undefined` here would make the wait loop unbounded (every `<= 0` / `>=`
+    // comparison against undefined is false). Treat a missing value as 0.
+    const timeoutMs = this.config.approval_timeout_ms ?? 0
+    const deadlineAt = Date.now() + timeoutMs
+    const deadline = timeoutMs > 0 ? new Date(deadlineAt).toISOString() : undefined
     const request = openApprovalRequest(
       parked,
       holdEvaluationForParkedAction(parked),
@@ -729,7 +743,22 @@ export class MCPProxy {
       }
     }
 
-    const outcome = await this.waitForResolution(request, parked.id, timeoutMs)
+    const outcome = await this.waitForResolution(request, parked.id, deadlineAt)
+
+    // The proxy was stopped mid-wait: don't append post-teardown events or run
+    // the tool (its registration may already be gone). Return a terminal result;
+    // the wrapped agent is disconnecting anyway.
+    if (this.stopping) {
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: "proxy stopped before the held action was resolved",
+          kind: "approval_timeout",
+          action_id: parked.id,
+        }),
+      }
+    }
 
     // Deadline passed with no resolution → expire it (a soft denial).
     if (outcome === undefined) {
@@ -772,31 +801,49 @@ export class MCPProxy {
   }
 
   /**
-   * Poll the event log for an out-of-band resolution of `request`, up to
-   * `timeoutMs`. Returns the bound `ApprovalOutcome` (granted/denied) or
-   * `undefined` if the deadline passes first.
+   * Poll the event log for an out-of-band resolution of `request`, until the
+   * absolute `deadlineAt` (ms epoch). Returns the bound `ApprovalOutcome`
+   * (granted/denied) recorded *before* the deadline, or `undefined` if the
+   * deadline passes first (or the proxy stops).
    *
-   * The resolver appends the `approval.*` event to the same log. In-process a
-   * second `EventLogWriter` shares the single-writer mutex; a separate process
-   * (the `lodestar approve` CLI) hydrates its seq from the log tip and appends
-   * one small atomic line — cross-process file-locking is a documented v0
-   * caveat of `EventLogWriter`, acceptable here because the resolution is a
-   * single infrequent append while the proxy only reads during the wait.
+   * Acceptance is gated on the resolution event's own envelope timestamp
+   * (≤ the request's `deadline`), not on poll timing — so a resolution appended
+   * after the deadline is never accepted even if a final poll happens to observe
+   * it (closing the "late grant slips in" race). A torn / partially-written
+   * trailing line from a concurrent append is tolerated: the read error is
+   * swallowed and polling continues until the deadline.
+   *
+   * Cross-process write safety is NOT yet guaranteed. In-process a second
+   * `EventLogWriter` shares the single-writer mutex and seq counter, so an
+   * in-process resolver is correct. A *separate* process appending the
+   * resolution can collide on `seq` / `logical_clock` with the proxy's own
+   * post-resolution appends — the writer's counters are process-local, so the
+   * proxy never observes the resolver's allocation. The event-log writer must
+   * gain cross-process locking (or the resolution must route through the proxy's
+   * single writer) before a separate-process resolver is safe; that is a
+   * prerequisite for the `lodestar approve` CLI slice, not yet in place.
    */
   private async waitForResolution(
     request: ApprovalRequest,
     actionId: string,
-    timeoutMs: number,
+    deadlineAt: number,
   ): Promise<ApprovalOutcome | undefined> {
     const reader = new EventLogReader(this.logRoot)
-    const start = Date.now()
     for (;;) {
-      const events = await reader.readSession(this.config.project_id, this.sessionId)
-      const outcome = resolutionOutcomeFor(events, request.request_id, actionId)
+      if (this.stopping) return undefined
+      let events: EventEnvelope[] = []
+      try {
+        events = await reader.readSession(this.config.project_id, this.sessionId)
+      } catch {
+        // A concurrent append may have left a torn trailing line; treat it as
+        // "no resolution yet" and keep polling rather than failing the call.
+        events = []
+      }
+      const outcome = resolutionOutcomeFor(events, request.request_id, actionId, request.deadline)
       if (outcome !== undefined) return outcome
-      const elapsed = Date.now() - start
-      if (elapsed >= timeoutMs) return undefined
-      await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, timeoutMs - elapsed))
+      const remaining = deadlineAt - Date.now()
+      if (remaining <= 0) return undefined
+      await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, remaining))
     }
   }
 
@@ -871,6 +918,9 @@ export class MCPProxy {
    */
   async stop(): Promise<void> {
     if (!this.started) return
+    // Signal any in-flight approval wait to bail before we tear down tools and
+    // close the session, so it cannot resolve/execute against a dead proxy.
+    this.stopping = true
     try {
       // Best-effort: if the log is unwritable (operator broke the
       // partition mid-session, disk filled up, …), do not let the
@@ -1184,32 +1234,40 @@ function delay(ms: number): Promise<void> {
 /**
  * Find an out-of-band `approval.granted@1` / `approval.denied@1` event matching
  * this request and build the bound `ApprovalOutcome`. Returns `undefined` if
- * none has landed yet. First match wins — one resolution is expected per
- * request, and `ActionKernel.resolve()` re-validates the binding regardless.
+ * none qualifies yet. First qualifying match wins — one resolution is expected
+ * per request, and `ActionKernel.resolve()` re-validates the binding regardless.
+ *
+ * Two guards beyond the id match:
+ * - **Deadline:** an event recorded *after* `notAfter` (the request's deadline)
+ *   is skipped — a late grant is a timeout, not an approval.
+ * - **Schema:** the payload is validated against the core
+ *   `ApprovalGrantedPayloadSchema` / `ApprovalDeniedPayloadSchema`; a malformed
+ *   event is skipped, never accepted with a fabricated `approver_id`. (This is
+ *   shape validation, not a trust boundary against a process that can write the
+ *   log — signing approval events is the deeper hardening, tracked separately.)
  */
 function resolutionOutcomeFor(
   events: EventEnvelope[],
   requestId: string,
   actionId: string,
+  notAfter: string | undefined,
 ): ApprovalOutcome | undefined {
   for (const e of events) {
     if (e.type !== "approval.granted" && e.type !== "approval.denied") continue
-    const p = e.payload as {
-      request_id?: unknown
-      action_id?: unknown
-      approver_id?: unknown
-      reason?: unknown
-      at?: unknown
-    }
+    if (notAfter !== undefined && e.timestamp > notAfter) continue
+    const schema =
+      e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
+    const parsed = schema.safeParse(e.payload)
+    if (!parsed.success) continue
+    const p = parsed.data
     if (p.request_id !== requestId || p.action_id !== actionId) continue
-    const kind = e.type === "approval.granted" ? "granted" : "denied"
     return {
-      kind,
-      action_id: actionId,
-      request_id: requestId,
-      approver_id: typeof p.approver_id === "string" ? p.approver_id : "unknown",
-      reason: typeof p.reason === "string" ? p.reason : undefined,
-      at: typeof p.at === "string" ? p.at : undefined,
+      kind: e.type === "approval.granted" ? "granted" : "denied",
+      action_id: p.action_id,
+      request_id: p.request_id,
+      approver_id: p.approver_id,
+      reason: p.reason,
+      at: p.at,
     }
   }
   return undefined

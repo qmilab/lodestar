@@ -95,10 +95,14 @@ gate an action. It has landed, with both hold-resolution paths wired:
 
 Two honest caveats for anyone running the **proxy** today:
 
-- **No reference resolver ships yet.** Until the `lodestar approve` CLI lands,
-  *something* must write the out-of-band `approval.granted@1` (your own script,
-  an approval UI). With `approval_timeout_ms` left at its default of 0 the proxy
+- **No reference resolver ships yet, and a separate-process writer isn't
+  seq-safe.** With `approval_timeout_ms` left at its default of 0 the proxy
   doesn't wait at all — it surfaces the hold as `approval_required` immediately.
+  Set a positive timeout to enable waiting, but note: an *in-process* resolver
+  is safe today, whereas a *separate* process appending the resolution to the
+  same log can collide on event sequence numbers (the event-log writer's
+  cross-process locking is the prerequisite the `lodestar approve` CLI will
+  bring). Until then, resolve holds in-process.
 - **The `sandbox` declaration is intent, not enforcement.** The contract declares a
   sandbox profile, but in v0 no namespace/cgroup/container layer enforces it. Run
   downstream tools inside your own OS-level sandbox until the sandbox runtime

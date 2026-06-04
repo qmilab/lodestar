@@ -108,11 +108,21 @@ Cognitive Core. The resulting event log is renderable by
    marker the agent reads as a normal tool response and re-plans around —
    never a transport error. A timed-out hold is a soft denial the agent
    re-proposes; durable resume of the same approved call is deferred.
-   `auto_approve_ceiling` caps at L3 — auto-approving L4 is not
-   expressible (the floor always holds it). Cross-process resolution
-   relies on `EventLogWriter` hydration + atomic single-line appends (the
-   resolver appends one event while the proxy only reads during the
-   wait); cross-process file-locking remains a documented v0 caveat.
+   Acceptance is gated on the resolution event's own timestamp (≤ the
+   request deadline), so a grant appended after the deadline is a timeout,
+   not a late approval; the payload is validated against the core
+   `approval.*` schema before it is trusted; and a torn trailing line from
+   a concurrent append is tolerated (polling continues). `auto_approve_ceiling`
+   caps at L3 — auto-approving L4 is not expressible (the floor always holds
+   it). **Cross-process resolution is not yet seq-safe.** In-process a second
+   `EventLogWriter` shares the single-writer mutex and seq counter, so an
+   in-process resolver is correct. A *separate* process appending the
+   resolution can collide on `seq`/`logical_clock` with the proxy's own
+   post-resolution appends (the writer's counters are process-local — see
+   `EventLogWriter`). The event-log writer must gain cross-process locking, or
+   the resolution must route through the proxy's single writer, before the
+   separate-process `lodestar approve` CLI is safe — a prerequisite for that
+   slice.
 
 6. **Stdio only for v0.** HTTP/SSE transports for the proxy's
    upstream face are deferred. The downstream client side uses

@@ -174,6 +174,11 @@ export const ProxyConfigSchema = z.object({
    * a positive value below the client's timeout to enable out-of-band
    * approval). Keep it comfortably under the wrapped agent's `tools/call`
    * timeout.
+   *
+   * Caveat: an *in-process* resolver is fully safe; a *separate process*
+   * writing the resolution is not yet seq-safe (the event-log writer's counters
+   * are process-local — see `EventLogWriter`). The separate-process
+   * `lodestar approve` CLI needs the writer's cross-process locking first.
    */
   approval_timeout_ms: z.number().int().min(0).default(0),
   downstream_servers: z

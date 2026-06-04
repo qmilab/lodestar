@@ -97,7 +97,9 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   `approval_timeout_ms` polling for an `approval.granted@1`, else expires).
   **Still pending:** the `lodestar approve` reference CLI resolver (the
   open-core writer of `approval.granted@1` / `approval.denied@1` that keeps the
-  solo workflow ungated).
+  solo workflow ungated). It runs as a *separate process*, so it also needs the
+  event-log writer to gain cross-process append safety (the proxy's poll path is
+  seq-safe only for an in-process resolver today — see the guard-mcp CLAUDE.md).
 - **OS-level sandbox enforcement.** The Policy Kernel *decides* a
   `SandboxProfile`; a separate sandbox runtime enforces it (graduates with the
   shell adapter).
