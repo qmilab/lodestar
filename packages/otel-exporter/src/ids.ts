@@ -10,21 +10,29 @@ import { createHash } from "node:crypto"
  * duplicates the trace. No randomness and no wall clock — which also
  * keeps the package replay-safe.
  *
+ * The seed includes the **project id** as well as the session id: a session
+ * id is only unique within a project (callers disambiguate cross-project
+ * collisions with `--project`), so seeding on the session alone would make
+ * two projects that reuse a session id collide on trace/span ids in the
+ * backend. The seed is a JSON array so the components can never be confused
+ * across a delimiter (`["a:b", "c"]` ≠ `["a", "b:c"]`).
+ *
  * sha-256 of any input is never all-zero, so the OTLP "invalid id"
  * sentinel (all bytes zero) cannot be produced.
  */
 
-/** 16-byte (32 hex char) trace id for a session. */
-export function traceIdFor(sessionId: string): string {
-  return createHash("sha256").update(`lodestar.trace:${sessionId}`).digest("hex").slice(0, 32)
+function hashHex(seed: string): string {
+  return createHash("sha256").update(seed).digest("hex")
 }
 
-/** 8-byte (16 hex char) span id for a record within a session. */
-export function spanIdFor(sessionId: string, localId: string): string {
-  return createHash("sha256")
-    .update(`lodestar.span:${sessionId}:${localId}`)
-    .digest("hex")
-    .slice(0, 16)
+/** 16-byte (32 hex char) trace id for a (project, session). */
+export function traceIdFor(projectId: string, sessionId: string): string {
+  return hashHex(`lodestar.trace:${JSON.stringify([projectId, sessionId])}`).slice(0, 32)
+}
+
+/** 8-byte (16 hex char) span id for a record within a (project, session). */
+export function spanIdFor(projectId: string, sessionId: string, localId: string): string {
+  return hashHex(`lodestar.span:${JSON.stringify([projectId, sessionId, localId])}`).slice(0, 16)
 }
 
 /**

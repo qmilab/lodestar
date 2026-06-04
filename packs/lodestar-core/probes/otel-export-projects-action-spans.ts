@@ -28,13 +28,17 @@
  *   D4 — endpoint + out are mutually exclusive (throws, rather than POSTing
  *       and silently dropping the requested file);
  *   E — the export is idempotent: re-exporting the same log yields a
- *       byte-identical trace (deterministic ids).
+ *       byte-identical trace (deterministic ids);
+ *   F — two projects that reuse the same session id get distinct trace ids
+ *       (the ids are seeded with the project id, so a backend cannot merge
+ *       them).
  *
  * If the parent wiring breaks, C trips. If a policy denial stops being
  * legible as a failed span, D trips. If an outcome-less terminal state
  * collapses to proposal time, D2 trips. If a child escapes the root bounds,
  * D3 trips. If conflicting delivery targets are silently accepted, D4 trips.
- * If ids stop being deterministic, E trips.
+ * If ids stop being deterministic, E trips. If cross-project ids collide,
+ * F trips.
  */
 
 import { mkdtempSync, rmSync } from "node:fs"
@@ -50,6 +54,7 @@ interface ProbeResult {
 }
 
 const PROJECT = "otel-spans-probe"
+const PROJECT2 = "otel-spans-probe-other"
 const SESSION = "otel-spans-probe-session"
 const ACTOR = "otel-spans-probe-actor"
 const SCOPE = { level: "project" as const, identifier: PROJECT }
@@ -309,6 +314,40 @@ async function run(): Promise<ProbeResult> {
       return fail(details, "re-export produced different bytes (non-deterministic)")
     }
     details.push("E: re-export is byte-identical (deterministic ids)")
+
+    // F — two projects that reuse the same session id must NOT collide on
+    // trace ids (callers disambiguate with --project; an OTLP backend would
+    // otherwise merge them). Seed a second project with the SAME session id
+    // and assert a distinct trace id.
+    const writer2 = new EventLogWriter(rootDir)
+    await writer2.append({
+      schema_version: "1",
+      project_id: PROJECT2,
+      session_id: SESSION,
+      actor_id: ACTOR,
+      causal_parent_ids: [],
+      versions: {},
+      id: "ev-act-read-p2",
+      type: "action.completed",
+      timestamp: "2026-06-04T12:00:01.000Z",
+      payload: action(
+        "act-read",
+        "fs.read",
+        "completed",
+        0,
+        "self",
+        "reversible",
+        "2026-06-04T12:00:01.000Z",
+      ),
+    })
+    const other = await exportSession({ sessionId: SESSION, projectId: PROJECT2, logRoot: rootDir })
+    if (other.trace_id === summary.trace_id) {
+      return fail(
+        details,
+        "two projects sharing a session id produced the SAME trace id (collision)",
+      )
+    }
+    details.push("F: distinct project ⇒ distinct trace id (no cross-project collision)")
 
     return {
       passed: true,

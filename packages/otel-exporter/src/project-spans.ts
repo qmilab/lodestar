@@ -139,8 +139,9 @@ export function buildTrace(
   const gate: GateState = { ceiling, redacted: 0 }
 
   const session = projection.session_id
-  const trace_id = traceIdFor(session)
-  const rootSpanId = spanIdFor(session, `session:${session}`)
+  const project = projection.project_id
+  const trace_id = traceIdFor(project, session)
+  const rootSpanId = spanIdFor(project, session, "session")
 
   const meta = buildMetaIndex(projection)
   const claimById = new Map<string, Claim>()
@@ -173,7 +174,7 @@ export function buildTrace(
   // ── Action spans: execute_tool ──────────────────────────────────────
   const actionSpans: LodestarSpan[] = []
   for (const pa of projection.actions) {
-    const span = actionSpan(pa, session, rootSpanId, meta, gate)
+    const span = actionSpan(pa, project, session, rootSpanId, meta, gate)
     if (span) actionSpans.push(span)
   }
 
@@ -233,6 +234,7 @@ function spanBounds(nanos: string[]): { start: string; end: string } {
 
 function actionSpan(
   pa: ProjectedAction,
+  project: string,
   session: string,
   parentSpanId: string,
   meta: Map<string, RecordMeta>,
@@ -284,7 +286,7 @@ function actionSpan(
 
   return {
     name: `execute_tool ${action.tool}`,
-    span_id: spanIdFor(session, action.id),
+    span_id: spanIdFor(project, session, action.id),
     parent_span_id: parentSpanId,
     kind: "internal",
     start_unix_nano,

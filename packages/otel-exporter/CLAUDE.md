@@ -16,7 +16,7 @@ log ──(trace.loadSessionEvents)──▶ ChainProjection ──(buildTrace)�
                                                                                 └▶ --out / --stdout
 ```
 
-- `src/ids.ts` — deterministic ids (sha-256 over session/local ids; 16-byte
+- `src/ids.ts` — deterministic ids (sha-256 over project/session/local ids; 16-byte
   trace id, 8-byte span id) and `isoToUnixNano`. No randomness, no wall clock —
   re-exporting the same log yields the same trace (idempotent).
 - `src/sensitivity.ts` — `SENSITIVITY_ORDER` + `redact()`: the sensitivity gate.
@@ -48,8 +48,10 @@ log ──(trace.loadSessionEvents)──▶ ChainProjection ──(buildTrace)�
    first (structural metadata excepted). Default ceiling is `internal` — the same
    conservative default as the v0 `ContextPolicy`.
 3. **Deterministic ids.** Trace/span ids are a pure function of the
-   session/action ids. No `Date.now()` / `Math.random()`. Re-export is
-   idempotent; collectors overwrite rather than duplicate.
+   project, session, and action ids (the project is in the seed so two
+   projects reusing a session id never collide). No `Date.now()` /
+   `Math.random()`. Re-export is idempotent; collectors overwrite rather
+   than duplicate.
 4. **No OTel SDK dependency.** The OTLP/HTTP trace wire format is small and
    stable; we build it directly. A read-side batch exporter does not need the
    SDK's span processors, batching, retry, or context propagation — the log

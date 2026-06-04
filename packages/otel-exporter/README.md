@@ -33,7 +33,8 @@ Each governed Action becomes an `execute_tool` span (`gen_ai.operation.name`,
 trust level, blast radius, and outcome as `lodestar.*` attributes. Observations,
 beliefs, decisions, and firewall transitions ride as span **events** on the
 session root. Span and trace ids are derived deterministically from the
-session/action ids, so re-exporting the same log produces the same trace.
+project, session, and action ids, so re-exporting the same log produces the
+same trace (and two projects that reuse a session id stay distinct).
 
 ## The sensitivity gate
 
