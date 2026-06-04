@@ -81,25 +81,36 @@ the irreversible action the injection was steering toward never runs.
 The **Policy Kernel** turns the declared ladder into enforced decisions: a
 signed, declarative `Policy` document, the three-valued gate above, the approval
 lifecycle, and the arbitrate hook that lets sentinel alerts and calibration flags
-gate an action. It has landed — along with the **in-process approval resolver**:
-a held L4 action under `guard.wrap()` opens an `ApprovalRequest` that a resolver
-(a human, an auto-rule, a test stub) answers, un-parking the action so it
-executes (or rejecting it). Two honest caveats for anyone running the **proxy**
-today:
+gate an action. It has landed, with both hold-resolution paths wired:
 
-- **The MCP proxy surfaces a hold; it doesn't yet wait for one.** A held L4
-  action returns an `approval_required` synthetic result the agent re-plans
-  around. The deadline + out-of-band resolution loop — and the `lodestar approve`
-  CLI that resolves a hold from your own terminal — are the next host-wiring
-  slices. Until they land, treat a proxy hold as "denied, re-propose."
+- **In-process (`guard.wrap()`):** a held L4 action opens an `ApprovalRequest`
+  that an injected resolver (a human, an auto-rule, a test stub) answers,
+  un-parking the action so it executes (or rejecting it).
+- **MCP proxy:** a held action waits up to a configured `approval_timeout_ms`,
+  polling the event log for an out-of-band `approval.granted@1` /
+  `approval.denied@1`. On a grant it un-parks and runs the tool; on a deny or a
+  deadline pass it returns a synthetic result (`approval_denied` /
+  `approval_timeout`) the agent re-plans around. A timed-out hold is a soft
+  denial to re-propose — durable resume of the same call is deferred.
+
+Two honest caveats for anyone running the **proxy** today:
+
+- **No reference resolver ships yet, and a separate-process writer isn't
+  seq-safe.** With `approval_timeout_ms` left at its default of 0 the proxy
+  doesn't wait at all — it surfaces the hold as `approval_required` immediately.
+  Set a positive timeout to enable waiting, but note: an *in-process* resolver
+  is safe today, whereas a *separate* process appending the resolution to the
+  same log can collide on event sequence numbers (the event-log writer's
+  cross-process locking is the prerequisite the `lodestar approve` CLI will
+  bring). Until then, resolve holds in-process.
 - **The `sandbox` declaration is intent, not enforcement.** The contract declares a
   sandbox profile, but in v0 no namespace/cgroup/container layer enforces it. Run
   downstream tools inside your own OS-level sandbox until the sandbox runtime
   lands (it graduates with the shell adapter).
 
-The ladder, the contract schema, the gate, and the approval lifecycle exist now;
-what remains is the proxy's out-of-band hold resolution, the team approval
-surface, and OS-level sandbox enforcement.
+The ladder, the contract schema, the gate, the approval lifecycle, and both
+hold-resolution paths exist now; what remains is the `lodestar approve` reference
+resolver, the team approval surface, and OS-level sandbox enforcement.
 
 ## Related
 

@@ -89,14 +89,17 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
 
 ## What does NOT live here yet (deliberate deferrals — `policy-kernel.md`)
 
-- **Host wiring (partly landed).** The in-process `guard.wrap()`
-  `ApprovalResolver` seam has landed: `autoApprovePolicy` is now re-exported
-  from `@qmilab/lodestar-guard` (its preset graduated here — L4 holds, L5
-  denies, ceiling caps at L3) and guard resolves a held action through the
-  resolver. **Still pending:** the MCP proxy's deadline / `approval_required` /
-  `approval_timeout` out-of-band hold loop (`@qmilab/lodestar-guard-mcp` — the
-  proxy currently surfaces a hold as an immediate `approval_required` synthetic
-  result, no wait) and the `lodestar approve` reference CLI resolver.
+- **Host wiring (mostly landed).** Both hold-resolution paths are wired on top
+  of this engine: the in-process `guard.wrap()` `ApprovalResolver` seam
+  (`@qmilab/lodestar-guard` — `autoApprovePolicy` re-exported here, L4 holds, L5
+  denies, ceiling caps at L3), and the MCP proxy's deadline / `approval_timeout`
+  out-of-band hold loop (`@qmilab/lodestar-guard-mcp` — waits up to
+  `approval_timeout_ms` polling for an `approval.granted@1`, else expires).
+  **Still pending:** the `lodestar approve` reference CLI resolver (the
+  open-core writer of `approval.granted@1` / `approval.denied@1` that keeps the
+  solo workflow ungated). It runs as a *separate process*, so it also needs the
+  event-log writer to gain cross-process append safety (the proxy's poll path is
+  seq-safe only for an in-process resolver today — see the guard-mcp CLAUDE.md).
 - **OS-level sandbox enforcement.** The Policy Kernel *decides* a
   `SandboxProfile`; a separate sandbox runtime enforces it (graduates with the
   shell adapter).

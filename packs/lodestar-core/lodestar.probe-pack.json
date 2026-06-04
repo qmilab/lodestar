@@ -36,7 +36,8 @@
     "structural_deny_default",
     "policy_signature_required",
     "granted_approval_revalidates",
-    "hold_resolves_in_process"
+    "hold_resolves_in_process",
+    "proxy_hold_times_out_or_resolves"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -108,6 +109,7 @@
     {
       "name": "guard-hold-resolves-via-resolver",
       "file": "probes/guard-hold-resolves-via-resolver.ts"
-    }
+    },
+    { "name": "approval-timeout-denies", "file": "probes/approval-timeout-denies.ts" }
   ]
 }

@@ -210,6 +210,9 @@ export async function runGovernedDevDemo(
     default_scope: { level: "project", identifier: projectId },
     default_sensitivity: "internal",
     auto_approve_ceiling: 3,
+    // No out-of-band resolver in this demo: a held L4 action (the push) is
+    // surfaced immediately as `approval_required` rather than waited on.
+    approval_timeout_ms: 0,
     downstream_servers: [
       {
         name: "fs",
