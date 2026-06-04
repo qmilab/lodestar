@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs"
 import { join } from "node:path"
 import type { EventEnvelope } from "@qmilab/lodestar-core"
 import { EventLogReader } from "@qmilab/lodestar-event-log"
@@ -39,12 +40,36 @@ export interface ViewerHandle {
   stop: () => Promise<void>
 }
 
-const PUBLIC_DIR = join(import.meta.dir, "public")
+// The SPA assets live under `src/public`. When run from source under Bun
+// (the dev, CLI, and probe path) `import.meta.dir` is `src/`, so
+// `<dir>/public` resolves. When the package is built and consumed from
+// `dist/`, the assets are not copied, so fall back to `../src/public`
+// relative to the module — keeping the published build self-serving.
+const PUBLIC_DIR = (() => {
+  const here = join(import.meta.dir, "public")
+  if (existsSync(here)) return here
+  const fromDist = join(import.meta.dir, "..", "src", "public")
+  return existsSync(fromDist) ? fromDist : here
+})()
 
 function assetResponse(name: string, contentType: string): Response {
   return new Response(Bun.file(join(PUBLIC_DIR, name)), {
     headers: { "content-type": contentType },
   })
+}
+
+/**
+ * Decode a path segment, tolerating malformed percent-encoding. A request
+ * like `/api/sessions/%/x` would otherwise throw `URIError` and surface as
+ * an unhandled 500; here a bad segment simply decodes to itself and yields
+ * a clean 404 (no such session).
+ */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
+  }
 }
 
 function parseSeq(value: string | undefined): number {
@@ -144,8 +169,8 @@ function createApp(opts: Required<Pick<ViewerOptions, "logRoot" | "tailIntervalM
       .get("/api/sessions", () => listSessions(logRoot))
       .get("/api/approvals", async () => pendingApprovals(await readAllEvents(logRoot)))
       .get("/api/sessions/:project/:session", async ({ params, set }) => {
-        const project = decodeURIComponent(params.project)
-        const session = decodeURIComponent(params.session)
+        const project = safeDecode(params.project)
+        const session = safeDecode(params.session)
         const events = await reader.readSession(project, session)
         if (events.length === 0) {
           set.status = 404
@@ -155,8 +180,8 @@ function createApp(opts: Required<Pick<ViewerOptions, "logRoot" | "tailIntervalM
         return toWireProjection(projection)
       })
       .get("/api/sessions/:project/:session/report", async ({ params, set }) => {
-        const project = decodeURIComponent(params.project)
-        const session = decodeURIComponent(params.session)
+        const project = safeDecode(params.project)
+        const session = safeDecode(params.session)
         const events = await reader.readSession(project, session)
         if (events.length === 0) {
           set.status = 404
@@ -167,15 +192,15 @@ function createApp(opts: Required<Pick<ViewerOptions, "logRoot" | "tailIntervalM
         return renderReport(projection)
       })
       .get("/api/sessions/:project/:session/events", async ({ params, query }) => {
-        const project = decodeURIComponent(params.project)
-        const session = decodeURIComponent(params.session)
+        const project = safeDecode(params.project)
+        const session = safeDecode(params.session)
         const sinceSeq = parseSeq(query.sinceSeq)
         const events = await reader.readSession(project, session)
         return events.filter((event) => event.seq > sinceSeq)
       })
       .get("/api/sessions/:project/:session/stream", ({ params, query }) => {
-        const project = decodeURIComponent(params.project)
-        const session = decodeURIComponent(params.session)
+        const project = safeDecode(params.project)
+        const session = safeDecode(params.session)
         const sinceSeq = parseSeq(query.sinceSeq)
         return sseResponse(logRoot, project, session, sinceSeq, tailIntervalMs)
       })

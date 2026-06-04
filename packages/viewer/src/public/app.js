@@ -669,6 +669,15 @@ async function openSession(project_id, session_id, opts = {}) {
       ),
       api("/api/approvals").catch(() => []),
     ])
+    // Guard against a fast session switch: if the user opened another
+    // session while these requests were in flight, drop this stale result.
+    if (
+      !state.current ||
+      state.current.project_id !== project_id ||
+      state.current.session_id !== session_id
+    ) {
+      return
+    }
     state.projection = projection
     state.events = events
     state.maxSeq = events.reduce((m, e) => Math.max(m, e.seq), -1)
