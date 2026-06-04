@@ -1,13 +1,19 @@
 import { resolve } from "node:path"
 import {
+  type Actor,
   ApprovalDeniedPayloadSchema,
   ApprovalExpiredPayloadSchema,
   ApprovalGrantedPayloadSchema,
   type ApprovalRequest,
   ApprovalRequestSchema,
   type EventEnvelope,
+  type ResourceScope,
+  ResourceScopeSchema,
+  type Sensitivity,
+  SensitivitySchema,
 } from "@qmilab/lodestar-core"
 import { EventLogReader } from "@qmilab/lodestar-event-log"
+import { authorizeResolution } from "@qmilab/lodestar-guard"
 import {
   type ApprovalResolution,
   readApprovalResolution,
@@ -22,8 +28,8 @@ import {
  * mcp-proxy`, and resolve it from their own terminal — no account, no team UI.
  *
  *   lodestar approve list  --project <id> [--log-root <path>]
- *   lodestar approve grant <request-id> --approver <id> [--reason <text>] --project <id> [--log-root <path>]
- *   lodestar approve deny  <request-id> --approver <id> [--reason <text>] --project <id> [--log-root <path>]
+ *   lodestar approve grant <request-id> --approver <id> [auth flags] [--reason <text>] --project <id> [--log-root <path>]
+ *   lodestar approve deny  <request-id> --approver <id> [auth flags] [--reason <text>] --project <id> [--log-root <path>]
  *
  * It runs as a *separate process* from the proxy, so it never writes the event
  * log directly (the writer's seq/logical_clock counters are process-local — a
@@ -33,13 +39,31 @@ import {
  * `approval.granted@1` / `approval.denied@1`, and runs (or rejects) the held
  * action. See `@qmilab/lodestar-guard-mcp`'s `approvals-channel`.
  *
- * `list` reads the log read-only to show what is waiting; it never writes.
+ * **Authorisation.** The resolver owns authorisation (design lock:
+ * `policy-kernel.md` — the same contract the in-process `guard.wrap()` resolver
+ * honours). Before writing anything, this CLI builds the approver's `Actor` from
+ * `--approver` + the auth flags (`--clearance`, `--trust-baseline`, `--scope`,
+ * repeatable) and runs `authorizeResolution` against the request's
+ * `required_authority`: an approver who does not clear the required trust /
+ * clearance / scope is **refused** (exit 4) and no resolution is written, so a
+ * side-channel grant cannot unblock an action the policy held for a more
+ * authorised approver. The approver's authority is *self-declared* — this is
+ * honest-mistake protection at parity with the in-process path, not a
+ * cryptographic boundary (a hard boundary needs signed actors / a trusted actor
+ * registry, deliberately deferred). Auth flags default conservatively
+ * (clearance `public`, trust `0`, no scope), so a request carrying a non-empty
+ * `required_authority` makes you assert the authority you hold rather than
+ * silently clearing it.
+ *
+ * `list` reads the log read-only to show what is waiting (including each
+ * request's `required_authority`); it never writes.
  *
  * Exit codes:
  *   0  — success (resolution written, or list rendered)
  *   1  — runtime error (unreadable log, write failed)
  *   2  — usage error (bad/missing flags or subcommand)
  *   3  — the named request is not a pending approval in this log
+ *   4  — the approver does not clear the request's required_authority
  */
 export async function approveCommand(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
@@ -58,6 +82,12 @@ export async function approveCommand(argv: string[]): Promise<number> {
   let logRoot = ".lodestar/events"
   let approver: string | undefined
   let reason: string | undefined
+  // Approver authority — conservative defaults (no silent clearance). The
+  // approver asserts what they hold; `authorizeResolution` checks it against the
+  // request's `required_authority` before grant/deny is written.
+  let clearance: Sensitivity = "public"
+  let trustBaseline = 0
+  const scopes: ResourceScope[] = []
   const positionals: string[] = []
   for (let i = 0; i < rest.length; i++) {
     const arg = rest[i]
@@ -65,7 +95,35 @@ export async function approveCommand(argv: string[]): Promise<number> {
     else if (arg === "--log-root") logRoot = rest[++i] ?? logRoot
     else if (arg === "--approver" || arg === "-a") approver = rest[++i]
     else if (arg === "--reason" || arg === "-r") reason = rest[++i]
-    else if (arg === "--help" || arg === "-h") {
+    else if (arg === "--clearance") {
+      const v = rest[++i]
+      const parsed = SensitivitySchema.safeParse(v)
+      if (!parsed.success) {
+        process.stderr.write(
+          `invalid --clearance '${v ?? ""}' (expected public|internal|confidential|secret)\n`,
+        )
+        return 2
+      }
+      clearance = parsed.data
+    } else if (arg === "--trust-baseline") {
+      const v = rest[++i]
+      const n = Number(v)
+      if (v === undefined || v === "" || Number.isNaN(n) || n < 0 || n > 1) {
+        process.stderr.write(`invalid --trust-baseline '${v ?? ""}' (expected a number in [0,1])\n`)
+        return 2
+      }
+      trustBaseline = n
+    } else if (arg === "--scope") {
+      const v = rest[++i]
+      const scope = parseScope(v)
+      if (scope === undefined) {
+        process.stderr.write(
+          `invalid --scope '${v ?? ""}' (expected '<level>:<identifier>' or 'global')\n`,
+        )
+        return 2
+      }
+      scopes.push(scope)
+    } else if (arg === "--help" || arg === "-h") {
       writeUsage(process.stdout)
       return 0
     } else if (arg?.startsWith("-")) {
@@ -108,6 +166,9 @@ export async function approveCommand(argv: string[]): Promise<number> {
     kind: sub === "grant" ? "granted" : "denied",
     approver,
     reason,
+    clearance,
+    trustBaseline,
+    scopes,
   })
 }
 
@@ -174,8 +235,12 @@ async function resolveRequest(input: {
   kind: "granted" | "denied"
   approver: string
   reason: string | undefined
+  clearance: Sensitivity
+  trustBaseline: number
+  scopes: ResourceScope[]
 }): Promise<number> {
-  const { root, projectId, requestId, kind, approver, reason } = input
+  const { root, projectId, requestId, kind, approver, reason, clearance, trustBaseline, scopes } =
+    input
 
   let events: EventEnvelope[]
   try {
@@ -218,12 +283,41 @@ async function resolveRequest(input: {
     )
   }
 
+  // Authorisation — the resolver's job (design lock: policy-kernel.md). Build the
+  // approver's (self-asserted) Actor and match it against the request's
+  // required_authority. A shortfall refuses BEFORE any side-channel write, so an
+  // under-authorised approver cannot unblock an action the policy held for a
+  // trusted / cleared / scoped approver. Parity with the in-process resolver
+  // contract; not a cryptographic boundary (authority is self-declared).
+  const at = new Date().toISOString()
+  const approverActor: Actor = {
+    id: approver,
+    kind: "human",
+    display_name: approver,
+    authority_scope: scopes,
+    trust_baseline: trustBaseline,
+    sensitivity_clearance: clearance,
+    created_at: at,
+  }
+  const auth = authorizeResolution(
+    request,
+    approverActor,
+    kind,
+    reason !== undefined && reason !== "" ? { reason, at } : { at },
+  )
+  if (!auth.authorized) {
+    process.stderr.write(
+      `[approve] refused: ${auth.reason}\n          this request requires: ${describeAuthority(request) ?? "(no specific authority)"}\n          re-run asserting the authority you hold, e.g. --clearance <level> --trust-baseline <0..1> --scope <level:id>.\n`,
+    )
+    return 4
+  }
+
   const resolution: ApprovalResolution = {
     request_id: requestId,
     action_id: request.action_id,
     kind,
     approver_id: approver,
-    at: new Date().toISOString(),
+    at,
   }
   if (reason !== undefined && reason !== "") resolution.reason = reason
 
@@ -326,6 +420,22 @@ function describeAuthority(req: ApprovalRequest): string | undefined {
   return parts.length > 0 ? parts.join(", ") : undefined
 }
 
+/**
+ * Parse a `--scope` value into a `ResourceScope`. Accepts `global` (shorthand
+ * for the global level, identifier `*`) or `<level>:<identifier>`. Returns
+ * `undefined` on anything the `ResourceScope` schema rejects (unknown level,
+ * empty identifier, missing colon).
+ */
+function parseScope(value: string | undefined): ResourceScope | undefined {
+  if (value === undefined || value === "") return undefined
+  if (value === "global") return { level: "global", identifier: "*" }
+  const idx = value.indexOf(":")
+  if (idx <= 0) return undefined
+  const candidate = { level: value.slice(0, idx), identifier: value.slice(idx + 1) }
+  const parsed = ResourceScopeSchema.safeParse(candidate)
+  return parsed.success ? parsed.data : undefined
+}
+
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -337,10 +447,17 @@ function delay(ms: number): Promise<void> {
 function writeUsage(stream: NodeJS.WritableStream): void {
   stream.write(
     "usage: lodestar approve list  --project <id> [--log-root <path>]\n" +
-      "       lodestar approve grant <request-id> --approver <id> [--reason <text>] --project <id> [--log-root <path>]\n" +
-      "       lodestar approve deny  <request-id> --approver <id> [--reason <text>] --project <id> [--log-root <path>]\n" +
+      "       lodestar approve grant <request-id> --approver <id> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
+      "       lodestar approve deny  <request-id> --approver <id> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
       "\n" +
       "  Resolve an action a running `lodestar guard mcp-proxy` is holding for approval.\n" +
-      "  --log-root defaults to .lodestar/events (match the proxy's config).\n",
+      "  --log-root defaults to .lodestar/events (match the proxy's config).\n" +
+      "\n" +
+      "  Approver authority (asserted; checked against the request's required_authority):\n" +
+      "    --clearance <public|internal|confidential|secret>   (default public)\n" +
+      "    --trust-baseline <0..1>                             (default 0)\n" +
+      "    --scope <level:identifier> | global   (repeatable;  default none)\n" +
+      "  An approver who does not clear the request's required_authority is refused (exit 4);\n" +
+      "  'lodestar approve list' prints each request's authority requirement.\n",
   )
 }

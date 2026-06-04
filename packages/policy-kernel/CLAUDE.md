@@ -101,8 +101,12 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   are process-local and would collide) it drops a resolution in the proxy's
   side-channel; the proxy — the sole writer of its log — promotes it to the
   canonical `approval.granted@1` / `approval.denied@1`. The event-log writer was
-  left untouched (no cross-process locking needed). See the guard-mcp CLAUDE.md
-  and the `approval-via-side-channel` probe.
+  left untouched (no cross-process locking needed). The CLI honours the resolver
+  authorisation contract: it runs `authorizeResolution` (this package) against
+  the request's `required_authority` before writing, refusing an under-authorised
+  approver — the proxy promotes whatever it finds, so the resolver, not the
+  proxy, is where authority is checked. See the guard-mcp CLAUDE.md, the
+  `approval-via-side-channel` probe, and the cli `approve.test.ts`.
 - **OS-level sandbox enforcement.** The Policy Kernel *decides* a
   `SandboxProfile`; a separate sandbox runtime enforces it (graduates with the
   shell adapter).

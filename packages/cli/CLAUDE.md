@@ -30,6 +30,19 @@ log directly — that keeps the proxy the sole writer (the event-log
 writer's seq counters are process-local). `approve list` reads the log
 read-only to show pending `approval.requested@1` events.
 
+**The resolver owns authorisation** (design lock: `policy-kernel.md`).
+Because the proxy promotes whatever it finds (it is deliberately not a
+trust boundary), `approve grant/deny` builds the approver's `Actor` from
+`--approver` + the auth flags (`--clearance`, `--trust-baseline`,
+`--scope`) and runs `authorizeResolution` against the request's
+`required_authority` *before* writing anything — an under-authorised
+approver is refused (exit 4) and no side-channel file is written. This is
+parity with the in-process `guard.wrap()` resolver contract, and
+honest-mistake protection only: the approver's authority is self-declared
+(auth flags default conservatively — `public` / `0` / no scope), not a
+cryptographic boundary. A hard boundary (signed actors / a trusted actor
+registry the proxy verifies) is the deferred deeper hardening.
+
 ## Invariants
 
 1. **`lodestar report` is the headline surface.** It must produce output
