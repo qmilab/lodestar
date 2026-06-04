@@ -599,6 +599,10 @@ export class MCPProxy {
     // the next host-wiring slice; v0 here treats a hold as a soft denial the
     // agent re-proposes.
     if (arbitrated.phase === "pending_approval") {
+      // Record the parked Action (with its audit) before the request, so the
+      // held state is reconstructable directly from the event stream — not only
+      // inferred from `approval.requested`.
+      await this.emit("action.pending_approval", arbitrated)
       const request = openApprovalRequest(arbitrated, holdEvaluationForParkedAction(arbitrated))
       await this.emit("approval.requested", request)
       return buildPolicyDeniedResult({

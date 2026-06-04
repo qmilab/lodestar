@@ -61,7 +61,7 @@ runs it through the full trust layer.
 | `--project <id>` | `-p` | Project id |
 | `--actor <id>` | `-a` | Actor id for the run |
 | `--log-root <path>` | `-l` | Event-log root directory |
-| `--auto-approve-up-to <0..4>` | | Auto-approve [trust-ladder](../concepts/trust-ladder.md) rung; above it, deny |
+| `--auto-approve-up-to <0..3>` | | Auto-approve up to this [trust-ladder](../concepts/trust-ladder.md) rung. L4 always **holds** for approval, L5 is denied — neither is an auto-approve ceiling |
 
 **`guard mcp-proxy`** — stdio MCP proxy. Wraps any MCP-speaking agent (Claude Code,
 Cursor, Aider) without code changes; see

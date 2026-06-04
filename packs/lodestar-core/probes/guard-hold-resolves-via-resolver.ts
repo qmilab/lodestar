@@ -18,6 +18,11 @@
  *    `callTool` throw (a clear "no resolver" error) rather than silently
  *    approving or denying — and the tool never runs. No silent default on a
  *    security-relevant path.
+ * 4. A `CompiledPolicy` whose arbitrate hook escalates `allow → hold` (a
+ *    low-confidence backing belief) still opens a request and resolves. The
+ *    context-free `evaluate()` re-run returns the base `allow`, so the resolver
+ *    path must fall back to the parked action's audit rather than throwing on a
+ *    non-hold re-evaluation.
  *
  * Why this matters: the resolver seam is what makes a hold resolvable in
  * process — the load-bearing guarantee that the solo workflow is never gated.
@@ -31,9 +36,11 @@ import { EventLogReader } from "@qmilab/lodestar-event-log"
 import {
   type ApprovalResolver,
   type GuardConfig,
+  type Policy,
   alwaysHoldsChecker,
   authorizeResolution,
   autoApprovePolicy,
+  compile,
   runGuarded,
 } from "@qmilab/lodestar-guard"
 import { z } from "zod"
@@ -215,10 +222,70 @@ async function run(): Promise<ProbeResult> {
     return { passed: false, details: `[3] tool ran ${executeCalls}x with no resolver; expected 0.` }
   }
 
+  // ── 4. Arbitration-escalated hold (allow → hold) on a CompiledPolicy. ──────
+  registerProbeTool()
+  const allowAll: Policy = {
+    id: "allow-all",
+    version: "1",
+    rules: [{ match: {}, effect: "allow", reason: "allow everything (probe)" }],
+  }
+  const escalatingPolicy = compile(allowAll, {
+    decider_id: "probe-policy",
+    allow_unsigned: true,
+    arbitration: {
+      // A low-confidence / unverified backing belief escalates an L>=3 `allow`
+      // to a `hold` (the synchronous low-confidence check) — a hold the
+      // context-free evaluate() re-run cannot see.
+      resolveContext: () => ({
+        beliefs: [
+          {
+            id: "weak-belief",
+            calibration_class: "probe-class",
+            confidence: 0.1,
+            truth_status: "unverified",
+          },
+        ],
+      }),
+    },
+  })
+  const escalated = await runGuarded(
+    async (ctx) => {
+      await ctx.callTool("probe.push", {}, { contract: { required_level: 3 } })
+      return "ok"
+    },
+    { ...baseConfig(), policy_gate: escalatingPolicy, approval_resolver: grantingResolver },
+  )
+  if (escalated.result !== "ok") {
+    return {
+      passed: false,
+      details: `[4] arbitration-escalated hold did not resolve; loop returned '${escalated.result}'. The resolver path must fall back to the parked action when evaluate() re-runs to a non-hold.`,
+    }
+  }
+  if (executeCalls !== 1) {
+    return {
+      passed: false,
+      details: `[4] tool ran ${executeCalls}x after an escalated hold was granted; expected exactly 1.`,
+    }
+  }
+  const escTypes = await sessionEventTypes(escalated.session_id)
+  for (const required of [
+    "action.pending_approval",
+    "approval.requested",
+    "approval.granted",
+    "action.completed",
+  ]) {
+    if (!escTypes.includes(required)) {
+      return {
+        passed: false,
+        details: `[4] event log missing '${required}'. Got: ${escTypes.join(", ")}`,
+      }
+    }
+  }
+
   return {
     passed: true,
     details:
-      "A granting resolver un-parked a held L4 action to approved (executed once; approval.requested + approval.granted logged); a denying resolver rejected it (tool never ran; approval.denied logged); a hold with no resolver threw rather than silently resolving.",
+      "A granting resolver un-parked a held L4 action to approved (executed once; approval.requested + approval.granted logged); a denying resolver rejected it (tool never ran; approval.denied logged); a hold with no resolver threw rather than silently resolving; and an arbitration-escalated allow->hold on a compiled policy still opened a request and resolved.",
   }
 }
 

@@ -373,14 +373,29 @@ export async function runGuarded<T>(
    * `ActionKernel.resolve()` validates that the outcome is bound to this action.
    */
   const resolveHold = async (parked: Action, toolName: string): Promise<Action> => {
+    // Record that the action reached `pending_approval` (with its audit) before
+    // anything below can throw, so the parked state is always in the event
+    // stream — a report or approval UI reads the parked Action directly, not
+    // only inferred from the request.
+    await emit("action.pending_approval", parked)
     if (config.approval_resolver === undefined) {
       throw new Error(
         `guard.callTool: action '${toolName}' was held for approval (pending_approval) but no approval_resolver was configured. A policy that can hold must say who resolves the hold.`,
       )
     }
-    const evaluation: PolicyEvaluation = compiledPolicy
-      ? compiledPolicy.evaluate(parked)
-      : holdEvaluationForParkedAction(parked)
+    // Recover the hold's `required_authority`. A CompiledPolicy can re-run its
+    // pure evaluate() to read a matched rule's authority — but ONLY for a
+    // contract+rule hold: an arbitration-escalated hold (sentinel / calibration
+    // / low-confidence) is invisible to a context-free re-run (see gate.ts), so
+    // evaluate() returns the base verdict (e.g. allow). Default to the parked
+    // action's audit (always a hold) and upgrade to the compiled evaluation only
+    // when it agrees the verdict is a hold — so every kind of hold opens a
+    // request rather than throwing on a non-hold re-evaluation.
+    let evaluation: PolicyEvaluation = holdEvaluationForParkedAction(parked)
+    if (compiledPolicy) {
+      const reevaluated = compiledPolicy.evaluate(parked)
+      if (reevaluated.verdict === "hold") evaluation = reevaluated
+    }
     const request = openApprovalRequest(parked, evaluation)
     await emit("approval.requested", request)
 
