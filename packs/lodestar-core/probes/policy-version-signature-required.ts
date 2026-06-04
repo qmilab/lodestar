@@ -17,6 +17,9 @@
  *    recomputed canonical hash no longer matches `payload_hash` → rejected.
  * 5. An injected `verifySignature` that returns false rejects an otherwise
  *    structurally-valid signed policy (the cryptographic hook has teeth).
+ * 6. A signed policy survives JSON persistence: the canonical hash is
+ *    invariant to an optional field present as `undefined` vs omitted (JSON
+ *    drops undefined keys), so a round-tripped signed policy still verifies.
  *
  * Why this matters: a function cannot be signed; a document can. Policy
  * substitution is a real threat (`v02-delta.md` §5), and a wrong/forged
@@ -142,10 +145,38 @@ async function run(): Promise<ProbeResult> {
     }
   }
 
+  // 6. A signed policy survives JSON persistence — the canonical hash must be
+  //    invariant to an optional field present as `undefined` vs omitted, since
+  //    JSON.stringify drops undefined keys. A rule built with an explicit
+  //    `approval: undefined` (e.g. a config merge) is signed, then round-
+  //    tripped through JSON (which drops the key); reload must still verify.
+  const withUndef = {
+    id: "p",
+    version: "2",
+    rules: [
+      { match: { required_level_lte: 3 }, effect: "allow", reason: "auto", approval: undefined },
+    ],
+  } as unknown as Policy
+  const signedUndef = sign(withUndef)
+  const persisted = JSON.parse(JSON.stringify(signedUndef)) as Policy
+  if ("approval" in (persisted.rules[0] ?? {})) {
+    return {
+      passed: false,
+      details: "[6] test setup: JSON.stringify did not drop the undefined `approval` key.",
+    }
+  }
+  const c6 = compiles(persisted)
+  if (!c6.ok) {
+    return {
+      passed: false,
+      details: `[6] a signed policy was rejected after a JSON round-trip that dropped an explicit-undefined optional field: ${c6.err}. The canonical hash must skip undefined keys.`,
+    }
+  }
+
   return {
     passed: true,
     details:
-      "Unsigned policy rejected (allow_unsigned opt-in aside); a canonically-signed policy compiled; post-signing tampering and an injected verifier rejection were both caught as PolicyCompileError.",
+      "Unsigned policy rejected (allow_unsigned opt-in aside); a canonically-signed policy compiled and survived a JSON round-trip (undefined keys hashed like omitted); post-signing tampering and an injected verifier rejection were both caught as PolicyCompileError.",
   }
 }
 

@@ -21,11 +21,16 @@ function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map(stableStringify).join(",")}]`
   }
-  const entries = Object.keys(value as Record<string, unknown>)
+  const obj = value as Record<string, unknown>
+  // Skip keys whose value is `undefined`, matching JSON.stringify: a policy
+  // built with an explicit `approval: undefined` (e.g. a config merge) must
+  // hash identically to one that omits the key, or a JSON round-trip during
+  // persistence would change the hash and the signed policy would be wrongly
+  // rejected as tampered at reload.
+  const entries = Object.keys(obj)
+    .filter((key) => obj[key] !== undefined)
     .sort()
-    .map(
-      (key) => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`,
-    )
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
   return `{${entries.join(",")}}`
 }
 
