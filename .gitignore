@@ -9,10 +9,11 @@ build/
 # per-machine bash-permission allowlists.
 .claude/settings.local.json
 
-# Strategy / internal planning docs — kept local, not committed to this
-# open-source repo (positioning, pitch deck, whitepaper planning, review
-# notes, walkthrough production, batch kickoffs). The cast-build tooling
-# under walkthrough/ stays tracked.
+# Local-only working notes and scratch files — never committed.
+.claude/local/
+
+# Internal planning docs — kept local, not committed to this repo. The
+# cast-build tooling under walkthrough/ stays tracked.
 /docs/strategy/
 /docs/internal/*
 !/docs/internal/walkthrough/
