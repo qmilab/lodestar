@@ -89,7 +89,17 @@ Cognitive Core. The resulting event log is renderable by
    receives a `CallToolResult` with `isError: true` and a
    structured payload. This is the contract: the agent can reason
    about denial and re-plan, instead of seeing a transport-level
-   failure that most agents would treat as a fatal abort.
+   failure that most agents would treat as a fatal abort. The
+   three-valued gate's **hold** (an L4 tool the trust-ladder floor
+   always parks at `pending_approval`) reuses the same machinery: the
+   proxy emits `approval.requested@1` and returns a synthetic result
+   with `kind: "approval_required"`, which the agent reads as a normal
+   tool response and re-plans around — never a transport error. v0 here
+   surfaces the hold *immediately* (a soft denial to re-propose); the
+   deadline + out-of-band resolution loop (poll for an
+   `approval.granted@1` up to a timeout, else `approval_timeout`) is the
+   next host-wiring slice. `auto_approve_ceiling` caps at L3 — auto-
+   approving L4 is not expressible (the floor always holds it).
 
 6. **Stdio only for v0.** HTTP/SSE transports for the proxy's
    upstream face are deferred. The downstream client side uses

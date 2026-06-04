@@ -1,13 +1,43 @@
-import type { PolicyGate, PreconditionChecker } from "@qmilab/lodestar-action-kernel"
+import type {
+  ApprovalOutcome,
+  PolicyGate,
+  PreconditionChecker,
+} from "@qmilab/lodestar-action-kernel"
 import type { EvidenceLinkerLike, IngestResult } from "@qmilab/lodestar-cognitive-core"
 import type {
   Action,
   ActionContract,
+  ApprovalRequest,
   Observation,
   ResourceScope,
   Sensitivity,
 } from "@qmilab/lodestar-core"
 import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
+import type { CompiledPolicy } from "@qmilab/lodestar-policy-kernel"
+
+/**
+ * Resolves a held action's `ApprovalRequest` into an `ApprovalOutcome`.
+ *
+ * The in-process counterpart of the MCP proxy's out-of-band hold loop: because
+ * a `guard.wrap()` agent loop is suspendable JS, a hold can simply *await* this
+ * resolver. The resolver is where a human (via an approval UI), an auto-rule, or
+ * a test stub answers — it is the seam, not the policy.
+ *
+ * The resolver is responsible for *authorisation*: it should match an approver's
+ * `Actor` against `request.required_authority` (the `authorizeResolution` helper
+ * from `@qmilab/lodestar-policy-kernel` does exactly this) and return a bound
+ * outcome. The outcome's `action_id` / `request_id` MUST come from the request —
+ * `ActionKernel.resolve()` refuses to apply an outcome bound to a different
+ * action, so a stray grant cannot un-park the wrong held action.
+ *
+ * Security-relevant: a `GuardConfig` whose policy can hold MUST supply a
+ * resolver. There is no silent default — `callTool` throws (rather than
+ * silently approving or denying) if an action is held and no resolver is set.
+ * It is optional on the type only because guard cannot statically introspect an
+ * opaque `PolicyGate` to know whether it ever holds; the runtime check is the
+ * load-bearing guard.
+ */
+export type ApprovalResolver = (request: ApprovalRequest) => Promise<ApprovalOutcome>
 
 /**
  * Configuration for a guarded session.
@@ -23,6 +53,17 @@ import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-me
  * `policy_gate` and `precondition_checker` are required. Guard
  * deliberately does not provide auto-approve defaults — the trust
  * layer must not silently approve actions on behalf of the caller.
+ *
+ * `policy_gate` may be either a bare {@link PolicyGate} function or a
+ * {@link CompiledPolicy} (from `@qmilab/lodestar-policy-kernel`). When a
+ * `CompiledPolicy` is supplied, guard re-runs its pure `evaluate()` after a
+ * hold to recover the matched rule's `required_authority` for the opened
+ * `ApprovalRequest`; a bare gate falls back to "any configured resolver".
+ *
+ * If the policy can produce a *hold* (the three-valued gate's third outcome —
+ * e.g. the trust-ladder floor on an L4 action), `approval_resolver` MUST be
+ * supplied; a held action with no resolver throws rather than silently
+ * resolving (no silent default for a security-relevant path).
  */
 export interface GuardConfig {
   project_id: string
@@ -36,8 +77,17 @@ export interface GuardConfig {
   /** Where event NDJSON files are written. Defaults to `<cwd>/.lodestar/events`. */
   log_root?: string
 
-  policy_gate: PolicyGate
+  policy_gate: PolicyGate | CompiledPolicy
   precondition_checker: PreconditionChecker
+
+  /**
+   * Resolves an action the policy held for approval (`pending_approval`). See
+   * {@link ApprovalResolver}. Required whenever `policy_gate` can hold; omit it
+   * only for a policy that provably never holds (e.g. an allow/deny-only gate).
+   * A hold with no resolver is a hard error at `callTool` time, not a silent
+   * approval or denial.
+   */
+  approval_resolver?: ApprovalResolver
 
   /**
    * Inject the firewall's belief/claim/evidence stores instead of the

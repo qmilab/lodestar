@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Thirty-one probes pass under
+publishing), v0.2 architecture locked. Thirty-two probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Twenty-seven live in the first-party pack
+below). Twenty-eight live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -13,15 +13,17 @@ context propagation, event-log single-writer), two Batch 3 MCP probes
 Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
 `contradicted-belief-flags-dependent-decisions`,
 `event-log-canonical-hash`), one Batch 5 probe
-(`documentation-evidence-provenance`), and nine Policy Kernel probes —
+(`documentation-evidence-provenance`), and ten Policy Kernel probes —
 the three-valued gate, the trust-ladder floor, the approval lifecycle,
-signature verification, and the arbitrate hook
+signature verification, the arbitrate hook, and the in-process host
+wiring — the `guard.wrap()` approval-resolver seam
 (`l4-action-requires-approval`, `l4-floor-preserves-stricter-rule`,
 `pending-approval-cannot-execute`, `ladder-floor-overrides-allow-rule`,
 `unmatched-action-defaults-to-deny`, `policy-version-signature-required`,
 `granted-approval-still-revalidates-preconditions`,
 `sentinel-alert-gates-dependent-action`,
-`calibration-flag-escalates-action`). The other four live in the first non-core
+`calibration-flag-escalates-action`,
+`guard-hold-resolves-via-resolver`). The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
 `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack
@@ -122,11 +124,11 @@ packages/
       zep/             # (exists) Zep facts import adapter
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
   cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
-  guard/               # (exists) meta-package + guard.wrap() helper
+  guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel
   trace/               # (exists) read side + `lodestar report` CLI
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`
   harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier)
-  policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). Host wiring still pending
+  policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). In-process host wiring landed (guard.wrap() resolver seam); MCP-proxy deadline/timeout hold path + `lodestar approve` CLI still pending
   otel-exporter/       # (later) OTel GenAI semantic conventions bridge
   adapters/
     git/               # (exists)
@@ -222,7 +224,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Thirty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Thirty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

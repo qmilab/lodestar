@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { resolve } from "node:path"
+import type { ApprovalOutcome } from "@qmilab/lodestar-action-kernel"
 import { ActionKernel, lookupTool } from "@qmilab/lodestar-action-kernel"
 import {
   CognitiveCore,
@@ -15,6 +16,7 @@ import type { ClaimExtractor, IngestResult } from "@qmilab/lodestar-cognitive-co
 import type {
   Action,
   ActionContract,
+  ApprovalRequest,
   Observation,
   Reversibility,
   Sensitivity,
@@ -26,6 +28,8 @@ import {
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
+import { holdEvaluationForParkedAction, openApprovalRequest } from "@qmilab/lodestar-policy-kernel"
+import type { CompiledPolicy, PolicyEvaluation } from "@qmilab/lodestar-policy-kernel"
 import type {
   AgentLoop,
   CallToolOptions,
@@ -341,16 +345,68 @@ export async function runGuarded<T>(
     captureBox.current = { observation, ingest }
   }
 
+  // `policy_gate` may be a bare PolicyGate function or a CompiledPolicy. The
+  // kernel only ever needs the gate; a CompiledPolicy additionally lets the
+  // hold path below re-run its pure `evaluate()` to recover a held rule's
+  // `required_authority` for the opened ApprovalRequest.
+  const policyGate =
+    typeof config.policy_gate === "function" ? config.policy_gate : config.policy_gate.gate
+  const compiledPolicy: CompiledPolicy | undefined =
+    typeof config.policy_gate === "function" ? undefined : config.policy_gate
+
   // Propagate the guarded session/project ids into every
   // `tool.execute(inputs, ctx)` call so custom tools that scope side
   // effects by session_id / project_id (logging, temp dirs, capability
   // tokens) see the real values rather than the kernel's stubs.
-  const kernel = new ActionKernel(
-    config.policy_gate,
-    config.precondition_checker,
-    observationSink,
-    () => ({ session_id, project_id: config.project_id }),
-  )
+  const kernel = new ActionKernel(policyGate, config.precondition_checker, observationSink, () => ({
+    session_id,
+    project_id: config.project_id,
+  }))
+
+  /**
+   * Resolve an action the policy held for approval. In-process the hold can
+   * simply await the configured {@link GuardConfig.approval_resolver}; there is
+   * no deadline (that is the MCP proxy's concern). Emits the canonical
+   * `approval.requested@1` for the parked action, then the resolver's
+   * `approval.granted@1` / `approval.denied@1` / `approval.expired@1`, and
+   * returns the un-parked action (`approved` on a grant, `rejected` otherwise).
+   * `ActionKernel.resolve()` validates that the outcome is bound to this action.
+   */
+  const resolveHold = async (parked: Action, toolName: string): Promise<Action> => {
+    // Record that the action reached `pending_approval` (with its audit) before
+    // anything below can throw, so the parked state is always in the event
+    // stream — a report or approval UI reads the parked Action directly, not
+    // only inferred from the request.
+    await emit("action.pending_approval", parked)
+    if (config.approval_resolver === undefined) {
+      throw new Error(
+        `guard.callTool: action '${toolName}' was held for approval (pending_approval) but no approval_resolver was configured. A policy that can hold must say who resolves the hold.`,
+      )
+    }
+    // Recover the hold's `required_authority`. A CompiledPolicy can re-run its
+    // pure evaluate() to read a matched rule's authority — but ONLY for a
+    // contract+rule hold: an arbitration-escalated hold (sentinel / calibration
+    // / low-confidence) is invisible to a context-free re-run (see gate.ts), so
+    // evaluate() returns the base verdict (e.g. allow). Default to the parked
+    // action's audit (always a hold) and upgrade to the compiled evaluation only
+    // when it agrees the verdict is a hold — so every kind of hold opens a
+    // request rather than throwing on a non-hold re-evaluation.
+    let evaluation: PolicyEvaluation = holdEvaluationForParkedAction(parked)
+    if (compiledPolicy) {
+      const reevaluated = compiledPolicy.evaluate(parked)
+      if (reevaluated.verdict === "hold") evaluation = reevaluated
+    }
+    const request = openApprovalRequest(parked, evaluation)
+    await emit("approval.requested", request)
+
+    const outcome = await config.approval_resolver(request)
+    // Apply (and validate the binding) first, so the canonical `at` comes from
+    // the kernel transition and a mis-bound outcome throws before we log it.
+    const resolved = kernel.resolve(parked, outcome)
+    const at = resolved.approval?.at ?? new Date().toISOString()
+    await emit(`approval.${outcome.kind}`, approvalEventPayload(outcome, request, at))
+    return resolved
+  }
 
   const callTool = async <TOut = unknown>(
     toolName: string,
@@ -399,15 +455,21 @@ export async function runGuarded<T>(
     await emit("action.proposed", proposed)
 
     const arbitrated = await kernel.arbitrate(proposed)
-    await emit(arbitrated.phase === "approved" ? "action.approved" : "action.rejected", arbitrated)
+    // Three-valued gate: a held action is parked at `pending_approval`. Resolve
+    // it through the in-process resolver seam (open request → await resolver →
+    // un-park) before the approved/rejected emit, so the rest of the flow sees
+    // a settled phase exactly as it did pre-Policy-Kernel.
+    const settled =
+      arbitrated.phase === "pending_approval" ? await resolveHold(arbitrated, toolName) : arbitrated
+    await emit(settled.phase === "approved" ? "action.approved" : "action.rejected", settled)
 
-    if (arbitrated.phase !== "approved") {
-      const reason = arbitrated.approval?.reason ?? "no reason given"
+    if (settled.phase !== "approved") {
+      const reason = settled.approval?.reason ?? "no reason given"
       throw new Error(`guard.callTool: action '${toolName}' rejected by policy: ${reason}`)
     }
 
     captureBox.current = undefined
-    const executed = await kernel.execute(arbitrated)
+    const executed = await kernel.execute(settled)
     // `kernel.execute` can finish in three distinguishable phases:
     //   completed → tool ran, observation produced
     //   rejected  → precondition revalidation killed the action
@@ -541,6 +603,32 @@ export async function runGuarded<T>(
       kernel,
     },
   }
+}
+
+/**
+ * Map an applied {@link ApprovalOutcome} onto the matching `approval.*` event
+ * payload. The event *type* carries the verdict, so there is no `approved`
+ * boolean; `approval.expired` carries no `approver_id`; optional `reason` is
+ * omitted entirely when unset (never `undefined`) so the writer's `canonicalHash`
+ * and `JSON.stringify` agree on re-read — the discipline the core
+ * `approval.*` schemas hold.
+ */
+function approvalEventPayload(
+  outcome: ApprovalOutcome,
+  request: ApprovalRequest,
+  at: string,
+): Record<string, unknown> {
+  if (outcome.kind === "expired") {
+    return { request_id: request.request_id, action_id: request.action_id, at }
+  }
+  const payload: Record<string, unknown> = {
+    request_id: request.request_id,
+    action_id: request.action_id,
+    approver_id: outcome.approver_id,
+    at,
+  }
+  if (outcome.reason !== undefined) payload.reason = outcome.reason
+  return payload
 }
 
 function takeCapture<C>(box: { current: C | undefined }, toolName: string): C {

@@ -58,13 +58,17 @@ bugs, not features.)
 
 This is where it's worth being precise about current state.
 
-Today the gate is a **single auto-approve ceiling**. The `autoApprovePolicy`
-preset auto-approves actions up to a configured rung (the CLI exposes this as
-`--auto-approve-up-to <0..4>`); anything above the ceiling is **denied outright**.
-Through the [MCP proxy](../reference/architecture.md), a denial isn't a transport
-error — the proxy returns a synthetic tool result with `isError: true` and a
-structured `_lodestar` payload, so the wrapped agent reads the refusal as a normal
-response and can revise its plan rather than crashing.
+Today the gate is the Policy Kernel's **three-valued gate** — `allow`, `deny`, or
+`hold`. The `autoApprovePolicy` preset auto-approves actions up to a configured
+rung (the CLI exposes this as `--auto-approve-up-to <0..3>`); above the ceiling an
+action is **denied** — except **L4** (external/shared: push, deploy, spend,
+publish), which the trust-ladder floor always **holds for approval**, and **L5**,
+which is prohibited. L4 and L5 are not expressible auto-approve ceilings, which is
+why the ceiling caps at L3. Through the [MCP proxy](../reference/architecture.md),
+a denial isn't a transport error — the proxy returns a synthetic tool result with
+`isError: true` and a structured `_lodestar` payload, so the wrapped agent reads
+the refusal (or a held action's `approval_required`) as a normal response and can
+revise its plan rather than crashing.
 
 In the demos, the ceiling sits at **L3**: the agent's reads, edits, tests, and
 commits auto-approve, and the L4 `git_push` is held at the gate. That is the
@@ -72,27 +76,35 @@ commits auto-approve, and the L4 `git_push` is held at the gate. That is the
 [poison run](../guides/get-started.md#run-the-poison-demo-watch-the-firewall-hold) —
 the irreversible action the injection was steering toward never runs.
 
-## What the Policy Kernel will add
+## What the Policy Kernel adds
 
-The full trust ladder — graduated **action contracts**, an interactive
-**human-in-the-loop approval workflow** for L4 actions, and OS-level **sandbox
-enforcement** of the contract's declared profile — is the job of the **Policy
-Kernel**, which is on the post-v1 roadmap and not yet built. Two honest caveats
-for anyone running the proxy today:
+The **Policy Kernel** turns the declared ladder into enforced decisions: a
+signed, declarative `Policy` document, the three-valued gate above, the approval
+lifecycle, and the arbitrate hook that lets sentinel alerts and calibration flags
+gate an action. It has landed — along with the **in-process approval resolver**:
+a held L4 action under `guard.wrap()` opens an `ApprovalRequest` that a resolver
+(a human, an auto-rule, a test stub) answers, un-parking the action so it
+executes (or rejecting it). Two honest caveats for anyone running the **proxy**
+today:
 
-- **There is no approval UI yet.** "Requires approval" means "denied at the
-  ceiling." Treat `auto_approve_ceiling` as the real policy.
+- **The MCP proxy surfaces a hold; it doesn't yet wait for one.** A held L4
+  action returns an `approval_required` synthetic result the agent re-plans
+  around. The deadline + out-of-band resolution loop — and the `lodestar approve`
+  CLI that resolves a hold from your own terminal — are the next host-wiring
+  slices. Until they land, treat a proxy hold as "denied, re-propose."
 - **The `sandbox` declaration is intent, not enforcement.** The contract declares a
   sandbox profile, but in v0 no namespace/cgroup/container layer enforces it. Run
-  downstream tools inside your own OS-level sandbox until the Policy Kernel lands.
+  downstream tools inside your own OS-level sandbox until the sandbox runtime
+  lands (it graduates with the shell adapter).
 
-The ladder, the contract schema, and the gate exist now; what the Policy Kernel
-adds is the graduated enforcement and the approval surface on top of them.
+The ladder, the contract schema, the gate, and the approval lifecycle exist now;
+what remains is the proxy's out-of-band hold resolution, the team approval
+surface, and OS-level sandbox enforcement.
 
 ## Related
 
 - [The epistemic chain](epistemic-chain.md) — where actions and outcomes sit.
 - [Sentinels and calibration](sentinels-and-calibration.md) — runtime monitors
-  that observe (and, once the Policy Kernel lands, will gate).
+  that observe; the Policy Kernel's arbitrate hook is what gives their alerts teeth.
 - [Architecture reference](../reference/architecture.md) — the Action Kernel and
   the proxy topology.

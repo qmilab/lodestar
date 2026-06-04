@@ -46,6 +46,7 @@
     "@qmilab/lodestar-core": "workspace:*",
     "@qmilab/lodestar-event-log": "workspace:*",
     "@qmilab/lodestar-action-kernel": "workspace:*",
+    "@qmilab/lodestar-policy-kernel": "workspace:*",
     "@qmilab/lodestar-memory-firewall": "workspace:*",
     "@qmilab/lodestar-cognitive-core": "workspace:*",
     "zod": "^3.23.8"

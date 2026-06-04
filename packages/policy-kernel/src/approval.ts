@@ -66,6 +66,33 @@ export function openApprovalRequest(
   return request
 }
 
+/**
+ * Reconstruct a minimal hold {@link PolicyEvaluation} from a parked action, for
+ * a host that holds only the bare `PolicyGate` and so cannot re-run
+ * `evaluate()`. `arbitrate()` stamped the gate's reason and decider onto the
+ * action's `pending_approval` audit entry; this reads them back so the host can
+ * feed {@link openApprovalRequest}. `required_authority` defaults to `{}` (any
+ * configured resolver may approve) — a host that holds a `CompiledPolicy`
+ * should prefer `evaluate(action)`, which recovers a matched rule's stricter
+ * authority. Throws if the action is not parked (only a `pending_approval`
+ * action has a hold to describe).
+ */
+export function holdEvaluationForParkedAction(action: Action): PolicyEvaluation {
+  if (action.phase !== "pending_approval") {
+    throw new Error(
+      `policy-kernel: holdEvaluationForParkedAction requires a 'pending_approval' action; got '${action.phase}'`,
+    )
+  }
+  const parkEntry = [...action.audit].reverse().find((entry) => entry.phase === "pending_approval")
+  return {
+    verdict: "hold",
+    reason: parkEntry?.detail ?? "action held for approval",
+    decider_id: parkEntry?.by_actor_id ?? "system",
+    matched: { source: "floor" },
+    required_authority: {},
+  }
+}
+
 export type AuthorizationResult =
   | { authorized: true; outcome: ApprovalOutcome }
   | { authorized: false; reason: string }
