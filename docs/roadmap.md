@@ -232,6 +232,23 @@ Work past the v1 line, tracked here as it lands:
   workflows, RBAC, dashboards) is the separate commercial surface and is not
   in this repo.
 
+- **otel-exporter — the OpenTelemetry bridge** — ✅ landed
+  (`packages/otel-exporter/`, `@qmilab/lodestar-otel-exporter`,
+  `lodestar otel export`). The "pair with Langfuse/Phoenix" bridge: a
+  read-side, batch exporter that projects a session into OTel GenAI spans and
+  emits them as **OTLP/HTTP JSON** (POST to a collector, or `--out`/`--stdout`
+  for a collector-free dry run). Action-centric span model — the session is the
+  root `invoke_agent` span, each governed Action an `execute_tool` child span
+  carrying the policy verdict, trust level, and outcome; observations, beliefs,
+  decisions, and firewall transitions ride as span events. Reuses the trace
+  read side (`projectChain()`); hand-rolls the OTLP wire format (no OTel SDK
+  dependency — the log already holds the causal DAG). Honours the locked v0.2
+  export gate: content above a configured **sensitivity ceiling** (default
+  `internal`) is withheld (structural metadata + payload hash only). Locked by
+  two probes — `otel-export-respects-sensitivity-ceiling` (the gate) and
+  `otel-export-projects-action-spans` (the span tree). **Metrics/logs signals
+  and live in-process instrumentation are out of scope for v0** (traces only).
+
 ## What this roadmap explicitly does not include
 
 These are real items, but they belong later than v1:

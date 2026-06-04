@@ -19,6 +19,7 @@
         "@qmilab/lodestar-memory-firewall-letta": "workspace:*",
         "@qmilab/lodestar-memory-firewall-mem0": "workspace:*",
         "@qmilab/lodestar-memory-firewall-zep": "workspace:*",
+        "@qmilab/lodestar-otel-exporter": "workspace:*",
         "@qmilab/lodestar-policy-kernel": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "@qmilab/lodestar-viewer": "workspace:*",
@@ -159,6 +160,7 @@
         "@qmilab/lodestar-guard-mcp": "workspace:*",
         "@qmilab/lodestar-harness": "workspace:*",
         "@qmilab/lodestar-memory-firewall": "workspace:*",
+        "@qmilab/lodestar-otel-exporter": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "@qmilab/lodestar-viewer": "workspace:*",
         "zod": "^3.23.8",
@@ -294,6 +296,18 @@
         "typescript": "5.6.3",
       },
     },
+    "packages/otel-exporter": {
+      "name": "@qmilab/lodestar-otel-exporter",
+      "version": "0.1.5",
+      "dependencies": {
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
     "packages/policy-kernel": {
       "name": "@qmilab/lodestar-policy-kernel",
       "version": "0.1.5",
@@ -404,6 +418,8 @@
     "@qmilab/lodestar-memory-firewall-mem0": ["@qmilab/lodestar-memory-firewall-mem0@workspace:packages/memory-firewall/adapters/mem0"],
 
     "@qmilab/lodestar-memory-firewall-zep": ["@qmilab/lodestar-memory-firewall-zep@workspace:packages/memory-firewall/adapters/zep"],
+
+    "@qmilab/lodestar-otel-exporter": ["@qmilab/lodestar-otel-exporter@workspace:packages/otel-exporter"],
 
     "@qmilab/lodestar-policy-kernel": ["@qmilab/lodestar-policy-kernel@workspace:packages/policy-kernel"],
 
