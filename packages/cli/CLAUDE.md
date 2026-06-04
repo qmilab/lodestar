@@ -13,11 +13,22 @@ src/
     ├── help.ts               # help text
     ├── report.ts             # `lodestar report`
     ├── guard.ts              # `lodestar guard wrap`
+    ├── guard-mcp.ts          # `lodestar guard mcp-proxy`
+    ├── approve.ts            # `lodestar approve list/grant/deny`
     ├── action.ts             # `lodestar action list/describe`
     ├── trace.ts              # `lodestar trace inspect`
     ├── probe.ts              # `lodestar probe <name>`
+    ├── reflect.ts            # `lodestar reflect <session-id>`
     └── harness.ts            # `lodestar harness run/list`
 ```
+
+The `approve` command is the reference approval resolver: it writes a
+resolution to the MCP proxy's side-channel
+(`@qmilab/lodestar-guard-mcp`'s `approvals-channel`), which the running
+proxy promotes into its own event log. The CLI never writes the event
+log directly — that keeps the proxy the sole writer (the event-log
+writer's seq counters are process-local). `approve list` reads the log
+read-only to show pending `approval.requested@1` events.
 
 ## Invariants
 

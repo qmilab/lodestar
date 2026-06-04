@@ -175,10 +175,11 @@ export const ProxyConfigSchema = z.object({
    * approval). Keep it comfortably under the wrapped agent's `tools/call`
    * timeout.
    *
-   * Caveat: an *in-process* resolver is fully safe; a *separate process*
-   * writing the resolution is not yet seq-safe (the event-log writer's counters
-   * are process-local — see `EventLogWriter`). The separate-process
-   * `lodestar approve` CLI needs the writer's cross-process locking first.
+   * Both resolver paths are safe. An *in-process* resolver writes
+   * `approval.granted@1` to the log directly (it shares the single-writer
+   * mutex). The *separate-process* `lodestar approve` CLI instead drops a
+   * side-channel file the proxy promotes into its own log (the proxy stays the
+   * sole writer — the event-log writer's process-local counters never collide).
    */
   approval_timeout_ms: z.number().int().min(0).default(0),
   downstream_servers: z

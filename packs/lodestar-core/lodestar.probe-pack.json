@@ -110,6 +110,10 @@
       "name": "guard-hold-resolves-via-resolver",
       "file": "probes/guard-hold-resolves-via-resolver.ts"
     },
-    { "name": "approval-timeout-denies", "file": "probes/approval-timeout-denies.ts" }
+    { "name": "approval-timeout-denies", "file": "probes/approval-timeout-denies.ts" },
+    {
+      "name": "approval-via-side-channel",
+      "file": "probes/approval-via-side-channel.ts"
+    }
   ]
 }

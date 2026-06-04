@@ -108,21 +108,29 @@ Cognitive Core. The resulting event log is renderable by
    marker the agent reads as a normal tool response and re-plans around —
    never a transport error. A timed-out hold is a soft denial the agent
    re-proposes; durable resume of the same approved call is deferred.
-   Acceptance is gated on the resolution event's own timestamp (≤ the
-   request deadline), so a grant appended after the deadline is a timeout,
-   not a late approval; the payload is validated against the core
-   `approval.*` schema before it is trusted; and a torn trailing line from
-   a concurrent append is tolerated (polling continues). `auto_approve_ceiling`
-   caps at L3 — auto-approving L4 is not expressible (the floor always holds
-   it). **Cross-process resolution is not yet seq-safe.** In-process a second
-   `EventLogWriter` shares the single-writer mutex and seq counter, so an
-   in-process resolver is correct. A *separate* process appending the
-   resolution can collide on `seq`/`logical_clock` with the proxy's own
-   post-resolution appends (the writer's counters are process-local — see
-   `EventLogWriter`). The event-log writer must gain cross-process locking, or
-   the resolution must route through the proxy's single writer, before the
-   separate-process `lodestar approve` CLI is safe — a prerequisite for that
-   slice.
+   Acceptance is gated on the resolver's *decision time* (≤ the request
+   deadline), so a grant dated after the deadline is a timeout, not a late
+   approval; the payload is validated before it is trusted; and a torn read is
+   tolerated (polling continues). `auto_approve_ceiling` caps at L3 —
+   auto-approving L4 is not expressible (the floor always holds it).
+
+   **Two resolution sources, one writer.** `waitForResolution` polls both:
+   - an `approval.granted@1` / `approval.denied@1` already **in the log** — the
+     *in-process* resolver path (a second `EventLogWriter` in the proxy's own
+     process shares the single-writer mutex + seq counter, so it is seq-safe and
+     already canonical; the proxy does not re-emit);
+   - a resolution file in the **side-channel** — the *separate-process* path the
+     `lodestar approve` CLI uses (`approvals-channel.ts`,
+     `<log_root>/.approvals/<project>/<request-id>.json`). The CLI never appends
+     the log (cross-process `seq`/`logical_clock` would collide — the writer's
+     counters are process-local), so the proxy **promotes** it: emits the
+     canonical `approval.granted@1` / `approval.denied@1` into its *own* log,
+     then consumes the file. The proxy stays the sole writer of its session's
+     log; the event-log writer is untouched, the single-writer invariant intact.
+     The channel deadline gate is numeric (offset-safe) on the resolver's `at`.
+     This is what keeps the separate-process resolver safe without cross-process
+     file locking — see the `approval-via-side-channel` probe (sole-writer seq
+     integrity is one of its assertions).
 
 6. **Stdio only for v0.** HTTP/SSE transports for the proxy's
    upstream face are deferred. The downstream client side uses

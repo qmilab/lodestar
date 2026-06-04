@@ -4,6 +4,9 @@ Usage:
   lodestar report <session-id> [--project <id>] [--log-root <path>] [--out <file>]
   lodestar guard wrap --target <module> [--project <id>] [--actor <id>]
   lodestar guard mcp-proxy --config <path>
+  lodestar approve list --project <id> [--log-root <path>]
+  lodestar approve grant <request-id> --approver <id> --project <id>
+  lodestar approve deny  <request-id> --approver <id> --project <id>
   lodestar action list
   lodestar action describe <action-id>
   lodestar trace inspect <event-id> [--project <id>] [--session <id>]
@@ -19,6 +22,10 @@ Commands:
                wrap       — programmatic; loads a JS/TS loop module.
                mcp-proxy  — stdio MCP proxy; wrap any MCP-speaking agent
                             (Claude Code, Cursor, Aider).
+  approve    Resolve an action the MCP proxy is holding for approval. Lists
+             pending requests (list) and writes a grant/deny to the proxy's
+             side-channel. The reference resolver that keeps the solo workflow
+             ungated — local, no account.
   action     Introspect the registered tool catalogue.
   trace      Debug-grade event-log inspection. Not the user-facing surface;
              prefer 'lodestar report'.
@@ -36,6 +43,8 @@ Commands:
 Examples:
   lodestar report session-1779551238212
   lodestar guard mcp-proxy --config ./lodestar-mcp-proxy.config.json
+  lodestar approve list --project my-project
+  lodestar approve grant 7f3c… --approver me --project my-project
   lodestar action list
   lodestar action describe git.status
   lodestar trace inspect <event-id>
