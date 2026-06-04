@@ -141,7 +141,7 @@ export function buildTrace(
   const session = projection.session_id
   const project = projection.project_id
   const trace_id = traceIdFor(project, session)
-  const rootSpanId = spanIdFor(project, session, "session")
+  const rootSpanId = spanIdFor(project, session, "session", session)
 
   const meta = buildMetaIndex(projection)
   const claimById = new Map<string, Claim>()
@@ -286,7 +286,7 @@ function actionSpan(
 
   return {
     name: `execute_tool ${action.tool}`,
-    span_id: spanIdFor(project, session, action.id),
+    span_id: spanIdFor(project, session, "action", action.id),
     parent_span_id: parentSpanId,
     kind: "internal",
     start_unix_nano,

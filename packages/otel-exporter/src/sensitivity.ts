@@ -45,8 +45,15 @@ export function isAboveCeiling(source: Sensitivity, ceiling: Sensitivity): boole
 /**
  * The Action contract's coarse `data_sensitivity` (public/private/secret)
  * mapped onto the content scale, so action inputs gate the same way as
- * belief/claim content. `private` maps to `confidential` — the
- * conservative reading.
+ * belief/claim content.
+ *
+ * This mirrors the canonical cross-alphabet mapping used across the codebase
+ * (`sensitivityForContract` in `@qmilab/lodestar-action-kernel`):
+ * `public → public`, `private → internal`, `secret → secret`. In particular
+ * `private` maps to `internal` (NOT `confidential`) so that ordinary private
+ * tool calls — the common Guard/MCP filesystem case — keep their intent and
+ * inputs visible at the default `internal` ceiling; only `secret` actions are
+ * withheld by default. Keep this in sync with `sensitivityForContract`.
  */
 export function contentSensitivityForAction(
   dataSensitivity: "public" | "private" | "secret",
@@ -55,7 +62,7 @@ export function contentSensitivityForAction(
     case "public":
       return "public"
     case "private":
-      return "confidential"
+      return "internal"
     case "secret":
       return "secret"
   }

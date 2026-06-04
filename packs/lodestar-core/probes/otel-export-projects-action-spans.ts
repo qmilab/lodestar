@@ -31,14 +31,20 @@
  *       byte-identical trace (deterministic ids);
  *   F — two projects that reuse the same session id get distinct trace ids
  *       (the ids are seeded with the project id, so a backend cannot merge
- *       them).
+ *       them);
+ *   G — an action whose id equals the root's seed key ("session") still gets
+ *       a distinct, correctly-parented span (the span-id seed is namespaced by
+ *       kind); and a `private` action stays visible at the default `internal`
+ *       ceiling while a `secret` action is withheld (the canonical
+ *       private→internal contract mapping).
  *
  * If the parent wiring breaks, C trips. If a policy denial stops being
  * legible as a failed span, D trips. If an outcome-less terminal state
  * collapses to proposal time, D2 trips. If a child escapes the root bounds,
  * D3 trips. If conflicting delivery targets are silently accepted, D4 trips.
  * If ids stop being deterministic, E trips. If cross-project ids collide,
- * F trips.
+ * F trips. If an action id collides with the root seed or private content is
+ * over-redacted, G trips.
  */
 
 import { mkdtempSync, rmSync } from "node:fs"
@@ -55,6 +61,7 @@ interface ProbeResult {
 
 const PROJECT = "otel-spans-probe"
 const PROJECT2 = "otel-spans-probe-other"
+const PROJECT3 = "otel-spans-probe-edge"
 const SESSION = "otel-spans-probe-session"
 const ACTOR = "otel-spans-probe-actor"
 const SCOPE = { level: "project" as const, identifier: PROJECT }
@@ -70,6 +77,7 @@ function action(
   // Terminal-transition time recorded in the audit trail (e.g. when a policy
   // rejection lands). Real guard/MCP rejections carry this but no Outcome.
   terminalAt?: string,
+  dataSensitivity: Action["contract"]["data_sensitivity"] = "public",
 ): Action {
   return {
     id,
@@ -81,7 +89,7 @@ function action(
       blast_radius: blast,
       reversibility,
       scope: SCOPE,
-      data_sensitivity: "public",
+      data_sensitivity: dataSensitivity,
       preconditions: [],
     },
     phase,
@@ -348,6 +356,84 @@ async function run(): Promise<ProbeResult> {
       )
     }
     details.push("F: distinct project ⇒ distinct trace id (no cross-project collision)")
+
+    // G — two edge cases in one fresh export:
+    //   (P3) an action whose id equals the root's seed key ("session") must
+    //        still get a span id distinct from the root and parent to it, not
+    //        to itself — the span-id seed is namespaced by kind;
+    //   (P2) a `private` action's content stays VISIBLE at the default
+    //        `internal` ceiling while a `secret` action's is withheld, matching
+    //        the canonical sensitivityForContract mapping (private→internal).
+    const writer3 = new EventLogWriter(rootDir)
+    const common3 = {
+      schema_version: "1",
+      project_id: PROJECT3,
+      session_id: SESSION,
+      actor_id: ACTOR,
+      causal_parent_ids: [] as string[],
+      versions: {},
+    }
+    await writer3.append({
+      ...common3,
+      id: "ev-g-private",
+      type: "action.completed",
+      timestamp: "2026-06-04T12:00:01.000Z",
+      payload: action(
+        "session",
+        "fs.read",
+        "completed",
+        0,
+        "self",
+        "reversible",
+        "2026-06-04T12:00:01.000Z",
+        undefined,
+        "private",
+      ),
+    })
+    await writer3.append({
+      ...common3,
+      id: "ev-g-secret",
+      type: "action.completed",
+      timestamp: "2026-06-04T12:00:02.000Z",
+      payload: action(
+        "act-secret",
+        "creds.read",
+        "completed",
+        0,
+        "self",
+        "reversible",
+        "2026-06-04T12:00:02.000Z",
+        undefined,
+        "secret",
+      ),
+    })
+    const g = await exportSession({ sessionId: SESSION, projectId: PROJECT3, logRoot: rootDir })
+    const gSpans = (g.otlp as OtlpDoc).resourceSpans[0]?.scopeSpans[0]?.spans ?? []
+    const gRoot = gSpans[0]
+    const ids = gSpans.map((s) => s.spanId)
+    if (new Set(ids).size !== ids.length) {
+      return fail(details, "duplicate span ids — an action id collided with the root span seed")
+    }
+    const collideSpan = findSpan(gSpans, "execute_tool fs.read") // the id:"session" action
+    const secretSpan = findSpan(gSpans, "execute_tool creds.read")
+    if (!gRoot || !collideSpan || !secretSpan) {
+      return fail(details, "G export missing the root or one of the action spans")
+    }
+    if (collideSpan.spanId === gRoot.spanId || collideSpan.parentSpanId !== gRoot.spanId) {
+      return fail(details, "action id 'session' collided with / mis-parented to the root span")
+    }
+    if (attr(collideSpan.attributes, "lodestar.action.intent") === undefined) {
+      return fail(
+        details,
+        "private action intent was redacted at the internal ceiling (over-redaction)",
+      )
+    }
+    if (attr(secretSpan.attributes, "lodestar.action.intent.redacted") !== true) {
+      return fail(details, "secret action intent was NOT withheld at the internal ceiling")
+    }
+    details.push(
+      "G: id 'session' gets a distinct, correctly-parented span; private visible / secret withheld at internal",
+    )
 
     return {
       passed: true,

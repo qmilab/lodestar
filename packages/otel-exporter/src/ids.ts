@@ -14,8 +14,11 @@ import { createHash } from "node:crypto"
  * id is only unique within a project (callers disambiguate cross-project
  * collisions with `--project`), so seeding on the session alone would make
  * two projects that reuse a session id collide on trace/span ids in the
- * backend. The seed is a JSON array so the components can never be confused
- * across a delimiter (`["a:b", "c"]` ≠ `["a", "b:c"]`).
+ * backend. Span ids additionally carry a **kind** discriminator so the
+ * session root (`kind: "session"`) and an action span (`kind: "action"`)
+ * never collide even if an action's id equals the session id. The seed is a
+ * JSON array so the components can never be confused across a delimiter
+ * (`["a:b", "c"]` ≠ `["a", "b:c"]`).
  *
  * sha-256 of any input is never all-zero, so the OTLP "invalid id"
  * sentinel (all bytes zero) cannot be produced.
@@ -30,9 +33,21 @@ export function traceIdFor(projectId: string, sessionId: string): string {
   return hashHex(`lodestar.trace:${JSON.stringify([projectId, sessionId])}`).slice(0, 32)
 }
 
-/** 8-byte (16 hex char) span id for a record within a (project, session). */
-export function spanIdFor(projectId: string, sessionId: string, localId: string): string {
-  return hashHex(`lodestar.span:${JSON.stringify([projectId, sessionId, localId])}`).slice(0, 16)
+/**
+ * 8-byte (16 hex char) span id for a record within a (project, session).
+ * `kind` namespaces disjoint span families (e.g. "session" vs "action") so
+ * their seeds can never collide regardless of `localId`.
+ */
+export function spanIdFor(
+  projectId: string,
+  sessionId: string,
+  kind: string,
+  localId: string,
+): string {
+  return hashHex(`lodestar.span:${JSON.stringify([projectId, sessionId, kind, localId])}`).slice(
+    0,
+    16,
+  )
 }
 
 /**
