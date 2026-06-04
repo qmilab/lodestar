@@ -1,5 +1,11 @@
-import { resolve } from "node:path"
-import { MCPProxy, type MCPProxyOverrides, loadProxyConfig } from "@qmilab/lodestar-guard-mcp"
+import { dirname, resolve } from "node:path"
+import type { CompiledPolicy } from "@qmilab/lodestar-guard"
+import {
+  MCPProxy,
+  type MCPProxyOverrides,
+  compileProxyPolicy,
+  loadProxyConfig,
+} from "@qmilab/lodestar-guard-mcp"
 
 /**
  * `lodestar guard mcp-proxy --config <path>`
@@ -24,9 +30,17 @@ import { MCPProxy, type MCPProxyOverrides, loadProxyConfig } from "@qmilab/lodes
  * database connection itself — the CLI owns the connection's lifecycle
  * and closes it after the session ends (on clean exit, error, or signal).
  *
+ * Policy: when the config sets `policy`, this command loads + `compile()`s the
+ * referenced (signed) `Policy` document and injects the resulting gate into the
+ * proxy — the same host-owns-the-I/O separation as persistence, and the path to
+ * richer holds (a `require_approval` rule whose `required_authority` an approver
+ * must clear). Done before any DB connection opens so a bad policy fails fast.
+ * Without `policy`, the gate is the `auto_approve_ceiling` preset.
+ *
  * Exit codes:
  *   0  — session ended cleanly
  *   1  — runtime error (downstream startup failed, config invalid,
+ *         policy invalid — unsigned/tampered/missing,
  *         postgres env var unset, store init failed)
  *   2  — usage error (missing --config or unknown flag)
  *   3  — config file not found
@@ -65,6 +79,24 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
     }
     process.stderr.write(`[mcp-proxy] config invalid: ${message}\n`)
     return 1
+  }
+
+  // Compile a declarative policy document, if one is configured, into the gate
+  // the proxy uses. Done before opening any database connection so a bad policy
+  // fails fast without leaking a store. The proxy never reads the file itself —
+  // the CLI owns the I/O and signature check (same separation as persistence)
+  // and injects the resulting CompiledPolicy via the policyGate seam. The
+  // `file` path resolves against the config file's own directory.
+  let policyOverride: CompiledPolicy | undefined
+  if (config.policy !== undefined) {
+    try {
+      policyOverride = await compileProxyPolicy(config.policy, dirname(resolved))
+      process.stderr.write(`[mcp-proxy] policy gate compiled from ${config.policy.file}\n`)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      process.stderr.write(`[mcp-proxy] policy invalid: ${message}\n`)
+      return 1
+    }
   }
 
   // Resolve the persistence backend into injected stores. The proxy
@@ -120,7 +152,10 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
     }
   }
 
-  const proxy = new MCPProxy(config, storeOverride ? { stores: storeOverride } : undefined)
+  const overrides: MCPProxyOverrides = {}
+  if (storeOverride !== undefined) overrides.stores = storeOverride
+  if (policyOverride !== undefined) overrides.policyGate = policyOverride
+  const proxy = new MCPProxy(config, overrides)
   process.stderr.write(`[mcp-proxy] session ${proxy.session_id}\n`)
   process.stderr.write(`[mcp-proxy] log root ${proxy.log_root}\n`)
   // Always include `--project` and `--log-root` in the hint so the

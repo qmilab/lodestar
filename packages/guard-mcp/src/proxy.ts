@@ -29,11 +29,12 @@ import type {
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
   alwaysHoldsChecker,
-  autoApprovePolicy,
+  autoApprovePolicyCompiled,
   expireRequest,
   holdEvaluationForParkedAction,
   openApprovalRequest,
 } from "@qmilab/lodestar-guard"
+import type { CompiledPolicy, PolicyEvaluation } from "@qmilab/lodestar-guard"
 import {
   type BeliefStore,
   type ClaimStore,
@@ -101,10 +102,18 @@ export interface MCPProxyOverrides {
     }) => Promise<CallToolResultLike>,
   ) => UpstreamServer
   /**
-   * Override the policy gate. Defaults to `autoApprovePolicy`
-   * configured from `config.auto_approve_ceiling`.
+   * Override the policy gate. Defaults to the graduated `autoApprovePolicy`
+   * ceiling compiled from `config.auto_approve_ceiling`.
+   *
+   * Accepts either a bare `PolicyGate` or a full `CompiledPolicy`. The kernel
+   * only ever needs the gate, but a `CompiledPolicy` additionally lets the hold
+   * path re-run its pure `evaluate()` to recover a matched `require_approval`
+   * rule's `required_authority` (`min_trust_baseline` / `scope`) for the opened
+   * `ApprovalRequest`. A bare `PolicyGate` cannot expose that, so a hold under
+   * one carries only the action's mapped `sensitivity_clearance`. This is the
+   * seam the CLI uses to inject a compiled `ProxyConfig.policy` document.
    */
-  policyGate?: PolicyGate
+  policyGate?: PolicyGate | CompiledPolicy
   /**
    * Override the precondition checker. Defaults to
    * `alwaysHoldsChecker` (MCP tools don't currently emit
@@ -149,6 +158,15 @@ export class MCPProxy {
   private readonly writer: EventLogWriter
   private readonly downstreams: DownstreamConnection[]
   private readonly policyGate: PolicyGate
+  /**
+   * The compiled policy behind {@link policyGate}, when one is available — the
+   * default ceiling preset, or a `CompiledPolicy` override (the CLI's compiled
+   * `ProxyConfig.policy`). Held so {@link resolveProxyHold} can re-run its pure
+   * `evaluate()` to recover a matched rule's `required_authority`. `undefined`
+   * when the gate is a bare `PolicyGate` override, where no such re-derivation
+   * is possible and a hold falls back to the parked action's audit.
+   */
+  private readonly compiledPolicy?: CompiledPolicy
   private readonly preconditionChecker: PreconditionChecker
   private readonly upstreamFactory?: MCPProxyOverrides["upstreamFactory"]
   private readonly injectedStores?: MCPProxyOverrides["stores"]
@@ -214,12 +232,49 @@ export class MCPProxy {
     this.downstreams =
       overrides?.downstreamFactory?.(config) ??
       config.downstream_servers.map((entry) => new DownstreamConnection(entry, SERVER_INFO))
-    this.policyGate =
-      overrides?.policyGate ??
-      autoApprovePolicy({
+    const gateOverride = overrides?.policyGate
+    if (gateOverride === undefined) {
+      // Default: the graduated ceiling preset, kept as a `CompiledPolicy` so the
+      // hold path goes through `evaluate()` uniformly. (The preset has no
+      // `require_approval` rule, so its only holds are the L4 floor's, whose
+      // authority is `{}` — but keeping the compiled handle means the one code
+      // path serves both the preset and a richer injected policy.)
+      this.compiledPolicy = autoApprovePolicyCompiled({
         auto_approve_up_to: config.auto_approve_ceiling as 0 | 1 | 2 | 3,
         approver_id: `policy:auto-approve-up-to-${config.auto_approve_ceiling}`,
       })
+      this.policyGate = this.compiledPolicy.gate
+    } else if (typeof gateOverride === "function") {
+      // A bare `PolicyGate`: the kernel has all it needs, but a hold cannot
+      // re-derive a matched rule's authority — it falls back to the parked
+      // action's audit (authority `{}`).
+      this.policyGate = gateOverride
+    } else {
+      // A `CompiledPolicy`: use its gate, and keep the compiled handle so a hold
+      // can re-run `evaluate()` to recover the matched rule's `required_authority`.
+      this.compiledPolicy = gateOverride
+      this.policyGate = gateOverride.gate
+    }
+    // A `config.policy` with no injected `CompiledPolicy` is a wiring bug,
+    // mirroring the postgres-stores check below. The proxy deliberately does not
+    // read or compile the policy document itself (that keeps the file I/O +
+    // signature verification in the host — `compileProxyPolicy`, which the CLI
+    // calls). Falling through to the `auto_approve_ceiling` preset here would
+    // silently *ignore* a declared, possibly stricter, signed policy and
+    // under-enforce it — a silent default for a security-relevant setting, which
+    // this package does not allow. The discriminator is whether a CompiledPolicy
+    // reached us via the override (a bare `PolicyGate` and the default preset
+    // both leave the declared policy unhonoured), so gate on the override shape,
+    // not on `this.compiledPolicy` (the preset sets that too).
+    const compiledPolicyInjected = gateOverride !== undefined && typeof gateOverride !== "function"
+    if (config.policy !== undefined && !compiledPolicyInjected) {
+      throw new Error(
+        "MCPProxy: config.policy is set but no compiled policy was injected. The proxy " +
+          "does not read or compile the policy document itself — compile it " +
+          "(compileProxyPolicy from @qmilab/lodestar-guard-mcp) and pass the result via " +
+          "MCPProxyOverrides.policyGate. The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
     this.preconditionChecker = overrides?.preconditionChecker ?? alwaysHoldsChecker
     if (overrides?.upstreamFactory !== undefined) {
       this.upstreamFactory = overrides.upstreamFactory
@@ -730,9 +785,23 @@ export class MCPProxy {
     const timeoutMs = this.config.approval_timeout_ms ?? 0
     const deadlineAt = Date.now() + timeoutMs
     const deadline = timeoutMs > 0 ? new Date(deadlineAt).toISOString() : undefined
+    // Recover the hold's `required_authority`. A `CompiledPolicy` can re-run its
+    // pure `evaluate()` to read a matched `require_approval` rule's authority
+    // (`min_trust_baseline` / `scope`) — but ONLY for a contract+rule hold: an
+    // arbitration-escalated hold is invisible to a context-free re-run (see
+    // gate.ts), so `evaluate()` returns the base verdict (e.g. allow). Default
+    // to the parked action's audit (always a hold, authority `{}`) and upgrade
+    // to the compiled evaluation only when it agrees the verdict is a hold — so
+    // every kind of hold opens a request rather than tripping on a non-hold
+    // re-evaluation. Mirrors `guard.wrap()`'s `resolveHold`.
+    let evaluation: PolicyEvaluation = holdEvaluationForParkedAction(parked)
+    if (this.compiledPolicy) {
+      const reevaluated = this.compiledPolicy.evaluate(parked)
+      if (reevaluated.verdict === "hold") evaluation = reevaluated
+    }
     const request = openApprovalRequest(
       parked,
-      holdEvaluationForParkedAction(parked),
+      evaluation,
       deadline !== undefined ? { deadline } : {},
     )
     await this.emit("approval.requested", request)
