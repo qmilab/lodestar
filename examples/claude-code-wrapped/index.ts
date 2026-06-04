@@ -63,6 +63,9 @@ async function main(): Promise<void> {
     default_scope: { level: "project", identifier: PROJECT_ID },
     default_sensitivity: "internal",
     auto_approve_ceiling: 2,
+    // No out-of-band approval resolver in this example: a held action is
+    // surfaced immediately as `approval_required` (no wait).
+    approval_timeout_ms: 0,
     downstream_servers: [
       {
         name: "fs",

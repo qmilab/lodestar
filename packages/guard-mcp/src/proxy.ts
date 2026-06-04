@@ -3,6 +3,7 @@ import { resolve as resolvePath } from "node:path"
 import type { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js"
 import {
   ActionKernel,
+  type ApprovalOutcome,
   type PolicyGate,
   type PreconditionChecker,
   lookupTool,
@@ -14,11 +15,19 @@ import {
   InMemoryWorldModel,
   type IngestResult,
 } from "@qmilab/lodestar-cognitive-core"
-import type { Action, ActionContract, Observation, Reversibility } from "@qmilab/lodestar-core"
-import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
+import type {
+  Action,
+  ActionContract,
+  ApprovalRequest,
+  EventEnvelope,
+  Observation,
+  Reversibility,
+} from "@qmilab/lodestar-core"
+import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
   alwaysHoldsChecker,
   autoApprovePolicy,
+  expireRequest,
   holdEvaluationForParkedAction,
   openApprovalRequest,
 } from "@qmilab/lodestar-guard"
@@ -588,33 +597,19 @@ export class MCPProxy {
 
     const arbitrated = await this.kernel.arbitrate(proposed)
 
-    // Three-valued gate: a held action (e.g. an L4 tool the trust-ladder floor
-    // always holds) is parked at `pending_approval`. The proxy surfaces the
-    // hold as a synthetic `approval_required` result the wrapped agent reads as
-    // a normal tool response and re-plans around — never a transport error. An
-    // `approval.requested@1` is recorded for the audit trail; the world stays
-    // untouched (the two-phase discipline forbids execute() from
-    // pending_approval). The deadline + out-of-band resolution (poll for an
-    // `approval.granted@1` up to a timeout, else `approval_timeout`) lands in
-    // the next host-wiring slice; v0 here treats a hold as a soft denial the
-    // agent re-proposes.
+    // Three-valued gate. A held action (an L4 tool the trust-ladder floor always
+    // holds) is parked at `pending_approval`; `resolveProxyHold` opens a request,
+    // waits up to `approval_timeout_ms` for an out-of-band resolution, and either
+    // returns a terminal synthetic result (no-wait / deny / timeout) the agent
+    // re-plans around or the un-parked, approved action to execute. A rejection
+    // becomes a synthetic `policy_denied` result. Either way the world stays
+    // untouched until an action reaches `approved` (two-phase discipline).
+    let approved: Action
     if (arbitrated.phase === "pending_approval") {
-      // Record the parked Action (with its audit) before the request, so the
-      // held state is reconstructable directly from the event stream — not only
-      // inferred from `approval.requested`.
-      await this.emit("action.pending_approval", arbitrated)
-      const request = openApprovalRequest(arbitrated, holdEvaluationForParkedAction(arbitrated))
-      await this.emit("approval.requested", request)
-      return buildPolicyDeniedResult({
-        tool_name: req.name,
-        args: req.arguments,
-        reason: request.reason,
-        kind: "approval_required",
-        action_id: arbitrated.id,
-      })
-    }
-
-    if (arbitrated.phase !== "approved") {
+      const held = await this.resolveProxyHold(arbitrated, req)
+      if ("result" in held) return held.result
+      approved = held.approved
+    } else if (arbitrated.phase !== "approved") {
       await this.emit("action.rejected", arbitrated)
       const reason = arbitrated.approval?.reason ?? "policy gate rejected this action"
       return buildPolicyDeniedResult({
@@ -624,13 +619,15 @@ export class MCPProxy {
         kind: "policy_denied",
         action_id: arbitrated.id,
       })
+    } else {
+      await this.emit("action.approved", arbitrated)
+      approved = arbitrated
     }
-    await this.emit("action.approved", arbitrated)
 
     // Capture slot is keyed by action id (== invocation_id on the
     // emitted Observation). Don't pre-clear a global slot — that
     // would race with overlapping calls.
-    const executed = await this.kernel.execute(arbitrated)
+    const executed = await this.kernel.execute(approved)
     if (executed.phase === "completed") {
       await this.emit("action.completed", executed)
     } else if (executed.phase === "rejected") {
@@ -677,6 +674,130 @@ export class MCPProxy {
     const captured = this.takeCapture(executed.id, req.name)
     const payload = captured.observation.payload as MCPToolResultObservationPayload
     return payloadToCallToolResult(payload)
+  }
+
+  /**
+   * Resolve an action the policy held for approval (`pending_approval`).
+   *
+   * Emits `action.pending_approval` then `approval.requested@1` (carrying the
+   * deadline when one is configured), then waits up to `approval_timeout_ms`
+   * polling the event log for an out-of-band `approval.granted@1` /
+   * `approval.denied@1` written by the `lodestar approve` CLI or an approval UI.
+   * Returns the un-parked, `approved` action to execute, or a terminal synthetic
+   * `CallToolResult` the wrapped agent reads as a normal response and re-plans
+   * around:
+   *   - `approval_timeout_ms` is 0 (no wait) → `approval_required`
+   *   - deadline passes with no resolution   → `approval_timeout` (after
+   *                                             emitting `approval.expired@1`)
+   *   - an out-of-band deny lands            → `approval_denied`
+   *
+   * A timed-out hold is a soft denial the agent re-proposes — durable resume of
+   * the *same* approved call is deliberately deferred (`policy-kernel.md`).
+   */
+  private async resolveProxyHold(
+    parked: Action,
+    req: { name: string; arguments: Record<string, unknown> },
+  ): Promise<{ approved: Action } | { result: CallToolResultLike }> {
+    if (this.kernel === undefined) {
+      throw new Error("resolveProxyHold invoked before start() wired the kernel")
+    }
+    // Record the parked Action (with its audit) before anything else, so the
+    // held state is reconstructable directly from the event stream — not only
+    // inferred from `approval.requested`.
+    await this.emit("action.pending_approval", parked)
+
+    const timeoutMs = this.config.approval_timeout_ms
+    const deadline = timeoutMs > 0 ? new Date(Date.now() + timeoutMs).toISOString() : undefined
+    const request = openApprovalRequest(
+      parked,
+      holdEvaluationForParkedAction(parked),
+      deadline !== undefined ? { deadline } : {},
+    )
+    await this.emit("approval.requested", request)
+
+    // No wait configured: surface the hold immediately as a soft denial the
+    // agent re-proposes (the pre-deadline behaviour).
+    if (timeoutMs <= 0) {
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: request.reason,
+          kind: "approval_required",
+          action_id: parked.id,
+        }),
+      }
+    }
+
+    const outcome = await this.waitForResolution(request, parked.id, timeoutMs)
+
+    // Deadline passed with no resolution → expire it (a soft denial).
+    if (outcome === undefined) {
+      const expired = expireRequest(request)
+      const rejected = this.kernel.resolve(parked, expired)
+      const at = rejected.approval?.at ?? new Date().toISOString()
+      await this.emit("approval.expired", {
+        request_id: request.request_id,
+        action_id: parked.id,
+        at,
+      })
+      await this.emit("action.rejected", rejected)
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: `approval deadline passed with no resolution after ${timeoutMs}ms`,
+          kind: "approval_timeout",
+          action_id: parked.id,
+        }),
+      }
+    }
+
+    // A resolution arrived out-of-band. resolve() validates the binding.
+    const resolved = this.kernel.resolve(parked, outcome)
+    if (resolved.phase !== "approved") {
+      await this.emit("action.rejected", resolved)
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: resolved.approval?.reason ?? "approval denied by resolver",
+          kind: "approval_denied",
+          action_id: parked.id,
+        }),
+      }
+    }
+    await this.emit("action.approved", resolved)
+    return { approved: resolved }
+  }
+
+  /**
+   * Poll the event log for an out-of-band resolution of `request`, up to
+   * `timeoutMs`. Returns the bound `ApprovalOutcome` (granted/denied) or
+   * `undefined` if the deadline passes first.
+   *
+   * The resolver appends the `approval.*` event to the same log. In-process a
+   * second `EventLogWriter` shares the single-writer mutex; a separate process
+   * (the `lodestar approve` CLI) hydrates its seq from the log tip and appends
+   * one small atomic line — cross-process file-locking is a documented v0
+   * caveat of `EventLogWriter`, acceptable here because the resolution is a
+   * single infrequent append while the proxy only reads during the wait.
+   */
+  private async waitForResolution(
+    request: ApprovalRequest,
+    actionId: string,
+    timeoutMs: number,
+  ): Promise<ApprovalOutcome | undefined> {
+    const reader = new EventLogReader(this.logRoot)
+    const start = Date.now()
+    for (;;) {
+      const events = await reader.readSession(this.config.project_id, this.sessionId)
+      const outcome = resolutionOutcomeFor(events, request.request_id, actionId)
+      if (outcome !== undefined) return outcome
+      const elapsed = Date.now() - start
+      if (elapsed >= timeoutMs) return undefined
+      await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, timeoutMs - elapsed))
+    }
   }
 
   /**
@@ -1048,6 +1169,47 @@ function lastFailureDetail(action: Action): string | undefined {
     const step = action.audit[i]
     if (step && (step.phase === "failed" || step.phase === "rejected")) {
       return step.detail
+    }
+  }
+  return undefined
+}
+
+/** How often the proxy re-reads the log while waiting on a held action. */
+const APPROVAL_POLL_INTERVAL_MS = 100
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)))
+}
+
+/**
+ * Find an out-of-band `approval.granted@1` / `approval.denied@1` event matching
+ * this request and build the bound `ApprovalOutcome`. Returns `undefined` if
+ * none has landed yet. First match wins — one resolution is expected per
+ * request, and `ActionKernel.resolve()` re-validates the binding regardless.
+ */
+function resolutionOutcomeFor(
+  events: EventEnvelope[],
+  requestId: string,
+  actionId: string,
+): ApprovalOutcome | undefined {
+  for (const e of events) {
+    if (e.type !== "approval.granted" && e.type !== "approval.denied") continue
+    const p = e.payload as {
+      request_id?: unknown
+      action_id?: unknown
+      approver_id?: unknown
+      reason?: unknown
+      at?: unknown
+    }
+    if (p.request_id !== requestId || p.action_id !== actionId) continue
+    const kind = e.type === "approval.granted" ? "granted" : "denied"
+    return {
+      kind,
+      action_id: actionId,
+      request_id: requestId,
+      approver_id: typeof p.approver_id === "string" ? p.approver_id : "unknown",
+      reason: typeof p.reason === "string" ? p.reason : undefined,
+      at: typeof p.at === "string" ? p.at : undefined,
     }
   }
   return undefined

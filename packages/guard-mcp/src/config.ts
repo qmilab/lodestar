@@ -151,10 +151,31 @@ export const ProxyConfigSchema = z.object({
    * approval and L5 prohibited — neither is an expressible auto-approve
    * ceiling, and `autoApprovePolicy()` throws on a ceiling of 4 or 5. We
    * mirror that bound here to fail at config-load time instead. An L4 tool
-   * is held regardless of this ceiling (the proxy surfaces the hold; the
-   * deadline / out-of-band resolution path lands in the next slice).
+   * is held regardless of this ceiling (see `approval_timeout_ms`).
    */
   auto_approve_ceiling: z.number().int().min(0).max(3).default(2),
+  /**
+   * How long (milliseconds) the proxy waits on a held action for an
+   * out-of-band resolution before timing out.
+   *
+   * A `tools/call` is request/response, so the proxy cannot hold one open
+   * indefinitely without tripping the wrapped agent's client timeout. When an
+   * action is held (an L4 tool the trust-ladder floor parks at
+   * `pending_approval`), the proxy emits `approval.requested@1` and then polls
+   * the event log up to this deadline for an `approval.granted@1` /
+   * `approval.denied@1` written out-of-band (the `lodestar approve` CLI, the
+   * approval UI). On a grant it un-parks and runs the tool; on a deny or a
+   * deadline pass it returns a synthetic result the agent re-plans around
+   * (`_lodestar.kind` = `approval_denied` / `approval_timeout`). A timed-out
+   * hold is a soft denial the agent re-proposes — durable resume is deferred.
+   *
+   * Defaults to **0** = do not wait: surface the hold immediately as
+   * `approval_required` (the conservative, backward-compatible default — set
+   * a positive value below the client's timeout to enable out-of-band
+   * approval). Keep it comfortably under the wrapped agent's `tools/call`
+   * timeout.
+   */
+  approval_timeout_ms: z.number().int().min(0).default(0),
   downstream_servers: z
     .array(DownstreamServerConfigSchema)
     .min(1)

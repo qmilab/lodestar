@@ -11,9 +11,11 @@ Cognitive Core. The resulting event log is renderable by
 
 - `src/config.ts` — Zod schema for the proxy config file
   (`ProxyConfig`). Describes downstream servers, per-tool action-
-  contract defaults, the event log root, and the auto-approve policy
-  ceiling. Every field is explicit; nothing in this package has a
-  silent default for a security-relevant setting.
+  contract defaults, the event log root, the auto-approve policy
+  ceiling (`auto_approve_ceiling`, 0..3), and `approval_timeout_ms` (how
+  long a held action waits for an out-of-band resolution before timing
+  out; 0 = don't wait). Every field is explicit; nothing in this package
+  has a silent default for a security-relevant setting.
 - `src/observation.ts` — registers the `mcp.tool_result@1` observation
   schema in `@qmilab/lodestar-core`'s registry, and the matching
   `MCPToolResultExtractor` for `@qmilab/lodestar-cognitive-core`. The
@@ -91,15 +93,26 @@ Cognitive Core. The resulting event log is renderable by
    about denial and re-plan, instead of seeing a transport-level
    failure that most agents would treat as a fatal abort. The
    three-valued gate's **hold** (an L4 tool the trust-ladder floor
-   always parks at `pending_approval`) reuses the same machinery: the
-   proxy emits `approval.requested@1` and returns a synthetic result
-   with `kind: "approval_required"`, which the agent reads as a normal
-   tool response and re-plans around — never a transport error. v0 here
-   surfaces the hold *immediately* (a soft denial to re-propose); the
-   deadline + out-of-band resolution loop (poll for an
-   `approval.granted@1` up to a timeout, else `approval_timeout`) is the
-   next host-wiring slice. `auto_approve_ceiling` caps at L3 — auto-
-   approving L4 is not expressible (the floor always holds it).
+   always parks at `pending_approval`) reuses the same machinery. The
+   proxy emits `action.pending_approval` + `approval.requested@1` (with a
+   deadline), then waits up to `approval_timeout_ms` polling the event
+   log for an out-of-band `approval.granted@1` / `approval.denied@1`
+   (written by the `lodestar approve` CLI or an approval UI):
+   - **grant** → un-park via `ActionKernel.resolve()` and run the tool;
+   - **deny** → synthetic `approval_denied` result;
+   - **deadline passes** → emit `approval.expired@1`, reject, return a
+     synthetic `approval_timeout` result;
+   - **`approval_timeout_ms` is 0** (don't wait) → return
+     `approval_required` immediately (the conservative default).
+   Each is a `CallToolResult` with `isError: true` and a `_lodestar`
+   marker the agent reads as a normal tool response and re-plans around —
+   never a transport error. A timed-out hold is a soft denial the agent
+   re-proposes; durable resume of the same approved call is deferred.
+   `auto_approve_ceiling` caps at L3 — auto-approving L4 is not
+   expressible (the floor always holds it). Cross-process resolution
+   relies on `EventLogWriter` hydration + atomic single-line appends (the
+   resolver appends one event while the proxy only reads during the
+   wait); cross-process file-locking remains a documented v0 caveat.
 
 6. **Stdio only for v0.** HTTP/SSE transports for the proxy's
    upstream face are deferred. The downstream client side uses
