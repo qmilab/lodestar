@@ -86,9 +86,14 @@ async function exportCommand(argv: string[]): Promise<number> {
     return 2
   }
 
-  // --stdout is mutually exclusive with delivery to an endpoint/file.
+  // The three delivery targets are mutually exclusive: POST to --endpoint,
+  // write --out, or print to stdout (the default).
   if (to_stdout && (endpoint || out)) {
     process.stderr.write("--stdout cannot be combined with --endpoint or --out\n")
+    return 2
+  }
+  if (endpoint && out) {
+    process.stderr.write("--endpoint and --out are mutually exclusive\n")
     return 2
   }
 

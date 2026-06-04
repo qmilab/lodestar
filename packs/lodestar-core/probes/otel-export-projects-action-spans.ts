@@ -23,13 +23,18 @@
  *       makes the root span itself ERROR;
  *   D2 — the rejected push (which produces no Outcome) ends at its terminal
  *       audit timestamp, not collapsed to a zero-length span at proposal time;
+ *   D3 — the root span encloses every child (its bounds widen past the
+ *       envelope range to cover the push's later audit-time end);
+ *   D4 — endpoint + out are mutually exclusive (throws, rather than POSTing
+ *       and silently dropping the requested file);
  *   E — the export is idempotent: re-exporting the same log yields a
  *       byte-identical trace (deterministic ids).
  *
  * If the parent wiring breaks, C trips. If a policy denial stops being
  * legible as a failed span, D trips. If an outcome-less terminal state
- * collapses to proposal time, D2 trips. If ids stop being deterministic, E
- * trips.
+ * collapses to proposal time, D2 trips. If a child escapes the root bounds,
+ * D3 trips. If conflicting delivery targets are silently accepted, D4 trips.
+ * If ids stop being deterministic, E trips.
  */
 
 import { mkdtempSync, rmSync } from "node:fs"
@@ -259,6 +264,41 @@ async function run(): Promise<ProbeResult> {
     details.push(
       "D2: rejected push span ends at the audit-recorded denial time (non-zero duration)",
     )
+
+    // D3 — the root span must ENCLOSE every child. The push span ends at its
+    // audit time (:04), one second past the last event envelope (:03), so a
+    // root bounded only by envelope timestamps would let the child extend
+    // past it. Assert root.start ≤ every child start and root.end ≥ every end.
+    const rootStart = BigInt(root.startTimeUnixNano)
+    const rootEnd = BigInt(root.endTimeUnixNano)
+    for (const s of [readSpan, pushSpan]) {
+      if (BigInt(s.startTimeUnixNano) < rootStart || BigInt(s.endTimeUnixNano) > rootEnd) {
+        return fail(details, `child span ${s.name} extends outside the root span bounds`)
+      }
+    }
+    if (rootEnd < expectedEnd) {
+      return fail(details, "root span end did not widen to cover the push's audit-time end")
+    }
+    details.push("D3: root span encloses every child span (bounds widened past the envelope range)")
+
+    // D4 — delivery targets are mutually exclusive: endpoint + out must throw
+    // (fail fast, before any I/O), not POST and silently drop the file.
+    let conflictThrew = false
+    try {
+      await exportSession({
+        sessionId: SESSION,
+        projectId: PROJECT,
+        logRoot: rootDir,
+        endpoint: "http://127.0.0.1:4318",
+        out: "/tmp/lodestar-otel-probe-should-not-exist.json",
+      })
+    } catch {
+      conflictThrew = true
+    }
+    if (!conflictThrew) {
+      return fail(details, "endpoint + out did not throw — the requested file is silently dropped")
+    }
+    details.push("D4: endpoint + out are mutually exclusive (throws before any I/O)")
 
     // E — idempotent: re-export → byte-identical trace.
     const again = await exportSession({ sessionId: SESSION, projectId: PROJECT, logRoot: rootDir })

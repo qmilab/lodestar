@@ -170,24 +170,37 @@ export function buildTrace(
 
   const anyFailed = projection.actions.some((a) => isErrorPhase(a.terminal_phase))
 
+  // ── Action spans: execute_tool ──────────────────────────────────────
+  const actionSpans: LodestarSpan[] = []
+  for (const pa of projection.actions) {
+    const span = actionSpan(pa, session, rootSpanId, meta, gate)
+    if (span) actionSpans.push(span)
+  }
+
+  // The root must enclose every child span and event. Child spans/events are
+  // timed off *payload* timestamps (proposed_at, observed_at, terminal audit
+  // `at`) which can fall outside the envelope range — so bounding the root on
+  // the envelope alone (first/last_event_at) would let a child extend past
+  // it. Widen the root to span the earliest..latest of every contained time.
+  const { start: rootStart, end: rootEnd } = spanBounds([
+    isoToUnixNano(projection.first_event_at),
+    isoToUnixNano(projection.last_event_at ?? projection.first_event_at),
+    ...rootEvents.map((e) => e.time_unix_nano),
+    ...actionSpans.flatMap((s) => [s.start_unix_nano, s.end_unix_nano]),
+  ])
+
   const rootSpan: LodestarSpan = {
     name: `invoke_agent ${projection.project_id || session}`,
     span_id: rootSpanId,
     kind: "internal",
-    start_unix_nano: isoToUnixNano(projection.first_event_at),
-    end_unix_nano: isoToUnixNano(projection.last_event_at ?? projection.first_event_at),
+    start_unix_nano: rootStart,
+    end_unix_nano: rootEnd,
     status: { code: anyFailed ? "error" : "unset" },
     attributes: rootAttrs.bag,
     events: rootEvents,
   }
 
-  const spans: LodestarSpan[] = [rootSpan]
-
-  // ── Action spans: execute_tool ──────────────────────────────────────
-  for (const pa of projection.actions) {
-    const span = actionSpan(pa, session, rootSpanId, meta, gate)
-    if (span) spans.push(span)
-  }
+  const spans: LodestarSpan[] = [rootSpan, ...actionSpans]
 
   const resource_attributes: Record<string, AttrValue> = {
     "service.name": "lodestar",
@@ -195,6 +208,25 @@ export function buildTrace(
   }
 
   return { trace_id, resource_attributes, spans, redacted_count: gate.redacted }
+}
+
+/**
+ * The earliest..latest bounds over a set of unix-nano timestamps. The "0"
+ * sentinel (a missing/unparseable timestamp) is ignored; if everything is
+ * absent the bounds collapse to "0".
+ */
+function spanBounds(nanos: string[]): { start: string; end: string } {
+  let min: bigint | undefined
+  let max: bigint | undefined
+  for (const n of nanos) {
+    if (n === "0") continue
+    const v = BigInt(n)
+    if (min === undefined || v < min) min = v
+    if (max === undefined || v > max) max = v
+  }
+  const start = min !== undefined ? min.toString() : "0"
+  const end = max !== undefined ? max.toString() : start
+  return { start, end }
 }
 
 // ── Span / event builders ────────────────────────────────────────────────

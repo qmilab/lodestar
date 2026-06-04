@@ -53,6 +53,12 @@ export class SessionNotFoundError extends Error {
 }
 
 export async function exportSession(opts: ExportSessionOptions): Promise<ExportSummary> {
+  // `endpoint` and `out` are mutually exclusive delivery targets. Fail fast
+  // (before any I/O) rather than POSTing and silently dropping the requested
+  // file — the exact case where a caller asked for a file and gets none.
+  if (opts.endpoint && opts.out) {
+    throw new Error("provide only one of `endpoint` or `out` — they are mutually exclusive")
+  }
   const logRoot = opts.logRoot ?? defaultLogRoot()
   const loadInput: { logRoot: string; session_id: string; project_id?: string } = {
     logRoot,
