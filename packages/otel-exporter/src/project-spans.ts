@@ -1,4 +1,11 @@
-import type { ActionPhase, Belief, Claim, Observation, Sensitivity } from "@qmilab/lodestar-core"
+import type {
+  Action,
+  ActionPhase,
+  Belief,
+  Claim,
+  Observation,
+  Sensitivity,
+} from "@qmilab/lodestar-core"
 import type {
   ChainProjection,
   FirewallTransition,
@@ -224,17 +231,52 @@ function actionSpan(
     ? { code: "error", message: pa.outcome?.result ?? pa.terminal_phase }
     : { code: pa.terminal_phase === "completed" ? "ok" : "unset" }
 
+  // Span end. An Outcome (completed/failed) carries the real end time. The
+  // many terminal states that produce NO Outcome — rejected, halted,
+  // pending_approval, approval timeout — instead record their terminal time
+  // in the audit trail (and `approval`); use the latest of those so the span
+  // reflects when policy actually denied/halted the action rather than
+  // collapsing to a zero-length span at proposal time. `proposed_at` is the
+  // last resort, and the end is clamped to never precede the start.
+  const start_unix_nano = isoToUnixNano(action.proposed_at)
+  const endAt = pa.outcome?.observed_at ?? latestTimestamp(terminalCandidates(action))
+  const endNano = endAt ? isoToUnixNano(endAt) : start_unix_nano
+  const end_unix_nano = BigInt(endNano) >= BigInt(start_unix_nano) ? endNano : start_unix_nano
+
   return {
     name: `execute_tool ${action.tool}`,
     span_id: spanIdFor(session, action.id),
     parent_span_id: parentSpanId,
     kind: "internal",
-    start_unix_nano: isoToUnixNano(action.proposed_at),
-    end_unix_nano: isoToUnixNano(pa.outcome?.observed_at ?? action.proposed_at),
+    start_unix_nano,
+    end_unix_nano,
     status,
     attributes: a.bag,
     events: [],
   }
+}
+
+/** Timestamps that can mark an action's terminal transition without an Outcome. */
+function terminalCandidates(action: Action): Array<string | undefined> {
+  const candidates: Array<string | undefined> = action.audit.map((e) => e.at)
+  if (action.approval) candidates.push(action.approval.at)
+  return candidates
+}
+
+/** The latest parseable timestamp among the candidates (original string preserved). */
+function latestTimestamp(candidates: Array<string | undefined>): string | undefined {
+  let best: string | undefined
+  let bestMs = Number.NEGATIVE_INFINITY
+  for (const c of candidates) {
+    if (!c) continue
+    const ms = Date.parse(c)
+    if (Number.isNaN(ms)) continue
+    if (ms > bestMs) {
+      bestMs = ms
+      best = c
+    }
+  }
+  return best
 }
 
 function observationEvent(

@@ -21,11 +21,14 @@
  *   D — the completed read is status OK / verdict allow; the rejected push
  *       is status ERROR / verdict deny / trust level 4; and a denied action
  *       makes the root span itself ERROR;
+ *   D2 — the rejected push (which produces no Outcome) ends at its terminal
+ *       audit timestamp, not collapsed to a zero-length span at proposal time;
  *   E — the export is idempotent: re-exporting the same log yields a
  *       byte-identical trace (deterministic ids).
  *
  * If the parent wiring breaks, C trips. If a policy denial stops being
- * legible as a failed span, D trips. If ids stop being deterministic, E
+ * legible as a failed span, D trips. If an outcome-less terminal state
+ * collapses to proposal time, D2 trips. If ids stop being deterministic, E
  * trips.
  */
 
@@ -54,6 +57,9 @@ function action(
   blast: Action["contract"]["blast_radius"],
   reversibility: Action["contract"]["reversibility"],
   proposedAt: string,
+  // Terminal-transition time recorded in the audit trail (e.g. when a policy
+  // rejection lands). Real guard/MCP rejections carry this but no Outcome.
+  terminalAt?: string,
 ): Action {
   return {
     id,
@@ -69,7 +75,7 @@ function action(
       preconditions: [],
     },
     phase,
-    audit: [],
+    audit: terminalAt ? [{ phase, by_actor_id: ACTOR, at: terminalAt }] : [],
     proposed_at: proposedAt,
     proposed_by: ACTOR,
   }
@@ -134,6 +140,8 @@ async function seedLog(rootDir: string): Promise<void> {
       "external",
       "irreversible",
       "2026-06-04T12:00:03.000Z",
+      // Policy denied it one second after proposal — no Outcome, audit only.
+      "2026-06-04T12:00:04.000Z",
     ),
   })
 }
@@ -232,6 +240,26 @@ async function run(): Promise<ProbeResult> {
       "D: read=OK/allow, push=ERROR/deny/L4, root=ERROR (denial is a legible failed span)",
     )
 
+    // D2 — span timing. The rejected push has NO Outcome; its end must come
+    // from the terminal audit timestamp (proposal+1s), not collapse to the
+    // proposal time, or the trace shows a misleading zero-length span.
+    const pushStart = BigInt(pushSpan.startTimeUnixNano)
+    const pushEnd = BigInt(pushSpan.endTimeUnixNano)
+    const expectedEnd = BigInt(Date.parse("2026-06-04T12:00:04.000Z")) * 1_000_000n
+    if (pushEnd <= pushStart) {
+      return fail(details, "rejected push span is zero-length — end fell back to proposal time")
+    }
+    if (pushEnd !== expectedEnd) {
+      return fail(details, "rejected push span end did not use the terminal audit timestamp")
+    }
+    // The completed read still ends at its Outcome time (later than start).
+    if (BigInt(readSpan.endTimeUnixNano) <= BigInt(readSpan.startTimeUnixNano)) {
+      return fail(details, "completed read span is zero-length")
+    }
+    details.push(
+      "D2: rejected push span ends at the audit-recorded denial time (non-zero duration)",
+    )
+
     // E — idempotent: re-export → byte-identical trace.
     const again = await exportSession({ sessionId: SESSION, projectId: PROJECT, logRoot: rootDir })
     if (again.trace_id !== summary.trace_id) {
@@ -266,6 +294,8 @@ interface OtlpSpan {
   spanId: string
   parentSpanId?: string
   name: string
+  startTimeUnixNano: string
+  endTimeUnixNano: string
   status: { code: number; message?: string }
   attributes: OtlpKeyValue[]
 }
