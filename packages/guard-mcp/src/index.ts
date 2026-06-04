@@ -11,6 +11,17 @@ export {
 } from "./config.js"
 
 export {
+  type ApprovalResolution,
+  ApprovalResolutionSchema,
+  approvalResolutionPath,
+  approvalsChannelDir,
+  deleteApprovalResolution,
+  readApprovalResolution,
+  resolutionToOutcome,
+  writeApprovalResolution,
+} from "./approvals-channel.js"
+
+export {
   collectPaginatedTools,
   DownstreamConnection,
   mergeDownstreamEnv,

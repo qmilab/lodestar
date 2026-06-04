@@ -20,6 +20,7 @@
 import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
 import { registerGitStatusTool } from "@qmilab/lodestar-adapter-git"
 import { actionDescribeCommand, actionListCommand } from "./commands/action.js"
+import { approveCommand } from "./commands/approve.js"
 import { guardMCPProxyCommand } from "./commands/guard-mcp.js"
 import { guardWrapCommand } from "./commands/guard.js"
 import { harnessCommand } from "./commands/harness.js"
@@ -77,6 +78,9 @@ async function dispatch(): Promise<number> {
       if (sub === "describe") return actionDescribeCommand(rest)
       process.stderr.write("usage: lodestar action list | lodestar action describe <action-id>\n")
       return 2
+
+    case "approve":
+      return approveCommand(sub === undefined ? [] : [sub, ...rest])
 
     case "trace":
       if (sub === "inspect") return traceInspectCommand(rest)

@@ -19,6 +19,8 @@ import { ApprovalDeniedPayloadSchema, ApprovalGrantedPayloadSchema } from "@qmil
 import type {
   Action,
   ActionContract,
+  ApprovalDeniedPayload,
+  ApprovalGrantedPayload,
   ApprovalRequest,
   EventEnvelope,
   Observation,
@@ -41,6 +43,12 @@ import {
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
+import {
+  type ApprovalResolution,
+  deleteApprovalResolution,
+  readApprovalResolution,
+  resolutionToOutcome,
+} from "./approvals-channel.js"
 import type { ProxyConfig, ToolContractDefaults } from "./config.js"
 import { DownstreamConnection } from "./downstream.js"
 import {
@@ -743,7 +751,7 @@ export class MCPProxy {
       }
     }
 
-    const outcome = await this.waitForResolution(request, parked.id, deadlineAt)
+    const resolution = await this.waitForResolution(request, parked.id, deadlineAt)
 
     // The proxy was stopped mid-wait: don't append post-teardown events or run
     // the tool (its registration may already be gone). Return a terminal result;
@@ -761,7 +769,7 @@ export class MCPProxy {
     }
 
     // Deadline passed with no resolution → expire it (a soft denial).
-    if (outcome === undefined) {
+    if (resolution === undefined) {
       const expired = expireRequest(request)
       const rejected = this.kernel.resolve(parked, expired)
       const at = rejected.approval?.at ?? new Date().toISOString()
@@ -780,6 +788,19 @@ export class MCPProxy {
           action_id: parked.id,
         }),
       }
+    }
+
+    const { outcome, source } = resolution
+    // A side-channel resolution (the separate-process `lodestar approve` CLI)
+    // carries no event yet — the writer deliberately never appends the log. The
+    // proxy is the sole writer of its session's log, so it emits the canonical
+    // `approval.granted@1` / `approval.denied@1` itself, then consumes the
+    // spent file. A resolution found already in the log (an in-process resolver
+    // that shares the single-writer mutex) is left as-is — re-emitting would
+    // duplicate it.
+    if (source === "channel") {
+      await this.emitCanonicalResolution(outcome)
+      await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
     }
 
     // A resolution arrived out-of-band. resolve() validates the binding.
@@ -801,33 +822,36 @@ export class MCPProxy {
   }
 
   /**
-   * Poll the event log for an out-of-band resolution of `request`, until the
-   * absolute `deadlineAt` (ms epoch). Returns the bound `ApprovalOutcome`
-   * (granted/denied) recorded *before* the deadline, or `undefined` if the
+   * Poll for an out-of-band resolution of `request`, until the absolute
+   * `deadlineAt` (ms epoch). Returns the bound `ApprovalOutcome` (granted/denied)
+   * recorded *before* the deadline plus its `source`, or `undefined` if the
    * deadline passes first (or the proxy stops).
    *
-   * Acceptance is gated on the resolution event's own envelope timestamp
-   * (≤ the request's `deadline`), not on poll timing — so a resolution appended
-   * after the deadline is never accepted even if a final poll happens to observe
-   * it (closing the "late grant slips in" race). A torn / partially-written
-   * trailing line from a concurrent append is tolerated: the read error is
-   * swallowed and polling continues until the deadline.
+   * Two sources, checked in order each poll:
+   *   - **`log`** — an `approval.granted@1` / `approval.denied@1` already in the
+   *     event log. This is the *in-process* resolver path: a second
+   *     `EventLogWriter` in the proxy's own process shares the single-writer
+   *     mutex and seq counter, so its append is seq-safe and already canonical.
+   *     The caller does not re-emit.
+   *   - **`channel`** — a `<request_id>.json` resolution file the separate-process
+   *     `lodestar approve` CLI dropped in the side-channel (`approvals-channel.ts`).
+   *     The CLI never writes the log (cross-process appends would collide on
+   *     `seq`/`logical_clock` with the proxy's own counters), so the caller
+   *     promotes it: emits the canonical `approval.*` event into the proxy's own
+   *     log and consumes the file. The proxy stays the sole writer of its log.
    *
-   * Cross-process write safety is NOT yet guaranteed. In-process a second
-   * `EventLogWriter` shares the single-writer mutex and seq counter, so an
-   * in-process resolver is correct. A *separate* process appending the
-   * resolution can collide on `seq` / `logical_clock` with the proxy's own
-   * post-resolution appends — the writer's counters are process-local, so the
-   * proxy never observes the resolver's allocation. The event-log writer must
-   * gain cross-process locking (or the resolution must route through the proxy's
-   * single writer) before a separate-process resolver is safe; that is a
-   * prerequisite for the `lodestar approve` CLI slice, not yet in place.
+   * Acceptance is gated on the resolver's *decision time*, not on poll timing —
+   * a log event's own envelope timestamp ≤ the request's `deadline`, or a channel
+   * file's `at` ≤ `deadlineAt` (compared numerically, so an offset timestamp in
+   * the file is handled correctly). A resolution dated after the deadline is a
+   * timeout, never a late approval. A torn / partially-written read on either
+   * source is swallowed and polling continues until the deadline.
    */
   private async waitForResolution(
     request: ApprovalRequest,
     actionId: string,
     deadlineAt: number,
-  ): Promise<ApprovalOutcome | undefined> {
+  ): Promise<{ outcome: ApprovalOutcome; source: "log" | "channel" } | undefined> {
     const reader = new EventLogReader(this.logRoot)
     for (;;) {
       if (this.stopping) return undefined
@@ -839,11 +863,58 @@ export class MCPProxy {
         // "no resolution yet" and keep polling rather than failing the call.
         events = []
       }
-      const outcome = resolutionOutcomeFor(events, request.request_id, actionId, request.deadline)
-      if (outcome !== undefined) return outcome
+      const logOutcome = resolutionOutcomeFor(
+        events,
+        request.request_id,
+        actionId,
+        request.deadline,
+      )
+      if (logOutcome !== undefined) return { outcome: logOutcome, source: "log" }
+      // Then the separate-process side-channel. Read errors / malformed files
+      // surface as `undefined` (the helper is tolerant); keep polling.
+      const resolution = await readApprovalResolution(
+        this.logRoot,
+        this.config.project_id,
+        request.request_id,
+      )
+      const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
+      if (channelOutcome !== undefined) return { outcome: channelOutcome, source: "channel" }
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return undefined
       await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, remaining))
+    }
+  }
+
+  /**
+   * Emit the canonical `approval.granted@1` / `approval.denied@1` event for a
+   * resolution the proxy picked up from the side-channel (the in-process / log
+   * path already has its event). `payload.at` carries the *approver's* decision
+   * time from the outcome; the envelope timestamp (`emit`) is the proxy's write
+   * time — the same record-vs-decision split `approval.expired@1` already uses.
+   * `reason` is omitted entirely when unset (canonical-hash discipline). An
+   * `expired` outcome never reaches here — the side-channel only carries
+   * granted/denied; the deadline path emits `approval.expired@1` itself.
+   */
+  private async emitCanonicalResolution(outcome: ApprovalOutcome): Promise<void> {
+    const at = outcome.at ?? new Date().toISOString()
+    if (outcome.kind === "granted") {
+      const payload: ApprovalGrantedPayload = {
+        request_id: outcome.request_id,
+        action_id: outcome.action_id,
+        approver_id: outcome.approver_id,
+        at,
+      }
+      if (outcome.reason !== undefined) payload.reason = outcome.reason
+      await this.emit("approval.granted", payload)
+    } else if (outcome.kind === "denied") {
+      const payload: ApprovalDeniedPayload = {
+        request_id: outcome.request_id,
+        action_id: outcome.action_id,
+        approver_id: outcome.approver_id,
+        at,
+      }
+      if (outcome.reason !== undefined) payload.reason = outcome.reason
+      await this.emit("approval.denied", payload)
     }
   }
 
@@ -1271,4 +1342,30 @@ function resolutionOutcomeFor(
     }
   }
   return undefined
+}
+
+/**
+ * Build the bound `ApprovalOutcome` from a side-channel resolution file, or
+ * `undefined` if there is none yet, it is for a different action, or the
+ * approver's decision time is after the deadline.
+ *
+ * The deadline guard mirrors `resolutionOutcomeFor`'s but compares *numerically*
+ * (`Date.parse(at) <= deadlineAt`) rather than lexically: the side-channel `at`
+ * is resolver-supplied and `TimestampSchema` permits a non-UTC offset, so a
+ * lexical string compare against the UTC deadline would be wrong. A resolution
+ * dated after the deadline is a timeout, never a late approval — the same rule
+ * the log path applies. The action-id match is defense in depth: the file is
+ * already keyed by `request_id`, and `ActionKernel.resolve()` re-validates the
+ * binding regardless.
+ */
+function channelOutcomeFor(
+  resolution: ApprovalResolution | undefined,
+  actionId: string,
+  deadlineAt: number,
+): ApprovalOutcome | undefined {
+  if (resolution === undefined) return undefined
+  if (resolution.action_id !== actionId) return undefined
+  const at = Date.parse(resolution.at)
+  if (Number.isNaN(at) || at > deadlineAt) return undefined
+  return resolutionToOutcome(resolution)
 }

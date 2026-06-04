@@ -206,9 +206,12 @@ async function caseGrant(): Promise<string | undefined> {
     const callPromise = proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
 
     // Out-of-band resolver: wait for the request to land, then append
-    // approval.granted@1 to the SAME log (a second in-process writer shares
-    // the single-writer mutex — exactly what the `lodestar approve` CLI does
-    // cross-process).
+    // approval.granted@1 to the SAME log. This is the *in-process* resolver
+    // path — a second in-process writer shares the single-writer mutex + seq
+    // counter, so the proxy finds the event already canonical in the log. (The
+    // separate-process `lodestar approve` CLI cannot write the log safely
+    // cross-process; it writes a side-channel the proxy promotes instead — see
+    // the `approval-via-side-channel` probe.)
     const reader = new EventLogReader(logDir)
     let request: { request_id: string; action_id: string } | undefined
     const deadline = Date.now() + 2000
