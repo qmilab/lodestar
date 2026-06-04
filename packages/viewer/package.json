@@ -1,25 +1,30 @@
 {
-  "name": "@qmilab/lodestar-cli",
+  "name": "@qmilab/lodestar-viewer",
   "version": "0.1.5",
-  "description": "The `lodestar` command-line interface — `lodestar report`, `lodestar guard wrap`, `lodestar action`, `lodestar trace`, `lodestar probe`. Part of Lodestar, the trust layer for AI agents.",
+  "description": "The read-side Governing UI — a local, read-only web viewer over the Lodestar event log. Renders the live epistemic chain and trust report in the browser. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
   "homepage": "https://qmilab.com/lodestar",
   "repository": {
     "type": "git",
     "url": "https://github.com/qmilab/lodestar.git",
-    "directory": "packages/cli"
+    "directory": "packages/viewer"
   },
   "bugs": {
     "url": "https://github.com/qmilab/lodestar/issues"
   },
-  "keywords": ["ai-agents", "trust", "lodestar", "cli", "audit", "agent-governance"],
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "viewer",
+    "governing-ui",
+    "epistemic-chain",
+    "audit-trail"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "lodestar": "./dist/index.js"
-  },
   "exports": {
     ".": {
       "bun": "./src/index.ts",
@@ -40,16 +45,8 @@
   "dependencies": {
     "@qmilab/lodestar-core": "workspace:*",
     "@qmilab/lodestar-event-log": "workspace:*",
-    "@qmilab/lodestar-action-kernel": "workspace:*",
-    "@qmilab/lodestar-memory-firewall": "workspace:*",
-    "@qmilab/lodestar-guard": "workspace:*",
-    "@qmilab/lodestar-guard-mcp": "workspace:*",
-    "@qmilab/lodestar-harness": "workspace:*",
     "@qmilab/lodestar-trace": "workspace:*",
-    "@qmilab/lodestar-viewer": "workspace:*",
-    "@qmilab/lodestar-cognitive-core": "workspace:*",
-    "@qmilab/lodestar-adapter-filesystem": "workspace:*",
-    "@qmilab/lodestar-adapter-git": "workspace:*",
+    "elysia": "^1.1.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

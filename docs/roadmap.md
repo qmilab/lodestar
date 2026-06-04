@@ -216,6 +216,22 @@ Roughly 6 weeks of focused work from Batch 1 to Batch 5, assuming uninterrupted 
 
 ---
 
+## Post-v1 (in progress)
+
+Work past the v1 line, tracked here as it lands:
+
+- **Governing UI (a) — read-side viewer** — ✅ landed (`packages/viewer/`,
+  `@qmilab/lodestar-viewer`, `lodestar view`). A local, strictly read-only
+  web viewer over the event log: Elysia + a no-build vanilla SPA reusing the
+  trace read side (`projectChain()` + `renderReport()`), with session list,
+  interactive chain drill-down, the markdown report, an event-type filter, a
+  live tail over Server-Sent Events, and a read-only view of pending
+  approvals. It is the interactive sibling of `lodestar report`. No mutation
+  route, never writes the log — locked by the `viewer-is-read-only` probe.
+  The framework-rich **write-side** Governing UI (resolving approvals, team
+  workflows, RBAC, dashboards) is the separate commercial surface and is not
+  in this repo.
+
 ## What this roadmap explicitly does not include
 
 These are real items, but they belong later than v1:

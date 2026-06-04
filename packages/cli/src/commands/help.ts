@@ -2,6 +2,7 @@ export const HELP_TEXT = `lodestar — the trust layer for AI agents
 
 Usage:
   lodestar report <session-id> [--project <id>] [--log-root <path>] [--out <file>]
+  lodestar view [session-id] [--log-root <path>] [--port <n>] [--open]
   lodestar guard wrap --target <module> [--project <id>] [--actor <id>]
   lodestar guard mcp-proxy --config <path>
   lodestar approve list --project <id> [--log-root <path>]
@@ -18,6 +19,8 @@ Usage:
 
 Commands:
   report     Render a markdown trust report for a session (headline command).
+  view       Serve the read-side Governing UI: a local, read-only web viewer
+             over the event log. The live, interactive sibling of 'report'.
   guard      Wrap an agent run. Two modes:
                wrap       — programmatic; loads a JS/TS loop module.
                mcp-proxy  — stdio MCP proxy; wrap any MCP-speaking agent
@@ -42,6 +45,7 @@ Commands:
 
 Examples:
   lodestar report session-1779551238212
+  lodestar view session-1779551238212 --open
   lodestar guard mcp-proxy --config ./lodestar-mcp-proxy.config.json
   lodestar approve list --project my-project
   lodestar approve grant 7f3c… --approver me --project my-project

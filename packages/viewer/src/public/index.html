@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Lodestar — Governing UI</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="mark" aria-hidden="true">◆</span>
+        <span class="title">Lodestar</span>
+        <span class="subtitle">Governing UI</span>
+        <span class="ro-badge" title="This viewer never writes the event log.">read-only</span>
+      </div>
+      <div class="topbar-meta">
+        <span id="log-root" class="log-root" title="Event-log root being served"></span>
+        <label class="tail-toggle" title="Live-tail the open session over Server-Sent Events">
+          <input type="checkbox" id="tail-toggle" />
+          <span>Live tail</span>
+          <span id="tail-dot" class="tail-dot off"></span>
+        </label>
+        <button id="refresh" class="btn" title="Reload sessions and the open session">Refresh</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <span>Sessions</span>
+          <span id="session-count" class="pill">0</span>
+        </div>
+        <input id="session-filter" class="filter" type="text" placeholder="Filter sessions…" />
+        <ul id="session-list" class="session-list"></ul>
+      </aside>
+
+      <main class="main">
+        <section id="empty" class="empty">
+          <h1>Select a session</h1>
+          <p>
+            The read-side trust viewer projects the append-only event log into the
+            epistemic chain — what the agent observed, claimed, believed, decided,
+            and what policy allowed. It is the live, interactive sibling of
+            <code>lodestar report</code>.
+          </p>
+          <p class="muted">Pick a session on the left to begin.</p>
+        </section>
+
+        <section id="session-view" class="session-view" hidden>
+          <div class="session-head">
+            <h1 id="session-title" class="session-title"></h1>
+            <div id="session-sub" class="session-sub"></div>
+          </div>
+
+          <nav class="tabs" role="tablist">
+            <button class="tab" data-tab="chain" role="tab">Chain</button>
+            <button class="tab" data-tab="report" role="tab">Report</button>
+            <button class="tab" data-tab="events" role="tab">Events</button>
+            <button class="tab" data-tab="approvals" role="tab">Approvals</button>
+          </nav>
+
+          <div id="panel-chain" class="panel" role="tabpanel"></div>
+
+          <div id="panel-report" class="panel" role="tabpanel" hidden>
+            <div class="panel-actions">
+              <a id="download-md" class="btn" download>Download .md</a>
+            </div>
+            <div id="report-body" class="report"></div>
+          </div>
+
+          <div id="panel-events" class="panel" role="tabpanel" hidden>
+            <div class="panel-actions">
+              <select id="event-type-filter" class="filter-select"></select>
+              <input id="event-text-filter" class="filter" type="text" placeholder="Filter events…" />
+              <span id="event-count" class="pill"></span>
+            </div>
+            <div id="events-body" class="events"></div>
+          </div>
+
+          <div id="panel-approvals" class="panel" role="tabpanel" hidden></div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
