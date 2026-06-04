@@ -178,6 +178,11 @@ jobs:
             // harness depends on core + event-log; the CLI depends on it
             // (`lodestar harness run`/`list`), so it publishes before cli.
             "packages/harness",
+            // viewer depends on core/event-log/trace; the CLI now depends
+            // on it, so it publishes before `cli`. Like guard-mcp, its
+            // first publish needs the manual trusted-publisher mini-marathon
+            // before CI can stage-publish it through this path.
+            "packages/viewer",
             "packages/cli",
           ];
 
@@ -219,7 +224,7 @@ jobs:
       # both the order array there AND the array here — the verifier
       # will catch divergence.
       #
-      # 16 packages today; an explicit list stays reviewable up to ~25.
+      # 17 packages today; an explicit list stays reviewable up to ~25.
       # Past that, factor into a shared JSON file both steps read.
       #
       # Failures are NOT swallowed. If any single publish fails, the
@@ -250,6 +255,9 @@ jobs:
             packages/guard-mcp
             # cli depends on harness (`lodestar harness run`/`list`).
             packages/harness
+            # viewer is a CLI dependency; publishes before `cli`. Like
+            # guard-mcp, its first publish needs the manual bootstrap.
+            packages/viewer
             packages/cli
           )
 
