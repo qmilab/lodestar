@@ -3,17 +3,25 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Twenty-two probes pass under
+publishing), v0.2 architecture locked. Thirty-one probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Eighteen live in the first-party pack
+below). Twenty-seven live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
 (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense`), three
 Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
 `contradicted-belief-flags-dependent-decisions`,
-`event-log-canonical-hash`), and one Batch 5 probe
-(`documentation-evidence-provenance`). The other four live in the first non-core
+`event-log-canonical-hash`), one Batch 5 probe
+(`documentation-evidence-provenance`), and nine Policy Kernel probes —
+the three-valued gate, the trust-ladder floor, the approval lifecycle,
+signature verification, and the arbitrate hook
+(`l4-action-requires-approval`, `l4-floor-preserves-stricter-rule`,
+`pending-approval-cannot-execute`, `ladder-floor-overrides-allow-rule`,
+`unmatched-action-defaults-to-deny`, `policy-version-signature-required`,
+`granted-approval-still-revalidates-preconditions`,
+`sentinel-alert-gates-dependent-action`,
+`calibration-flag-escalates-action`). The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
 `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack
@@ -214,7 +222,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Twenty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Thirty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 
