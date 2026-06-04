@@ -37,11 +37,31 @@ export interface PolicyDecision {
  *
  * `expired` carries no `approver_id`: the deadline passed, not an actor, so
  * the un-park is attributed to `system`.
+ *
+ * Every outcome is *bound* to the action (and request) it was authorised for:
+ * `action_id` / `request_id` come from the resolved `ApprovalRequest`, and
+ * `resolve()` refuses to apply an outcome whose `action_id` is not the action
+ * being un-parked. Without this, a grant authorised for one pending action
+ * could be applied to a different one (both merely sit at `pending_approval`).
  */
 export type ApprovalOutcome =
-  | { kind: "granted"; approver_id: string; reason?: string; at?: string }
-  | { kind: "denied"; approver_id: string; reason?: string; at?: string }
-  | { kind: "expired"; reason?: string; at?: string }
+  | {
+      kind: "granted"
+      action_id: string
+      request_id: string
+      approver_id: string
+      reason?: string
+      at?: string
+    }
+  | {
+      kind: "denied"
+      action_id: string
+      request_id: string
+      approver_id: string
+      reason?: string
+      at?: string
+    }
+  | { kind: "expired"; action_id: string; request_id: string; reason?: string; at?: string }
 
 /**
  * Re-check a precondition. Returns true if the precondition still holds.
@@ -269,10 +289,20 @@ export class ActionKernel {
    * gate, so `must_revalidate_at_execution` preconditions still fire —
    * approval authorises *intent*, not a stale world. Synchronous: no I/O, no
    * gate call (the decision already happened upstream).
+   *
+   * The outcome must be bound to this action: `outcome.action_id` has to equal
+   * `action.id`, or `resolve()` throws. This stops an outcome authorised for
+   * one pending action from being applied to another (both at
+   * `pending_approval`) — approval is per-action, not a fungible token.
    */
   resolve(action: Action, outcome: ApprovalOutcome): Action {
     if (action.phase !== "pending_approval") {
       throw new Error(`action-kernel: cannot resolve from phase '${action.phase}'`)
+    }
+    if (outcome.action_id !== action.id) {
+      throw new Error(
+        `action-kernel: approval outcome is bound to action '${outcome.action_id}' (request '${outcome.request_id}'), not the action '${action.id}' being resolved`,
+      )
     }
     const granted = outcome.kind === "granted"
     const phase = granted ? "approved" : "rejected"

@@ -13,6 +13,9 @@
  *    action can be un-parked.
  * 3. A qualified approver's grant → `authorizeResolution` → `resolve()`
  *    transitions the action to `approved`, recording the ApprovalEvent.
+ * 3b. The outcome is bound to its action: applying a grant authorized for one
+ *    parked action to a DIFFERENT pending action is refused (both sit at
+ *    `pending_approval`, so the phase check alone is not enough).
  * 4. The now-`approved` action executes to `completed` and the tool runs
  *    exactly once.
  *
@@ -116,7 +119,12 @@ async function run(): Promise<ProbeResult> {
   // 2. resolve() refuses the wrong phase.
   let resolveRefused = false
   try {
-    kernel.resolve(proposed, { kind: "granted", approver_id: APPROVER.id })
+    kernel.resolve(proposed, {
+      kind: "granted",
+      action_id: proposed.id,
+      request_id: "req-x",
+      approver_id: APPROVER.id,
+    })
   } catch (err) {
     resolveRefused = /cannot resolve|pending_approval|proposed/i.test(
       err instanceof Error ? err.message : String(err),
@@ -133,6 +141,38 @@ async function run(): Promise<ProbeResult> {
   const auth = authorizeResolution(request, APPROVER, "granted", { reason: "looks good" })
   if (!auth.authorized)
     return { passed: false, details: `[3] qualified approver was refused: ${auth.reason}` }
+
+  // 3b. The outcome is bound to its action: applying it to a DIFFERENT parked
+  //     action is refused, even though that action is also pending_approval.
+  const other = await kernel.arbitrate(
+    kernel.propose({
+      intent: "push elsewhere",
+      tool: "probe.push",
+      inputs: {},
+      contract: L4_CONTRACT,
+      proposed_by: "agent",
+    }),
+  )
+  if (other.phase !== "pending_approval") {
+    return {
+      passed: false,
+      details: `[3b] setup: second action expected 'pending_approval', got '${other.phase}'.`,
+    }
+  }
+  let misbindRefused = false
+  try {
+    kernel.resolve(other, auth.outcome)
+  } catch (err) {
+    misbindRefused = /bound|outcome/i.test(err instanceof Error ? err.message : String(err))
+  }
+  if (!misbindRefused) {
+    return {
+      passed: false,
+      details:
+        "[3b] resolve() applied an outcome authorized for one action to a DIFFERENT pending action.",
+    }
+  }
+
   const resolved = kernel.resolve(parked, auth.outcome)
   if (resolved.phase !== "approved") {
     return {

@@ -91,21 +91,46 @@ export function authorizeResolution(
       reason: `approver '${approver.id}' may not resolve request '${request.request_id}': ${shortfall}`,
     }
   }
+  // Bind the outcome to the request's action so resolve() can refuse to apply
+  // it to any other pending action.
+  const bind = { action_id: request.action_id, request_id: request.request_id }
   const outcome: ApprovalOutcome =
     kind === "granted"
-      ? { kind: "granted", approver_id: approver.id, reason: options.reason, at: options.at }
-      : { kind: "denied", approver_id: approver.id, reason: options.reason, at: options.at }
+      ? {
+          kind: "granted",
+          ...bind,
+          approver_id: approver.id,
+          reason: options.reason,
+          at: options.at,
+        }
+      : {
+          kind: "denied",
+          ...bind,
+          approver_id: approver.id,
+          reason: options.reason,
+          at: options.at,
+        }
   return { authorized: true, outcome }
 }
 
 /**
  * The deadline-passed outcome — a held request whose `deadline` elapsed with
  * no resolution. Carries no approver (the deadline, not an actor, resolved
- * it). The Action Kernel rejects the parked action on receipt; v0 treats a
- * timed-out hold as a soft denial the agent re-proposes.
+ * it) but stays bound to its request's action. The Action Kernel rejects the
+ * parked action on receipt; v0 treats a timed-out hold as a soft denial the
+ * agent re-proposes.
  */
-export function expireRequest(options: { at?: string; reason?: string } = {}): ApprovalOutcome {
-  return { kind: "expired", reason: options.reason, at: options.at }
+export function expireRequest(
+  request: ApprovalRequest,
+  options: { at?: string; reason?: string } = {},
+): ApprovalOutcome {
+  return {
+    kind: "expired",
+    action_id: request.action_id,
+    request_id: request.request_id,
+    reason: options.reason,
+    at: options.at,
+  }
 }
 
 // -----------------------------------------------------------------------------
