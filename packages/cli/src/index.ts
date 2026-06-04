@@ -29,6 +29,7 @@ import { probeCommand } from "./commands/probe.js"
 import { reflectCommand } from "./commands/reflect.js"
 import { reportCommand } from "./commands/report.js"
 import { traceInspectCommand } from "./commands/trace.js"
+import { viewCommand } from "./commands/view.js"
 
 /**
  * Pre-register the v0 built-in tools (fs.read, git.status) bound to
@@ -62,6 +63,9 @@ async function dispatch(): Promise<number> {
   switch (command) {
     case "report":
       return reportCommand(sub === undefined ? [] : [sub, ...rest])
+
+    case "view":
+      return viewCommand(sub === undefined ? [] : [sub, ...rest])
 
     case "guard":
       if (sub === "wrap") return guardWrapCommand(rest)

@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Thirty-five probes pass under
+publishing), v0.2 architecture locked. Thirty-six probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Thirty-one live in the first-party pack
+below). Thirty-two live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -29,7 +29,10 @@ holds
 `sentinel-alert-gates-dependent-action`,
 `calibration-flag-escalates-action`,
 `guard-hold-resolves-via-resolver`, `approval-timeout-denies`,
-`approval-via-side-channel`, `proxy-hold-carries-rule-authority`). The
+`approval-via-side-channel`, `proxy-hold-carries-rule-authority`), and one
+Governing-UI read-side probe (`viewer-is-read-only` — the read-side
+viewer surfaces the chain + pending approvals but exposes no mutation
+route and never writes the log). The
 other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -55,8 +58,9 @@ with the `confidence-drift` probe it gates, and finally the three
 sentinels folded into the `coding-agent-safety` pack — the manifest
 declares them under a `sentinels` field and the loader resolves each id
 against the first-party `FIRST_PARTY_SENTINELS` registry — have all
-landed). `@qmilab/lodestar-guard-mcp`
-lives in this repo and will publish to npm in a follow-up mini-marathon.
+landed). `@qmilab/lodestar-guard-mcp` and the post-v1 read-side
+`@qmilab/lodestar-viewer` (the Governing UI, `lodestar view`) live in this
+repo and will publish to npm in a follow-up mini-marathon.
 Batch 5 (week-8 thesis demo) has landed — all of Batches 1–5 are complete. The secondary
 documentation-agent proving ground has landed
 (`examples/documentation-agent/`) — it exercises the claim/evidence chain
@@ -133,6 +137,7 @@ packages/
   cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
   guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel
   trace/               # (exists) read side + `lodestar report` CLI
+  viewer/              # (exists, post-v1) read-side Governing UI — `lodestar view`; Elysia + no-build vanilla SPA over the log; strictly read-only (no mutation route, never writes the log); surfaces pending approvals for visibility only
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`; held L4 actions wait up to `approval_timeout_ms` polling for an out-of-band `approval.granted@1`, else synthetic `approval_timeout`
   harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier)
   policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). host wiring landed for all three paths: the in-process (guard.wrap() resolver seam), MCP-proxy (deadline/timeout out-of-band hold path), and the separate-process `lodestar approve` CLI (writes a side-channel the proxy promotes; proxy stays sole event-log writer)

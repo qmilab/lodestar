@@ -14,7 +14,8 @@
     "mcp_proxy",
     "reflection",
     "documentation_provenance",
-    "policy_kernel"
+    "policy_kernel",
+    "governing_ui"
   ],
   "invariants": [
     "no_self_promotion",
@@ -37,7 +38,8 @@
     "policy_signature_required",
     "granted_approval_revalidates",
     "hold_resolves_in_process",
-    "proxy_hold_times_out_or_resolves"
+    "proxy_hold_times_out_or_resolves",
+    "read_only_viewer"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -118,6 +120,7 @@
     {
       "name": "proxy-hold-carries-rule-authority",
       "file": "probes/proxy-hold-carries-rule-authority.ts"
-    }
+    },
+    { "name": "viewer-is-read-only", "file": "probes/viewer-is-read-only.ts" }
   ]
 }
