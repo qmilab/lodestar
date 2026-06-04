@@ -144,16 +144,17 @@ export const ProxyConfigSchema = z.object({
   /**
    * Trust ceiling for the auto-approve policy. Tools with
    * `required_trust_level` ≤ this ceiling are auto-approved; higher
-   * requires explicit approval (returns a synthetic policy_denied
-   * result to the agent). v0 has no approval UI — the ceiling IS
-   * the policy.
+   * requires explicit approval.
    *
-   * Range is 0..4 because L5 is "prohibited" in the Lodestar trust
-   * ladder and cannot serve as an auto-approve ceiling; `autoApprove
-   * Policy()` itself throws on ceiling=5, so we mirror the bound
-   * here to fail at config-load time instead.
+   * Range is 0..3. With the Policy Kernel's graduated `autoApprovePolicy`,
+   * the trust-ladder floor makes L4 (external/shared) *always* require
+   * approval and L5 prohibited — neither is an expressible auto-approve
+   * ceiling, and `autoApprovePolicy()` throws on a ceiling of 4 or 5. We
+   * mirror that bound here to fail at config-load time instead. An L4 tool
+   * is held regardless of this ceiling (the proxy surfaces the hold; the
+   * deadline / out-of-band resolution path lands in the next slice).
    */
-  auto_approve_ceiling: z.number().int().min(0).max(4).default(2),
+  auto_approve_ceiling: z.number().int().min(0).max(3).default(2),
   downstream_servers: z
     .array(DownstreamServerConfigSchema)
     .min(1)

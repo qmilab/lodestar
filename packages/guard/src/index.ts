@@ -11,9 +11,11 @@
  *     returns a wrapped version that, when called with a {@link GuardConfig},
  *     runs the loop with a guarded context: every tool call goes through
  *     the Action Kernel and every observation through the Cognitive Core.
- *  2. Policy presets — minimal `autoApprovePolicy` and `alwaysHoldsChecker`
- *     to get an example running. Anything beyond that lives in the
- *     forthcoming `@qmilab/lodestar-policy-kernel`.
+ *  2. The Policy Kernel surface — `autoApprovePolicy` (the graduated ceiling
+ *     preset), `compile`, and the approval-lifecycle helpers — re-exported from
+ *     `@qmilab/lodestar-policy-kernel`, plus the local `alwaysHoldsChecker`
+ *     precondition stub, so an example or host can wire a guarded session from
+ *     this one package.
  *
  * Everything else is re-exported so a consumer can `import { ... }
  * from "@qmilab/lodestar-guard"` without picking each underlying package.
@@ -24,13 +26,43 @@ export { wrap, runGuarded } from "./wrap.js"
 export type { GuardRunResult } from "./wrap.js"
 export type {
   AgentLoop,
+  ApprovalResolver,
   CallToolOptions,
   CallToolResult,
   GuardConfig,
   GuardContext,
   GuardInternals,
 } from "./types.js"
-export { autoApprovePolicy, alwaysHoldsChecker } from "./policy-presets.js"
+export { alwaysHoldsChecker } from "./policy-presets.js"
+
+// ── Policy Kernel surface (graduated preset + approval lifecycle) ────────────
+// `autoApprovePolicy` graduated here from guard's own preset: it now honours the
+// trust-ladder floor (L4 always holds, L5 denies) and its ceiling caps at L3.
+// Re-exported so a host can author/compile a policy and wire the in-process
+// approval seam without importing `@qmilab/lodestar-policy-kernel` directly.
+export {
+  autoApprovePolicy,
+  autoApprovePolicyCompiled,
+  autoApprovePolicyDocument,
+  compile,
+  decisionOf,
+  verifyPolicySignature,
+  openApprovalRequest,
+  authorizeResolution,
+  expireRequest,
+  holdEvaluationForParkedAction,
+  canonicalPolicyHash,
+  PolicyCompileError,
+} from "@qmilab/lodestar-policy-kernel"
+export type {
+  AutoApproveInput,
+  CompiledPolicy,
+  CompileOptions,
+  PolicyEvaluation,
+  PolicyVerdict,
+  AuthorizationResult,
+  OpenApprovalRequestOptions,
+} from "@qmilab/lodestar-policy-kernel"
 
 // ── Re-exports from the underlying packages ─────────────────────────────────
 
@@ -47,6 +79,7 @@ export {
 export type {
   PolicyGate,
   PolicyDecision,
+  ApprovalOutcome,
   PreconditionChecker,
   Tool,
   SandboxProfile,
@@ -107,6 +140,11 @@ export type {
   Action,
   ActionContract,
   ActionPrecondition,
+  Actor,
+  ApprovalRequest,
+  Policy,
+  PolicyRule,
+  RequiredAuthority,
   Belief,
   Claim,
   EvidenceSet,

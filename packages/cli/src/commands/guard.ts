@@ -49,9 +49,9 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
     } else if (arg === "--auto-approve-up-to") {
       const next = argv[++i]
       const parsed = next ? Number.parseInt(next, 10) : Number.NaN
-      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 4) {
+      if (!Number.isFinite(parsed) || parsed < 0 || parsed > 3) {
         process.stderr.write(
-          `--auto-approve-up-to must be an integer in [0,4]; got '${next}'. L5 is prohibited and cannot be auto-approved.\n`,
+          `--auto-approve-up-to must be an integer in [0,3]; got '${next}'. L4 always requires approval and L5 is prohibited — neither is an auto-approve ceiling.\n`,
         )
         return 2
       }
@@ -62,7 +62,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
   if (!target) {
     process.stderr.write(
       "usage: lodestar guard wrap --target <module> [--project <id>] [--actor <id>]\n" +
-        "       [--log-root <path>] [--auto-approve-up-to <0..5>]\n",
+        "       [--log-root <path>] [--auto-approve-up-to <0..3>]\n",
     )
     return 2
   }
@@ -93,7 +93,7 @@ export async function guardWrapCommand(argv: string[]): Promise<number> {
     default_scope: { level: "project", identifier: project_id },
     default_sensitivity: "internal",
     policy_gate: autoApprovePolicy({
-      auto_approve_up_to: auto_approve_up_to as 0 | 1 | 2 | 3 | 4,
+      auto_approve_up_to: auto_approve_up_to as 0 | 1 | 2 | 3,
       approver_id: "lodestar-cli-policy",
     }),
     precondition_checker: alwaysHoldsChecker,

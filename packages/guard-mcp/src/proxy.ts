@@ -16,7 +16,12 @@ import {
 } from "@qmilab/lodestar-cognitive-core"
 import type { Action, ActionContract, Observation, Reversibility } from "@qmilab/lodestar-core"
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
-import { alwaysHoldsChecker, autoApprovePolicy } from "@qmilab/lodestar-guard"
+import {
+  alwaysHoldsChecker,
+  autoApprovePolicy,
+  holdEvaluationForParkedAction,
+  openApprovalRequest,
+} from "@qmilab/lodestar-guard"
 import {
   type BeliefStore,
   type ClaimStore,
@@ -187,7 +192,7 @@ export class MCPProxy {
     this.policyGate =
       overrides?.policyGate ??
       autoApprovePolicy({
-        auto_approve_up_to: config.auto_approve_ceiling as 0 | 1 | 2 | 3 | 4,
+        auto_approve_up_to: config.auto_approve_ceiling as 0 | 1 | 2 | 3,
         approver_id: `policy:auto-approve-up-to-${config.auto_approve_ceiling}`,
       })
     this.preconditionChecker = overrides?.preconditionChecker ?? alwaysHoldsChecker
@@ -582,6 +587,29 @@ export class MCPProxy {
     await this.emit("action.proposed", proposed)
 
     const arbitrated = await this.kernel.arbitrate(proposed)
+
+    // Three-valued gate: a held action (e.g. an L4 tool the trust-ladder floor
+    // always holds) is parked at `pending_approval`. The proxy surfaces the
+    // hold as a synthetic `approval_required` result the wrapped agent reads as
+    // a normal tool response and re-plans around — never a transport error. An
+    // `approval.requested@1` is recorded for the audit trail; the world stays
+    // untouched (the two-phase discipline forbids execute() from
+    // pending_approval). The deadline + out-of-band resolution (poll for an
+    // `approval.granted@1` up to a timeout, else `approval_timeout`) lands in
+    // the next host-wiring slice; v0 here treats a hold as a soft denial the
+    // agent re-proposes.
+    if (arbitrated.phase === "pending_approval") {
+      const request = openApprovalRequest(arbitrated, holdEvaluationForParkedAction(arbitrated))
+      await this.emit("approval.requested", request)
+      return buildPolicyDeniedResult({
+        tool_name: req.name,
+        args: req.arguments,
+        reason: request.reason,
+        kind: "approval_required",
+        action_id: arbitrated.id,
+      })
+    }
+
     if (arbitrated.phase !== "approved") {
       await this.emit("action.rejected", arbitrated)
       const reason = arbitrated.approval?.reason ?? "policy gate rejected this action"

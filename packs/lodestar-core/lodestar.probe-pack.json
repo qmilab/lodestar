@@ -35,7 +35,8 @@
     "pending_approval_no_execute",
     "structural_deny_default",
     "policy_signature_required",
-    "granted_approval_revalidates"
+    "granted_approval_revalidates",
+    "hold_resolves_in_process"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -103,6 +104,10 @@
     {
       "name": "calibration-flag-escalates-action",
       "file": "probes/calibration-flag-escalates-action.ts"
+    },
+    {
+      "name": "guard-hold-resolves-via-resolver",
+      "file": "probes/guard-hold-resolves-via-resolver.ts"
     }
   ]
 }

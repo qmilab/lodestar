@@ -24,7 +24,11 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   into the 4-value clearance via the Action Kernel's `sensitivityForContract`);
   `authorizeResolution()` matches a resolver's `Actor` against the request's
   `required_authority` and produces the `ApprovalOutcome` the Action Kernel's
-  `resolve()` applies; `expireRequest()` produces the deadline-passed outcome.
+  `resolve()` applies; `expireRequest()` produces the deadline-passed outcome;
+  `holdEvaluationForParkedAction()` reconstructs a minimal hold
+  `PolicyEvaluation` from a parked action's audit, so a host that holds only the
+  bare `PolicyGate` (no `evaluate()` to re-run) can still feed
+  `openApprovalRequest()`.
 - `src/presets.ts` — `autoApprovePolicy` / `autoApprovePolicyDocument`, the
   graduated "ceiling" constructor. It is the one-rule policy
   `[{ match: { required_level_lte: N }, effect: allow }]` over the deny default.
@@ -85,12 +89,14 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
 
 ## What does NOT live here yet (deliberate deferrals — `policy-kernel.md`)
 
-- **Host wiring.** The `guard.wrap()` `ApprovalResolver` seam and the MCP
-  proxy's deadline / `approval_required` / `approval_timeout` hold path are host
-  integrations (`@qmilab/lodestar-guard`, `@qmilab/lodestar-guard-mcp`), built
-  on top of this engine in a follow-up. `autoApprovePolicy` is **not yet**
-  re-exported from guard (graduating guard's preset flips L4 from reject to
-  hold and must land with the host wiring + probe updates).
+- **Host wiring (partly landed).** The in-process `guard.wrap()`
+  `ApprovalResolver` seam has landed: `autoApprovePolicy` is now re-exported
+  from `@qmilab/lodestar-guard` (its preset graduated here — L4 holds, L5
+  denies, ceiling caps at L3) and guard resolves a held action through the
+  resolver. **Still pending:** the MCP proxy's deadline / `approval_required` /
+  `approval_timeout` out-of-band hold loop (`@qmilab/lodestar-guard-mcp` — the
+  proxy currently surfaces a hold as an immediate `approval_required` synthetic
+  result, no wait) and the `lodestar approve` reference CLI resolver.
 - **OS-level sandbox enforcement.** The Policy Kernel *decides* a
   `SandboxProfile`; a separate sandbox runtime enforces it (graduates with the
   shell adapter).

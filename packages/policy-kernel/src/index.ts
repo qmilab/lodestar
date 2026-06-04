@@ -32,6 +32,7 @@ export {
   openApprovalRequest,
   authorizeResolution,
   expireRequest,
+  holdEvaluationForParkedAction,
   type AuthorizationResult,
   type OpenApprovalRequestOptions,
 } from "./approval.js"

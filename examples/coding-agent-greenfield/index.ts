@@ -93,15 +93,19 @@ async function agentLoop(ctx: GuardContext): Promise<AgentResult> {
   })
 
   // Step 4: optionally attempt an action that should be denied, to
-  // demonstrate the policy gate.
+  // demonstrate the policy gate. L3 is above this session's auto-approve
+  // ceiling (L2), so the graduated `autoApprovePolicy` denies it outright.
+  // (An L4 action would be *held* for approval, not denied — the trust-ladder
+  // floor; demonstrating the in-process resolver seam is the approval example's
+  // job, not this report-only one.)
   if (SIMULATE_DENIED) {
     try {
       await ctx.callTool(
         "fs.read",
         { path: "README.md" },
         {
-          intent: "attempt L4 read above auto-approve ceiling",
-          contract: { required_level: 4 },
+          intent: "attempt L3 read above auto-approve ceiling",
+          contract: { required_level: 3 },
         },
       )
     } catch (err) {
