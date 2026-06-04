@@ -255,6 +255,26 @@ export class MCPProxy {
       this.compiledPolicy = gateOverride
       this.policyGate = gateOverride.gate
     }
+    // A `config.policy` with no injected `CompiledPolicy` is a wiring bug,
+    // mirroring the postgres-stores check below. The proxy deliberately does not
+    // read or compile the policy document itself (that keeps the file I/O +
+    // signature verification in the host — `compileProxyPolicy`, which the CLI
+    // calls). Falling through to the `auto_approve_ceiling` preset here would
+    // silently *ignore* a declared, possibly stricter, signed policy and
+    // under-enforce it — a silent default for a security-relevant setting, which
+    // this package does not allow. The discriminator is whether a CompiledPolicy
+    // reached us via the override (a bare `PolicyGate` and the default preset
+    // both leave the declared policy unhonoured), so gate on the override shape,
+    // not on `this.compiledPolicy` (the preset sets that too).
+    const compiledPolicyInjected = gateOverride !== undefined && typeof gateOverride !== "function"
+    if (config.policy !== undefined && !compiledPolicyInjected) {
+      throw new Error(
+        "MCPProxy: config.policy is set but no compiled policy was injected. The proxy " +
+          "does not read or compile the policy document itself — compile it " +
+          "(compileProxyPolicy from @qmilab/lodestar-guard-mcp) and pass the result via " +
+          "MCPProxyOverrides.policyGate. The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
     this.preconditionChecker = overrides?.preconditionChecker ?? alwaysHoldsChecker
     if (overrides?.upstreamFactory !== undefined) {
       this.upstreamFactory = overrides.upstreamFactory

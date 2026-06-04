@@ -27,7 +27,13 @@
  *    proves case 1's richer authority came from the rule, not from the proxy
  *    fabricating it.
  *
- * Both cases set `approval_timeout_ms: 0` (don't wait): the proxy emits
+ * 3. NO SILENT DOWNGRADE — a config that DECLARES a `policy` but reaches the
+ *    proxy with no injected `CompiledPolicy` (a non-CLI host that forgot to
+ *    compile it) is refused at construction, rather than silently falling back
+ *    to the `auto_approve_ceiling` preset and under-enforcing the declared,
+ *    possibly stricter, signed policy. Mirrors the postgres-stores wiring check.
+ *
+ * Cases 1 and 2 set `approval_timeout_ms: 0` (don't wait): the proxy emits
  * `action.pending_approval` + `approval.requested@1` and returns
  * `approval_required` immediately, so the request is inspectable straight off
  * the log without driving a resolution.
@@ -313,15 +319,57 @@ async function caseBareContrast(): Promise<string | undefined> {
   }
 }
 
+// ── Case 3: a config.policy with no injected CompiledPolicy is refused ───────
+async function caseRejectsUninjectedPolicy(): Promise<string | undefined> {
+  resetState()
+  // A config that DECLARES a policy but is handed to the proxy WITHOUT an
+  // injected CompiledPolicy (a non-CLI host doing `new MCPProxy(loadProxyConfig
+  // (...))`). The proxy must refuse rather than silently fall back to the
+  // auto_approve_ceiling preset, which would ignore the declared — possibly
+  // stricter — signed policy and under-enforce it. Mirrors the postgres-stores
+  // wiring check. The proxy never reads the policy file itself.
+  const config: ProxyConfig = {
+    project_id: PROJECT_ID,
+    actor_id: ACTOR_ID,
+    session_id: "probe-session-proxy-authority-reject",
+    log_root: "/tmp/lodestar-probe-proxy-authority-reject-unused",
+    default_scope: { level: "project", identifier: PROJECT_ID },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 3,
+    approval_timeout_ms: 0,
+    policy: { file: "policy.json", allow_unsigned: true },
+    downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
+    tool_defaults: {},
+  }
+  let threw = false
+  try {
+    // downstreamFactory keeps construction hermetic (no real connection); the
+    // point is that NO policyGate override is supplied.
+    new MCPProxy(config, { downstreamFactory: () => [] })
+  } catch (err) {
+    threw = true
+    const msg = err instanceof Error ? err.message : String(err)
+    if (!/config\.policy is set but no compiled policy/i.test(msg)) {
+      return `[reject] threw, but with an unexpected message: ${msg}`
+    }
+  }
+  if (!threw) {
+    return "[reject] a config with `policy` set but no injected CompiledPolicy did not throw; the proxy would silently use the ceiling preset and ignore the declared policy."
+  }
+  return undefined
+}
+
 async function run(): Promise<ProbeResult> {
   const richFail = await caseRichAuthority()
   if (richFail) return { passed: false, details: richFail }
   const bareFail = await caseBareContrast()
   if (bareFail) return { passed: false, details: bareFail }
+  const rejectFail = await caseRejectsUninjectedPolicy()
+  if (rejectFail) return { passed: false, details: rejectFail }
   return {
     passed: true,
     details:
-      "A proxy gated by a CompiledPolicy opened an approval.requested@1 carrying the matched require_approval rule's min_trust_baseline + scope (plus the action's mapped sensitivity_clearance), and that authority refused an under-authorised approver while clearing a trusted, project-scoped one. The same L4 tool under the default ceiling preset carried only sensitivity_clearance — no min_trust_baseline, no scope.",
+      "A proxy gated by a CompiledPolicy opened an approval.requested@1 carrying the matched require_approval rule's min_trust_baseline + scope (plus the action's mapped sensitivity_clearance), and that authority refused an under-authorised approver while clearing a trusted, project-scoped one. The same L4 tool under the default ceiling preset carried only sensitivity_clearance — no min_trust_baseline, no scope. And a config that declares a policy but reaches the proxy with no injected CompiledPolicy is refused at construction, never silently downgraded to the ceiling preset.",
   }
 }
 
