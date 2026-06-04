@@ -39,6 +39,7 @@
     "probe:canonical-hash": "bun run packs/lodestar-core/probes/event-log-canonical-hash.ts",
     "probe:doc-provenance": "bun run packs/lodestar-core/probes/documentation-evidence-provenance.ts",
     "probe:l4-approval": "bun run packs/lodestar-core/probes/l4-action-requires-approval.ts",
+    "probe:l4-floor-lb": "bun run packs/lodestar-core/probes/l4-floor-preserves-stricter-rule.ts",
     "probe:pending-no-execute": "bun run packs/lodestar-core/probes/pending-approval-cannot-execute.ts",
     "probe:ladder-floor": "bun run packs/lodestar-core/probes/ladder-floor-overrides-allow-rule.ts",
     "probe:deny-default": "bun run packs/lodestar-core/probes/unmatched-action-defaults-to-deny.ts",

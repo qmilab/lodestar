@@ -31,6 +31,7 @@
     "contradicted_belief_cascade",
     "documentation_evidence_provenance",
     "trust_ladder_floor",
+    "l4_floor_is_lower_bound",
     "pending_approval_no_execute",
     "structural_deny_default",
     "policy_signature_required",
@@ -71,6 +72,10 @@
       "file": "probes/documentation-evidence-provenance.ts"
     },
     { "name": "l4-action-requires-approval", "file": "probes/l4-action-requires-approval.ts" },
+    {
+      "name": "l4-floor-preserves-stricter-rule",
+      "file": "probes/l4-floor-preserves-stricter-rule.ts"
+    },
     {
       "name": "pending-approval-cannot-execute",
       "file": "probes/pending-approval-cannot-execute.ts"

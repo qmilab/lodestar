@@ -144,8 +144,7 @@ function evaluatePolicy(policy: Policy, action: Action, decider_id: string): Pol
   const contract = action.contract
   const level = contract.required_level
 
-  // 1. Trust-ladder floor — applied BEFORE any rule, non-overridable.
-  //    No rule can lift it: a broad earlier `allow` still yields a hold/deny.
+  // L5 is prohibited — always deny, nothing overrides.
   if (level >= 5) {
     return {
       verdict: "deny",
@@ -154,7 +153,53 @@ function evaluatePolicy(policy: Policy, action: Action, decider_id: string): Pol
       matched: { source: "floor" },
     }
   }
+
+  const hit = firstMatchingRule(policy, contract, action.tool)
+
+  // The trust-ladder floor for L4 is a *lower bound*, not a fixed verdict: it
+  // guarantees L4 (external/shared) NEVER auto-approves, but a matching rule
+  // can still make it *more* restrictive. So the rule list is consulted first,
+  // and the floor only blocks a downgrade to `allow`:
+  //   - a matching `deny` rule           → deny (stricter than the floor; kept)
+  //   - a matching `require_approval`    → hold, with the rule's stricter
+  //                                         required_authority preserved
+  //   - a matching `allow` rule          → hold (the floor lifts allow → hold;
+  //                                         allow is impotent at L4)
+  //   - no matching rule                 → hold (the floor's baseline; NOT the
+  //                                         structural deny default — L4 is the
+  //                                         human-in-the-loop tier, not L5)
+  // This is what "no rule can *lift* the floor" means: rules may strengthen it,
+  // never weaken it. (A literal "L4 → hold, ignore rules" floor would silently
+  // drop a stricter rule's deny / required_authority — an under-enforcement.)
   if (level === 4) {
+    if (hit) {
+      if (hit.rule.effect === "deny") {
+        return {
+          verdict: "deny",
+          reason: hit.rule.reason,
+          decider_id,
+          matched: { source: "rule", rule_index: hit.index },
+        }
+      }
+      if (hit.rule.effect === "require_approval") {
+        return {
+          verdict: "hold",
+          reason: hit.rule.reason,
+          decider_id,
+          matched: { source: "rule", rule_index: hit.index },
+          required_authority: hit.rule.approval?.required_authority ?? {},
+        }
+      }
+      // effect === "allow": the floor blocks the downgrade.
+      return {
+        verdict: "hold",
+        reason:
+          "L4 (external/shared) always requires approval — a matching allow rule cannot lift the floor",
+        decider_id,
+        matched: { source: "floor" },
+        required_authority: {},
+      }
+    }
     return {
       verdict: "hold",
       reason: "L4 (external/shared) always requires approval",
@@ -164,42 +209,52 @@ function evaluatePolicy(policy: Policy, action: Action, decider_id: string): Pol
     }
   }
 
-  // 2. Ordered, first-decisive rules.
-  for (const [index, rule] of policy.rules.entries()) {
-    if (!matchesRule(rule.match, contract, action.tool)) continue
-    if (rule.effect === "allow") {
+  // L0–L3: ordered, first-decisive rules over the structural deny default.
+  if (hit) {
+    if (hit.rule.effect === "allow") {
       return {
         verdict: "allow",
-        reason: rule.reason,
+        reason: hit.rule.reason,
         decider_id,
-        matched: { source: "rule", rule_index: index },
+        matched: { source: "rule", rule_index: hit.index },
       }
     }
-    if (rule.effect === "deny") {
+    if (hit.rule.effect === "deny") {
       return {
         verdict: "deny",
-        reason: rule.reason,
+        reason: hit.rule.reason,
         decider_id,
-        matched: { source: "rule", rule_index: index },
+        matched: { source: "rule", rule_index: hit.index },
       }
     }
-    // require_approval → hold
     return {
       verdict: "hold",
-      reason: rule.reason,
+      reason: hit.rule.reason,
       decider_id,
-      matched: { source: "rule", rule_index: index },
-      required_authority: rule.approval?.required_authority ?? {},
+      matched: { source: "rule", rule_index: hit.index },
+      required_authority: hit.rule.approval?.required_authority ?? {},
     }
   }
 
-  // 3. Structural deny default — no silent allow.
+  // Structural deny default — no silent allow.
   return {
     verdict: "deny",
     reason: `no policy rule matched action '${action.tool}' (L${level}); structural deny default`,
     decider_id,
     matched: { source: "default" },
   }
+}
+
+/** The first rule (in document order) whose `match` holds, or null. */
+function firstMatchingRule(
+  policy: Policy,
+  contract: ActionContract,
+  tool: string,
+): { index: number; rule: Policy["rules"][number] } | null {
+  for (const [index, rule] of policy.rules.entries()) {
+    if (matchesRule(rule.match, contract, tool)) return { index, rule }
+  }
+  return null
 }
 
 const BLAST_ORDER: readonly BlastRadius[] = ["self", "session", "project", "external"]

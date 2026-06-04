@@ -33,11 +33,16 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
 
 ## Invariants
 
-1. **The trust-ladder floor is non-overridable and runs before the rules.**
-   `required_level === 5 → deny`; `required_level === 4 → hold` (require
-   approval). No rule can lift the floor — a broad earlier `allow` (e.g.
-   `git.* → allow`) still yields a hold for an L4 action. This is why
-   `autoApprovePolicy` caps at L3.
+1. **The trust-ladder floor is a non-overridable lower bound.**
+   `required_level === 5 → deny` (always). For `required_level === 4` the floor
+   is a *lower bound*, not a fixed verdict: the rule list is still consulted,
+   but the floor blocks any downgrade to `allow`. A matching `deny` rule still
+   denies, a matching `require_approval` rule's stricter `required_authority` is
+   *preserved*, a matching `allow` rule is lifted to a hold, and an unmatched L4
+   action holds (the baseline — not the deny default). Rules may strengthen the
+   floor, never weaken it. This is why `autoApprovePolicy` caps at L3. (A naïve
+   "L4 → hold, ignore rules" floor under-enforces — it drops a stricter rule's
+   deny / authority. See `granted`/`l4-floor-preserves-stricter-rule` probes.)
 2. **The deny default is structural, not a field.** Rules are evaluated in
    document order; the first whose `match` holds is decisive. An action matching
    no rule is denied. There is no `default: allow`, no silent allow.
