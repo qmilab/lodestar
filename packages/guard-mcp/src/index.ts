@@ -6,9 +6,13 @@ export {
   PersistenceConfigSchema,
   type ProxyConfig,
   ProxyConfigSchema,
+  type ProxyPolicyConfig,
+  ProxyPolicyConfigSchema,
   type ToolContractDefaults,
   ToolContractDefaultsSchema,
 } from "./config.js"
+
+export { compileProxyPolicy } from "./policy.js"
 
 export {
   type ApprovalResolution,

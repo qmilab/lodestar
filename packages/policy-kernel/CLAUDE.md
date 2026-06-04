@@ -107,6 +107,14 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   approver — the proxy promotes whatever it finds, so the resolver, not the
   proxy, is where authority is checked. See the guard-mcp CLAUDE.md, the
   `approval-via-side-channel` probe, and the cli `approve.test.ts`.
+  Both in-process and proxy hosts can be wired with a full `CompiledPolicy`
+  (not just the bare `PolicyGate`): on a hold they re-run its pure `evaluate()`
+  to recover a matched `require_approval` rule's `required_authority`
+  (`min_trust_baseline` / `scope`) for the opened `ApprovalRequest`. The proxy
+  takes one via `MCPProxyOverrides.policyGate`, which the CLI fills from a signed
+  `ProxyConfig.policy` document (`compileProxyPolicy`) — so a declarative policy's
+  authority constraints reach proxy holds, not just the mapped
+  `sensitivity_clearance`. See the `proxy-hold-carries-rule-authority` probe.
 - **OS-level sandbox enforcement.** The Policy Kernel *decides* a
   `SandboxProfile`; a separate sandbox runtime enforces it (graduates with the
   shell adapter).

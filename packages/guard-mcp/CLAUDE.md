@@ -12,10 +12,20 @@ Cognitive Core. The resulting event log is renderable by
 - `src/config.ts` — Zod schema for the proxy config file
   (`ProxyConfig`). Describes downstream servers, per-tool action-
   contract defaults, the event log root, the auto-approve policy
-  ceiling (`auto_approve_ceiling`, 0..3), and `approval_timeout_ms` (how
+  ceiling (`auto_approve_ceiling`, 0..3), `approval_timeout_ms` (how
   long a held action waits for an out-of-band resolution before timing
-  out; 0 = don't wait). Every field is explicit; nothing in this package
+  out; 0 = don't wait), and the optional `policy` field (`ProxyPolicyConfig`)
+  pointing at a signed declarative `Policy` document that becomes the gate in
+  place of the ceiling preset. Every field is explicit; nothing in this package
   has a silent default for a security-relevant setting.
+- `src/policy.ts` — `compileProxyPolicy(policyConfig, baseDir)`: loads the
+  `ProxyConfig.policy` document off disk, `PolicySchema`-parses it, derives the
+  gate's `decider_id` from the signer, and `compile()`s it into the
+  `CompiledPolicy` the CLI injects via `MCPProxyOverrides.policyGate`. The file
+  I/O + signature verification live here (the host), never in the proxy — the
+  same separation `persistence` uses. This is the path that lets a matched
+  `require_approval` rule's richer `required_authority` reach proxy holds (the
+  ceiling preset only ever holds at the L4 floor with empty authority).
 - `src/observation.ts` — registers the `mcp.tool_result@1` observation
   schema in `@qmilab/lodestar-core`'s registry, and the matching
   `MCPToolResultExtractor` for `@qmilab/lodestar-cognitive-core`. The
@@ -113,6 +123,19 @@ Cognitive Core. The resulting event log is renderable by
    approval; the payload is validated before it is trusted; and a torn read is
    tolerated (polling continues). `auto_approve_ceiling` caps at L3 —
    auto-approving L4 is not expressible (the floor always holds it).
+
+   **The opened `ApprovalRequest` carries the matched rule's authority.** When
+   the gate is a `CompiledPolicy` (the default ceiling preset, or an injected
+   `ProxyConfig.policy`), `resolveProxyHold` re-runs its pure `evaluate()` on the
+   parked action to recover a matched `require_approval` rule's
+   `required_authority` (`min_trust_baseline` / `scope`) for the request — so a
+   declarative policy's authority constraints reach the `lodestar approve`
+   authorisation check, not just the action's mapped `sensitivity_clearance`. It
+   re-runs only when the re-evaluation still agrees the verdict is a hold (an
+   arbitration-escalated hold is invisible to a context-free re-run), otherwise
+   it falls back to the parked action's audit (authority `{}`). A bare
+   `PolicyGate` override cannot expose this, so a hold under one carries only the
+   mapped `sensitivity_clearance`. Mirrors `guard.wrap()`'s `resolveHold`.
 
    **Two resolution sources, one writer.** `waitForResolution` polls both:
    - an `approval.granted@1` / `approval.denied@1` already **in the log** — the

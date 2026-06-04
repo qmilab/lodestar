@@ -106,6 +106,43 @@ export const PersistenceConfigSchema = z.discriminatedUnion("backend", [
 export type PersistenceConfig = z.infer<typeof PersistenceConfigSchema>
 
 /**
+ * Points the proxy's policy gate at a declarative, signed `Policy` document
+ * (`@qmilab/lodestar-core`) instead of the `auto_approve_ceiling` preset.
+ *
+ * This is what lets an operator declare *richer* holds. The ceiling preset only
+ * ever holds at the L4 floor with no authority constraints, so a proxy hold
+ * carries only the action's mapped `sensitivity_clearance`. A declarative
+ * policy can match a tool with a `require_approval` rule whose
+ * `approval.required_authority` names a `min_trust_baseline` or `scope` an
+ * approver must additionally clear — and those now flow into the opened
+ * `ApprovalRequest` (and so into the `lodestar approve` authority check).
+ *
+ * The CLI (`lodestar guard mcp-proxy`) reads this field, loads + `compile()`s
+ * the document (verifying its signature) and injects the resulting
+ * `CompiledPolicy` into the proxy. The proxy never reads the file itself — the
+ * same separation as `persistence`: the proxy receives constructed
+ * dependencies, the CLI owns the I/O. See `compileProxyPolicy`.
+ *
+ * When `policy` is set it *is* the gate; `auto_approve_ceiling` is ignored (it
+ * only builds the fallback preset when no `policy` is declared).
+ */
+export const ProxyPolicyConfigSchema = z.object({
+  /**
+   * Path to the signed `Policy` JSON document, resolved relative to the proxy
+   * config file's own directory (so a config + its policy can ship together).
+   */
+  file: z.string().min(1),
+  /**
+   * Permit an unsigned (draft) policy document. Security-relevant: an active
+   * policy must be signed (`v02-delta.md` §5). Defaults to `false`; set `true`
+   * only for an explicit, logged development draft — never the production path.
+   * Mirrors `compile()`'s `allow_unsigned` option.
+   */
+  allow_unsigned: z.boolean().default(false),
+})
+export type ProxyPolicyConfig = z.infer<typeof ProxyPolicyConfigSchema>
+
+/**
  * Top-level proxy config. The CLI loads this from a path on disk.
  *
  * Round 5 invariant: the proxy MUST receive a real session_id and
@@ -152,8 +189,20 @@ export const ProxyConfigSchema = z.object({
    * ceiling, and `autoApprovePolicy()` throws on a ceiling of 4 or 5. We
    * mirror that bound here to fail at config-load time instead. An L4 tool
    * is held regardless of this ceiling (see `approval_timeout_ms`).
+   *
+   * Ignored when `policy` is set — a declarative policy document is the gate in
+   * full, and this ceiling only builds the fallback preset when no `policy` is
+   * declared.
    */
   auto_approve_ceiling: z.number().int().min(0).max(3).default(2),
+  /**
+   * Optional declarative policy document that becomes the proxy's gate. When
+   * set, the CLI compiles + injects it and `auto_approve_ceiling` is ignored.
+   * This is the path to richer holds — a `require_approval` rule whose
+   * `required_authority` names a `min_trust_baseline` / `scope` an approver must
+   * clear. See {@link ProxyPolicyConfigSchema}.
+   */
+  policy: ProxyPolicyConfigSchema.optional(),
   /**
    * How long (milliseconds) the proxy waits on a held action for an
    * out-of-band resolution before timing out.
