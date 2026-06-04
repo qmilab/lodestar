@@ -634,14 +634,18 @@ manifest:
 
 ## Open questions
 
-- **How are the alert index and calibration report injected?** Both the
-  recent-alerts view and the `CalibrationReport` are read-only inputs the gate
-  consults at arbitration. Options: the host passes queryable snapshots (mirrors
-  how guard wires stores and how the calibrator is handed events), or the Policy
-  Kernel tails the log itself. Leaning host-injected — it keeps the kernel
-  I/O-free at its core and lets the one host that already runs the SentinelRunner
-  and `calibrate()` own their freshness. The exact query surface (scope, freshness
-  window) is a prerequisite interface, settled at implementation.
+- **How are the alert index and calibration report injected?** *Settled
+  (slice 2, host-injected).* `compile()` takes an optional
+  `arbitration.resolveContext(action)` resolver that returns a read-only
+  `ArbitrationContext { beliefs?, alerts?, calibration? }`. The resolver does the
+  I/O (the `decision → belief_dependencies → belief` resolution, the recent-alert
+  and calibration snapshots) on the gate's async boundary; `evaluate(action,
+  context)` stays pure given it. The kernel reads only `flagged_classes` (a
+  structural `CalibrationSnapshot`), so it does not depend on the harness. The
+  host that already runs the `SentinelRunner` and `calibrate()` owns freshness and
+  scoping. A durable `calibration.computed@1` event (live, not snapshot) remains
+  the deferred upgrade. *Original lean, kept:* the host passes queryable snapshots
+  rather than the kernel tailing the log — it keeps the kernel I/O-free at its core.
 - **Who writes `Decision.policy_dependencies`?** The gate arbitrates *Actions*,
   but the policy *version* consulted must be threaded into *Decision* creation (the
   cognitive core) for the audit citation to populate. The active version is known

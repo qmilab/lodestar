@@ -95,6 +95,14 @@
     {
       "name": "granted-approval-still-revalidates-preconditions",
       "file": "probes/granted-approval-still-revalidates-preconditions.ts"
+    },
+    {
+      "name": "sentinel-alert-gates-dependent-action",
+      "file": "probes/sentinel-alert-gates-dependent-action.ts"
+    },
+    {
+      "name": "calibration-flag-escalates-action",
+      "file": "probes/calibration-flag-escalates-action.ts"
     }
   ]
 }

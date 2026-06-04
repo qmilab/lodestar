@@ -17,6 +17,15 @@ export {
   type CompileOptions,
   type PolicyEvaluation,
   type PolicyVerdict,
+  // The arbitrate hook (slice 2): the host-injected snapshot + escalation config
+  // that give sentinel alerts and calibration flags teeth.
+  type ArbitrationConfig,
+  type ArbitrationContext,
+  type ArbitrationSignalRecord,
+  type BackingBelief,
+  type CalibrationSnapshot,
+  type EscalationConfig,
+  type EscalationEffect,
 } from "./gate.js"
 
 export {

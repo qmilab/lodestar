@@ -11,11 +11,14 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
 
 - `src/gate.ts` — `compile(policy, options) → CompiledPolicy`. A `CompiledPolicy`
   is `{ gate, evaluate }`: `gate` is the `PolicyGate` the Action Kernel calls;
-  `evaluate(action)` is the pure, richer verdict the host re-runs on a hold to
-  learn the matched rule's `required_authority`. Inside: the **trust-ladder
+  `evaluate(action, context?)` is the pure, richer verdict the host re-runs on a
+  hold to learn the matched rule's `required_authority`. Inside: the **trust-ladder
   floor** (applied before any rule), the ordered **first-decisive** rule list
-  over a **structural deny default**, and policy **signature verification** at
-  compile time.
+  over a **structural deny default**, policy **signature verification** at
+  compile time, and the **arbitrate hook** — when `options.arbitration` is wired,
+  the gate consults a host-injected `ArbitrationContext` (recent
+  `sentinel.alerted@1` payloads, a `CalibrationSnapshot`, the action's backing
+  beliefs) and lets it *strengthen* (never weaken) the contract+rule verdict.
 - `src/approval.ts` — the approval lifecycle: `openApprovalRequest()` builds the
   `ApprovalRequest` for a held action (mapping the action's `data_sensitivity`
   into the 4-value clearance via the Action Kernel's `sensitivityForContract`);
@@ -63,13 +66,25 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
 6. **Wire formats stay in core.** `Policy`, `PolicyRule`, `ApprovalRequest`, the
    `approval.*` events, and the `pending_approval` phase live in
    `@qmilab/lodestar-core`. This package is behaviour only.
+7. **The arbitrate hook only ever strengthens.** A sentinel alert, calibration
+   flag, or low-confidence belief may lift `allow → hold` or `→ deny`; it can
+   never relax a verdict (the same lower-bound discipline as the L4 floor). It is
+   off unless the host wires `options.arbitration`; when off, the gate is exactly
+   its pre-slice-2 self (the deny default and floor are untouched). The hook
+   reads only *landed* alerts (honest about the async-tail race — a not-yet-landed
+   alert fails open on that one signal while the contract rules still apply), and
+   it enforces the low-confidence condition **synchronously** from the action's
+   backing beliefs rather than waiting on `low-confidence-action`'s same-event
+   alert. Sentinels still only observe and the calibrator still only measures —
+   the kernel *reads* their outputs; the harness boundary does not move.
+8. **No dependency on the harness.** The gate consults only `flagged_classes`,
+   typed as a structural `CalibrationSnapshot`, so `@qmilab/lodestar-policy-kernel`
+   does not import `@qmilab/lodestar-harness`. A full harness `CalibrationReport`
+   is structurally assignable; the layering (calibrator → its output → kernel
+   reads it) is preserved by construction. Do not add a harness import.
 
 ## What does NOT live here yet (deliberate deferrals — `policy-kernel.md`)
 
-- **The arbitrate hook** that consumes `sentinel.alerted@1` alerts and a
-  `CalibrationReport` to escalate/deny an action. Sentinels observe and the
-  calibrator measures today; the hook that gives them teeth is the next slice.
-  Do not add a blocking path from a sentinel here until it lands.
 - **Host wiring.** The `guard.wrap()` `ApprovalResolver` seam and the MCP
   proxy's deadline / `approval_required` / `approval_timeout` hold path are host
   integrations (`@qmilab/lodestar-guard`, `@qmilab/lodestar-guard-mcp`), built
@@ -86,5 +101,11 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
    `l4-action-requires-approval`, and `unmatched-action-defaults-to-deny` probes
    are the spec — run them.
 2. Keep `evaluate()` pure (no I/O, no clock) so a host can re-run it
-   deterministically after `arbitrate()` parks an action.
-3. New policy fields go in `@qmilab/lodestar-core` first (additive), then here.
+   deterministically after `arbitrate()` parks an action. The arbitrate hook
+   keeps this: the host's `resolveContext` does the I/O on the gate's async
+   boundary, and `evaluate(action, context)` is pure given the snapshot.
+3. The arbitrate hook is load-bearing too: `sentinel-alert-gates-dependent-action`
+   and `calibration-flag-escalates-action` are its spec, and each pins that the
+   sentinel/calibrator only observed — enforcement lives here. Run them if you
+   touch `applyArbitration`.
+4. New policy fields go in `@qmilab/lodestar-core` first (additive), then here.
