@@ -122,7 +122,11 @@ export function buildTrace(
   projection: ChainProjection,
   opts: BuildTraceOptions = {},
 ): LodestarTrace {
-  const ceiling = opts.sensitivityCeiling ?? "internal"
+  // Only an omitted option (`undefined`) takes the default. A present-but-
+  // invalid value — null, "", a typo from JS/config — must reach validation
+  // and fail loud, never silently fall back to internal (a `??` default would
+  // swallow null).
+  const ceiling = opts.sensitivityCeiling === undefined ? "internal" : opts.sensitivityCeiling
   // Validate the ceiling at runtime: a typo'd / config-derived value would
   // otherwise rank above every real level (see `sensitivityRank`) and make
   // the gate fail open — exporting even `secret` content. Fail loud instead.
@@ -141,6 +145,8 @@ export function buildTrace(
   const meta = buildMetaIndex(projection)
   const claimById = new Map<string, Claim>()
   for (const c of projection.claims) claimById.set(c.id, c)
+  const beliefById = new Map<string, Belief>()
+  for (const b of projection.beliefs) beliefById.set(b.id, b)
 
   // ── Root span: the session ──────────────────────────────────────────
   const rootAttrs = new Attrs(gate)
@@ -157,7 +163,8 @@ export function buildTrace(
   const rootEvents: LodestarSpanEvent[] = []
   for (const obs of projection.observations) rootEvents.push(observationEvent(obs, meta, gate))
   for (const b of projection.beliefs) rootEvents.push(beliefEvent(b, claimById, meta, gate))
-  for (const d of projection.decisions) rootEvents.push(decisionEvent(d, meta, gate))
+  for (const d of projection.decisions)
+    rootEvents.push(decisionEvent(d, beliefById, claimById, meta, gate))
   for (const t of projection.transitions) rootEvents.push(transitionEvent(t, gate))
   rootEvents.sort(byTime)
 
@@ -337,6 +344,8 @@ function beliefEvent(
 
 function decisionEvent(
   d: ProjectedDecision,
+  beliefById: Map<string, Belief>,
+  claimById: Map<string, Claim>,
   meta: Map<string, RecordMeta>,
   gate: GateState,
 ): LodestarSpanEvent {
@@ -348,17 +357,43 @@ function decisionEvent(
     a.put("lodestar.decision.belief_dependency_count", d.belief_dependencies.length)
   }
   if (d.made_by) a.put("lodestar.decision.made_by", d.made_by)
-  // Decisions carry no sensitivity in v0; treat the question as "internal"
-  // (the default tool-output level) so it ships under the default ceiling
-  // but is withheld when the operator lowers the ceiling to "public".
+  // The question / intent is free-form content that can echo the claim text
+  // of the beliefs the decision depends on, so it must be gated at least as
+  // strictly as the strictest dependency — otherwise a secret belief that was
+  // itself redacted leaks through the decision event.
   if (d.question !== undefined) {
-    a.putContent("lodestar.decision.question", d.question, "internal", m?.hash)
+    const src = decisionContentSensitivity(d, beliefById, claimById)
+    a.putContent("lodestar.decision.question", d.question, src, m?.hash)
   }
   return {
     name: "decision.made",
     time_unix_nano: isoToUnixNano(m?.timestamp ?? d.made_at),
     attributes: a.bag,
   }
+}
+
+/**
+ * The sensitivity at which a decision's free-text question/intent must be
+ * gated. Floored at `internal` (the default tool-output level — a
+ * dependency-free intent is the agent's own text), then raised to the
+ * strictest sensitivity of every belief the decision depends on (and that
+ * belief's claim). A dependency we cannot resolve to verify its sensitivity
+ * fails closed (`secret`): we cannot prove the question is safe to export.
+ */
+function decisionContentSensitivity(
+  d: ProjectedDecision,
+  beliefById: Map<string, Belief>,
+  claimById: Map<string, Claim>,
+): Sensitivity {
+  let level: Sensitivity = "internal"
+  for (const beliefId of d.belief_dependencies ?? []) {
+    const belief = beliefById.get(beliefId)
+    if (!belief) return "secret"
+    level = stricter(level, belief.sensitivity)
+    const claim = claimById.get(belief.claim_id)
+    if (claim) level = stricter(level, claim.sensitivity)
+  }
+  return level
 }
 
 function transitionEvent(t: FirewallTransition, gate: GateState): LodestarSpanEvent {

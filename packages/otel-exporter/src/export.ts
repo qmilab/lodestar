@@ -64,7 +64,11 @@ export async function exportSession(opts: ExportSessionOptions): Promise<ExportS
   if (events.length === 0) throw new SessionNotFoundError(opts.sessionId)
 
   const projection = projectChain(events, { session_id: opts.sessionId, project_id })
-  const buildOpts = opts.sensitivityCeiling ? { sensitivityCeiling: opts.sensitivityCeiling } : {}
+  // Pass the ceiling through whenever it is *present* (not merely truthy), so a
+  // falsy-but-invalid value ("" / null from a JS/config caller) reaches
+  // buildTrace's validation and fails closed rather than silently defaulting.
+  const buildOpts =
+    opts.sensitivityCeiling !== undefined ? { sensitivityCeiling: opts.sensitivityCeiling } : {}
   const trace = buildTrace(projection, buildOpts)
   const otlp = toOtlpTraceJson([trace])
 

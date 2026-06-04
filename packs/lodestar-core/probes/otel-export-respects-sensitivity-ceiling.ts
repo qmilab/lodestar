@@ -30,12 +30,19 @@
  *       event carrying its id and `sensitivity=secret` — with a
  *       `*.statement.redacted` marker and the withheld content's payload
  *       hash in place of the text;
+ *   C2 — a `decision.made` whose free-text question echoes the secret belief
+ *       is gated by that dependency's sensitivity, so the secret cannot leak
+ *       through the decision event;
  *   D — raising the ceiling to `secret` makes the marker reappear, proving
- *       it is the gate withholding it, not an unrelated bug.
+ *       it is the gate withholding it, not an unrelated bug;
+ *   E — invalid ceilings supplied programmatically (a typo, or a falsy-but-
+ *       present "" / null that a truthiness check would drop before
+ *       validation) all THROW rather than silently failing open.
  *
  * If a future change routes claim content into a span without gating it,
  * A trips. If the gate over-redacts, B trips. If structural metadata is
- * dropped along with content, C trips.
+ * dropped along with content, C trips. If a decision question leaks a
+ * dependency's secret, C2 trips. If an invalid ceiling fails open, E trips.
  */
 
 import { mkdtempSync, rmSync } from "node:fs"
@@ -129,6 +136,21 @@ async function seedLog(rootDir: string): Promise<void> {
     type: "belief.adopted",
     payload: belief("belief-public", "claim-public", "public"),
   })
+  // A decision whose free-text question echoes the secret claim and depends
+  // on the secret belief. If the exporter gates decision questions at a fixed
+  // "internal", this leaks the secret via the decision event.
+  await writer.append({
+    ...common,
+    id: "ev-decision-1",
+    type: "decision.made",
+    payload: {
+      id: "decision-1",
+      question: `Should we ship using ${SECRET_MARKER}?`,
+      belief_dependencies: ["belief-secret"],
+      made_by: ACTOR,
+      made_at: NOW,
+    },
+  })
 }
 
 async function run(): Promise<ProbeResult> {
@@ -189,6 +211,26 @@ async function run(): Promise<ProbeResult> {
         `(redacted_count=${summary.redacted_count})`,
     )
 
+    // C2 — a decision whose question echoes the secret belief must be gated
+    // by that dependency, not leaked at the default ceiling via the decision
+    // event. (Assertion A already scans for the marker; this pins the cause.)
+    const decEvent = (root?.events ?? []).find(
+      (e) =>
+        e.name === "decision.made" && attr(e.attributes, "lodestar.decision.id") === "decision-1",
+    )
+    if (!decEvent) {
+      return fail(details, "decision event missing from the export")
+    }
+    if (attr(decEvent.attributes, "lodestar.decision.question.redacted") !== true) {
+      return fail(
+        details,
+        "decision question was not redacted despite a secret belief dependency — it can leak the secret",
+      )
+    }
+    details.push(
+      "C2: decision question gated by its secret belief dependency (no leak via the decision)",
+    )
+
     // D — raising the ceiling to `secret` makes the marker reappear.
     const open = await exportSession({
       sessionId: SESSION,
@@ -213,26 +255,33 @@ async function run(): Promise<ProbeResult> {
       "D: at ceiling=secret the marker reappears (the ceiling is the gate, redacted_count=0)",
     )
 
-    // E — an invalid ceiling (a typo from a JS caller / env-derived config
-    // that bypassed the type system) must THROW, not silently fail open and
-    // export the secret. Without runtime validation, an unknown ceiling
-    // ranks above every real level and nothing is ever withheld.
-    const badOpts = {
-      sessionId: SESSION,
-      projectId: PROJECT,
-      logRoot: rootDir,
-      sensitivityCeiling: "internl",
-    } as unknown as Parameters<typeof exportSession>[0]
-    let threw = false
-    try {
-      await exportSession(badOpts)
-    } catch {
-      threw = true
+    // E — an invalid ceiling from a JS caller / env-derived config that
+    // bypassed the type system must THROW, not silently fail open. This
+    // covers a typo (ranks above every real level → nothing withheld) AND
+    // falsy-but-present values ("" / null) that a truthiness check would drop
+    // before validation, silently defaulting to internal.
+    const badCeilings: unknown[] = ["internl", "", null]
+    for (const bad of badCeilings) {
+      const badOpts = {
+        sessionId: SESSION,
+        projectId: PROJECT,
+        logRoot: rootDir,
+        sensitivityCeiling: bad,
+      } as unknown as Parameters<typeof exportSession>[0]
+      let threw = false
+      try {
+        await exportSession(badOpts)
+      } catch {
+        threw = true
+      }
+      if (!threw) {
+        return fail(
+          details,
+          `an invalid sensitivity ceiling (${JSON.stringify(bad)}) did NOT throw — the gate can fail open`,
+        )
+      }
     }
-    if (!threw) {
-      return fail(details, "an invalid sensitivity ceiling did NOT throw — the gate can fail open")
-    }
-    details.push("E: an invalid ceiling throws (the gate fails closed, not open)")
+    details.push("E: invalid ceilings (typo, empty string, null) all throw (the gate fails closed)")
 
     return {
       passed: true,
