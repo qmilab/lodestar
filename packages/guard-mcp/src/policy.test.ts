@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { Action, Policy } from "@qmilab/lodestar-core"
 import { PolicyCompileError } from "@qmilab/lodestar-guard"
-import { compileProxyPolicy } from "./policy.js"
+import { SuspiciousMemoryOriginSentinel } from "@qmilab/lodestar-harness"
+import { compileProxyPolicy, compileProxyPolicyWithSentinels } from "./policy.js"
 
 const TOOL = "mcp.test.push"
 
@@ -98,6 +99,29 @@ describe("compileProxyPolicy", () => {
       await expect(
         compileProxyPolicy({ file: "nope.json", allow_unsigned: true }, dir),
       ).rejects.toThrow()
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("compileProxyPolicyWithSentinels", () => {
+  it("compiles the same document and returns a matched gate + arbiter pair", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-proxy-policy-sentinels-"))
+    try {
+      await writePolicyFile(dir, "policy.json", draftPolicy())
+      const { gate, arbiter } = await compileProxyPolicyWithSentinels(
+        { file: "policy.json", allow_unsigned: true },
+        dir,
+        [new SuspiciousMemoryOriginSentinel()],
+      )
+      // The gate still recovers the rule's authority (the arbitrate hook only
+      // *strengthens* a verdict; the base contract+rule evaluation is unchanged).
+      const ev = gate.evaluate(l4Action())
+      expect(ev.verdict).toBe("hold")
+      expect(ev.required_authority?.min_trust_baseline).toBe(0.7)
+      // The arbiter is real and single-session (it exposes the sentinel actor).
+      expect(arbiter.actorId).toBe("lodestar-sentinel")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

@@ -204,6 +204,22 @@ export const ProxyConfigSchema = z.object({
    */
   policy: ProxyPolicyConfigSchema.optional(),
   /**
+   * First-party sentinel ids to run over this session's event stream and wire
+   * into the gate's arbitrate hook (ADR-0001 / ADR-0003). Each id resolves
+   * against the harness `FIRST_PARTY_SENTINELS` registry — e.g.
+   * `"suspicious-memory-origin"`, `"low-confidence-action"`,
+   * `"anomalous-tool-sequence"`. When non-empty, the CLI compiles `policy` *with*
+   * a `SentinelArbiter` and the proxy synthesizes a `decision.made` per action
+   * (the opaque-agent decision source) so a belief-scoped alert can hold the
+   * dependent tool call.
+   *
+   * Requires `policy` to be set: arming the bare `auto_approve_ceiling` preset is
+   * not expressible in v0 (it is not a declarative document the host can compile
+   * with arbitration). Omit (or `[]`) and the proxy runs with no sentinels —
+   * exactly today's behaviour.
+   */
+  sentinels: z.array(z.string()).optional(),
+  /**
    * How long (milliseconds) the proxy waits on a held action for an
    * out-of-band resolution before timing out.
    *

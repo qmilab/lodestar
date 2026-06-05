@@ -244,4 +244,36 @@ describe("SentinelArbiter", () => {
     expect(() => arbiter.bindSession("B")).not.toThrow()
     expect(arbiter.resolveContext(action(undefined)).beliefs).toEqual([])
   })
+
+  describe("drainRecentBeliefIds (opaque-agent decision source, ADR-0003)", () => {
+    test("returns adopted belief ids in order and clears the window", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "unverified" }, "A"))
+      await arbiter.observe(evt("belief.adopted", { id: "b2", truth_status: "supported" }, "A"))
+
+      expect(arbiter.drainRecentBeliefIds()).toEqual(["b1", "b2"])
+      // Drained: the next call sees only beliefs adopted since (none yet).
+      expect(arbiter.drainRecentBeliefIds()).toEqual([])
+
+      await arbiter.observe(evt("belief.adopted", { id: "b3", truth_status: "supported" }, "A"))
+      expect(arbiter.drainRecentBeliefIds()).toEqual(["b3"])
+    })
+
+    test("dedups a re-adopted belief within the un-drained window", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      expect(arbiter.drainRecentBeliefIds()).toEqual(["b1"])
+    })
+
+    test("session end clears the window", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      await arbiter.observe(evt("guard.session.ended", {}, "A"))
+      expect(arbiter.drainRecentBeliefIds()).toEqual([])
+    })
+  })
 })

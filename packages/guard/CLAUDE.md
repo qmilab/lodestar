@@ -47,7 +47,11 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   compiled gate and returns the matched `{ gate, arbiter }` pair. This is the new
   `guard → @qmilab/lodestar-harness` dependency. The arbiter never writes the log
   itself — `observe()` *returns* the alerts and `wrap` emits them as
-  `sentinel.alerted@1` on its own writer, so the session stays the sole writer.
+  `sentinel.alerted@1` on its own writer, so the session stays the sole writer. It
+  also exposes `drainRecentBeliefIds()` — the causal-recency window (belief ids
+  since the last drain, projected from `belief.adopted`) the **MCP proxy** drains
+  to synthesize a decision for its opaque agent (ADR-0003); guard.wrap() uses
+  declared decisions and never drains it.
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is
@@ -138,10 +142,14 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   lifecycle from it and wires the in-process resolver seam around it).
 - The MCP proxy's deadline / out-of-band hold-resolution loop and the
   `lodestar approve` reference CLI — later host-wiring slices.
-- Sentinel→action wiring for the **MCP proxy**. The `SentinelArbiter` is reusable
-  (guard-mcp depends on guard), but the proxy's wrapped agent is opaque and cannot
-  declare `decision.made` over MCP, so it needs *synthesized* decisions — a
-  distinct mechanism deferred to a follow-up (ADR-0002).
+- The MCP proxy's *use* of the arbiter. The `SentinelArbiter` is reusable
+  (guard-mcp depends on guard) and now ships a `drainRecentBeliefIds()` primitive
+  — the proxy's wrapped agent is opaque and cannot declare `decision.made` over
+  MCP, so guard-mcp drains the arbiter's causal-recency window to **synthesize** a
+  decision per action (ADR-0002, ADR-0003). The recency buffer lives in the
+  arbiter (populated from `belief.adopted`, cleared on session end); guard.wrap()
+  uses declared decisions and never drains it. The proxy-side wiring itself lives
+  in `@qmilab/lodestar-guard-mcp`.
 - **Three deferred arbiter-hardening items (from the PR #54 review):** (F1)
   re-projecting `firewall.belief.transitioned` so the belief cache reflects
   post-adoption truth_status — needs a policy-kernel gate-semantics call on

@@ -12,7 +12,7 @@ export {
   ToolContractDefaultsSchema,
 } from "./config.js"
 
-export { compileProxyPolicy } from "./policy.js"
+export { compileProxyPolicy, compileProxyPolicyWithSentinels } from "./policy.js"
 
 export {
   type ApprovalResolution,
@@ -54,6 +54,7 @@ export {
 export {
   MCPProxy,
   type MCPProxyOverrides,
+  PROXY_DECISION_SYNTHESIS_ACTOR,
 } from "./proxy.js"
 
 export {

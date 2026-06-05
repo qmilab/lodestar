@@ -131,6 +131,16 @@ export class SentinelArbiter {
   private readonly beliefs = new Map<string, BackingBelief>()
   /** decision_id → belief_dependencies, projected from the bound session's `decision.made`. */
   private readonly decisions = new Map<string, string[]>()
+  /**
+   * The causal-recency window: belief ids adopted (in order, deduped) since the
+   * last {@link drainRecentBeliefIds}. This is the opaque-agent decision source
+   * (ADR-0003) — a host whose wrapped agent cannot *declare* its
+   * `belief_dependencies` (the MCP proxy) drains this to synthesize a
+   * `decision.made` linking "the beliefs the agent just saw, then acted on". A
+   * host that uses declared decisions (`guard.wrap()`) simply never drains it; it
+   * is cleared on session end like the rest of the per-session state.
+   */
+  private recentBeliefIds: string[] = []
   private calibration: CalibrationSnapshot | null
 
   constructor(options: SentinelArbiterOptions) {
@@ -224,11 +234,34 @@ export class SentinelArbiter {
     this.calibration = snapshot
   }
 
+  /**
+   * Return the belief ids adopted since the previous drain (the causal-recency
+   * window) and clear the buffer — the opaque-agent decision source (ADR-0003).
+   *
+   * A host whose wrapped agent cannot declare its dependency edges (the MCP
+   * proxy) calls this immediately before proposing an action, builds a
+   * `decision.made` whose `belief_dependencies` are the returned ids, and
+   * proposes the action with that decision id. The window is "since the previous
+   * action" because proxied tool-call N's beliefs are adopted during N's
+   * execution and so become the window N+1 acts on. An empty result means no
+   * decision need be synthesized (e.g. the first read of a session).
+   *
+   * Synchronous read-and-clear: atomic under the JS single-threaded model, so two
+   * overlapping proposes never tear the buffer (the first drains it; a concurrent
+   * propose links fewer — a documented best-effort gap, ADR-0003).
+   */
+  drainRecentBeliefIds(): string[] {
+    const drained = this.recentBeliefIds
+    this.recentBeliefIds = []
+    return drained
+  }
+
   private unbind(): void {
     this.boundSession = undefined
     this.alerts = []
     this.beliefs.clear()
     this.decisions.clear()
+    this.recentBeliefIds = []
   }
 
   /**
@@ -267,6 +300,11 @@ export class SentinelArbiter {
         confidence: v.confidence ?? 1,
         truth_status: (v.truth_status ?? "unverified") as TruthStatus,
       })
+      // Track it in the causal-recency window for opaque-agent decision
+      // synthesis (ADR-0003). Dedup against the un-drained window so a re-adopted
+      // belief does not list twice; a host that uses declared decisions never
+      // drains this and the entry is freed on session end.
+      if (!this.recentBeliefIds.includes(v.id)) this.recentBeliefIds.push(v.id)
       return
     }
     if (event.type === "decision.made") {
