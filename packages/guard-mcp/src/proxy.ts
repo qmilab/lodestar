@@ -341,6 +341,25 @@ export class MCPProxy {
           "MCPProxyOverrides.stores. The `lodestar guard mcp-proxy` CLI does this for you.",
       )
     }
+    // A `config.sentinels` with no injected arbiter is a wiring bug, mirroring the
+    // `config.policy` and `persistence: postgres` checks above. The proxy does not
+    // resolve sentinel ids itself (that keeps the harness registry out of its
+    // import graph — the CLI resolves them against FIRST_PARTY_SENTINELS and
+    // injects a SentinelArbiter via the seam above). Running with the declared
+    // sentinels UNENFORCED is a silent default for a security-relevant setting,
+    // which this package forbids — the `ProxyConfigSchema` superRefine rejects a
+    // `sentinels`-without-`policy` config at parse, and this guards the remaining
+    // case where a host constructs the proxy directly but forgets the arbiter.
+    if ((config.sentinels?.length ?? 0) > 0 && this.arbiter === undefined) {
+      throw new Error(
+        "MCPProxy: config.sentinels is set but no arbiter was injected. The proxy " +
+          "does not resolve sentinel ids itself — resolve them against " +
+          "FIRST_PARTY_SENTINELS (@qmilab/lodestar-harness) and inject a SentinelArbiter " +
+          "via MCPProxyOverrides.arbiter, with policyGate compiled from the same arbiter " +
+          "(compileProxyPolicyWithSentinels / compileWithSentinels). The `lodestar guard " +
+          "mcp-proxy` CLI does this for you.",
+      )
+    }
   }
 
   /**

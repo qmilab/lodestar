@@ -152,120 +152,145 @@ export type ProxyPolicyConfig = z.infer<typeof ProxyPolicyConfigSchema>
  * `"session-stub"` are intentionally not accepted — the schema
  * rejects them.
  */
-export const ProxyConfigSchema = z.object({
-  project_id: z
-    .string()
-    .min(1)
-    .refine((v) => v !== "project-stub", {
-      message: "project_id 'project-stub' is reserved for test fixtures",
-    }),
-  actor_id: z.string().min(1),
-  session_id: z.union([
-    z.literal("auto"),
-    z
+export const ProxyConfigSchema = z
+  .object({
+    project_id: z
       .string()
       .min(1)
-      .refine((v) => v !== "session-stub", {
-        message: "session_id 'session-stub' is reserved for test fixtures",
+      .refine((v) => v !== "project-stub", {
+        message: "project_id 'project-stub' is reserved for test fixtures",
       }),
-  ]),
-  /** Where the event log NDJSON files are written. */
-  log_root: z.string().default(".lodestar/events"),
-  /**
-   * Scope tagged on every Claim, Belief, and ActionContract this
-   * proxy session emits. Mirrors `@qmilab/lodestar-core`'s
-   * `ResourceScope`: `{ level, identifier }`.
-   */
-  default_scope: ResourceScopeSchema,
-  default_sensitivity: z.enum(["public", "internal", "confidential", "secret"]).default("internal"),
-  /**
-   * Trust ceiling for the auto-approve policy. Tools with
-   * `required_trust_level` ≤ this ceiling are auto-approved; higher
-   * requires explicit approval.
-   *
-   * Range is 0..3. With the Policy Kernel's graduated `autoApprovePolicy`,
-   * the trust-ladder floor makes L4 (external/shared) *always* require
-   * approval and L5 prohibited — neither is an expressible auto-approve
-   * ceiling, and `autoApprovePolicy()` throws on a ceiling of 4 or 5. We
-   * mirror that bound here to fail at config-load time instead. An L4 tool
-   * is held regardless of this ceiling (see `approval_timeout_ms`).
-   *
-   * Ignored when `policy` is set — a declarative policy document is the gate in
-   * full, and this ceiling only builds the fallback preset when no `policy` is
-   * declared.
-   */
-  auto_approve_ceiling: z.number().int().min(0).max(3).default(2),
-  /**
-   * Optional declarative policy document that becomes the proxy's gate. When
-   * set, the CLI compiles + injects it and `auto_approve_ceiling` is ignored.
-   * This is the path to richer holds — a `require_approval` rule whose
-   * `required_authority` names a `min_trust_baseline` / `scope` an approver must
-   * clear. See {@link ProxyPolicyConfigSchema}.
-   */
-  policy: ProxyPolicyConfigSchema.optional(),
-  /**
-   * First-party sentinel ids to run over this session's event stream and wire
-   * into the gate's arbitrate hook (ADR-0001 / ADR-0003). Each id resolves
-   * against the harness `FIRST_PARTY_SENTINELS` registry — e.g.
-   * `"suspicious-memory-origin"`, `"low-confidence-action"`,
-   * `"anomalous-tool-sequence"`. When non-empty, the CLI compiles `policy` *with*
-   * a `SentinelArbiter` and the proxy synthesizes a `decision.made` per action
-   * (the opaque-agent decision source) so a belief-scoped alert can hold the
-   * dependent tool call.
-   *
-   * Requires `policy` to be set: arming the bare `auto_approve_ceiling` preset is
-   * not expressible in v0 (it is not a declarative document the host can compile
-   * with arbitration). Omit (or `[]`) and the proxy runs with no sentinels —
-   * exactly today's behaviour.
-   */
-  sentinels: z.array(z.string()).optional(),
-  /**
-   * How long (milliseconds) the proxy waits on a held action for an
-   * out-of-band resolution before timing out.
-   *
-   * A `tools/call` is request/response, so the proxy cannot hold one open
-   * indefinitely without tripping the wrapped agent's client timeout. When an
-   * action is held (an L4 tool the trust-ladder floor parks at
-   * `pending_approval`), the proxy emits `approval.requested@1` and then polls
-   * the event log up to this deadline for an `approval.granted@1` /
-   * `approval.denied@1` written out-of-band (the `lodestar approve` CLI, the
-   * approval UI). On a grant it un-parks and runs the tool; on a deny or a
-   * deadline pass it returns a synthetic result the agent re-plans around
-   * (`_lodestar.kind` = `approval_denied` / `approval_timeout`). A timed-out
-   * hold is a soft denial the agent re-proposes — durable resume is deferred.
-   *
-   * Defaults to **0** = do not wait: surface the hold immediately as
-   * `approval_required` (the conservative, backward-compatible default — set
-   * a positive value below the client's timeout to enable out-of-band
-   * approval). Keep it comfortably under the wrapped agent's `tools/call`
-   * timeout.
-   *
-   * Both resolver paths are safe. An *in-process* resolver writes
-   * `approval.granted@1` to the log directly (it shares the single-writer
-   * mutex). The *separate-process* `lodestar approve` CLI instead drops a
-   * side-channel file the proxy promotes into its own log (the proxy stays the
-   * sole writer — the event-log writer's process-local counters never collide).
-   */
-  approval_timeout_ms: z.number().int().min(0).default(0),
-  downstream_servers: z
-    .array(DownstreamServerConfigSchema)
-    .min(1)
-    .refine((servers) => new Set(servers.map((s) => s.name)).size === servers.length, {
-      message:
-        "downstream_servers[*].name must be unique; two entries with the same " +
-        "name would map their tools to the same `mcp.<name>.<tool>` namespace " +
-        "and make tool_defaults ownership + audit trail ambiguous",
-    }),
-  tool_defaults: z.record(ToolContractDefaultsSchema).default({}),
-  /**
-   * Where the firewall's belief/claim/evidence stores live. Omitted (or
-   * `{ backend: "memory" }`) means in-memory, single-session — the
-   * default. Set `{ backend: "postgres", connection_string_env: "..." }`
-   * for a session that shares durable state with other sessions. See
-   * {@link PersistenceConfigSchema}.
-   */
-  persistence: PersistenceConfigSchema.optional(),
-})
+    actor_id: z.string().min(1),
+    session_id: z.union([
+      z.literal("auto"),
+      z
+        .string()
+        .min(1)
+        .refine((v) => v !== "session-stub", {
+          message: "session_id 'session-stub' is reserved for test fixtures",
+        }),
+    ]),
+    /** Where the event log NDJSON files are written. */
+    log_root: z.string().default(".lodestar/events"),
+    /**
+     * Scope tagged on every Claim, Belief, and ActionContract this
+     * proxy session emits. Mirrors `@qmilab/lodestar-core`'s
+     * `ResourceScope`: `{ level, identifier }`.
+     */
+    default_scope: ResourceScopeSchema,
+    default_sensitivity: z
+      .enum(["public", "internal", "confidential", "secret"])
+      .default("internal"),
+    /**
+     * Trust ceiling for the auto-approve policy. Tools with
+     * `required_trust_level` ≤ this ceiling are auto-approved; higher
+     * requires explicit approval.
+     *
+     * Range is 0..3. With the Policy Kernel's graduated `autoApprovePolicy`,
+     * the trust-ladder floor makes L4 (external/shared) *always* require
+     * approval and L5 prohibited — neither is an expressible auto-approve
+     * ceiling, and `autoApprovePolicy()` throws on a ceiling of 4 or 5. We
+     * mirror that bound here to fail at config-load time instead. An L4 tool
+     * is held regardless of this ceiling (see `approval_timeout_ms`).
+     *
+     * Ignored when `policy` is set — a declarative policy document is the gate in
+     * full, and this ceiling only builds the fallback preset when no `policy` is
+     * declared.
+     */
+    auto_approve_ceiling: z.number().int().min(0).max(3).default(2),
+    /**
+     * Optional declarative policy document that becomes the proxy's gate. When
+     * set, the CLI compiles + injects it and `auto_approve_ceiling` is ignored.
+     * This is the path to richer holds — a `require_approval` rule whose
+     * `required_authority` names a `min_trust_baseline` / `scope` an approver must
+     * clear. See {@link ProxyPolicyConfigSchema}.
+     */
+    policy: ProxyPolicyConfigSchema.optional(),
+    /**
+     * First-party sentinel ids to run over this session's event stream and wire
+     * into the gate's arbitrate hook (ADR-0001 / ADR-0003). Each id resolves
+     * against the harness `FIRST_PARTY_SENTINELS` registry — e.g.
+     * `"suspicious-memory-origin"`, `"low-confidence-action"`,
+     * `"anomalous-tool-sequence"`. When non-empty, the CLI compiles `policy` *with*
+     * a `SentinelArbiter` and the proxy synthesizes a `decision.made` per action
+     * (the opaque-agent decision source) so a belief-scoped alert can hold the
+     * dependent tool call.
+     *
+     * Requires `policy` to be set — arming the bare `auto_approve_ceiling` preset is
+     * not expressible in v0 (it is not a declarative document the host can compile
+     * with arbitration). This is enforced: the schema rejects a
+     * `sentinels`-without-`policy` config at parse, and the `MCPProxy` constructor
+     * additionally throws if `sentinels` is declared but no arbiter was injected, so
+     * a declared sentinel can never be silently unenforced. Omit (or `[]`) and the
+     * proxy runs with no sentinels — exactly today's behaviour.
+     */
+    sentinels: z.array(z.string()).optional(),
+    /**
+     * How long (milliseconds) the proxy waits on a held action for an
+     * out-of-band resolution before timing out.
+     *
+     * A `tools/call` is request/response, so the proxy cannot hold one open
+     * indefinitely without tripping the wrapped agent's client timeout. When an
+     * action is held (an L4 tool the trust-ladder floor parks at
+     * `pending_approval`), the proxy emits `approval.requested@1` and then polls
+     * the event log up to this deadline for an `approval.granted@1` /
+     * `approval.denied@1` written out-of-band (the `lodestar approve` CLI, the
+     * approval UI). On a grant it un-parks and runs the tool; on a deny or a
+     * deadline pass it returns a synthetic result the agent re-plans around
+     * (`_lodestar.kind` = `approval_denied` / `approval_timeout`). A timed-out
+     * hold is a soft denial the agent re-proposes — durable resume is deferred.
+     *
+     * Defaults to **0** = do not wait: surface the hold immediately as
+     * `approval_required` (the conservative, backward-compatible default — set
+     * a positive value below the client's timeout to enable out-of-band
+     * approval). Keep it comfortably under the wrapped agent's `tools/call`
+     * timeout.
+     *
+     * Both resolver paths are safe. An *in-process* resolver writes
+     * `approval.granted@1` to the log directly (it shares the single-writer
+     * mutex). The *separate-process* `lodestar approve` CLI instead drops a
+     * side-channel file the proxy promotes into its own log (the proxy stays the
+     * sole writer — the event-log writer's process-local counters never collide).
+     */
+    approval_timeout_ms: z.number().int().min(0).default(0),
+    downstream_servers: z
+      .array(DownstreamServerConfigSchema)
+      .min(1)
+      .refine((servers) => new Set(servers.map((s) => s.name)).size === servers.length, {
+        message:
+          "downstream_servers[*].name must be unique; two entries with the same " +
+          "name would map their tools to the same `mcp.<name>.<tool>` namespace " +
+          "and make tool_defaults ownership + audit trail ambiguous",
+      }),
+    tool_defaults: z.record(ToolContractDefaultsSchema).default({}),
+    /**
+     * Where the firewall's belief/claim/evidence stores live. Omitted (or
+     * `{ backend: "memory" }`) means in-memory, single-session — the
+     * default. Set `{ backend: "postgres", connection_string_env: "..." }`
+     * for a session that shares durable state with other sessions. See
+     * {@link PersistenceConfigSchema}.
+     */
+    persistence: PersistenceConfigSchema.optional(),
+  })
+  .superRefine((config, ctx) => {
+    // `sentinels` is a security-relevant setting that must never be silently
+    // ignored. It can only be wired into the gate by compiling a declarative
+    // `policy` *with* arbitration (the `auto_approve_ceiling` preset is not a
+    // document the host can compile with a `SentinelArbiter`). A config that
+    // declares sentinels but no policy would otherwise parse and then run with
+    // those sentinels UNENFORCED — reject it at the schema so both the CLI and any
+    // library host using `loadProxyConfig` fail fast (mirrors the "no silent
+    // defaults for security-relevant settings" norm; the proxy constructor catches
+    // the remaining direct-construction case).
+    if ((config.sentinels?.length ?? 0) > 0 && config.policy === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sentinels"],
+        message:
+          "`sentinels` requires `policy`: a declarative policy document is needed to compile the gate with arbitration — the auto_approve_ceiling preset cannot be armed with sentinels. Declare a `policy`, or remove `sentinels`.",
+      })
+    }
+  })
 export type ProxyConfig = z.infer<typeof ProxyConfigSchema>
 
 /**

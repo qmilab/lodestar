@@ -90,18 +90,11 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
   // and injects the resulting CompiledPolicy via the policyGate seam. The
   // `file` path resolves against the config file's own directory.
   // Declared sentinels (ADR-0003) arm the gate's arbitrate hook. They require a
-  // declarative `policy` to compile *with* arbitration — the bare
-  // `auto_approve_ceiling` preset has no such compile path in v0. Resolve the ids
-  // against the first-party registry here (the CLI owns the registry; the proxy
-  // package stays free of a harness dependency).
+  // declarative `policy` to compile *with* arbitration (the `ProxyConfigSchema`
+  // already rejects a `sentinels`-without-`policy` config at load). Resolve the
+  // ids against the first-party registry here — the CLI owns the registry, so the
+  // proxy package stays free of a harness runtime dependency.
   const declaredSentinelIds = config.sentinels ?? []
-  if (declaredSentinelIds.length > 0 && config.policy === undefined) {
-    process.stderr.write(
-      "[mcp-proxy] config invalid: `sentinels` requires `policy` — arming the auto_approve_ceiling preset with sentinels is not supported; declare a signed policy document.\n",
-    )
-    return 1
-  }
-
   let policyOverride: CompiledPolicy | undefined
   let arbiterOverride: SentinelArbiter | undefined
   if (config.policy !== undefined) {

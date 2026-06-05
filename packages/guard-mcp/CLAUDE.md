@@ -205,6 +205,12 @@ Cognitive Core. The resulting event log is renderable by
     faulty sentinel logs `guard.sentinel.failed` and never aborts the session).
     **Opt-in:** with no arbiter the proxy synthesizes nothing, feeds nothing, and
     its event stream is byte-for-byte unchanged — every existing proxy probe holds.
+    **No silent non-enforcement:** a declared sentinel must never be quietly
+    dropped — the `ProxyConfigSchema` superRefine rejects a `sentinels`-without-
+    `policy` config at parse, and the constructor throws if `config.sentinels` is
+    set but no arbiter was injected (same shape as the `policy` / `persistence`
+    guards). The proxy never resolves sentinel ids itself; the CLI resolves them
+    against `FIRST_PARTY_SENTINELS` and injects the arbiter.
     The window is drained-on-synthesis (precise, scoped) and its concurrency
     posture (overlapping calls under-attribute) is the documented best-effort gap
     in ADR-0003. The `mcp-proxy-arbiter-gates-dependent-action` probe pins all of
