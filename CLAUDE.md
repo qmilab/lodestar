@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Thirty-six probes pass under
+publishing), v0.2 architecture locked. Thirty-nine probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Thirty-two live in the first-party pack
+below). Thirty-five live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -29,10 +29,16 @@ holds
 `sentinel-alert-gates-dependent-action`,
 `calibration-flag-escalates-action`,
 `guard-hold-resolves-via-resolver`, `approval-timeout-denies`,
-`approval-via-side-channel`, `proxy-hold-carries-rule-authority`), and one
+`approval-via-side-channel`, `proxy-hold-carries-rule-authority`), one
 Governing-UI read-side probe (`viewer-is-read-only` — the read-side
 viewer surfaces the chain + pending approvals but exposes no mutation
-route and never writes the log). The
+route and never writes the log), two OTel-exporter probes
+(`otel-export-respects-sensitivity-ceiling`,
+`otel-export-projects-action-spans`), and the host-side sentinel→action
+wiring probe (`guard-arbiter-gates-dependent-action` — a real
+`suspicious-memory-origin` alert, run by the `guard.wrap()`
+`SentinelArbiter` over the session's own event stream, holds the
+dependent action at `pending_approval` through the host; ADR-0001). The
 other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -135,7 +141,7 @@ packages/
       zep/             # (exists) Zep facts import adapter
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
   cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
-  guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel
+  guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel; SentinelArbiter + compileWithSentinels wire the harness sentinels into the gate's arbitrate hook (sentinel→action, ADR-0001)
   trace/               # (exists) read side + `lodestar report` CLI
   viewer/              # (exists, post-v1) read-side Governing UI — `lodestar view`; Elysia + no-build vanilla SPA over the log; strictly read-only (no mutation route, never writes the log); surfaces pending approvals for visibility only
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`; held L4 actions wait up to `approval_timeout_ms` polling for an out-of-band `approval.granted@1`, else synthetic `approval_timeout`
@@ -236,7 +242,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Thirty-five probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Thirty-nine probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

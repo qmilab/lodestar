@@ -35,6 +35,19 @@ export type {
 } from "./types.js"
 export { alwaysHoldsChecker } from "./policy-presets.js"
 
+// ── Sentinel→action arbitration bridge ───────────────────────────────────────
+// The host-side glue that gives sentinel alerts teeth: it runs the sentinels over
+// the guarded session's event stream and projects their landed alerts (plus the
+// action's backing beliefs and an optional calibration snapshot) into the Policy
+// Kernel's arbitrate hook. `compileWithSentinels` is the one-call form that wires
+// the arbiter's `resolveContext` into the compiled gate. See
+// `.claude/adr/0001-sentinel-action-arbitration-bridge.md`.
+export { SentinelArbiter, compileWithSentinels } from "./sentinel-arbiter.js"
+export type {
+  SentinelArbiterOptions,
+  CompileWithSentinelsOptions,
+} from "./sentinel-arbiter.js"
+
 // ── Policy Kernel surface (graduated preset + approval lifecycle) ────────────
 // `autoApprovePolicy` graduated here from guard's own preset: it now honours the
 // trust-ladder floor (L4 always holds, L5 denies) and its ceiling caps at L3.

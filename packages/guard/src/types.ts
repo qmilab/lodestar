@@ -8,12 +8,14 @@ import type {
   Action,
   ActionContract,
   ApprovalRequest,
+  Decision,
   Observation,
   ResourceScope,
   Sensitivity,
 } from "@qmilab/lodestar-core"
 import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 import type { CompiledPolicy } from "@qmilab/lodestar-policy-kernel"
+import type { SentinelArbiter } from "./sentinel-arbiter.js"
 
 /**
  * Resolves a held action's `ApprovalRequest` into an `ApprovalOutcome`.
@@ -128,6 +130,23 @@ export interface GuardConfig {
       beliefs: BeliefStore
     }) => EvidenceLinkerLike
   }
+
+  /**
+   * Wire sentinel→action arbitration into this session. When supplied, the host
+   * feeds every emitted event to the arbiter (which runs the sentinels and
+   * projects the chain), emits the `sentinel.alerted@1` events the arbiter
+   * surfaces, and — because the arbiter's `resolveContext` is compiled into
+   * `policy_gate` — lets a landed alert (or calibration flag, or low-confidence
+   * belief) escalate a *dependent* action to `pending_approval`.
+   *
+   * The arbiter and `policy_gate` MUST be the matched pair from
+   * `compileWithSentinels(policy, { sentinels, … })` — or hand-wired, with the
+   * gate compiled from `arbitration.resolveContext = a => arbiter.resolveContext(a)`.
+   * Passing an arbiter whose `resolveContext` is not compiled into the gate
+   * observes the stream but gates nothing (the alerts are still logged). Because
+   * arbitration can produce a *hold*, `approval_resolver` is required alongside it.
+   */
+  arbiter?: SentinelArbiter
 }
 
 /**
@@ -171,8 +190,26 @@ export interface GuardContext {
    * Emit an arbitrary event to the log. Use for chain primitives the
    * action kernel doesn't generate directly — e.g. `claim.extracted`
    * events whose payload embeds the full Claim. Keeps reports rich.
+   *
+   * Security note: events emitted here are **not** trusted to drive sentinel
+   * arbitration — a raw agent emit cannot reset or mutate the arbiter's
+   * enforcement state (a forged `guard.session.ended` or `belief.adopted` is
+   * inert to the gate). To declare the beliefs an action depends on — the input a
+   * belief-scoped sentinel alert is gated against — use {@link recordDecision},
+   * the trusted channel.
    */
   emit(type: string, payload: unknown): Promise<void>
+
+  /**
+   * Record a {@link import("@qmilab/lodestar-core").Decision} the agent made:
+   * validates it and emits a host-authored `decision.made`. This is the trusted
+   * path that feeds the `SentinelArbiter` — its `belief_dependencies` are how a
+   * belief-scoped sentinel alert (or the low-confidence signal) finds the action
+   * that leans on a flagged belief. Without a recorded decision, an action is
+   * gated only by subject-agnostic signals. No-op on enforcement when no
+   * `arbiter` is configured (the event is still logged for the chain).
+   */
+  recordDecision(decision: Decision): Promise<void>
 }
 
 export interface CallToolOptions {

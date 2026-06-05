@@ -13,13 +13,16 @@ import {
   registerExtractor,
 } from "@qmilab/lodestar-cognitive-core"
 import type { ClaimExtractor, IngestResult } from "@qmilab/lodestar-cognitive-core"
-import type {
-  Action,
-  ActionContract,
-  ApprovalRequest,
-  Observation,
-  Reversibility,
-  Sensitivity,
+import {
+  type Action,
+  type ActionContract,
+  type ApprovalRequest,
+  DecisionSchema,
+  type Observation,
+  type Reversibility,
+  SENTINEL_ALERTED_EVENT_TYPE,
+  SENTINEL_ALERTED_SCHEMA_VERSION,
+  type Sensitivity,
 } from "@qmilab/lodestar-core"
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
@@ -222,21 +225,95 @@ export async function runGuarded<T>(
   const emit = async (
     type: string,
     payload: unknown,
-    options?: { causal_parent_ids?: string[] },
+    options?: {
+      causal_parent_ids?: string[]
+      feedArbiter?: boolean
+      actor_id?: string
+      schema_version?: string
+    },
   ): Promise<void> => {
-    await writer.append({
+    const envelope = await writer.append({
       id: randomUUID(),
       type,
-      schema_version: "0.1.0",
+      // Most guard status/chain events ride the session schema version; an event
+      // with its own governance schema (e.g. `sentinel.alerted@1`) overrides it so
+      // consumers validating by type/version see the canonical version.
+      schema_version: options?.schema_version ?? "0.1.0",
       project_id: config.project_id,
       session_id,
-      actor_id: config.actor_id,
+      // Defaults to the governed agent; a `sentinel.alerted@1` re-emit overrides
+      // it with the sentinel actor so the audit shows who authored the alert.
+      actor_id: options?.actor_id ?? config.actor_id,
       timestamp: new Date().toISOString(),
       causal_parent_ids: options?.causal_parent_ids ?? [],
       payload,
       payload_hash: canonicalHash(payload),
       versions: { schema_registry_version: "0.1.0" },
     })
+    // Sentinel→action arbitration. Feed the written event to the arbiter (which
+    // runs the sentinels and projects belief.adopted / decision.made), then emit
+    // any alert it surfaces as `sentinel.alerted@1` on this same writer — so the
+    // guarded session stays the sole writer of its log. Done AFTER `append`
+    // resolves: the partition mutex is released before the re-entrant
+    // `sentinel.alerted` emit appends, and the alert lands in the buffer/log
+    // before the next action arbitrates (the gate's `resolveContext` reads it).
+    // The arbiter skips `sentinel.alerted` events, so the re-entry bottoms out at
+    // depth one for any sentinel set.
+    //
+    // ONLY host-authored events reach the arbiter: `feedArbiter` defaults to true
+    // for guard's own emits, but the agent-facing `ctx.emit` passes `false`. That
+    // is the security boundary — otherwise an agent loop could forge a
+    // `guard.session.ended` (clearing buffered alerts) or a `belief.adopted`
+    // (overwriting a flagged belief) to bypass the gate it is subject to. The
+    // agent declares decisions through the trusted `ctx.recordDecision` channel,
+    // which routes back through this host emit (PR #54 review, Codex P1).
+    //
+    // The whole feed is best-effort: sentinel arbitration is a non-blocking
+    // observability + advisory layer ("sentinels alert; they never block"), so a
+    // faulty/hostile sentinel — or a finding that fails schema validation — must
+    // NOT abort the governed session. On a fault, record a `guard.sentinel.failed`
+    // status event (appended DIRECTLY, so it can't re-enter the arbiter and
+    // recurse) and continue; the epistemic chain is unaffected, only this one
+    // alert pass is lost (PR #54 review, F2).
+    if (config.arbiter !== undefined && options?.feedArbiter !== false) {
+      try {
+        const alerts = await config.arbiter.observe(envelope)
+        for (const alert of alerts) {
+          await emit(SENTINEL_ALERTED_EVENT_TYPE, alert.payload, {
+            causal_parent_ids: alert.causal_parent_ids,
+            feedArbiter: false,
+            // Attribute the alert to the sentinel actor, not the governed agent,
+            // and stamp the canonical sentinel.alerted schema version (not the
+            // generic session version) so it matches the harness alert sink.
+            actor_id: config.arbiter.actorId,
+            schema_version: SENTINEL_ALERTED_SCHEMA_VERSION,
+          })
+        }
+      } catch (err) {
+        const failure = {
+          for_event_id: envelope.id,
+          for_event_type: envelope.type,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        await writer
+          .append({
+            id: randomUUID(),
+            type: "guard.sentinel.failed",
+            schema_version: "0.1.0",
+            project_id: config.project_id,
+            session_id,
+            actor_id: config.actor_id,
+            timestamp: new Date().toISOString(),
+            causal_parent_ids: [envelope.id],
+            payload: failure,
+            payload_hash: canonicalHash(failure),
+            versions: { schema_registry_version: "0.1.0" },
+          })
+          // If even the status append fails, give up silently — observability
+          // must never break governance.
+          .catch(() => {})
+      }
+    }
   }
 
   const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
@@ -563,8 +640,26 @@ export async function runGuarded<T>(
       }
       return result
     },
-    emit,
+    // The agent-facing escape hatch logs an event but is NOT trusted to drive
+    // sentinel arbitration: `feedArbiter: false` keeps a raw agent emit (e.g. a
+    // forged `guard.session.ended` or `belief.adopted`) out of the arbiter, so an
+    // agent cannot reset or poison the enforcement state it is subject to.
+    emit: (type, payload) => emit(type, payload, { feedArbiter: false }),
+    recordDecision: async (decision) => {
+      // The trusted channel for an agent to declare a decision's
+      // `belief_dependencies`. Validated, then emitted as a host-authored
+      // `decision.made` that DOES feed the arbiter — this is how a belief-scoped
+      // sentinel alert finds the action that depends on the flagged belief.
+      const validated = DecisionSchema.parse(decision)
+      await emit("decision.made", validated)
+    },
   }
+
+  // Bind the arbiter to this session before any event flows, so `resolveContext`
+  // reports THIS session (never "whichever was observed last") and a second
+  // concurrent guarded session sharing the same arbiter is rejected loudly here
+  // rather than silently cross-talking (Codex review, round 2).
+  config.arbiter?.bindSession(session_id)
 
   await emit("guard.session.started", {
     project_id: config.project_id,

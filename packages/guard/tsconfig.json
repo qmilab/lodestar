@@ -11,6 +11,7 @@
     { "path": "../action-kernel" },
     { "path": "../policy-kernel" },
     { "path": "../memory-firewall" },
-    { "path": "../cognitive-core" }
+    { "path": "../cognitive-core" },
+    { "path": "../harness" }
   ]
 }
