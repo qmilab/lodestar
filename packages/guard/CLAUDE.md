@@ -70,9 +70,11 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
 4. **No new schemas.** Guard does not extend `@qmilab/lodestar-core`. All
    event payloads are existing chain primitives or simple status events
    (`guard.session.started`, `guard.session.ended`,
-   `guard.session.failed`), plus the core `approval.*` wire events the hold
-   path emits (`approval.requested@1`, `approval.granted@1`,
-   `approval.denied@1`, `approval.expired@1`) — all already defined in
+   `guard.session.failed`, and `guard.sentinel.failed` — the best-effort
+   record written when the arbiter feed throws; see invariant 6), plus the core
+   `approval.*` wire events the hold path emits (`approval.requested@1`,
+   `approval.granted@1`, `approval.denied@1`, `approval.expired@1`) and the
+   `sentinel.alerted@1` events the arbiter surfaces — all already defined in
    `@qmilab/lodestar-core`, none new.
 5. **A hold needs a resolver — no silent default.** The three-valued gate's
    third outcome is `hold`: a held action is parked at `pending_approval` and
@@ -98,7 +100,12 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    by subject-agnostic signals (a `tool_sequence` alert). The arbiter never blocks
    or calls back into the kernel — enforcement lives in the gate. Because
    arbitration can produce a *hold*, `approval_resolver` (invariant 5) is required
-   alongside it.
+   alongside it. The feed is **best-effort and non-blocking**: a throw from a
+   sentinel (or a finding that fails schema validation) is caught in `emit`, logged
+   as a `guard.sentinel.failed` status event, and swallowed — a faulty/hostile
+   sentinel degrades observability but never aborts the governed session. The
+   arbiter ignores `sentinel.alerted` events, so its own output cannot recurse the
+   feed regardless of the sentinel set.
 
 ## What does not live here
 
@@ -112,6 +119,15 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   (guard-mcp depends on guard), but the proxy's wrapped agent is opaque and cannot
   declare `decision.made` over MCP, so it needs *synthesized* decisions — a
   distinct mechanism deferred to a follow-up (ADR-0002).
+- **Three deferred arbiter-hardening items (from the PR #54 review):** (F1)
+  re-projecting `firewall.belief.transitioned` so the belief cache reflects
+  post-adoption truth_status — needs a policy-kernel gate-semantics call on
+  whether `contradicted`/`superseded` should gate (the low-conf signal tests only
+  `=== "unverified"`); today the staleness only skews conservative. (F4) a bounded
+  alert recency window so a `tool_sequence` alert does not stay sticky for a whole
+  long session. (F6) a binding token so a hand-wired `arbiter`/`policy_gate`
+  mismatch fails loudly instead of observing-but-not-gating (`compileWithSentinels`
+  is the safe path today). These belong with the P1 hardening / P3 security track.
 - Anything that consumes the event log on the read side — that's
   `@qmilab/lodestar-trace`.
 

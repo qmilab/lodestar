@@ -86,15 +86,46 @@ describe("SentinelArbiter", () => {
     expect(arbiter.resolveContext(action("d1")).beliefs).toEqual([])
   })
 
-  test("belief projection fills missing fields with non-over-gating defaults", async () => {
+  test("belief projection fails closed: a partial belief reads as unverified", async () => {
     const arbiter = new SentinelArbiter({ sentinels: [] })
     await arbiter.observe(evt("belief.adopted", { id: "belief-bare" }))
     await arbiter.observe(evt("decision.made", { id: "d1", belief_dependencies: ["belief-bare"] }))
     expect(arbiter.resolveContext(action("d1")).beliefs).toEqual([
-      // No confidence/truth_status in the payload ⇒ strong + verified, so a
-      // partial belief does not spuriously trip the low-confidence signal.
-      { id: "belief-bare", calibration_class: "general", confidence: 1, truth_status: "supported" },
+      // A malformed/partial belief.adopted (no truth_status) reads as unverified,
+      // so it HOLDS a dependent action rather than slipping past the low-confidence
+      // signal — the conservative direction (PR #54 review, F3).
+      {
+        id: "belief-bare",
+        calibration_class: "general",
+        confidence: 1,
+        truth_status: "unverified",
+      },
     ])
+  })
+
+  test("observe ignores sentinel.alerted events (re-entrancy guard)", async () => {
+    // A pathological sentinel that alerts on the arbiter's OWN output would
+    // recurse if fed back. The arbiter skips sentinel.alerted entirely, so the
+    // depth-one guarantee holds for any sentinel set (PR #54 review, F5).
+    class MetaSentinel extends Sentinel {
+      readonly name = "meta"
+      readonly description = "alerts on alerts"
+      inspect(event: EventEnvelope): SentinelFinding[] {
+        if (event.type !== "sentinel.alerted") return []
+        return [
+          {
+            rule: "meta-rule",
+            severity: "warning",
+            subject: { kind: "belief", id: "belief-Y" },
+            message: "meta flagged",
+            observed_event_ids: [event.id],
+          },
+        ]
+      }
+    }
+    const arbiter = new SentinelArbiter({ sentinels: [new MetaSentinel()] })
+    expect(await arbiter.observe(evt("sentinel.alerted", {}))).toEqual([])
+    expect(arbiter.resolveContext(action(undefined)).alerts).toEqual([])
   })
 
   test("observe returns landed alerts and resolveContext surfaces them", async () => {

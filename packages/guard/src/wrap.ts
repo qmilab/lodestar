@@ -244,14 +244,47 @@ export async function runGuarded<T>(
     // resolves: the partition mutex is released before the re-entrant
     // `sentinel.alerted` emit appends, and the alert lands in the buffer/log
     // before the next action arbitrates (the gate's `resolveContext` reads it).
-    // The first-party sentinels never alert on a `sentinel.alerted` event, so the
-    // re-entry bottoms out at depth one.
+    // The arbiter skips `sentinel.alerted` events, so the re-entry bottoms out at
+    // depth one for any sentinel set.
+    //
+    // The whole feed is best-effort: sentinel arbitration is a non-blocking
+    // observability + advisory layer ("sentinels alert; they never block"), so a
+    // faulty/hostile sentinel — or a finding that fails schema validation — must
+    // NOT abort the governed session. On a fault, record a `guard.sentinel.failed`
+    // status event (appended DIRECTLY, so it can't re-enter the arbiter and
+    // recurse) and continue; the epistemic chain is unaffected, only this one
+    // alert pass is lost (PR #54 review, F2).
     if (config.arbiter !== undefined) {
-      const alerts = await config.arbiter.observe(envelope)
-      for (const alert of alerts) {
-        await emit("sentinel.alerted", alert.payload, {
-          causal_parent_ids: alert.causal_parent_ids,
-        })
+      try {
+        const alerts = await config.arbiter.observe(envelope)
+        for (const alert of alerts) {
+          await emit("sentinel.alerted", alert.payload, {
+            causal_parent_ids: alert.causal_parent_ids,
+          })
+        }
+      } catch (err) {
+        const failure = {
+          for_event_id: envelope.id,
+          for_event_type: envelope.type,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        await writer
+          .append({
+            id: randomUUID(),
+            type: "guard.sentinel.failed",
+            schema_version: "0.1.0",
+            project_id: config.project_id,
+            session_id,
+            actor_id: config.actor_id,
+            timestamp: new Date().toISOString(),
+            causal_parent_ids: [envelope.id],
+            payload: failure,
+            payload_hash: canonicalHash(failure),
+            versions: { schema_registry_version: "0.1.0" },
+          })
+          // If even the status append fails, give up silently — observability
+          // must never break governance.
+          .catch(() => {})
       }
     }
   }

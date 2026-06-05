@@ -111,7 +111,13 @@ export interface SentinelRunnerOptions {
 }
 
 const DEFAULT_SENTINEL_ACTOR = "lodestar-sentinel"
-const DEFAULT_SESSION_END_EVENTS = ["guard.session.ended", "guard.session.failed"] as const
+/**
+ * Event types that mean "this session is over" — the {@link SentinelRunner}
+ * frees per-session sentinel state on any of these. Exported so a host that
+ * tracks its own session lifecycle alongside the runner (e.g. the guard
+ * `SentinelArbiter`) shares one source of truth instead of re-declaring it.
+ */
+export const DEFAULT_SESSION_END_EVENTS = ["guard.session.ended", "guard.session.failed"] as const
 
 /**
  * Drives a set of sentinels over events. Stateless itself — all state

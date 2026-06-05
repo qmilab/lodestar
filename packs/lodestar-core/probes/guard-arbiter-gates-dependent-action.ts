@@ -46,7 +46,7 @@
  *     the probe pins.
  */
 
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -254,6 +254,21 @@ function wasHeld(action: Action): boolean {
   return action.audit.some((entry) => entry.phase === "pending_approval")
 }
 
+/** Read the events one guarded session wrote, straight off its NDJSON log. */
+function readSessionEvents(logRoot: string, sessionId: string): Record<string, unknown>[] {
+  const projectDir = join(logRoot, "sentinel-host-probe")
+  const events: Record<string, unknown>[] = []
+  for (const file of readdirSync(projectDir)) {
+    if (!file.endsWith(".ndjson")) continue
+    for (const line of readFileSync(join(projectDir, file), "utf8").split("\n")) {
+      if (line.trim() === "") continue
+      const event = JSON.parse(line) as Record<string, unknown>
+      if (event.session_id === sessionId) events.push(event)
+    }
+  }
+  return events
+}
+
 async function run(): Promise<ProbeResult> {
   if (!registry.has(OUT_KEY)) registry.register(OUT_KEY, z.object({ ran: z.boolean() }))
   _resetToolsForTests()
@@ -305,6 +320,29 @@ async function run(): Promise<ProbeResult> {
       return {
         passed: false,
         details: `[1] the hold was not attributed to the sentinel + poisoned belief. request reason: "${reason}".`,
+      }
+    }
+
+    // 1b. The hold is auditable independently of the request-reason ordering: the
+    //     REAL sentinel emitted a belief-scoped sentinel.alerted@1 for the
+    //     poisoned belief, recorded on the armed session's own log.
+    const poisonAlerts = readSessionEvents(logRoot, "armed").filter((e) => {
+      if (e.type !== "sentinel.alerted") return false
+      const payload = e.payload as {
+        sentinel_name?: string
+        subject?: { kind?: string; id?: string }
+      }
+      return (
+        payload.sentinel_name === "suspicious-memory-origin" &&
+        payload.subject?.kind === "belief" &&
+        payload.subject?.id === armed.poisonBeliefId
+      )
+    })
+    if (poisonAlerts.length === 0) {
+      return {
+        passed: false,
+        details:
+          "[1b] no sentinel.alerted@1 naming the poisoned belief was written to the armed session log; the real sentinel did not fire through the host.",
       }
     }
 

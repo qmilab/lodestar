@@ -1,11 +1,13 @@
-import type {
-  Action,
-  EventEnvelope,
-  Policy,
-  SentinelAlertPayload,
-  TruthStatus,
+import {
+  type Action,
+  type EventEnvelope,
+  type Policy,
+  SENTINEL_ALERTED_EVENT_TYPE,
+  type SentinelAlertPayload,
+  type TruthStatus,
 } from "@qmilab/lodestar-core"
 import {
+  DEFAULT_SESSION_END_EVENTS,
   type Sentinel,
   type SentinelAlert,
   SentinelRunner,
@@ -21,14 +23,6 @@ import {
   compile,
 } from "@qmilab/lodestar-policy-kernel"
 import { z } from "zod"
-
-/**
- * Session-end event types after which the arbiter frees its per-session state.
- * Mirrors the {@link SentinelRunner} default so the arbiter's caches and the
- * sentinels' state are dropped on the same events (the guarded session ending or
- * failing). Override via {@link SentinelArbiterOptions.runner}.
- */
-const DEFAULT_SESSION_END_EVENTS = ["guard.session.ended", "guard.session.failed"] as const
 
 /**
  * A loose projection of `belief.adopted` that — unlike the harness `asBeliefView`
@@ -107,7 +101,14 @@ export interface SentinelArbiterOptions {
 export class SentinelArbiter {
   private readonly runner: SentinelRunner
   private readonly sessionEndEventTypes: ReadonlySet<string>
-  /** Landed alert payloads in arrival order. The gate scopes them per action. */
+  /**
+   * Landed alert payloads in arrival order, for the whole session (freed on a
+   * session-end event). The gate scopes them per action by the action's backing
+   * belief ids — but a subject-agnostic `tool_sequence` alert gates *every*
+   * subsequent action until session end. A bounded recency window is a deferred
+   * refinement (PR #54 review, F4); for v0 the session-scoped buffer is the
+   * conservative choice — it never drops an alert that should still gate.
+   */
   private alerts: SentinelAlertPayload[] = []
   /** belief_id → backing fields, projected from `belief.adopted`. */
   private readonly beliefs = new Map<string, BackingBelief>()
@@ -138,6 +139,13 @@ export class SentinelArbiter {
    * still sees the terminating event).
    */
   async observe(event: EventEnvelope): Promise<SentinelAlert[]> {
+    // Never feed the arbiter its own output. The host emits each landed alert as
+    // `sentinel.alerted@1` through the very path that calls observe(); a (custom)
+    // sentinel reacting to a `sentinel.alerted` event would make alert-emission
+    // recurse without bound. The event also carries no chain primitive to
+    // project, so skip it wholesale — the depth-one guarantee then holds for ANY
+    // sentinel set, not only the first-party ones (PR #54 review, F5).
+    if (event.type === SENTINEL_ALERTED_EVENT_TYPE) return []
     this.project(event)
     const alerts = await this.runner.observe(event)
     for (const alert of alerts) this.alerts.push(alert.payload)
@@ -191,15 +199,15 @@ export class SentinelArbiter {
       const v = parsed.data
       this.beliefs.set(v.id, {
         id: v.id,
-        // Defaults are defensive fallbacks for a malformed/partial payload; a
-        // real `belief.adopted` always carries all three. They are chosen to NOT
-        // over-gate on missing data: an absent confidence/truth_status reads as
-        // strong+verified so a partial belief does not spuriously trip the
-        // low-confidence signal (the explicit alert path is unaffected — it
-        // scopes by belief id, not these fields).
+        // A real `belief.adopted` always carries all three fields; these defaults
+        // only apply to a malformed/partial payload, and they fail CLOSED (the
+        // repo's "no silent defaults for security-relevant settings" norm): a
+        // missing truth_status reads as `unverified`, so a partial belief HOLDS a
+        // dependent L3+ action rather than slipping past the low-confidence
+        // signal. `calibration_class` defaults to the neutral "general".
         calibration_class: v.calibration_class ?? "general",
         confidence: v.confidence ?? 1,
-        truth_status: (v.truth_status ?? "supported") as TruthStatus,
+        truth_status: (v.truth_status ?? "unverified") as TruthStatus,
       })
       return
     }
@@ -207,6 +215,15 @@ export class SentinelArbiter {
       const decision = asDecisionView(event.payload)
       if (decision !== null) this.decisions.set(decision.id, decision.belief_dependencies ?? [])
     }
+    // NOTE (deferred — PR #54 review, F1): the belief cache reflects
+    // `belief.adopted` only. A later `firewall.belief.transitioned` (e.g. a
+    // contradiction routing a belief to `contradicted`/`superseded`) is not
+    // re-projected, so a cached truth_status is the adoption-time value. Today
+    // that only skews the *conservative* way for the low-confidence signal (a
+    // since-promoted belief still reads `unverified` → an extra hold). Reflecting
+    // transitions — and deciding whether `contradicted`/`superseded` should gate,
+    // which is a policy-kernel gate-semantics question (the signal tests only
+    // `=== "unverified"`) — is left for the P1 hardening follow-up.
   }
 
   private resetSession(): void {
@@ -235,6 +252,13 @@ export interface CompileWithSentinelsOptions {
   calibration?: CalibrationSnapshot | null
   /** Optional escalation thresholds (severity→effect, low-confidence floor). */
   escalation?: EscalationConfig
+  /**
+   * Forwarded to the arbiter's internal {@link SentinelRunner}: `actor_id` for
+   * emitted alert envelopes, and `sessionEndEventTypes` for a host whose session
+   * terminates on non-default events (so the arbiter frees per-session state at
+   * the right boundary rather than leaking caches across logical sessions).
+   */
+  runner?: Pick<SentinelRunnerOptions, "actor_id" | "sessionEndEventTypes">
 }
 
 /**
@@ -259,6 +283,7 @@ export function compileWithSentinels(
   const arbiter = new SentinelArbiter({
     sentinels: options.sentinels,
     calibration: options.calibration,
+    runner: options.runner,
   })
   const gate = compile(policy, {
     decider_id: options.decider_id,
