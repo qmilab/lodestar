@@ -13,13 +13,14 @@ import {
   registerExtractor,
 } from "@qmilab/lodestar-cognitive-core"
 import type { ClaimExtractor, IngestResult } from "@qmilab/lodestar-cognitive-core"
-import type {
-  Action,
-  ActionContract,
-  ApprovalRequest,
-  Observation,
-  Reversibility,
-  Sensitivity,
+import {
+  type Action,
+  type ActionContract,
+  type ApprovalRequest,
+  DecisionSchema,
+  type Observation,
+  type Reversibility,
+  type Sensitivity,
 } from "@qmilab/lodestar-core"
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
@@ -222,7 +223,7 @@ export async function runGuarded<T>(
   const emit = async (
     type: string,
     payload: unknown,
-    options?: { causal_parent_ids?: string[] },
+    options?: { causal_parent_ids?: string[]; feedArbiter?: boolean },
   ): Promise<void> => {
     const envelope = await writer.append({
       id: randomUUID(),
@@ -238,7 +239,7 @@ export async function runGuarded<T>(
       versions: { schema_registry_version: "0.1.0" },
     })
     // Sentinel→action arbitration. Feed the written event to the arbiter (which
-    // runs the sentinels and projects decision.made / belief.adopted), then emit
+    // runs the sentinels and projects belief.adopted / decision.made), then emit
     // any alert it surfaces as `sentinel.alerted@1` on this same writer — so the
     // guarded session stays the sole writer of its log. Done AFTER `append`
     // resolves: the partition mutex is released before the re-entrant
@@ -247,6 +248,14 @@ export async function runGuarded<T>(
     // The arbiter skips `sentinel.alerted` events, so the re-entry bottoms out at
     // depth one for any sentinel set.
     //
+    // ONLY host-authored events reach the arbiter: `feedArbiter` defaults to true
+    // for guard's own emits, but the agent-facing `ctx.emit` passes `false`. That
+    // is the security boundary — otherwise an agent loop could forge a
+    // `guard.session.ended` (clearing buffered alerts) or a `belief.adopted`
+    // (overwriting a flagged belief) to bypass the gate it is subject to. The
+    // agent declares decisions through the trusted `ctx.recordDecision` channel,
+    // which routes back through this host emit (PR #54 review, Codex P1).
+    //
     // The whole feed is best-effort: sentinel arbitration is a non-blocking
     // observability + advisory layer ("sentinels alert; they never block"), so a
     // faulty/hostile sentinel — or a finding that fails schema validation — must
@@ -254,12 +263,13 @@ export async function runGuarded<T>(
     // status event (appended DIRECTLY, so it can't re-enter the arbiter and
     // recurse) and continue; the epistemic chain is unaffected, only this one
     // alert pass is lost (PR #54 review, F2).
-    if (config.arbiter !== undefined) {
+    if (config.arbiter !== undefined && options?.feedArbiter !== false) {
       try {
         const alerts = await config.arbiter.observe(envelope)
         for (const alert of alerts) {
           await emit("sentinel.alerted", alert.payload, {
             causal_parent_ids: alert.causal_parent_ids,
+            feedArbiter: false,
           })
         }
       } catch (err) {
@@ -613,7 +623,19 @@ export async function runGuarded<T>(
       }
       return result
     },
-    emit,
+    // The agent-facing escape hatch logs an event but is NOT trusted to drive
+    // sentinel arbitration: `feedArbiter: false` keeps a raw agent emit (e.g. a
+    // forged `guard.session.ended` or `belief.adopted`) out of the arbiter, so an
+    // agent cannot reset or poison the enforcement state it is subject to.
+    emit: (type, payload) => emit(type, payload, { feedArbiter: false }),
+    recordDecision: async (decision) => {
+      // The trusted channel for an agent to declare a decision's
+      // `belief_dependencies`. Validated, then emitted as a host-authored
+      // `decision.made` that DOES feed the arbiter — this is how a belief-scoped
+      // sentinel alert finds the action that depends on the flagged belief.
+      const validated = DecisionSchema.parse(decision)
+      await emit("decision.made", validated)
+    },
   }
 
   await emit("guard.session.started", {

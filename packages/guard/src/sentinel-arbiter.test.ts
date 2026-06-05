@@ -169,4 +169,26 @@ describe("SentinelArbiter", () => {
     expect(ctx.alerts).toEqual([])
     expect(ctx.beliefs).toEqual([])
   })
+
+  test("per-session isolation: one session's state never leaks into another", async () => {
+    const arbiter = new SentinelArbiter({ sentinels: [new StubSentinel()] })
+    // Session A accrues a belief, a decision, and an alert.
+    await arbiter.observe(
+      evt("belief.adopted", { id: "belief-X", confidence: 0.9, truth_status: "supported" }, "A"),
+    )
+    await arbiter.observe(
+      evt("decision.made", { id: "d1", belief_dependencies: ["belief-X"] }, "A"),
+    )
+    await arbiter.observe(evt("trigger", {}, "A"))
+    // Session B observes an unrelated event; resolveContext now reports B.
+    await arbiter.observe(evt("belief.adopted", { id: "belief-Z" }, "B"))
+    const inB = arbiter.resolveContext(action("d1"))
+    expect(inB.alerts).toEqual([]) // A's alert must not gate B
+    expect(inB.beliefs).toEqual([]) // A's decision/belief must not resolve in B
+
+    // A session-end for B must not wipe A's state.
+    await arbiter.observe(evt("guard.session.ended", {}, "B"))
+    await arbiter.observe(evt("noise", {}, "A")) // back to session A
+    expect(arbiter.resolveContext(action("d1")).alerts).toHaveLength(1)
+  })
 })

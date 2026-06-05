@@ -24,14 +24,18 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   `GuardConfig.policy_gate` accepts either a bare `PolicyGate` or a
   `CompiledPolicy`; `GuardConfig.approval_resolver` is the in-process seam that
   resolves a held action (see invariant 5); `GuardConfig.arbiter` wires the
-  sentinel→action bridge (see invariant 6).
+  sentinel→action bridge (see invariant 6). `GuardContext.recordDecision` is the
+  trusted channel an agent uses to declare a decision's `belief_dependencies`
+  (feeds the arbiter); the raw `GuardContext.emit` logs but is not trusted for
+  arbitration.
 - `src/sentinel-arbiter.ts` — `SentinelArbiter` + `compileWithSentinels`. The
   host-side glue that gives sentinel alerts teeth (ADR-0001,
   `docs/architecture/policy-kernel.md` "The arbitrate hook"). The arbiter is fed
-  every emitted event (`observe`); it runs a harness `SentinelRunner`, buffers
-  the alerts that land, and projects `decision.made → belief_dependencies` and
-  `belief.adopted → { calibration_class, confidence, truth_status }` from the
-  same stream. `resolveContext(action)` turns that into the gate's
+  every host-authored event (`observe`); it runs a harness `SentinelRunner`,
+  buffers the alerts that land, and projects `decision.made → belief_dependencies`
+  and `belief.adopted → { calibration_class, confidence, truth_status }` from the
+  same stream — all keyed by `event.session_id`, so the arbiter is
+  single-active-session and never leaks state across sessions. `resolveContext(action)` turns that into the gate's
   `ArbitrationContext` (the buffered alerts, the action's backing beliefs, an
   optional calibration snapshot). `compileWithSentinels(policy, { sentinels, … })`
   is the one-call form that wires the arbiter's `resolveContext` into the
@@ -95,12 +99,21 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    low-confidence belief escalate an action. Omit it and the gate keeps its pure
    contract+rule behaviour — sentinels still only observe. The arbiter scopes a
    belief-subject alert to an action via `action.decision_id →
-   belief_dependencies`, so the agent must emit `decision.made` (via `ctx.emit`)
-   for belief-scoped gating to bite; an action with no decision link is gated only
-   by subject-agnostic signals (a `tool_sequence` alert). The arbiter never blocks
-   or calls back into the kernel — enforcement lives in the gate. Because
-   arbitration can produce a *hold*, `approval_resolver` (invariant 5) is required
-   alongside it. The feed is **best-effort and non-blocking**: a throw from a
+   belief_dependencies`, so the agent declares decisions through
+   **`ctx.recordDecision`** for belief-scoped gating to bite; an action with no
+   decision link is gated only by subject-agnostic signals (a `tool_sequence`
+   alert). The arbiter never blocks or calls back into the kernel — enforcement
+   lives in the gate. Because arbitration can produce a *hold*, `approval_resolver`
+   (invariant 5) is required alongside it.
+   **Only host-authored events feed the arbiter** — `ctx.recordDecision` and
+   guard's own emits do, the raw agent-facing `ctx.emit` does NOT (it passes
+   `feedArbiter: false`). That is the security boundary: an agent loop must not be
+   able to forge a `guard.session.ended` (to clear buffered alerts) or a
+   `belief.adopted` (to overwrite a flagged belief) and bypass the gate it is
+   subject to. The arbiter keys all projection state by `event.session_id`, so one
+   reused arbiter never lets one session's alerts gate another's or lets a
+   session-end for one session clear another's (it is single-active-session by
+   construction). The feed is **best-effort and non-blocking**: a throw from a
    sentinel (or a finding that fails schema validation) is caught in `emit`, logged
    as a `guard.sentinel.failed` status event, and swallowed — a faulty/hostile
    sentinel degrades observability but never aborts the governed session. The

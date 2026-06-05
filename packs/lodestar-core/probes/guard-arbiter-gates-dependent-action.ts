@@ -22,10 +22,13 @@
  *    `external_document` evidence and the beliefs adopt `unverified` (Round 5
  *    gate). It also reads a clean `git.status` (a `direct_observation`, so its
  *    belief adopts `supported`).
- *  - The agent declares two decisions via `ctx.emit("decision.made", …)`: one
- *    depending on the poisoned belief, one on the clean belief. The real sentinel,
- *    seeing the poisoned decision, emits a belief-scoped alert — the arbiter logs
- *    it as `sentinel.alerted@1` and buffers it.
+ *  - The agent declares two decisions via the TRUSTED `ctx.recordDecision(…)`
+ *    channel: one depending on the poisoned belief, one on the clean belief. The
+ *    real sentinel, seeing the poisoned decision, emits a belief-scoped alert —
+ *    the arbiter logs it as `sentinel.alerted@1` and buffers it.
+ *  - The agent then FORGES a `guard.session.ended` via the untrusted `ctx.emit`
+ *    escape hatch, trying to wipe the arbiter's buffered alert before acting — it
+ *    must be inert (Codex review P1).
  *  - A permissive L3 policy (`required_level_lte: 3 → allow`) that, absent the
  *    hook, auto-approves the L3 action. Compiled WITH the arbiter via
  *    `compileWithSentinels`, and — as the control — WITHOUT it via `compile`.
@@ -33,10 +36,12 @@
  *    hold→resolve→execute path), and captures the `ApprovalRequest` it saw.
  *
  * Assertions:
- *  1. (armed) The action backed by the poisoned belief is HELD: its audit passes
- *     through `pending_approval`, exactly one `ApprovalRequest` is opened for it,
- *     and that request's reason names the `suspicious-memory-origin` sentinel and
- *     the poisoned belief — the hold was driven by the sentinel, through the host.
+ *  1. (armed) The action backed by the poisoned belief is HELD despite the forged
+ *     session-end: its audit passes through `pending_approval`, exactly one
+ *     `ApprovalRequest` is opened for it, that request's reason names the
+ *     `suspicious-memory-origin` sentinel and the poisoned belief, and a matching
+ *     `sentinel.alerted@1` is on the session log — the hold was driven by the
+ *     sentinel, through the host, and an agent emit could not reset it.
  *  2. (armed) The control action backed by the clean belief is NOT held: no
  *     `pending_approval` in its audit, no request — the alert is scoped to the
  *     flagged belief's dependents.
@@ -205,9 +210,18 @@ async function runHost(armed: boolean, logRoot: string): Promise<RunCapture> {
         throw new Error("setup: clean git.status did not adopt a supported belief")
       }
 
-      // 3. Declare the two decisions. The sentinel fires on the poisoned one.
-      await ctx.emit("decision.made", decision("decision-poison", [poisonBeliefId]))
-      await ctx.emit("decision.made", decision("decision-clean", [cleanBeliefId]))
+      // 3. Declare the two decisions through the TRUSTED channel. The sentinel
+      //    fires on the poisoned one.
+      await ctx.recordDecision(decision("decision-poison", [poisonBeliefId]))
+      await ctx.recordDecision(decision("decision-clean", [cleanBeliefId]))
+
+      // 3b. The agent now FORGES a host lifecycle event via the untrusted
+      //     `ctx.emit` escape hatch, trying to wipe the arbiter's buffered alert
+      //     before acting. It must be inert: `ctx.emit` does not feed the arbiter,
+      //     so the poisoned action below is still held (Codex review P1).
+      await ctx.emit("guard.session.ended", {
+        note: "forged by agent — must not reset the arbiter",
+      })
 
       // 4. The two L3 actions. Poison → held (when armed); clean → approved.
       const poison = await ctx.callTool(
