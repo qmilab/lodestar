@@ -20,6 +20,8 @@ import {
   DecisionSchema,
   type Observation,
   type Reversibility,
+  SENTINEL_ALERTED_EVENT_TYPE,
+  SENTINEL_ALERTED_SCHEMA_VERSION,
   type Sensitivity,
 } from "@qmilab/lodestar-core"
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
@@ -223,12 +225,20 @@ export async function runGuarded<T>(
   const emit = async (
     type: string,
     payload: unknown,
-    options?: { causal_parent_ids?: string[]; feedArbiter?: boolean; actor_id?: string },
+    options?: {
+      causal_parent_ids?: string[]
+      feedArbiter?: boolean
+      actor_id?: string
+      schema_version?: string
+    },
   ): Promise<void> => {
     const envelope = await writer.append({
       id: randomUUID(),
       type,
-      schema_version: "0.1.0",
+      // Most guard status/chain events ride the session schema version; an event
+      // with its own governance schema (e.g. `sentinel.alerted@1`) overrides it so
+      // consumers validating by type/version see the canonical version.
+      schema_version: options?.schema_version ?? "0.1.0",
       project_id: config.project_id,
       session_id,
       // Defaults to the governed agent; a `sentinel.alerted@1` re-emit overrides
@@ -269,11 +279,14 @@ export async function runGuarded<T>(
       try {
         const alerts = await config.arbiter.observe(envelope)
         for (const alert of alerts) {
-          await emit("sentinel.alerted", alert.payload, {
+          await emit(SENTINEL_ALERTED_EVENT_TYPE, alert.payload, {
             causal_parent_ids: alert.causal_parent_ids,
             feedArbiter: false,
-            // Attribute the alert to the sentinel actor, not the governed agent.
+            // Attribute the alert to the sentinel actor, not the governed agent,
+            // and stamp the canonical sentinel.alerted schema version (not the
+            // generic session version) so it matches the harness alert sink.
             actor_id: config.arbiter.actorId,
+            schema_version: SENTINEL_ALERTED_SCHEMA_VERSION,
           })
         }
       } catch (err) {

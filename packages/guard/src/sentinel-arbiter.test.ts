@@ -201,4 +201,26 @@ describe("SentinelArbiter", () => {
       new SentinelArbiter({ sentinels: [], runner: { actor_id: "custom-sentinel" } }).actorId,
     ).toBe("custom-sentinel")
   })
+
+  test("session-end cleanup runs even if a sentinel throws (finally)", async () => {
+    class ThrowOnEndSentinel extends Sentinel {
+      readonly name = "throws-on-end"
+      readonly description = "throws while inspecting a session-end event"
+      inspect(event: EventEnvelope): SentinelFinding[] {
+        if (event.type === "guard.session.ended") throw new Error("boom")
+        return []
+      }
+    }
+    const arbiter = new SentinelArbiter({ sentinels: [new ThrowOnEndSentinel()] })
+    arbiter.bindSession("A")
+    await arbiter.observe(
+      evt("belief.adopted", { id: "belief-X", confidence: 0.9, truth_status: "supported" }, "A"),
+    )
+    // The session-end inspection throws, but unbind still runs in the finally.
+    await expect(arbiter.observe(evt("guard.session.ended", {}, "A"))).rejects.toThrow("boom")
+    // → the session is unbound and state cleared, so the same arbiter is reusable
+    // and carries no stale beliefs.
+    expect(() => arbiter.bindSession("B")).not.toThrow()
+    expect(arbiter.resolveContext(action(undefined)).beliefs).toEqual([])
+  })
 })

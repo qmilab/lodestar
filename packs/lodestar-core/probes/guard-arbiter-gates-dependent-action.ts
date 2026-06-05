@@ -368,6 +368,15 @@ async function run(): Promise<ProbeResult> {
         details: `[1c] sentinel.alerted@1 was authored by '${String(alertActor)}'; expected the sentinel actor 'lodestar-sentinel', not the governed agent.`,
       }
     }
+    // 1d. It carries the canonical sentinel.alerted schema version, so a consumer
+    //     validating governance events by type/version accepts it (Codex round 3).
+    const alertSchemaVersion = poisonAlerts[0]?.schema_version
+    if (alertSchemaVersion !== "1") {
+      return {
+        passed: false,
+        details: `[1d] sentinel.alerted@1 was written with schema_version '${String(alertSchemaVersion)}'; expected the canonical '1'.`,
+      }
+    }
 
     // 2. Armed: the clean-belief action was NOT held — scoping holds.
     if (wasHeld(armed.controlAction)) {

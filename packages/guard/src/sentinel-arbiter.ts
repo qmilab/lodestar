@@ -188,11 +188,19 @@ export class SentinelArbiter {
     // (concurrent reuse is rejected at bindSession, so this should not occur — it
     // guards against cross-session contamination of the single-session state).
     if (event.session_id !== this.boundSession) return []
-    this.project(event)
-    const alerts = await this.runner.observe(event)
-    for (const alert of alerts) this.alerts.push(alert.payload)
-    if (this.sessionEndEventTypes.has(event.type)) this.unbind()
-    return alerts
+    const sessionEnding = this.sessionEndEventTypes.has(event.type)
+    try {
+      this.project(event)
+      const alerts = await this.runner.observe(event)
+      for (const alert of alerts) this.alerts.push(alert.payload)
+      return alerts
+    } finally {
+      // Always clear/unbind on a terminal event — even if a sentinel threw while
+      // inspecting it (the host swallows that throw best-effort). Otherwise stale
+      // state would block or poison sequential reuse of the same arbiter (Codex
+      // review, round 3).
+      if (sessionEnding) this.unbind()
+    }
   }
 
   /**
