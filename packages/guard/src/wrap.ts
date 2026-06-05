@@ -224,7 +224,7 @@ export async function runGuarded<T>(
     payload: unknown,
     options?: { causal_parent_ids?: string[] },
   ): Promise<void> => {
-    await writer.append({
+    const envelope = await writer.append({
       id: randomUUID(),
       type,
       schema_version: "0.1.0",
@@ -237,6 +237,23 @@ export async function runGuarded<T>(
       payload_hash: canonicalHash(payload),
       versions: { schema_registry_version: "0.1.0" },
     })
+    // Sentinel→action arbitration. Feed the written event to the arbiter (which
+    // runs the sentinels and projects decision.made / belief.adopted), then emit
+    // any alert it surfaces as `sentinel.alerted@1` on this same writer — so the
+    // guarded session stays the sole writer of its log. Done AFTER `append`
+    // resolves: the partition mutex is released before the re-entrant
+    // `sentinel.alerted` emit appends, and the alert lands in the buffer/log
+    // before the next action arbitrates (the gate's `resolveContext` reads it).
+    // The first-party sentinels never alert on a `sentinel.alerted` event, so the
+    // re-entry bottoms out at depth one.
+    if (config.arbiter !== undefined) {
+      const alerts = await config.arbiter.observe(envelope)
+      for (const alert of alerts) {
+        await emit("sentinel.alerted", alert.payload, {
+          causal_parent_ids: alert.causal_parent_ids,
+        })
+      }
+    }
   }
 
   const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {

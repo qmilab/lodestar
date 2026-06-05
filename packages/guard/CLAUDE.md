@@ -1,6 +1,7 @@
 # @qmilab/lodestar-guard — CLAUDE.md
 
-A meta-package. Mostly re-exports plus one helper (`wrap`).
+A meta-package. Mostly re-exports plus two helpers: `wrap` and the
+`SentinelArbiter` sentinel→action bridge.
 
 ## What lives here
 
@@ -22,7 +23,22 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
   overrides under the same `cognitive` bag rather than widening `GuardConfig`.
   `GuardConfig.policy_gate` accepts either a bare `PolicyGate` or a
   `CompiledPolicy`; `GuardConfig.approval_resolver` is the in-process seam that
-  resolves a held action (see invariant 5).
+  resolves a held action (see invariant 5); `GuardConfig.arbiter` wires the
+  sentinel→action bridge (see invariant 6).
+- `src/sentinel-arbiter.ts` — `SentinelArbiter` + `compileWithSentinels`. The
+  host-side glue that gives sentinel alerts teeth (ADR-0001,
+  `docs/architecture/policy-kernel.md` "The arbitrate hook"). The arbiter is fed
+  every emitted event (`observe`); it runs a harness `SentinelRunner`, buffers
+  the alerts that land, and projects `decision.made → belief_dependencies` and
+  `belief.adopted → { calibration_class, confidence, truth_status }` from the
+  same stream. `resolveContext(action)` turns that into the gate's
+  `ArbitrationContext` (the buffered alerts, the action's backing beliefs, an
+  optional calibration snapshot). `compileWithSentinels(policy, { sentinels, … })`
+  is the one-call form that wires the arbiter's `resolveContext` into the
+  compiled gate and returns the matched `{ gate, arbiter }` pair. This is the new
+  `guard → @qmilab/lodestar-harness` dependency. The arbiter never writes the log
+  itself — `observe()` *returns* the alerts and `wrap` emits them as
+  `sentinel.alerted@1` on its own writer, so the session stays the sole writer.
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is
@@ -70,6 +86,19 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
    resolver owns authorisation (match an approver against
    `request.required_authority` via `authorizeResolution`) and must return an
    outcome bound to the request — `resolve()` rejects a mis-bound one.
+6. **Sentinels gate only through a wired arbiter — and only when the agent
+   declares its decisions.** `GuardConfig.arbiter` is the seam; supplying it (with
+   `policy_gate` compiled from the *same* arbiter, i.e. the `compileWithSentinels`
+   pair) is the only thing that lets a sentinel alert / calibration flag /
+   low-confidence belief escalate an action. Omit it and the gate keeps its pure
+   contract+rule behaviour — sentinels still only observe. The arbiter scopes a
+   belief-subject alert to an action via `action.decision_id →
+   belief_dependencies`, so the agent must emit `decision.made` (via `ctx.emit`)
+   for belief-scoped gating to bite; an action with no decision link is gated only
+   by subject-agnostic signals (a `tool_sequence` alert). The arbiter never blocks
+   or calls back into the kernel — enforcement lives in the gate. Because
+   arbitration can produce a *hold*, `approval_resolver` (invariant 5) is required
+   alongside it.
 
 ## What does not live here
 
@@ -79,6 +108,10 @@ A meta-package. Mostly re-exports plus one helper (`wrap`).
   lifecycle from it and wires the in-process resolver seam around it).
 - The MCP proxy's deadline / out-of-band hold-resolution loop and the
   `lodestar approve` reference CLI — later host-wiring slices.
+- Sentinel→action wiring for the **MCP proxy**. The `SentinelArbiter` is reusable
+  (guard-mcp depends on guard), but the proxy's wrapped agent is opaque and cannot
+  declare `decision.made` over MCP, so it needs *synthesized* decisions — a
+  distinct mechanism deferred to a follow-up (ADR-0002).
 - Anything that consumes the event log on the read side — that's
   `@qmilab/lodestar-trace`.
 

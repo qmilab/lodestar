@@ -14,6 +14,7 @@ import type {
 } from "@qmilab/lodestar-core"
 import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 import type { CompiledPolicy } from "@qmilab/lodestar-policy-kernel"
+import type { SentinelArbiter } from "./sentinel-arbiter.js"
 
 /**
  * Resolves a held action's `ApprovalRequest` into an `ApprovalOutcome`.
@@ -128,6 +129,23 @@ export interface GuardConfig {
       beliefs: BeliefStore
     }) => EvidenceLinkerLike
   }
+
+  /**
+   * Wire sentinel→action arbitration into this session. When supplied, the host
+   * feeds every emitted event to the arbiter (which runs the sentinels and
+   * projects the chain), emits the `sentinel.alerted@1` events the arbiter
+   * surfaces, and — because the arbiter's `resolveContext` is compiled into
+   * `policy_gate` — lets a landed alert (or calibration flag, or low-confidence
+   * belief) escalate a *dependent* action to `pending_approval`.
+   *
+   * The arbiter and `policy_gate` MUST be the matched pair from
+   * `compileWithSentinels(policy, { sentinels, … })` — or hand-wired, with the
+   * gate compiled from `arbitration.resolveContext = a => arbiter.resolveContext(a)`.
+   * Passing an arbiter whose `resolveContext` is not compiled into the gate
+   * observes the stream but gates nothing (the alerts are still logged). Because
+   * arbitration can produce a *hold*, `approval_resolver` is required alongside it.
+   */
+  arbiter?: SentinelArbiter
 }
 
 /**

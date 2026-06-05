@@ -49,6 +49,7 @@
     "@qmilab/lodestar-policy-kernel": "workspace:*",
     "@qmilab/lodestar-memory-firewall": "workspace:*",
     "@qmilab/lodestar-cognitive-core": "workspace:*",
+    "@qmilab/lodestar-harness": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {
