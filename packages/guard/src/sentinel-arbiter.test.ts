@@ -245,27 +245,47 @@ describe("SentinelArbiter", () => {
     expect(arbiter.resolveContext(action(undefined)).beliefs).toEqual([])
   })
 
-  describe("drainRecentBeliefIds (opaque-agent decision source, ADR-0003)", () => {
-    test("returns adopted belief ids in order and clears the window", async () => {
+  describe("recency window: peek + consume (opaque-agent decision source, ADR-0003)", () => {
+    test("peek returns adopted belief ids in order WITHOUT clearing", async () => {
       const arbiter = new SentinelArbiter({ sentinels: [] })
       arbiter.bindSession("A")
       await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "unverified" }, "A"))
       await arbiter.observe(evt("belief.adopted", { id: "b2", truth_status: "supported" }, "A"))
 
-      expect(arbiter.drainRecentBeliefIds()).toEqual(["b1", "b2"])
-      // Drained: the next call sees only beliefs adopted since (none yet).
-      expect(arbiter.drainRecentBeliefIds()).toEqual([])
-
-      await arbiter.observe(evt("belief.adopted", { id: "b3", truth_status: "supported" }, "A"))
-      expect(arbiter.drainRecentBeliefIds()).toEqual(["b3"])
+      // Peeking is idempotent — a held action that re-proposes re-reads the same
+      // window and stays gated (the soft-denial retry case).
+      expect(arbiter.peekRecentBeliefIds()).toEqual(["b1", "b2"])
+      expect(arbiter.peekRecentBeliefIds()).toEqual(["b1", "b2"])
     })
 
-    test("dedups a re-adopted belief within the un-drained window", async () => {
+    test("consume removes only the given ids; beliefs adopted after the peek remain", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "unverified" }, "A"))
+      await arbiter.observe(evt("belief.adopted", { id: "b2", truth_status: "supported" }, "A"))
+      const snapshot = arbiter.peekRecentBeliefIds()
+
+      // The executing action also adopts a fresh belief before it consumes its
+      // snapshot — that fresh belief becomes the next action's window.
+      await arbiter.observe(evt("belief.adopted", { id: "b3", truth_status: "supported" }, "A"))
+      arbiter.consumeBeliefIds(snapshot)
+      expect(arbiter.peekRecentBeliefIds()).toEqual(["b3"])
+    })
+
+    test("consume of ids not in the window is a no-op", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      arbiter.consumeBeliefIds(["nope"])
+      expect(arbiter.peekRecentBeliefIds()).toEqual(["b1"])
+    })
+
+    test("dedups a re-adopted belief within the window", async () => {
       const arbiter = new SentinelArbiter({ sentinels: [] })
       arbiter.bindSession("A")
       await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
       await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
-      expect(arbiter.drainRecentBeliefIds()).toEqual(["b1"])
+      expect(arbiter.peekRecentBeliefIds()).toEqual(["b1"])
     })
 
     test("session end clears the window", async () => {
@@ -273,7 +293,7 @@ describe("SentinelArbiter", () => {
       arbiter.bindSession("A")
       await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
       await arbiter.observe(evt("guard.session.ended", {}, "A"))
-      expect(arbiter.drainRecentBeliefIds()).toEqual([])
+      expect(arbiter.peekRecentBeliefIds()).toEqual([])
     })
   })
 })

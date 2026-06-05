@@ -735,12 +735,14 @@ export class MCPProxy {
     // (the gate maps `action.decision_id → belief_dependencies → backing
     // beliefs`) AND its `emit` must be awaited first (so the arbiter has observed
     // the `decision.made` — firing any belief-scoped sentinel — before
-    // `arbitrate` calls `resolveContext`). No arbiter, or an empty window, leaves
+    // `arbitrate` calls `resolveContext`). It only *peeks* the window; the beliefs
+    // are consumed on execution below, so a held / denied / re-proposed action
+    // keeps re-gating from the same window. No arbiter, or an empty window, leaves
     // `decision_id` unset and the stream unchanged.
-    const decisionId = await this.synthesizeDecision()
+    const synthesized = await this.synthesizeDecision()
 
     const proposed = this.kernel.propose({
-      decision_id: decisionId,
+      decision_id: synthesized?.decisionId,
       intent: `forward MCP tool call ${req.name} via proxy`,
       tool: req.name,
       inputs: req.arguments,
@@ -784,6 +786,15 @@ export class MCPProxy {
     const executed = await this.kernel.execute(approved)
     if (executed.phase === "completed") {
       await this.emit("action.completed", executed)
+      // The action executed: consume the beliefs its decision was synthesized
+      // from, so they are "acted upon" and do not re-gate the next, genuinely
+      // different action (ADR-0003). A held / denied / failed action never
+      // reaches here, so its beliefs stay in the window and a re-proposal keeps
+      // re-gating from them — closing the soft-denial → retry bypass. Beliefs
+      // this action's own result just adopted (in `observationSink` during
+      // `execute`) are NOT in the consumed snapshot, so they correctly become the
+      // next action's window.
+      if (synthesized !== undefined) this.arbiter?.consumeBeliefIds(synthesized.beliefIds)
     } else if (executed.phase === "rejected") {
       // Precondition revalidation killed the action between
       // arbitration and execution (TOCTOU defense). Emit as
@@ -1221,16 +1232,24 @@ export class MCPProxy {
 
   /**
    * Synthesize a `decision.made` for the next action from the arbiter's
-   * causal-recency window and return its id (ADR-0003). Returns `undefined` when
-   * no arbiter is wired or the window is empty — the action then carries no
-   * decision link and is gated by contract + rule + subject-agnostic signals
-   * only, exactly as the pre-sentinel proxy. The emit is awaited so the arbiter
-   * has observed the `decision.made` (firing any belief-scoped sentinel and
-   * projecting `decision_id → belief_dependencies`) before the caller arbitrates.
+   * causal-recency window (ADR-0003). Returns the new decision id together with
+   * the belief ids it links (so the caller can {@link SentinelArbiter.consumeBeliefIds}
+   * them once the action executes), or `undefined` when no arbiter is wired or
+   * the window is empty — the action then carries no decision link and is gated
+   * by contract + rule + subject-agnostic signals only, exactly as the
+   * pre-sentinel proxy.
+   *
+   * It *peeks* the window (does not consume): a held / denied / re-proposed
+   * action must keep re-gating from the same beliefs, so consumption is deferred
+   * to actual execution. The emit is awaited so the arbiter has observed the
+   * `decision.made` (firing any belief-scoped sentinel and projecting
+   * `decision_id → belief_dependencies`) before the caller arbitrates.
    */
-  private async synthesizeDecision(): Promise<string | undefined> {
+  private async synthesizeDecision(): Promise<
+    { decisionId: string; beliefIds: string[] } | undefined
+  > {
     if (this.arbiter === undefined) return undefined
-    const beliefIds = this.arbiter.drainRecentBeliefIds()
+    const beliefIds = this.arbiter.peekRecentBeliefIds()
     if (beliefIds.length === 0) return undefined
     const id = randomUUID()
     const decision: Decision = {
@@ -1250,7 +1269,7 @@ export class MCPProxy {
     // Attribute the synthesized decision to the synthesis actor, not the agent —
     // the audit must show this link as the proxy's inference (ADR-0003).
     await this.emit("decision.made", decision, { actor_id: PROXY_DECISION_SYNTHESIS_ACTOR })
-    return id
+    return { decisionId: id, beliefIds }
   }
 
   private async emit(

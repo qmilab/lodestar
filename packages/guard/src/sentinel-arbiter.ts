@@ -133,12 +133,14 @@ export class SentinelArbiter {
   private readonly decisions = new Map<string, string[]>()
   /**
    * The causal-recency window: belief ids adopted (in order, deduped) since the
-   * last {@link drainRecentBeliefIds}. This is the opaque-agent decision source
+   * last {@link consumeBeliefIds}. This is the opaque-agent decision source
    * (ADR-0003) — a host whose wrapped agent cannot *declare* its
-   * `belief_dependencies` (the MCP proxy) drains this to synthesize a
-   * `decision.made` linking "the beliefs the agent just saw, then acted on". A
-   * host that uses declared decisions (`guard.wrap()`) simply never drains it; it
-   * is cleared on session end like the rest of the per-session state.
+   * `belief_dependencies` (the MCP proxy) {@link peekRecentBeliefIds}-s this to
+   * synthesize a `decision.made` linking "the beliefs the agent just saw, then
+   * acted on", and {@link consumeBeliefIds}-s them only once that action
+   * executes. A host that uses declared decisions (`guard.wrap()`) simply never
+   * touches it; it is cleared on session end like the rest of the per-session
+   * state.
    */
   private recentBeliefIds: string[] = []
   private calibration: CalibrationSnapshot | null
@@ -235,25 +237,41 @@ export class SentinelArbiter {
   }
 
   /**
-   * Return the belief ids adopted since the previous drain (the causal-recency
-   * window) and clear the buffer — the opaque-agent decision source (ADR-0003).
+   * Peek the causal-recency window — the belief ids adopted since the last
+   * {@link consumeBeliefIds}, as a copy (it does NOT clear the buffer). The
+   * opaque-agent decision source (ADR-0003).
    *
    * A host whose wrapped agent cannot declare its dependency edges (the MCP
    * proxy) calls this immediately before proposing an action, builds a
    * `decision.made` whose `belief_dependencies` are the returned ids, and
    * proposes the action with that decision id. The window is "since the previous
-   * action" because proxied tool-call N's beliefs are adopted during N's
-   * execution and so become the window N+1 acts on. An empty result means no
-   * decision need be synthesized (e.g. the first read of a session).
+   * action that executed" because proxied tool-call N's beliefs are adopted
+   * during N's execution and so become the window N+1 acts on. An empty result
+   * means no decision need be synthesized (e.g. the first read of a session).
    *
-   * Synchronous read-and-clear: atomic under the JS single-threaded model, so two
-   * overlapping proposes never tear the buffer (the first drains it; a concurrent
-   * propose links fewer — a documented best-effort gap, ADR-0003).
+   * Crucially this only *peeks*: the beliefs are removed from the window via
+   * {@link consumeBeliefIds} only once the dependent action actually EXECUTES.
+   * A held / denied / timed-out action never consumes, so a re-proposal of it
+   * (the proxy's soft-denial → re-plan flow) re-reads the same window and stays
+   * gated — draining at synthesis time would let a retry slip through ungated.
    */
-  drainRecentBeliefIds(): string[] {
-    const drained = this.recentBeliefIds
-    this.recentBeliefIds = []
-    return drained
+  peekRecentBeliefIds(): string[] {
+    return [...this.recentBeliefIds]
+  }
+
+  /**
+   * Remove the given belief ids from the causal-recency window — the host calls
+   * this once the action that {@link peekRecentBeliefIds}-ed them has EXECUTED,
+   * marking them "acted upon" so they do not re-gate the next, genuinely
+   * different action (ADR-0003). Ids not in the window are ignored; beliefs
+   * adopted *after* the peek (e.g. the executing action's own results) remain,
+   * becoming the next action's window. Synchronous, so it is atomic with respect
+   * to concurrent peeks.
+   */
+  consumeBeliefIds(ids: readonly string[]): void {
+    if (ids.length === 0) return
+    const remove = new Set(ids)
+    this.recentBeliefIds = this.recentBeliefIds.filter((id) => !remove.has(id))
   }
 
   private unbind(): void {

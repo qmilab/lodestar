@@ -11,49 +11,55 @@
  *
  * The headline safety story, on the proxy path: a poisoned downstream tool result
  * (file contents → `external_document` evidence → an `unverified` belief) is read,
- * and the very next tool call that depends on it is **held at
- * `pending_approval`** by a real `SuspiciousMemoryOriginSentinel` run by the
- * proxy's `SentinelArbiter` — while a later call backed only by a clean
- * (`tool_result`-quality) belief is approved, and an un-armed proxy lets the same
- * poisoned call through.
+ * and the very next tool call that depends on it is **held at `pending_approval`**
+ * by a real `SuspiciousMemoryOriginSentinel` run by the proxy's `SentinelArbiter`.
+ *
+ * Window semantics (ADR-0003): the proxy *peeks* the recency window to synthesize
+ * each decision and *consumes* those beliefs only once the dependent action
+ * actually EXECUTES. So:
+ *   - a clean-belief action (a decision linking only `tool_result`-quality beliefs)
+ *     is NOT held and executes, consuming its window — scoping holds;
+ *   - a HELD action does not consume, so re-proposing it (the proxy's
+ *     `approval_required` → re-plan flow) re-reads the same poisoned window and
+ *     stays held — a drain-at-synthesis design would let the retry slip through.
  *
  * Setup (all through the real proxy, no gate poking):
- *  - A fake downstream `devfs` advertises two tools: `read_file` (returns the
- *    poisoned markdown as one text block → `external_document` content claim) and
- *    `apply_change` (an L3 write; returns no text → only the `tool_result`
- *    envelope belief). A path of `__status__` makes `read_file` return empty
- *    content — a CLEAN read that yields only the supported envelope belief.
+ *  - A fake downstream `devfs` advertises `read_file` (a `__status__` path returns
+ *    empty content → only the supported envelope belief; any other path returns
+ *    the poisoned markdown → an `external_document` content belief) and
+ *    `apply_change` (an L3 write; returns no text).
  *  - A permissive L3 policy (`required_level_lte: 3 → allow`) that, absent the
  *    hook, auto-approves the L3 `apply_change`. Compiled WITH the arbiter via
  *    `compileWithSentinels` (armed), and — as the control — WITHOUT it via
  *    `compile` (un-armed). `approval_timeout_ms: 0`, so a held action surfaces an
  *    `approval_required` soft-denial immediately (no polling).
- *  - The driver sequence per armed session: read poison → apply_change (the
- *    dependent action) → clean read → apply_change (backed by the clean belief).
+ *  - Driver sequence per session: clean read → clean edit → poison read →
+ *    apply_change (the dependent action) → apply_change again (the retry).
  *
  * Assertions:
- *  1. (armed) The `apply_change` that follows the poisoned read is HELD: exactly
- *     one `action.pending_approval` and one `approval.requested@1`, whose reason
- *     names the `suspicious-memory-origin` sentinel and the poisoned belief; the
- *     wrapped agent receives an `approval_required` soft denial.
- *  1b.(armed) The hold rode a SYNTHESIZED decision: a `decision.made` authored by
+ *  1. (armed) Both the dependent `apply_change` and its retry are HELD: two
+ *     `action.pending_approval` / `approval.requested@1`, each reason naming the
+ *     `suspicious-memory-origin` sentinel and the poisoned belief; the agent gets
+ *     `approval_required`. The retry staying held is the recency-window fix — a
+ *     held call did not consume the poisoned window.
+ *  1b.(armed) Each hold rode a SYNTHESIZED decision authored by
  *     `lodestar-proxy-synthesis` whose `belief_dependencies` include the poisoned
- *     belief, and the held action's `decision_id` is exactly that decision — the
- *     opaque-agent decision source, made honest in the audit.
+ *     belief; the held actions' `decision_id`s are those decisions.
  *  1c.(armed) A `sentinel.alerted@1` naming the poisoned belief is on the log,
  *     authored by the sentinel actor (`lodestar-sentinel`) with schema_version 1.
- *  2. (armed) The later `apply_change` backed only by the clean belief is NOT held
- *     and completes — the buffered belief-scoped alert is scoped to the poisoned
- *     belief's dependents.
- *  3. (un-armed) Through a proxy with no arbiter, the SAME poisoned-then-act
- *     sequence sails through: no `decision.made`, no `sentinel.alerted`, no
- *     `pending_approval`, the dependent call completes. Enforcement is the proxy
- *     wiring the arbiter, not the sentinel alone. This is the line the probe pins.
+ *  2. (armed) The clean-belief `apply_change` completes and is not denied, and the
+ *     held action's synthesized decision links ONLY the poison read's beliefs —
+ *     not the earlier clean belief, which was consumed when its action executed.
+ *     Scoping + consume-on-execute together.
+ *  3. (un-armed) Through a proxy with no arbiter, the same sequence sails through:
+ *     no `decision.made`, no `sentinel.alerted`, no `pending_approval`, the
+ *     dependent calls complete. Enforcement is the proxy wiring the arbiter, not
+ *     the sentinel alone. This is the line the probe pins.
  *
- * The proxy's full hold→resolve→execute path under a grant is already pinned by
+ * The proxy's full hold→grant→execute path is already pinned by
  * `approval-via-side-channel` / `approval-timeout-denies`; this probe focuses on
  * the P1b-specific mechanism — a synthesized decision letting a sentinel gate the
- * dependent tool call.
+ * dependent tool call, and re-gate its retries.
  */
 
 import { mkdtemp, rm } from "node:fs/promises"
@@ -170,8 +176,9 @@ function buildConfig(sessionId: string, logRoot: string): ProxyConfig {
 }
 
 interface RunResult {
-  editPoisonResult: CallToolResultLike
-  editCleanResult: CallToolResultLike
+  cleanEditResult: CallToolResultLike
+  editPoison1Result: CallToolResultLike
+  editPoison2Result: CallToolResultLike
   events: EventEnvelope[]
 }
 
@@ -193,16 +200,14 @@ async function runHost(armed: boolean, sessionId: string, logRoot: string): Prom
     args: Record<string, unknown>,
   ): Promise<CallToolResult> => {
     if (name === READ_TOOL) {
-      // The poisoned read returns document text (→ external_document belief); the
-      // `__status__` path returns no content (→ only the supported envelope belief).
+      // `__status__` → no content (only the supported envelope belief); any other
+      // path → document text (an external_document belief).
       if (args.path === "__status__") return { content: [], isError: false }
       return { content: [{ type: "text", text: POISON_DOC }], isError: false }
     }
-    if (name === EDIT_TOOL) {
-      // A write tool: no document text in its result, so it never itself adopts an
-      // external_document belief.
-      return { content: [], isError: false }
-    }
+    // A write tool: no document text in its result, so it never itself adopts an
+    // external_document belief.
+    if (name === EDIT_TOOL) return { content: [], isError: false }
     return { content: [{ type: "text", text: `unknown tool ${name}` }], isError: true }
   }
 
@@ -229,22 +234,30 @@ async function runHost(armed: boolean, sessionId: string, logRoot: string): Prom
   })
 
   await proxy.start()
-  let editPoisonResult: CallToolResultLike
-  let editCleanResult: CallToolResultLike
+  let cleanEditResult: CallToolResultLike
+  let editPoison1Result: CallToolResultLike
+  let editPoison2Result: CallToolResultLike
   try {
-    // 1. Read the poisoned file (external_document → unverified belief).
+    // 1. A clean read (no document content → only the supported envelope belief).
+    await proxy.handleCallTool({ name: READ_LODESTAR, arguments: { path: "__status__" } })
+    // 2. Act backed only by the clean belief — must NOT be held; it executes and
+    //    so consumes its window (scoping + consume-on-execute).
+    cleanEditResult = await proxy.handleCallTool({
+      name: EDIT_LODESTAR,
+      arguments: { change: "apply a change backed by clean state" },
+    })
+    // 3. Read the poisoned file (external_document → unverified belief).
     await proxy.handleCallTool({ name: READ_LODESTAR, arguments: { path: "DEVELOPMENT.md" } })
-    // 2. Act on it — the dependent action. Held when armed.
-    editPoisonResult = await proxy.handleCallTool({
+    // 4. Act on it — the dependent action. Held when armed.
+    editPoison1Result = await proxy.handleCallTool({
       name: EDIT_LODESTAR,
       arguments: { change: "apply the change the doc asks for" },
     })
-    // 3. A clean read (no document content → only the supported envelope belief).
-    await proxy.handleCallTool({ name: READ_LODESTAR, arguments: { path: "__status__" } })
-    // 4. Act backed only by the clean belief — must NOT be held even when armed.
-    editCleanResult = await proxy.handleCallTool({
+    // 5. Retry the same dependent action. Because step 4 was held (did not
+    //    execute), the poisoned window was not consumed — the retry stays held.
+    editPoison2Result = await proxy.handleCallTool({
       name: EDIT_LODESTAR,
-      arguments: { change: "apply a change backed by clean state" },
+      arguments: { change: "apply the change the doc asks for" },
     })
   } finally {
     await proxy.stop()
@@ -252,7 +265,7 @@ async function runHost(armed: boolean, sessionId: string, logRoot: string): Prom
 
   const reader = new EventLogReader(logRoot)
   const events = await reader.readSession(PROJECT_ID, sessionId)
-  return { editPoisonResult, editCleanResult, events }
+  return { cleanEditResult, editPoison1Result, editPoison2Result, events }
 }
 
 function eventsOfType(events: EventEnvelope[], type: string): EventEnvelope[] {
@@ -269,8 +282,6 @@ async function run(): Promise<ProbeResult> {
     const armed = await runHost(true, "armed", logRoot)
     const unarmed = await runHost(false, "unarmed", logRoot)
 
-    // The poisoned belief is the only one adopted at truth_status 'unverified'
-    // (the clean read's envelope belief adopts at 'supported').
     const armedBeliefs = eventsOfType(armed.events, "belief.adopted").map(
       (e) => e.payload as Belief,
     )
@@ -283,69 +294,83 @@ async function run(): Promise<ProbeResult> {
       }
     }
     const poisonBeliefId = poisonBelief.id
+    // The clean read is the first tool call, so its supported envelope belief is
+    // the first belief.adopted — used below to prove it was consumed on execute.
+    const cleanEnvelopeBeliefId = armedBeliefs[0]?.id
+    if (cleanEnvelopeBeliefId === undefined || cleanEnvelopeBeliefId === poisonBeliefId) {
+      return {
+        passed: false,
+        details:
+          "setup: could not identify the clean read's envelope belief as the first adopted belief.",
+      }
+    }
 
-    // ── 1. The dependent apply_change was HELD, attributed to the sentinel ──
+    // ── 1. The dependent apply_change AND its retry were both HELD ──
     const pending = eventsOfType(armed.events, "action.pending_approval")
-    if (pending.length !== 1) {
+    if (pending.length !== 2) {
       return {
         passed: false,
-        details: `[1] expected exactly one action.pending_approval in the armed session; got ${pending.length}. The synthesized decision should have let the sentinel hold exactly the dependent action.`,
+        details: `[1] expected exactly two action.pending_approval (the held edit and its retry) in the armed session; got ${pending.length}. A held call must NOT consume the poisoned window, so the retry stays held.`,
       }
     }
-    const heldAction = pending[0]?.payload as Action
     const requests = eventsOfType(armed.events, "approval.requested")
-    if (requests.length !== 1) {
+    if (requests.length !== 2) {
       return {
         passed: false,
-        details: `[1] expected exactly one approval.requested in the armed session; got ${requests.length}.`,
+        details: `[1] expected exactly two approval.requested in the armed session; got ${requests.length}.`,
       }
     }
-    const reason = String((requests[0]?.payload as { reason?: unknown })?.reason ?? "")
-    if (!reason.includes("suspicious-memory-origin") || !reason.includes(poisonBeliefId)) {
-      return {
-        passed: false,
-        details: `[1] the hold was not attributed to the sentinel + poisoned belief. approval.requested reason: "${reason}".`,
+    for (const r of requests) {
+      const reason = String((r.payload as { reason?: unknown }).reason ?? "")
+      if (!reason.includes("suspicious-memory-origin") || !reason.includes(poisonBeliefId)) {
+        return {
+          passed: false,
+          details: `[1] a hold was not attributed to the sentinel + poisoned belief. approval.requested reason: "${reason}".`,
+        }
       }
     }
-    if (!isPolicyDeniedResult(armed.editPoisonResult)) {
-      return {
-        passed: false,
-        details:
-          "[1] the wrapped agent did not receive a soft-denial for the held action — handleCallTool should return an approval_required CallToolResult, not the downstream result.",
-      }
-    }
-    const heldKind = (
-      armed.editPoisonResult._meta as { _lodestar?: { kind?: unknown } } | undefined
-    )?._lodestar?.kind
-    if (heldKind !== "approval_required") {
-      return {
-        passed: false,
-        details: `[1] the held action's soft-denial kind was '${String(heldKind)}', expected 'approval_required' (approval_timeout_ms is 0).`,
+    for (const label of ["first", "retry"] as const) {
+      const res = label === "first" ? armed.editPoison1Result : armed.editPoison2Result
+      const kind = (res._meta as { _lodestar?: { kind?: unknown } } | undefined)?._lodestar?.kind
+      if (!isPolicyDeniedResult(res) || kind !== "approval_required") {
+        return {
+          passed: false,
+          details: `[1] the ${label} poisoned edit did not surface an approval_required soft-denial to the agent (kind='${String(kind)}').`,
+        }
       }
     }
 
-    // ── 1b. The hold rode a SYNTHESIZED decision, honestly attributed ──
-    const decisions = eventsOfType(armed.events, "decision.made")
-    const synthForHeld = decisions
-      .map((e) => e.payload as Decision)
-      .find((d) => d.id === heldAction.decision_id)
-    if (heldAction.decision_id === undefined || synthForHeld === undefined) {
+    // ── 1b. Each hold rode a SYNTHESIZED, honestly-attributed decision ──
+    const heldDecisionIds = pending.map((e) => (e.payload as Action).decision_id)
+    if (heldDecisionIds.some((id) => id === undefined)) {
       return {
         passed: false,
-        details:
-          "[1b] the held action carried no synthesized decision_id (or its decision.made was not on the log); the opaque-agent decision source did not fire.",
+        details: "[1b] a held action carried no synthesized decision_id.",
       }
     }
-    if (synthForHeld.made_by !== PROXY_DECISION_SYNTHESIS_ACTOR) {
+    const decisions = eventsOfType(armed.events, "decision.made").map((e) => e.payload as Decision)
+    const decisionsLinkingPoison = decisions.filter((d) =>
+      d.belief_dependencies.includes(poisonBeliefId),
+    )
+    if (decisionsLinkingPoison.length < 2) {
       return {
         passed: false,
-        details: `[1b] the synthesized decision was authored by '${synthForHeld.made_by}', expected the synthesis actor '${PROXY_DECISION_SYNTHESIS_ACTOR}' — a synthesized decision must not masquerade as an agent-declared one.`,
+        details: `[1b] expected at least two synthesized decisions linking the poisoned belief (the hold and its retry); got ${decisionsLinkingPoison.length} — the retry did not re-synthesize the dependency, so the window was wrongly consumed.`,
       }
     }
-    if (!synthForHeld.belief_dependencies.includes(poisonBeliefId)) {
+    for (const d of decisionsLinkingPoison) {
+      if (d.made_by !== PROXY_DECISION_SYNTHESIS_ACTOR) {
+        return {
+          passed: false,
+          details: `[1b] a synthesized decision was authored by '${d.made_by}', expected '${PROXY_DECISION_SYNTHESIS_ACTOR}' — it must not masquerade as agent-declared.`,
+        }
+      }
+    }
+    const heldDecisions = decisions.filter((d) => heldDecisionIds.includes(d.id))
+    if (!heldDecisions.every((d) => d.belief_dependencies.includes(poisonBeliefId))) {
       return {
         passed: false,
-        details: `[1b] the synthesized decision's belief_dependencies did not include the poisoned belief ${poisonBeliefId}; the recency window did not link the read-then-act dependency.`,
+        details: "[1b] a held action's own synthesized decision did not link the poisoned belief.",
       }
     }
 
@@ -365,39 +390,40 @@ async function run(): Promise<ProbeResult> {
           "[1c] no sentinel.alerted@1 naming the poisoned belief was written to the armed session log; the real sentinel did not fire through the proxy.",
       }
     }
-    if (alerts[0]?.actor_id !== SENTINEL_ACTOR) {
+    if (alerts[0]?.actor_id !== SENTINEL_ACTOR || alerts[0]?.schema_version !== "1") {
       return {
         passed: false,
-        details: `[1c] sentinel.alerted@1 was authored by '${String(alerts[0]?.actor_id)}'; expected the sentinel actor '${SENTINEL_ACTOR}', not the governed agent.`,
-      }
-    }
-    if (alerts[0]?.schema_version !== "1") {
-      return {
-        passed: false,
-        details: `[1c] sentinel.alerted@1 carried schema_version '${String(alerts[0]?.schema_version)}'; expected the canonical '1'.`,
+        details: `[1c] sentinel.alerted@1 attribution wrong: actor='${String(alerts[0]?.actor_id)}' (want '${SENTINEL_ACTOR}'), schema_version='${String(alerts[0]?.schema_version)}' (want '1').`,
       }
     }
 
-    // ── 2. The clean-belief apply_change was NOT held; it completed ──
+    // ── 2. Clean-belief action not held; the held decision is SCOPED (the earlier
+    //       clean belief was consumed when its action executed) ──
+    if (isPolicyDeniedResult(armed.cleanEditResult)) {
+      return {
+        passed: false,
+        details:
+          "[2] the clean-belief apply_change was denied; a decision linking only tool_result-quality beliefs must not gate, and it must execute.",
+      }
+    }
     const completedEdits = eventsOfType(armed.events, "action.completed")
       .map((e) => e.payload as Action)
       .filter((a) => a.tool === EDIT_LODESTAR)
     if (completedEdits.length < 1) {
       return {
         passed: false,
-        details:
-          "[2] the clean-belief apply_change did not complete in the armed session; the belief-scoped alert must not gate an action that does not lean on the poisoned belief.",
+        details: "[2] the clean-belief apply_change did not complete in the armed session.",
       }
     }
-    if (isPolicyDeniedResult(armed.editCleanResult)) {
+    if (heldDecisions.some((d) => d.belief_dependencies.includes(cleanEnvelopeBeliefId))) {
       return {
         passed: false,
         details:
-          "[2] the clean-belief apply_change received a denial; the buffered alert is scoped to the poisoned belief's dependents and must spare it.",
+          "[2] a held edit's synthesized decision still linked the earlier clean belief — it should have been consumed when the clean edit executed (consume-on-execute), leaving the window scoped to the poison read.",
       }
     }
 
-    // ── 3. Un-armed: the same poisoned-then-act sequence sails through ──
+    // ── 3. Un-armed: the same sequence sails through ──
     if (eventsOfType(unarmed.events, "decision.made").length !== 0) {
       return {
         passed: false,
@@ -415,31 +441,33 @@ async function run(): Promise<ProbeResult> {
       return {
         passed: false,
         details:
-          "[3] with no arbiter the poisoned-then-act sequence was still held; the gate must not arbitrate on signals the proxy never fed it.",
+          "[3] with no arbiter the sequence was still held; the gate must not arbitrate on signals the proxy never fed it.",
       }
     }
-    if (isPolicyDeniedResult(unarmed.editPoisonResult)) {
+    if (
+      isPolicyDeniedResult(unarmed.editPoison1Result) ||
+      isPolicyDeniedResult(unarmed.editPoison2Result)
+    ) {
       return {
         passed: false,
         details:
-          "[3] without the arbiter the dependent apply_change was denied; the sentinel alone gates nothing — only the proxy wiring the arbiter does.",
+          "[3] without the arbiter a dependent apply_change was denied; the sentinel alone gates nothing — only the proxy wiring the arbiter does.",
       }
     }
     const unarmedCompletedEdits = eventsOfType(unarmed.events, "action.completed")
       .map((e) => e.payload as Action)
       .filter((a) => a.tool === EDIT_LODESTAR)
-    if (unarmedCompletedEdits.length < 1) {
+    if (unarmedCompletedEdits.length < 2) {
       return {
         passed: false,
-        details:
-          "[3] without the arbiter the dependent apply_change did not complete; the un-armed control must let the poisoned-then-act sequence through.",
+        details: `[3] without the arbiter both dependent edits should complete; got ${unarmedCompletedEdits.length}.`,
       }
     }
 
     return {
       passed: true,
       details:
-        "Through the real MCP proxy: the proxy synthesized a decision.made (authored by lodestar-proxy-synthesis) linking the dependent apply_change to the belief laundered from the poisoned read, the SentinelArbiter ran suspicious-memory-origin over the session and flagged that belief, and the dependent action was held at pending_approval (approval.requested attributed to the sentinel + belief; agent saw approval_required). A later apply_change backed only by a clean belief completed, and an un-armed proxy let the same poisoned-then-act sequence through with no decision.made, no alert, and no hold. Enforcement lives in the proxy wiring the arbiter; the opaque agent's missing decision is supplied by synthesis (ADR-0003).",
+        "Through the real MCP proxy: a clean-belief apply_change executed (consuming its window), then a poisoned read's dependent apply_change was held at pending_approval — the proxy synthesized a decision (authored by lodestar-proxy-synthesis) linking the laundered belief, the SentinelArbiter flagged it, and the held decision was scoped to the poison read (the earlier clean belief had been consumed on execute). Re-proposing the held edit stayed held (a held call does not consume the window), and an un-armed proxy let the whole sequence through. Enforcement lives in the proxy wiring the arbiter; the opaque agent's missing decision is supplied by synthesis, and a soft-denied call cannot drain its way out of the gate (ADR-0003).",
     }
   } finally {
     await rm(logRoot, { recursive: true, force: true })

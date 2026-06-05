@@ -191,9 +191,13 @@ Cognitive Core. The resulting event log is renderable by
     wired (`MCPProxyOverrides.arbiter`, with `policyGate` compiled from the *same*
     arbiter via `compileProxyPolicyWithSentinels`), the proxy **synthesizes** a
     `decision.made` per action from the arbiter's causal-recency window
-    (`drainRecentBeliefIds()` — the beliefs adopted since the previous action,
-    which land in `observationSink` *after* the prior call executes) and proposes
-    the action with that `decision_id`. That gives a belief-scoped sentinel alert
+    (`peekRecentBeliefIds()` — the beliefs adopted since the previous *executed*
+    action, which land in `observationSink` *after* the prior call executes) and
+    proposes the action with that `decision_id`. It *peeks* (does not drain) at
+    synthesis and `consumeBeliefIds()`-consumes those beliefs only when the action
+    actually executes (`completed`) — so a held / denied / re-proposed action
+    keeps re-gating from the same window (a soft-denied `tools/call` cannot drain
+    its way out of the gate; Codex P1 round 2). That gives a belief-scoped sentinel alert
     the `decision.made` it fires on and the gate the `decision_id →
     belief_dependencies` thread it scopes by, so a poisoned-read-then-act sequence
     is held at `pending_approval` through the existing hold path. The synthesized
@@ -211,10 +215,12 @@ Cognitive Core. The resulting event log is renderable by
     set but no arbiter was injected (same shape as the `policy` / `persistence`
     guards). The proxy never resolves sentinel ids itself; the CLI resolves them
     against `FIRST_PARTY_SENTINELS` and injects the arbiter.
-    The window is drained-on-synthesis (precise, scoped) and its concurrency
-    posture (overlapping calls under-attribute) is the documented best-effort gap
-    in ADR-0003. The `mcp-proxy-arbiter-gates-dependent-action` probe pins all of
-    this end-to-end; it must keep passing.
+    The window is peeked-at-synthesis / consumed-on-execution (so a held call's
+    beliefs re-gate its retry; scoping stays legible across the execute boundary)
+    and its concurrency posture (overlapping calls over-attribute) is the
+    documented best-effort gap in ADR-0003. The
+    `mcp-proxy-arbiter-gates-dependent-action` probe pins all of this end-to-end —
+    including that a re-proposed held edit stays held; it must keep passing.
 
 ## Persistence
 
@@ -284,7 +290,8 @@ want auto-approved at lower trust levels.
 - HTTP transport for the upstream face — Batch later.
 - The `SentinelArbiter` itself — `@qmilab/lodestar-guard` (ADR-0001). This package
   *uses* it (wires the feed + synthesizes decisions, see invariant 10); the
-  reusable bridge and the `drainRecentBeliefIds()` recency window live in guard.
+  reusable bridge and the `peekRecentBeliefIds()` / `consumeBeliefIds()` recency
+  window live in guard.
 - Resolving sentinel **ids** (`config.sentinels`) against the
   `FIRST_PARTY_SENTINELS` registry — the CLI does that and passes resolved
   `Sentinel` instances to `compileProxyPolicyWithSentinels`, so this package never
