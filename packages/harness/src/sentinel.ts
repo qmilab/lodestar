@@ -110,7 +110,14 @@ export interface SentinelRunnerOptions {
   sessionEndEventTypes?: readonly string[]
 }
 
-const DEFAULT_SENTINEL_ACTOR = "lodestar-sentinel"
+/**
+ * The `actor_id` attributed to emitted `sentinel.alerted@1` envelopes when a host
+ * does not override it. Sentinels are neither a human nor the agent; this names
+ * the sentinel layer so the audit trail is unambiguous. Exported so a host that
+ * emits alerts on its own writer (e.g. the guard `SentinelArbiter`) attributes
+ * them to the same actor the runner's sink would.
+ */
+export const DEFAULT_SENTINEL_ACTOR = "lodestar-sentinel"
 /**
  * Event types that mean "this session is over" — the {@link SentinelRunner}
  * frees per-session sentinel state on any of these. Exported so a host that

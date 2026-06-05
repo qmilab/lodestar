@@ -223,7 +223,7 @@ export async function runGuarded<T>(
   const emit = async (
     type: string,
     payload: unknown,
-    options?: { causal_parent_ids?: string[]; feedArbiter?: boolean },
+    options?: { causal_parent_ids?: string[]; feedArbiter?: boolean; actor_id?: string },
   ): Promise<void> => {
     const envelope = await writer.append({
       id: randomUUID(),
@@ -231,7 +231,9 @@ export async function runGuarded<T>(
       schema_version: "0.1.0",
       project_id: config.project_id,
       session_id,
-      actor_id: config.actor_id,
+      // Defaults to the governed agent; a `sentinel.alerted@1` re-emit overrides
+      // it with the sentinel actor so the audit shows who authored the alert.
+      actor_id: options?.actor_id ?? config.actor_id,
       timestamp: new Date().toISOString(),
       causal_parent_ids: options?.causal_parent_ids ?? [],
       payload,
@@ -270,6 +272,8 @@ export async function runGuarded<T>(
           await emit("sentinel.alerted", alert.payload, {
             causal_parent_ids: alert.causal_parent_ids,
             feedArbiter: false,
+            // Attribute the alert to the sentinel actor, not the governed agent.
+            actor_id: config.arbiter.actorId,
           })
         }
       } catch (err) {
@@ -637,6 +641,12 @@ export async function runGuarded<T>(
       await emit("decision.made", validated)
     },
   }
+
+  // Bind the arbiter to this session before any event flows, so `resolveContext`
+  // reports THIS session (never "whichever was observed last") and a second
+  // concurrent guarded session sharing the same arbiter is rejected loudly here
+  // rather than silently cross-talking (Codex review, round 2).
+  config.arbiter?.bindSession(session_id)
 
   await emit("guard.session.started", {
     project_id: config.project_id,

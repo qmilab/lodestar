@@ -359,6 +359,15 @@ async function run(): Promise<ProbeResult> {
           "[1b] no sentinel.alerted@1 naming the poisoned belief was written to the armed session log; the real sentinel did not fire through the host.",
       }
     }
+    // 1c. The alert is attributed to the SENTINEL actor, not the governed agent —
+    //     audit attribution is correct (Codex review, round 2).
+    const alertActor = poisonAlerts[0]?.actor_id
+    if (alertActor !== "lodestar-sentinel") {
+      return {
+        passed: false,
+        details: `[1c] sentinel.alerted@1 was authored by '${String(alertActor)}'; expected the sentinel actor 'lodestar-sentinel', not the governed agent.`,
+      }
+    }
 
     // 2. Armed: the clean-belief action was NOT held — scoping holds.
     if (wasHeld(armed.controlAction)) {

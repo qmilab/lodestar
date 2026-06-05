@@ -59,6 +59,7 @@ export {
 export { eventLogRecorder, type EventLogRecorderConfig } from "./recorder.js"
 
 export {
+  DEFAULT_SENTINEL_ACTOR,
   DEFAULT_SESSION_END_EVENTS,
   Sentinel,
   SentinelRunner,

@@ -7,6 +7,7 @@ import {
   type TruthStatus,
 } from "@qmilab/lodestar-core"
 import {
+  DEFAULT_SENTINEL_ACTOR,
   DEFAULT_SESSION_END_EVENTS,
   type Sentinel,
   type SentinelAlert,
@@ -98,40 +99,38 @@ export interface SentinelArbiterOptions {
  * arbiter *projects* their outputs into the gate's input. It never calls back
  * into the Action Kernel and never blocks — enforcement lives in the gate.
  */
-/** Per-session projection state (see {@link SentinelArbiter}). */
-interface SessionState {
-  /**
-   * Landed alert payloads for this session, in arrival order (freed when the
-   * session ends). The gate scopes them per action by backing-belief id — but a
-   * subject-agnostic `tool_sequence` alert gates *every* subsequent action in its
-   * session until end. A bounded recency window is a deferred refinement (PR #54
-   * review, F4); for v0 the session-scoped buffer is the conservative choice — it
-   * never drops an alert that should still gate.
-   */
-  alerts: SentinelAlertPayload[]
-  /** belief_id → backing fields, projected from this session's `belief.adopted`. */
-  beliefs: Map<string, BackingBelief>
-  /** decision_id → belief_dependencies, projected from this session's `decision.made`. */
-  decisions: Map<string, string[]>
-}
-
 export class SentinelArbiter {
   private readonly runner: SentinelRunner
   private readonly sessionEndEventTypes: ReadonlySet<string>
   /**
-   * Projection state keyed by `event.session_id`. Keyed (not flat) so one arbiter
-   * reused across guarded sessions can never let one session's alerts gate
-   * another's, nor let a session-end event for one session clear another's caches
-   * (PR #54 review, F2 / Codex P2).
+   * The `actor_id` attributed to the `sentinel.alerted@1` events a host emits
+   * from this arbiter's findings. Sentinels are neither the agent nor a human;
+   * this names the sentinel/runner so the audit trail shows who authored an
+   * alert, not the governed agent (Codex review, round 2).
    */
-  private readonly bySession = new Map<string, SessionState>()
+  readonly actorId: string
   /**
-   * The session_id of the most recently observed event — the session
-   * `resolveContext` reports for. Guard arbitrates an action immediately after
-   * emitting its `action.proposed`, so this is that action's session; the arbiter
-   * is single-active-session by construction.
+   * The single session this arbiter governs. The arbiter is **single-session by
+   * construction**: a host binds it (via {@link bindSession}, or lazily on the
+   * first observed event) and `resolveContext` reports exactly that session — it
+   * never infers a session from "whichever event was seen last", which would race
+   * under concurrent reuse. Reuse across a *second concurrent* session is rejected
+   * loudly at {@link bindSession}; sequential reuse is fine (a session-end unbinds
+   * and clears).
    */
-  private currentSession: string | undefined
+  private boundSession: string | undefined
+  /**
+   * Landed alert payloads for the bound session, in arrival order (cleared when it
+   * ends). The gate scopes them per action by backing-belief id — but a
+   * subject-agnostic `tool_sequence` alert gates *every* subsequent action until
+   * session end. A bounded recency window is a deferred refinement (PR #54 review,
+   * F4); for v0 the session-scoped buffer is the conservative choice.
+   */
+  private alerts: SentinelAlertPayload[] = []
+  /** belief_id → backing fields, projected from the bound session's `belief.adopted`. */
+  private readonly beliefs = new Map<string, BackingBelief>()
+  /** decision_id → belief_dependencies, projected from the bound session's `decision.made`. */
+  private readonly decisions = new Map<string, string[]>()
   private calibration: CalibrationSnapshot | null
 
   constructor(options: SentinelArbiterOptions) {
@@ -145,16 +144,34 @@ export class SentinelArbiter {
     this.sessionEndEventTypes = new Set(
       options.runner?.sessionEndEventTypes ?? DEFAULT_SESSION_END_EVENTS,
     )
+    this.actorId = options.runner?.actor_id ?? DEFAULT_SENTINEL_ACTOR
     this.calibration = options.calibration ?? null
+  }
+
+  /**
+   * Bind this arbiter to the one session it governs — the host calls this once at
+   * session start. Throws if a *different* session is still active: the arbiter is
+   * single-session, so create one (e.g. via {@link compileWithSentinels}) per
+   * guarded session. Idempotent for the same session id. A session-end event seen
+   * by {@link observe} unbinds it, so the *same* arbiter may serve a later session
+   * sequentially.
+   */
+  bindSession(sessionId: string): void {
+    if (this.boundSession !== undefined && this.boundSession !== sessionId) {
+      throw new Error(
+        `SentinelArbiter is single-session: session '${this.boundSession}' is still active — create one arbiter per guarded session (e.g. one compileWithSentinels() call each).`,
+      )
+    }
+    this.boundSession = sessionId
   }
 
   /**
    * Feed one event to the arbiter. Updates the backing-belief / decision
    * projections and runs the sentinels, buffering any alerts that land for
    * {@link resolveContext}. Returns the alerts produced *by this event* so the
-   * host can emit them as `sentinel.alerted@1` on its own writer. Frees
-   * per-session state on a session-end event (after inspection, so a sentinel
-   * still sees the terminating event).
+   * host can emit them as `sentinel.alerted@1` on its own writer. A session-end
+   * event clears state and unbinds (after inspection, so a sentinel still sees the
+   * terminating event).
    */
   async observe(event: EventEnvelope): Promise<SentinelAlert[]> {
     // Never feed the arbiter its own output. The host emits each landed alert as
@@ -164,49 +181,46 @@ export class SentinelArbiter {
     // project, so skip it wholesale — the depth-one guarantee then holds for ANY
     // sentinel set, not only the first-party ones (PR #54 review, F5).
     if (event.type === SENTINEL_ALERTED_EVENT_TYPE) return []
-    this.currentSession = event.session_id
-    const state = this.stateFor(event.session_id)
-    this.project(event, state)
+    // Lazy-bind for hosts that drive observe() directly (e.g. tests); runGuarded
+    // binds explicitly at session start.
+    if (this.boundSession === undefined) this.boundSession = event.session_id
+    // Defensive: an event from a different session than the bound one is ignored
+    // (concurrent reuse is rejected at bindSession, so this should not occur — it
+    // guards against cross-session contamination of the single-session state).
+    if (event.session_id !== this.boundSession) return []
+    this.project(event)
     const alerts = await this.runner.observe(event)
-    for (const alert of alerts) state.alerts.push(alert.payload)
-    // Free only THIS session's state on its own end — never another session's.
-    if (this.sessionEndEventTypes.has(event.type)) this.bySession.delete(event.session_id)
+    for (const alert of alerts) this.alerts.push(alert.payload)
+    if (this.sessionEndEventTypes.has(event.type)) this.unbind()
     return alerts
   }
 
   /**
-   * Build the gate's read-only {@link ArbitrationContext} for one action, from
-   * the most recently observed session's projections. Pure and synchronous
-   * (reads only in-memory state), so a host can re-run it deterministically after
-   * a park — handing the *same* snapshot the gate saw.
+   * Build the gate's read-only {@link ArbitrationContext} for the bound session's
+   * action. Pure and synchronous (reads only in-memory state), so a host can
+   * re-run it deterministically after a park — handing the *same* snapshot the
+   * gate saw.
    */
   resolveContext(action: Action): ArbitrationContext {
-    const state =
-      this.currentSession !== undefined ? this.bySession.get(this.currentSession) : undefined
-    if (state === undefined) {
-      return { alerts: [], beliefs: [], calibration: this.calibration }
-    }
     return {
       // Copy so the gate can never observe a later `observe()` mutating the
       // buffer mid-evaluation (it consumes synchronously, but be defensive).
-      alerts: [...state.alerts],
-      beliefs: this.backingBeliefsFor(action, state),
+      alerts: [...this.alerts],
+      beliefs: this.backingBeliefsFor(action),
       calibration: this.calibration,
     }
-  }
-
-  private stateFor(sessionId: string): SessionState {
-    let state = this.bySession.get(sessionId)
-    if (state === undefined) {
-      state = { alerts: [], beliefs: new Map(), decisions: new Map() }
-      this.bySession.set(sessionId, state)
-    }
-    return state
   }
 
   /** Replace the calibration snapshot consulted by the calibration-flag signal. */
   setCalibration(snapshot: CalibrationSnapshot | null): void {
     this.calibration = snapshot
+  }
+
+  private unbind(): void {
+    this.boundSession = undefined
+    this.alerts = []
+    this.beliefs.clear()
+    this.decisions.clear()
   }
 
   /**
@@ -216,24 +230,24 @@ export class SentinelArbiter {
    * seen simply yields fewer (or no) backing beliefs — the same "cannot trip a
    * rule it has not seen" discipline the sentinels follow.
    */
-  private backingBeliefsFor(action: Action, state: SessionState): BackingBelief[] {
+  private backingBeliefsFor(action: Action): BackingBelief[] {
     if (action.decision_id === undefined) return []
-    const dependencies = state.decisions.get(action.decision_id)
+    const dependencies = this.decisions.get(action.decision_id)
     if (dependencies === undefined) return []
     const out: BackingBelief[] = []
     for (const id of dependencies) {
-      const belief = state.beliefs.get(id)
+      const belief = this.beliefs.get(id)
       if (belief !== undefined) out.push(belief)
     }
     return out
   }
 
-  private project(event: EventEnvelope, state: SessionState): void {
+  private project(event: EventEnvelope): void {
     if (event.type === "belief.adopted") {
       const parsed = ArbiterBeliefView.safeParse(event.payload)
       if (!parsed.success) return
       const v = parsed.data
-      state.beliefs.set(v.id, {
+      this.beliefs.set(v.id, {
         id: v.id,
         // A real `belief.adopted` always carries all three fields; these defaults
         // only apply to a malformed/partial payload, and they fail CLOSED (the
@@ -249,7 +263,7 @@ export class SentinelArbiter {
     }
     if (event.type === "decision.made") {
       const decision = asDecisionView(event.payload)
-      if (decision !== null) state.decisions.set(decision.id, decision.belief_dependencies ?? [])
+      if (decision !== null) this.decisions.set(decision.id, decision.belief_dependencies ?? [])
     }
     // NOTE (deferred — PR #54 review, F1): the belief cache reflects
     // `belief.adopted` only. A later `firewall.belief.transitioned` (e.g. a

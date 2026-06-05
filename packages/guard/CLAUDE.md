@@ -34,8 +34,13 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   every host-authored event (`observe`); it runs a harness `SentinelRunner`,
   buffers the alerts that land, and projects `decision.made → belief_dependencies`
   and `belief.adopted → { calibration_class, confidence, truth_status }` from the
-  same stream — all keyed by `event.session_id`, so the arbiter is
-  single-active-session and never leaks state across sessions. `resolveContext(action)` turns that into the gate's
+  same stream. It is **single-session**: a host binds it (`bindSession`, or lazily
+  on the first event) and `resolveContext` reports exactly that session — never
+  "whichever event was seen last" (which would race under concurrent reuse). A
+  second concurrent session on the same arbiter is rejected loudly at
+  `bindSession`; a session-end unbinds and clears, so sequential reuse is fine. It
+  also exposes `actorId` (the sentinel actor) so the host attributes
+  `sentinel.alerted@1` to the sentinel, not the agent. `resolveContext(action)` turns that into the gate's
   `ArbitrationContext` (the buffered alerts, the action's backing beliefs, an
   optional calibration snapshot). `compileWithSentinels(policy, { sentinels, … })`
   is the one-call form that wires the arbiter's `resolveContext` into the
@@ -110,10 +115,14 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    `feedArbiter: false`). That is the security boundary: an agent loop must not be
    able to forge a `guard.session.ended` (to clear buffered alerts) or a
    `belief.adopted` (to overwrite a flagged belief) and bypass the gate it is
-   subject to. The arbiter keys all projection state by `event.session_id`, so one
-   reused arbiter never lets one session's alerts gate another's or lets a
-   session-end for one session clear another's (it is single-active-session by
-   construction). The feed is **best-effort and non-blocking**: a throw from a
+   subject to. The arbiter is **single-session**: `runGuarded` binds it
+   (`bindSession`) at session start, `resolveContext` reports that one session
+   (never "whichever event was seen last"), and a second concurrent session on the
+   same arbiter throws at `bindSession` rather than silently cross-talking; a
+   session-end unbinds and clears, so sequential reuse is fine. A host emits the
+   arbiter's `sentinel.alerted@1` with the sentinel `actorId`, so the audit
+   attributes the alert to the sentinel, not the governed agent. The feed is
+   **best-effort and non-blocking**: a throw from a
    sentinel (or a finding that fails schema validation) is caught in `emit`, logged
    as a `guard.sentinel.failed` status event, and swallowed — a faulty/hostile
    sentinel degrades observability but never aborts the governed session. The

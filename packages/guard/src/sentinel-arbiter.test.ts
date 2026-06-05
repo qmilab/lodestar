@@ -170,9 +170,9 @@ describe("SentinelArbiter", () => {
     expect(ctx.beliefs).toEqual([])
   })
 
-  test("per-session isolation: one session's state never leaks into another", async () => {
+  test("single-session: rejects a concurrent second session, allows sequential reuse", async () => {
     const arbiter = new SentinelArbiter({ sentinels: [new StubSentinel()] })
-    // Session A accrues a belief, a decision, and an alert.
+    arbiter.bindSession("A")
     await arbiter.observe(
       evt("belief.adopted", { id: "belief-X", confidence: 0.9, truth_status: "supported" }, "A"),
     )
@@ -180,15 +180,25 @@ describe("SentinelArbiter", () => {
       evt("decision.made", { id: "d1", belief_dependencies: ["belief-X"] }, "A"),
     )
     await arbiter.observe(evt("trigger", {}, "A"))
-    // Session B observes an unrelated event; resolveContext now reports B.
-    await arbiter.observe(evt("belief.adopted", { id: "belief-Z" }, "B"))
-    const inB = arbiter.resolveContext(action("d1"))
-    expect(inB.alerts).toEqual([]) // A's alert must not gate B
-    expect(inB.beliefs).toEqual([]) // A's decision/belief must not resolve in B
-
-    // A session-end for B must not wipe A's state.
-    await arbiter.observe(evt("guard.session.ended", {}, "B"))
-    await arbiter.observe(evt("noise", {}, "A")) // back to session A
     expect(arbiter.resolveContext(action("d1")).alerts).toHaveLength(1)
+
+    // A second, concurrent session on the same arbiter is rejected loudly — never
+    // a silent cross-talk via "last observed session".
+    expect(() => arbiter.bindSession("B")).toThrow(/single-session/)
+    // A stray B event while A is bound is ignored, not absorbed into A's state.
+    await arbiter.observe(evt("trigger", {}, "B"))
+    expect(arbiter.resolveContext(action("d1")).alerts).toHaveLength(1)
+
+    // After A ends, the SAME arbiter may serve a later session, with state cleared.
+    await arbiter.observe(evt("guard.session.ended", {}, "A"))
+    expect(() => arbiter.bindSession("B")).not.toThrow()
+    expect(arbiter.resolveContext(action("d1")).alerts).toEqual([])
+  })
+
+  test("exposes the sentinel actor for alert attribution", () => {
+    expect(new SentinelArbiter({ sentinels: [] }).actorId).toBe("lodestar-sentinel")
+    expect(
+      new SentinelArbiter({ sentinels: [], runner: { actor_id: "custom-sentinel" } }).actorId,
+    ).toBe("custom-sentinel")
   })
 })
