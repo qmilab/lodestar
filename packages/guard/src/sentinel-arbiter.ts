@@ -271,7 +271,17 @@ export class SentinelArbiter {
     }
     if (event.type === "decision.made") {
       const decision = asDecisionView(event.payload)
-      if (decision !== null) this.decisions.set(decision.id, decision.belief_dependencies ?? [])
+      if (decision !== null) {
+        // Union, never narrow: a second `decision.made` for the same id can only
+        // ADD backing beliefs, never drop one a sentinel may already have flagged.
+        // A later duplicate with an empty/narrower list must not be able to fail a
+        // belief-scoped hold open — the same monotonic strengthen-only discipline
+        // as the alert buffer and the gate (Codex review, round 4).
+        const existing = this.decisions.get(decision.id) ?? []
+        this.decisions.set(decision.id, [
+          ...new Set([...existing, ...(decision.belief_dependencies ?? [])]),
+        ])
+      }
     }
     // NOTE (deferred — PR #54 review, F1): the belief cache reflects
     // `belief.adopted` only. A later `firewall.belief.transitioned` (e.g. a

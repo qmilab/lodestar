@@ -72,6 +72,27 @@ describe("SentinelArbiter", () => {
     ])
   })
 
+  test("decision dependencies are monotonic: a duplicate can add but never narrow", async () => {
+    const arbiter = new SentinelArbiter({ sentinels: [] })
+    await arbiter.observe(
+      evt("belief.adopted", { id: "belief-X", confidence: 0.9, truth_status: "supported" }),
+    )
+    await arbiter.observe(
+      evt("belief.adopted", { id: "belief-Y", confidence: 0.9, truth_status: "supported" }),
+    )
+    await arbiter.observe(evt("decision.made", { id: "d1", belief_dependencies: ["belief-X"] }))
+    // A later duplicate that ADDS a belief unions it in.
+    await arbiter.observe(evt("decision.made", { id: "d1", belief_dependencies: ["belief-Y"] }))
+    // A later duplicate that NARROWS (empty) cannot drop the flagged belief-X.
+    await arbiter.observe(evt("decision.made", { id: "d1", belief_dependencies: [] }))
+    expect(
+      arbiter
+        .resolveContext(action("d1"))
+        .beliefs?.map((b) => b.id)
+        .sort(),
+    ).toEqual(["belief-X", "belief-Y"])
+  })
+
   test("an action with no decision link has no backing beliefs", async () => {
     const arbiter = new SentinelArbiter({ sentinels: [] })
     await arbiter.observe(
