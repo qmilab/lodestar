@@ -1,11 +1,13 @@
 import { dirname, resolve } from "node:path"
-import type { CompiledPolicy } from "@qmilab/lodestar-guard"
+import type { CompiledPolicy, SentinelArbiter } from "@qmilab/lodestar-guard"
 import {
   MCPProxy,
   type MCPProxyOverrides,
   compileProxyPolicy,
+  compileProxyPolicyWithSentinels,
   loadProxyConfig,
 } from "@qmilab/lodestar-guard-mcp"
+import { FIRST_PARTY_SENTINELS } from "@qmilab/lodestar-harness"
 
 /**
  * `lodestar guard mcp-proxy --config <path>`
@@ -87,11 +89,40 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
   // the CLI owns the I/O and signature check (same separation as persistence)
   // and injects the resulting CompiledPolicy via the policyGate seam. The
   // `file` path resolves against the config file's own directory.
+  // Declared sentinels (ADR-0003) arm the gate's arbitrate hook. They require a
+  // declarative `policy` to compile *with* arbitration (the `ProxyConfigSchema`
+  // already rejects a `sentinels`-without-`policy` config at load). Resolve the
+  // ids against the first-party registry here — the CLI owns the registry, so the
+  // proxy package stays free of a harness runtime dependency.
+  const declaredSentinelIds = config.sentinels ?? []
   let policyOverride: CompiledPolicy | undefined
+  let arbiterOverride: SentinelArbiter | undefined
   if (config.policy !== undefined) {
     try {
-      policyOverride = await compileProxyPolicy(config.policy, dirname(resolved))
-      process.stderr.write(`[mcp-proxy] policy gate compiled from ${config.policy.file}\n`)
+      if (declaredSentinelIds.length > 0) {
+        const sentinels = declaredSentinelIds.map((id) => {
+          const factory = FIRST_PARTY_SENTINELS[id]
+          if (factory === undefined) {
+            throw new Error(
+              `unknown sentinel id '${id}' — known: ${Object.keys(FIRST_PARTY_SENTINELS).join(", ")}`,
+            )
+          }
+          return factory()
+        })
+        const compiled = await compileProxyPolicyWithSentinels(
+          config.policy,
+          dirname(resolved),
+          sentinels,
+        )
+        policyOverride = compiled.gate
+        arbiterOverride = compiled.arbiter
+        process.stderr.write(
+          `[mcp-proxy] policy gate compiled from ${config.policy.file} with ${sentinels.length} sentinel(s): ${declaredSentinelIds.join(", ")}\n`,
+        )
+      } else {
+        policyOverride = await compileProxyPolicy(config.policy, dirname(resolved))
+        process.stderr.write(`[mcp-proxy] policy gate compiled from ${config.policy.file}\n`)
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       process.stderr.write(`[mcp-proxy] policy invalid: ${message}\n`)
@@ -155,6 +186,7 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
   const overrides: MCPProxyOverrides = {}
   if (storeOverride !== undefined) overrides.stores = storeOverride
   if (policyOverride !== undefined) overrides.policyGate = policyOverride
+  if (arbiterOverride !== undefined) overrides.arbiter = arbiterOverride
   const proxy = new MCPProxy(config, overrides)
   process.stderr.write(`[mcp-proxy] session ${proxy.session_id}\n`)
   process.stderr.write(`[mcp-proxy] log root ${proxy.log_root}\n`)

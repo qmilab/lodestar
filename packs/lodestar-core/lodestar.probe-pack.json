@@ -116,6 +116,10 @@
       "file": "probes/guard-arbiter-gates-dependent-action.ts"
     },
     {
+      "name": "mcp-proxy-arbiter-gates-dependent-action",
+      "file": "probes/mcp-proxy-arbiter-gates-dependent-action.ts"
+    },
+    {
       "name": "guard-hold-resolves-via-resolver",
       "file": "probes/guard-hold-resolves-via-resolver.ts"
     },

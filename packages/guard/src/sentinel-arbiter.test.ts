@@ -244,4 +244,38 @@ describe("SentinelArbiter", () => {
     expect(() => arbiter.bindSession("B")).not.toThrow()
     expect(arbiter.resolveContext(action(undefined)).beliefs).toEqual([])
   })
+
+  describe("observedBeliefIds: cumulative dependency set (opaque-agent decision source, ADR-0003)", () => {
+    test("returns every observed belief id in order, and is never reduced by reading it", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "unverified" }, "A"))
+      await arbiter.observe(evt("belief.adopted", { id: "b2", truth_status: "supported" }, "A"))
+
+      // Reading is idempotent and accumulates — a held action that re-proposes
+      // re-reads the same set and stays gated (the soft-denial retry case), and a
+      // later action still sees the earlier belief (the low-trust filler case).
+      expect(arbiter.observedBeliefIds()).toEqual(["b1", "b2"])
+      expect(arbiter.observedBeliefIds()).toEqual(["b1", "b2"])
+
+      await arbiter.observe(evt("belief.adopted", { id: "b3", truth_status: "supported" }, "A"))
+      expect(arbiter.observedBeliefIds()).toEqual(["b1", "b2", "b3"])
+    })
+
+    test("dedups a re-adopted belief", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      expect(arbiter.observedBeliefIds()).toEqual(["b1"])
+    })
+
+    test("session end clears the set", async () => {
+      const arbiter = new SentinelArbiter({ sentinels: [] })
+      arbiter.bindSession("A")
+      await arbiter.observe(evt("belief.adopted", { id: "b1", truth_status: "supported" }, "A"))
+      await arbiter.observe(evt("guard.session.ended", {}, "A"))
+      expect(arbiter.observedBeliefIds()).toEqual([])
+    })
+  })
 })

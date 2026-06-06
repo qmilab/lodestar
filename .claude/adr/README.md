@@ -51,3 +51,7 @@ The options we rejected, each with a one-line reason.
 - [ADR-0002](0002-p1-host-sequencing-and-proxy-decision-synthesis.md) — P1
   host sequencing: guard.wrap() first (agent-declared decisions), MCP proxy as
   an immediate follow-up (synthesized decisions).
+- [ADR-0003](0003-proxy-decision-synthesis-window.md) — MCP-proxy decision
+  synthesis: the conservative belief-dependency set (cumulative, never reduced by
+  execution — so an opaque agent can't drain its obligations) and honest
+  synthesized-decision attribution.

@@ -10,7 +10,7 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
 ## What lives here
 
 - `src/gate.ts` — `compile(policy, options) → CompiledPolicy`. A `CompiledPolicy`
-  is `{ gate, evaluate }`: `gate` is the `PolicyGate` the Action Kernel calls;
+  is `{ gate, evaluate, bindingToken? }`: `gate` is the `PolicyGate` the Action Kernel calls;
   `evaluate(action, context?)` is the pure, richer verdict the host re-runs on a
   hold to learn the matched rule's `required_authority`. Inside: the **trust-ladder
   floor** (applied before any rule), the ordered **first-decisive** rule list
@@ -19,6 +19,9 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   the gate consults a host-injected `ArbitrationContext` (recent
   `sentinel.alerted@1` payloads, a `CalibrationSnapshot`, the action's backing
   beliefs) and lets it *strengthen* (never weaken) the contract+rule verdict.
+  `bindingToken` is an opaque value `options.arbitration.bindingToken` passes
+  through (the kernel never reads it) so a host can verify a `{ gate, arbiter }`
+  pair was compiled together — the guard-mcp proxy rejects a mismatch.
 - `src/approval.ts` — the approval lifecycle: `openApprovalRequest()` builds the
   `ApprovalRequest` for a held action (mapping the action's `data_sensitivity`
   into the 4-value clearance via the Action Kernel's `sensitivityForContract`);

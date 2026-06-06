@@ -130,6 +130,15 @@ export interface ArbitrationContext {
 export interface ArbitrationConfig {
   resolveContext: (action: Action) => ArbitrationContext | Promise<ArbitrationContext>
   escalation?: EscalationConfig
+  /**
+   * An opaque token identifying the arbiter whose `resolveContext` is wired here.
+   * The kernel does not use it; it is stamped onto {@link CompiledPolicy.bindingToken}
+   * so a host can verify a `{ gate, arbiter }` pair was compiled *together* (a gate
+   * compiled without arbitration, or from a different arbiter, carries a different
+   * token, so its alerts would never gate). `compileWithSentinels` sets it to the
+   * arbiter's token; a host hand-wiring the two passes the same value to both.
+   */
+  bindingToken?: string
 }
 
 /**
@@ -163,6 +172,14 @@ export interface CompiledPolicy {
    * is invisible to a contract-only re-run.
    */
   evaluate(action: Action, context?: ArbitrationContext): PolicyEvaluation
+  /**
+   * The {@link ArbitrationConfig.bindingToken} this gate was compiled with, if
+   * any. A host that injects a `{ gate, arbiter }` pair can assert
+   * `gate.bindingToken === arbiter.bindingToken` to fail fast on a mismatched
+   * pair (a gate compiled without arbitration, or from a different arbiter, whose
+   * alerts would silently never gate). `undefined` when no `arbitration` was wired.
+   */
+  readonly bindingToken?: string
 }
 
 export interface CompileOptions {
@@ -255,7 +272,7 @@ export function compile(policy: Policy, options: CompileOptions): CompiledPolicy
       : undefined
     return decisionOf(evaluate(action, context))
   }
-  return { policy: parsed, gate, evaluate }
+  return { policy: parsed, gate, evaluate, bindingToken: options.arbitration?.bindingToken }
 }
 
 /** Map a `PolicyEvaluation` onto the Action Kernel's `PolicyDecision`. */

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   type Action,
   type EventEnvelope,
@@ -110,6 +111,16 @@ export class SentinelArbiter {
    */
   readonly actorId: string
   /**
+   * An opaque per-instance identity, stamped onto the gate `compileWithSentinels`
+   * compiles from this arbiter ({@link CompiledPolicy.bindingToken}). A host can
+   * assert `gate.bindingToken === arbiter.bindingToken` to fail fast on a
+   * mismatched `{ gate, arbiter }` pair — a gate compiled without arbitration, or
+   * from a *different* arbiter, whose alerts would silently never gate (the proxy
+   * does exactly this). Not a security boundary (an in-process caller can read it);
+   * a wiring-footgun guard against the accidental mismatch.
+   */
+  readonly bindingToken: string = randomUUID()
+  /**
    * The single session this arbiter governs. The arbiter is **single-session by
    * construction**: a host binds it (via {@link bindSession}, or lazily on the
    * first observed event) and `resolveContext` reports exactly that session — it
@@ -131,6 +142,25 @@ export class SentinelArbiter {
   private readonly beliefs = new Map<string, BackingBelief>()
   /** decision_id → belief_dependencies, projected from the bound session's `decision.made`. */
   private readonly decisions = new Map<string, string[]>()
+  /**
+   * The conservative belief-dependency set: every belief id the bound session has
+   * observed (deduped, insertion order), reset only on session end. This is the
+   * opaque-agent decision source (ADR-0003) — a host whose wrapped agent cannot
+   * *declare* its `belief_dependencies` (the MCP proxy) reads it via
+   * {@link observedBeliefIds} to synthesize a `decision.made`.
+   *
+   * It is **cumulative and never reduced by execution**. An opaque agent does not
+   * tell the proxy which subset of what it has read a given action actually used,
+   * so the proxy must assume the worst — the whole observed set. Letting an
+   * executed action *shrink* the set would let the agent drain its own
+   * obligations: a soft-denied call re-proposed (rounds 2) or a low-trust filler
+   * call (round 4) would consume a belief a later consequential action still
+   * depends on, so that action would synthesize with no backing belief and slip
+   * the gate. A host that uses declared decisions (`guard.wrap()`) never touches
+   * it. (A bounded window is the deferred F4 refinement; bounding it safely is its
+   * own design question, since any eviction is a drain an agent could exploit.)
+   */
+  private readonly observedBeliefs = new Set<string>()
   private calibration: CalibrationSnapshot | null
 
   constructor(options: SentinelArbiterOptions) {
@@ -224,11 +254,35 @@ export class SentinelArbiter {
     this.calibration = snapshot
   }
 
+  /**
+   * The conservative belief-dependency set for synthesizing an opaque agent's
+   * decision (ADR-0003): every belief id the session has observed so far, deduped
+   * and in insertion order, as a copy. The opaque-agent decision source.
+   *
+   * A host whose wrapped agent cannot declare its dependency edges (the MCP
+   * proxy) calls this immediately before proposing an action, builds a
+   * `decision.made` whose `belief_dependencies` are the returned ids, and
+   * proposes the action with that decision id. An empty result (the first read of
+   * a session) means no decision need be synthesized.
+   *
+   * It is cumulative and never shrinks mid-session: an action proposed *before* a
+   * belief was adopted will not depend on it (decisions are point-in-time
+   * snapshots, so temporal scoping holds), but once observed a belief stays in
+   * every later action's set until session end. Execution does NOT remove
+   * anything — that is deliberate (see the field doc): an opaque agent must not be
+   * able to drain its own obligations by re-proposing a held call or running a
+   * low-trust filler.
+   */
+  observedBeliefIds(): string[] {
+    return [...this.observedBeliefs]
+  }
+
   private unbind(): void {
     this.boundSession = undefined
     this.alerts = []
     this.beliefs.clear()
     this.decisions.clear()
+    this.observedBeliefs.clear()
   }
 
   /**
@@ -267,6 +321,11 @@ export class SentinelArbiter {
         confidence: v.confidence ?? 1,
         truth_status: (v.truth_status ?? "unverified") as TruthStatus,
       })
+      // Add it to the conservative belief-dependency set for opaque-agent
+      // decision synthesis (ADR-0003). The Set dedups a re-adopted belief; a host
+      // that uses declared decisions never reads it, and it is freed on session
+      // end.
+      this.observedBeliefs.add(v.id)
       return
     }
     if (event.type === "decision.made") {
@@ -354,6 +413,9 @@ export function compileWithSentinels(
     arbitration: {
       resolveContext: (action) => arbiter.resolveContext(action),
       escalation: options.escalation,
+      // Stamp the gate with this arbiter's identity so a host can verify the
+      // matched pair (the proxy rejects a gate compiled from a different arbiter).
+      bindingToken: arbiter.bindingToken,
     },
   })
   return { gate, arbiter }

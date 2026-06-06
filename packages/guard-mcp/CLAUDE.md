@@ -26,6 +26,12 @@ Cognitive Core. The resulting event log is renderable by
   same separation `persistence` uses. This is the path that lets a matched
   `require_approval` rule's richer `required_authority` reach proxy holds (the
   ceiling preset only ever holds at the L4 floor with empty authority).
+  `compileProxyPolicyWithSentinels(policyConfig, baseDir, sentinels)` is the
+  arbitrate-armed sibling: it compiles the same document *with* a
+  `SentinelArbiter` (via guard's `compileWithSentinels`) and returns the matched
+  `{ gate, arbiter }` pair the CLI injects (ADR-0003). It takes already-resolved
+  `Sentinel` instances — the CLI resolves `config.sentinels` ids against the
+  harness registry, keeping this package's runtime free of a harness dependency.
 - `src/observation.ts` — registers the `mcp.tool_result@1` observation
   schema in `@qmilab/lodestar-core`'s registry, and the matching
   `MCPToolResultExtractor` for `@qmilab/lodestar-cognitive-core`. The
@@ -179,6 +185,58 @@ Cognitive Core. The resulting event log is renderable by
    config that reaches the proxy with no injected stores is a wiring
    bug and `start()` throws rather than silently running in-memory.
 
+10. **Sentinels gate via synthesized decisions — opt-in, opaque-agent
+    (ADR-0003).** The wrapped MCP agent speaks `tools/call` only; it cannot
+    declare which beliefs back its next action. So when a `SentinelArbiter` is
+    wired (`MCPProxyOverrides.arbiter`, with `policyGate` compiled from the *same*
+    arbiter via `compileProxyPolicyWithSentinels`), the proxy **synthesizes** a
+    `decision.made` per action from the arbiter's conservative belief-dependency
+    set (`observedBeliefIds()` — every belief observed this session). The set is
+    cumulative and **never reduced by execution** (the proxy never removes from
+    it): an opaque agent must not be able to drain a later action's obligations via
+    a soft-denied retry (Codex round 2) or a low-trust filler call (Codex round 4)
+    — every execution-driven shrink is an attacker-controlled drain. Temporal
+    scoping still holds (a decision is a point-in-time snapshot, so an action
+    proposed before a belief was observed does not depend on it); the cost is
+    verbosity (over-linked decisions, repeated alerts), bounded only at session
+    end. A bounded set is the deferred F4 item. That gives a belief-scoped sentinel alert
+    the `decision.made` it fires on and the gate the `decision_id →
+    belief_dependencies` thread it scopes by, so a poisoned-read-then-act sequence
+    is held at `pending_approval` through the existing hold path. The synthesized
+    decision is attributed to `PROXY_DECISION_SYNTHESIS_ACTOR`
+    (`lodestar-proxy-synthesis`), never the agent — a synthesized link must not
+    masquerade as an agent-declared one. The arbiter feed lives in `emit` (mirrors
+    `guard.wrap()`: surface each landed alert as `sentinel.alerted@1` on the proxy's
+    own writer with the sentinel actor + canonical schema version; best-effort, a
+    faulty sentinel logs `guard.sentinel.failed` and never aborts the session).
+    **Opt-in:** with no arbiter the proxy synthesizes nothing, feeds nothing, and
+    its event stream is byte-for-byte unchanged — every existing proxy probe holds.
+    **No silent non-enforcement:** a wired sentinel must never be quietly dropped.
+    Three guards, each keyed on what it actually requires: the `ProxyConfigSchema`
+    superRefine rejects a `sentinels`-without-`policy` config at parse; the
+    constructor throws if (A) `config.sentinels` is set but no arbiter was injected,
+    and if (B) **an arbiter is injected but the gate is not a `CompiledPolicy`** —
+    the default `auto_approve_ceiling` preset and a bare `PolicyGate` have no
+    arbitrate hook, so the arbiter's alerts could never hold an action. Guard (B)
+    keys on the *arbiter*, not `config.sentinels`, so it also catches a library
+    host that wires `MCPProxyOverrides.arbiter` directly. (C) the injected gate
+    *is* a `CompiledPolicy` but was compiled from a **different** arbiter (or
+    without arbitration): `compileWithSentinels` stamps a shared `bindingToken` on
+    both, and the constructor throws on `gate.bindingToken !== arbiter.bindingToken`
+    — closing the F6 footgun (a hand-wired mismatch that would observe-but-not-gate).
+    And (C-mirror) a **sentinel-compiled gate** (`bindingToken` set) injected with
+    no arbiter: the proxy would never feed the gate's arbiter or synthesize
+    decisions, so its sentinels would be inert — throw. Same shape as the `policy`
+    / `persistence` guards. The proxy never resolves sentinel ids itself; the CLI
+    resolves them against `FIRST_PARTY_SENTINELS` and injects the matched
+    `{ gate, arbiter }` pair.
+    Because nothing is ever removed, there is no consume/drain race; the only
+    concurrency effect is over-linking (the safe direction), the documented
+    best-effort posture in ADR-0003. The `mcp-proxy-arbiter-gates-dependent-action`
+    probe pins all of this end-to-end — including that a re-proposed held edit
+    stays held and that an action proposed before the poison is not gated; it must
+    keep passing.
+
 ## Persistence
 
 By default the proxy builds fresh in-memory firewall stores per
@@ -245,8 +303,14 @@ want auto-approved at lower trust levels.
   `examples/claude-code-wrapped/`.
 - Probes — live in `packs/lodestar-core/probes/`.
 - HTTP transport for the upstream face — Batch later.
-- Sentinel hooks observing the proxy's event stream —
-  `@qmilab/lodestar-harness`, Batch 4.
+- The `SentinelArbiter` itself — `@qmilab/lodestar-guard` (ADR-0001). This package
+  *uses* it (wires the feed + synthesizes decisions, see invariant 10); the
+  reusable bridge and the `observedBeliefIds()` belief-dependency set live in
+  guard.
+- Resolving sentinel **ids** (`config.sentinels`) against the
+  `FIRST_PARTY_SENTINELS` registry — the CLI does that and passes resolved
+  `Sentinel` instances to `compileProxyPolicyWithSentinels`, so this package never
+  imports `@qmilab/lodestar-harness` at runtime.
 
 ## When you change the proxy
 

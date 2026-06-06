@@ -1,9 +1,33 @@
 import { readFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import { type Policy, PolicySchema } from "@qmilab/lodestar-core"
-import { compile } from "@qmilab/lodestar-guard"
-import type { CompiledPolicy } from "@qmilab/lodestar-guard"
+import { compile, compileWithSentinels } from "@qmilab/lodestar-guard"
+import type {
+  CompileWithSentinelsOptions,
+  CompiledPolicy,
+  SentinelArbiter,
+} from "@qmilab/lodestar-guard"
 import type { ProxyPolicyConfig } from "./config.js"
+
+/**
+ * Load and `PolicySchema`-parse the declarative document a `ProxyConfig.policy`
+ * points at, and derive the gate's `decider_id` from its signer. Shared by both
+ * compile paths (plain and sentinel-armed) so the file I/O and decider
+ * derivation live in exactly one place.
+ */
+async function loadPolicyDocument(
+  policyConfig: ProxyPolicyConfig,
+  baseDir: string,
+): Promise<{ document: Policy; decider_id: string }> {
+  const path = resolve(baseDir, policyConfig.file)
+  const raw: unknown = JSON.parse(await readFile(path, "utf8"))
+  const document: Policy = PolicySchema.parse(raw)
+  const decider_id =
+    document.signed_by ??
+    document.signature?.signer_id ??
+    `policy:${document.id}@${document.version}`
+  return { document, decider_id }
+}
 
 /**
  * Load and compile the declarative `Policy` document a `ProxyConfig.policy`
@@ -33,12 +57,32 @@ export async function compileProxyPolicy(
   policyConfig: ProxyPolicyConfig,
   baseDir: string,
 ): Promise<CompiledPolicy> {
-  const path = resolve(baseDir, policyConfig.file)
-  const raw: unknown = JSON.parse(await readFile(path, "utf8"))
-  const document: Policy = PolicySchema.parse(raw)
-  const decider_id =
-    document.signed_by ??
-    document.signature?.signer_id ??
-    `policy:${document.id}@${document.version}`
+  const { document, decider_id } = await loadPolicyDocument(policyConfig, baseDir)
   return compile(document, { decider_id, allow_unsigned: policyConfig.allow_unsigned })
+}
+
+/**
+ * Like {@link compileProxyPolicy}, but compiles the document *with* a
+ * `SentinelArbiter` wired into the gate's arbitrate hook (ADR-0001 / ADR-0003),
+ * returning the matched `{ gate, arbiter }` pair the CLI injects via
+ * `MCPProxyOverrides.policyGate` + `MCPProxyOverrides.arbiter`.
+ *
+ * `sentinels` are the already-resolved `Sentinel` instances (the CLI resolves
+ * the config's sentinel ids against the harness `FIRST_PARTY_SENTINELS` registry
+ * — keeping this package free of a harness dependency). The gate and arbiter are
+ * a matched pair: the proxy feeds events to the arbiter and the arbiter's
+ * `resolveContext` is what the gate consults, so they must be compiled together,
+ * which is exactly what `compileWithSentinels` guarantees.
+ */
+export async function compileProxyPolicyWithSentinels(
+  policyConfig: ProxyPolicyConfig,
+  baseDir: string,
+  sentinels: CompileWithSentinelsOptions["sentinels"],
+): Promise<{ gate: CompiledPolicy; arbiter: SentinelArbiter }> {
+  const { document, decider_id } = await loadPolicyDocument(policyConfig, baseDir)
+  return compileWithSentinels(document, {
+    decider_id,
+    allow_unsigned: policyConfig.allow_unsigned,
+    sentinels,
+  })
 }

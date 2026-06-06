@@ -15,13 +15,19 @@ import {
   InMemoryWorldModel,
   type IngestResult,
 } from "@qmilab/lodestar-cognitive-core"
-import { ApprovalDeniedPayloadSchema, ApprovalGrantedPayloadSchema } from "@qmilab/lodestar-core"
+import {
+  ApprovalDeniedPayloadSchema,
+  ApprovalGrantedPayloadSchema,
+  SENTINEL_ALERTED_EVENT_TYPE,
+  SENTINEL_ALERTED_SCHEMA_VERSION,
+} from "@qmilab/lodestar-core"
 import type {
   Action,
   ActionContract,
   ApprovalDeniedPayload,
   ApprovalGrantedPayload,
   ApprovalRequest,
+  Decision,
   EventEnvelope,
   Observation,
   Reversibility,
@@ -34,7 +40,7 @@ import {
   holdEvaluationForParkedAction,
   openApprovalRequest,
 } from "@qmilab/lodestar-guard"
-import type { CompiledPolicy, PolicyEvaluation } from "@qmilab/lodestar-guard"
+import type { CompiledPolicy, PolicyEvaluation, SentinelArbiter } from "@qmilab/lodestar-guard"
 import {
   type BeliefStore,
   type ClaimStore,
@@ -74,6 +80,18 @@ const SERVER_INFO = {
   name: "lodestar-guard-mcp",
   version: "0.1.5",
 } as const
+
+/**
+ * The `made_by` (and emitted `decision.made` envelope `actor_id`) of a decision
+ * the proxy **synthesizes** from the causal-recency window — the opaque-agent
+ * decision source (ADR-0003). A wrapped MCP agent speaks `tools/call` only and
+ * cannot declare its `belief_dependencies`, so the proxy invents the link from
+ * "the beliefs adopted since the previous action". Attributing it to this
+ * dedicated actor — never the governed agent — keeps the audit honest: a
+ * synthesized decision is visibly the proxy's inference, not a forged agent
+ * claim. Mirrors how a `sentinel.alerted` is attributed to the sentinel actor.
+ */
+export const PROXY_DECISION_SYNTHESIS_ACTOR = "lodestar-proxy-synthesis"
 
 /**
  * Optional dependency injection for tests and probes. Production
@@ -140,6 +158,24 @@ export interface MCPProxyOverrides {
     beliefs: BeliefStore
     evidence: EvidenceStore
   }
+  /**
+   * Wire the sentinel→action bridge into the proxy (ADR-0001 / ADR-0003). When
+   * present, the proxy (a) feeds every event it emits to `arbiter.observe()` and
+   * surfaces the alerts it returns as `sentinel.alerted@1`, and (b) **synthesizes**
+   * a `decision.made` from the arbiter's causal-recency window before each action
+   * — the opaque-agent decision source — so a belief-scoped sentinel alert can
+   * gate the dependent tool call through the existing hold path.
+   *
+   * The `policyGate` MUST be a `CompiledPolicy` compiled from the **same** arbiter
+   * (use `compileWithSentinels(policy, { sentinels, … })` and pass its matched
+   * `{ gate, arbiter }` pair here). The proxy cannot statically verify that
+   * binding (the F6 deferred item); a mismatch observes-but-does-not-gate.
+   *
+   * Omit it and the proxy behaves exactly as it does today: it feeds nothing,
+   * synthesizes nothing, and its event stream is byte-for-byte unchanged. The
+   * arbiter is single-session — pass a fresh one per proxy.
+   */
+  arbiter?: SentinelArbiter
 }
 
 /**
@@ -170,6 +206,12 @@ export class MCPProxy {
   private readonly preconditionChecker: PreconditionChecker
   private readonly upstreamFactory?: MCPProxyOverrides["upstreamFactory"]
   private readonly injectedStores?: MCPProxyOverrides["stores"]
+  /**
+   * The sentinel→action bridge, when wired (ADR-0003). Drives the arbiter feed in
+   * {@link emit} and the decision synthesis in {@link handleCallTool}. `undefined`
+   * leaves the proxy in its pure, pre-sentinel behaviour.
+   */
+  private readonly arbiter?: SentinelArbiter
 
   private firewall?: MemoryFirewall
   private evidenceStore?: EvidenceStore
@@ -282,6 +324,9 @@ export class MCPProxy {
     if (overrides?.stores !== undefined) {
       this.injectedStores = overrides.stores
     }
+    if (overrides?.arbiter !== undefined) {
+      this.arbiter = overrides.arbiter
+    }
     // A `persistence: postgres` config with no injected stores is a wiring
     // bug: the proxy deliberately does not open database connections itself
     // (that keeps `bun:sql` out of this package's import graph and leaves
@@ -294,6 +339,73 @@ export class MCPProxy {
           "Construct the Postgres stores (createPostgresStores from " +
           "@qmilab/lodestar-memory-firewall/postgres) and pass them via " +
           "MCPProxyOverrides.stores. The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
+    // synthesizes decisions for it) AND a `CompiledPolicy` gate whose arbitrate
+    // hook consults that arbiter. Two distinct silent-non-enforcement traps, two
+    // guards — keyed on what each actually requires:
+    //
+    // (A) `config.sentinels` declared but no arbiter wired to run them. The CLI
+    //     always injects an arbiter for declared sentinels; a non-CLI host that set
+    //     the field but forgot the arbiter would run the sentinels nowhere.
+    if ((config.sentinels?.length ?? 0) > 0 && this.arbiter === undefined) {
+      throw new Error(
+        "MCPProxy: config.sentinels is set but no arbiter was injected. Resolve the " +
+          "ids against FIRST_PARTY_SENTINELS (@qmilab/lodestar-harness) and inject a " +
+          "SentinelArbiter via MCPProxyOverrides.arbiter, with policyGate compiled from " +
+          "the same arbiter (compileProxyPolicyWithSentinels / compileWithSentinels). " +
+          "The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // (B) an arbiter is wired but the gate cannot arbitrate. The default
+    //     `auto_approve_ceiling` preset and a bare `PolicyGate` have NO arbitrate
+    //     hook, so the proxy would synthesize decisions and emit `sentinel.alerted`
+    //     that can never hold an action — silent non-enforcement. This keys on the
+    //     ARBITER, not `config.sentinels`, so it also catches a library host that
+    //     wires `MCPProxyOverrides.arbiter` directly and omits the compiled gate.
+    if (this.arbiter !== undefined && !compiledPolicyInjected) {
+      throw new Error(
+        "MCPProxy: an arbiter was injected but no CompiledPolicy gate was — the default " +
+          "auto_approve_ceiling preset and a bare PolicyGate have no arbitrate hook, so " +
+          "the arbiter's sentinel alerts could never hold an action. Inject a policyGate " +
+          "compiled from the SAME arbiter (compileProxyPolicyWithSentinels / " +
+          "compileWithSentinels). The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // (B′) the injected gate IS a `CompiledPolicy`, but was it compiled from THIS
+    //      arbiter? `compileWithSentinels` stamps a shared `bindingToken` on both;
+    //      a gate compiled without arbitration (plain `compile()`) or from a
+    //      *different* arbiter carries a different/absent token, so its arbitrate
+    //      hook consults someone else (or no one) and this arbiter's alerts would
+    //      silently never gate. Reject the mismatch — the F6 binding-token guard.
+    if (
+      this.arbiter !== undefined &&
+      this.compiledPolicy !== undefined &&
+      this.compiledPolicy.bindingToken !== this.arbiter.bindingToken
+    ) {
+      throw new Error(
+        "MCPProxy: the injected CompiledPolicy gate was not compiled from the injected " +
+          "arbiter (bindingToken mismatch) — its arbitrate hook consults a different " +
+          "arbiter (or none), so this arbiter's sentinel alerts would never hold an action. " +
+          "Compile the gate and arbiter together (compileProxyPolicyWithSentinels / " +
+          "compileWithSentinels) and inject that matched pair.",
+      )
+    }
+    // (B″) the mirror of B′: the injected gate WAS compiled with arbitration (it
+    //      carries a `bindingToken`) but no arbiter was injected. The proxy never
+    //      feeds the gate's arbiter and never synthesizes decisions, so the gate's
+    //      arbitrate hook resolves an empty context — the sentinels the gate was
+    //      compiled with are silently inert. The host wired the gate but forgot
+    //      `MCPProxyOverrides.arbiter`. (A plain `compile()` gate has no token, so
+    //      a no-sentinels declarative policy without an arbiter is still fine.)
+    if (this.arbiter === undefined && this.compiledPolicy?.bindingToken !== undefined) {
+      throw new Error(
+        "MCPProxy: a sentinel-compiled CompiledPolicy gate (bindingToken set) was injected " +
+          "but no arbiter — the proxy never feeds the gate's arbiter or synthesizes " +
+          "decisions, so the sentinels it was compiled with would be inert. Inject the " +
+          "matching arbiter via MCPProxyOverrides.arbiter (the compileProxyPolicyWithSentinels " +
+          "/ compileWithSentinels pair). The `lodestar guard mcp-proxy` CLI does this for you.",
       )
     }
   }
@@ -386,6 +498,16 @@ export class MCPProxy {
     this.namespacedTools = []
 
     try {
+      // Bind the sentinel arbiter (when wired) to this proxy's session BEFORE the
+      // first emit feeds it — the arbiter is single-session and `resolveContext`
+      // must report exactly this session, never "whichever event was seen last".
+      // A fresh proxy carries a fresh arbiter, so this never collides; but a
+      // caller that reuses a still-bound arbiter makes `bindSession` throw, so it
+      // sits INSIDE the rollback try — otherwise the throw would escape with
+      // `started=true` and a follow-up `stop()` would emit `guard.session.ended`
+      // for a session that never started (Codex review, round 5).
+      this.arbiter?.bindSession(this.sessionId)
+
       // 4. First I/O: write the session-start envelope. Inside the
       //    try so a bad `log_root` (unwritable directory, full
       //    disk, …) routes through the rollback path instead of
@@ -658,7 +780,20 @@ export class MCPProxy {
       preconditions: [],
     }
 
+    // Synthesize a decision linking this action to the beliefs the session has
+    // observed — the opaque-agent decision source (ADR-0003). The wrapped MCP
+    // agent cannot declare its `belief_dependencies`, so the proxy assumes the
+    // conservative set (every observed belief; it never shrinks mid-session, so a
+    // held/filler call cannot drain a later action's obligations). This must
+    // precede `propose` (the gate maps `action.decision_id → belief_dependencies
+    // → backing beliefs`) AND its `emit` must be awaited first (so the arbiter has
+    // observed the `decision.made` — firing any belief-scoped sentinel — before
+    // `arbitrate` calls `resolveContext`). No arbiter, or an empty set (the first
+    // read of a session), leaves `decision_id` unset and the stream unchanged.
+    const decisionId = await this.synthesizeDecision()
+
     const proposed = this.kernel.propose({
+      decision_id: decisionId,
       intent: `forward MCP tool call ${req.name} via proxy`,
       tool: req.name,
       inputs: req.arguments,
@@ -702,6 +837,11 @@ export class MCPProxy {
     const executed = await this.kernel.execute(approved)
     if (executed.phase === "completed") {
       await this.emit("action.completed", executed)
+      // No window bookkeeping on execution: the belief-dependency set is
+      // cumulative (ADR-0003). Removing a belief once an action "acted on" it
+      // would let an opaque agent drain a later consequential action's
+      // obligations via a soft-denial retry or a low-trust filler — both real
+      // under-gating bypasses. The set is reset only at session end.
     } else if (executed.phase === "rejected") {
       // Precondition revalidation killed the action between
       // arbitration and execution (TOCTOU defense). Emit as
@@ -1137,24 +1277,137 @@ export class MCPProxy {
     }
   }
 
+  /**
+   * Synthesize a `decision.made` for the next action from the arbiter's
+   * conservative belief-dependency set (ADR-0003). Returns the new decision id,
+   * or `undefined` when no arbiter is wired or the set is empty — the action then
+   * carries no decision link and is gated by contract + rule + subject-agnostic
+   * signals only, exactly as the pre-sentinel proxy.
+   *
+   * The set is cumulative and never shrinks mid-session (the proxy never removes
+   * from it): an opaque agent must not be able to drain its own obligations by
+   * re-proposing a held call or running a low-trust filler. The emit is awaited so
+   * the arbiter has observed the `decision.made` (firing any belief-scoped
+   * sentinel and projecting `decision_id → belief_dependencies`) before the caller
+   * arbitrates.
+   */
+  private async synthesizeDecision(): Promise<string | undefined> {
+    if (this.arbiter === undefined) return undefined
+    const beliefIds = this.arbiter.observedBeliefIds()
+    if (beliefIds.length === 0) return undefined
+    const id = randomUUID()
+    const decision: Decision = {
+      id,
+      question:
+        "synthesized: which beliefs observed this session could the proxied tool call depend on?",
+      options: [{ id: "proceed", description: "proceed with the proxied tool call" }],
+      selected_option_id: "proceed",
+      // Deterministic synthetic rationale; a full backing Explanation is a
+      // follow-up (ADR-0003) and does not change gating.
+      rationale_id: `synthesized-decision-rationale:${id}`,
+      belief_dependencies: beliefIds,
+      policy_dependencies: [],
+      made_by: PROXY_DECISION_SYNTHESIS_ACTOR,
+      made_at: new Date().toISOString(),
+    }
+    // Attribute the synthesized decision to the synthesis actor, not the agent —
+    // the audit must show this link as the proxy's inference (ADR-0003).
+    await this.emit("decision.made", decision, { actor_id: PROXY_DECISION_SYNTHESIS_ACTOR })
+    return id
+  }
+
   private async emit(
     type: string,
     payload: unknown,
-    options?: { causal_parent_ids?: string[] },
+    options?: {
+      causal_parent_ids?: string[]
+      /**
+       * Override the envelope `actor_id`. Used for events the proxy authors on
+       * behalf of a governance layer rather than the agent: the synthesis actor
+       * for `decision.made`, the sentinel actor for `sentinel.alerted@1`. Defaults
+       * to the agent `actor_id`.
+       */
+      actor_id?: string
+      /**
+       * Override the envelope `schema_version`. `sentinel.alerted@1` carries the
+       * canonical `SENTINEL_ALERTED_SCHEMA_VERSION`, not the generic session
+       * version. Defaults to `"0.1.0"`.
+       */
+      schema_version?: string
+      /**
+       * Skip feeding the arbiter for this emit. Set on the recursive
+       * `sentinel.alerted` emit so the feed bottoms out at depth one. Defaults to
+       * feeding (when an arbiter is wired).
+       */
+      feedArbiter?: boolean
+    },
   ): Promise<void> {
-    await this.writer.append({
+    // `append` returns the full envelope with `seq`/`logical_clock` assigned —
+    // that is what the arbiter observes (sentinels read it positionally).
+    const envelope = await this.writer.append({
       id: randomUUID(),
       type,
-      schema_version: "0.1.0",
+      schema_version: options?.schema_version ?? "0.1.0",
       project_id: this.config.project_id,
       session_id: this.sessionId,
-      actor_id: this.config.actor_id,
+      actor_id: options?.actor_id ?? this.config.actor_id,
       timestamp: new Date().toISOString(),
       causal_parent_ids: options?.causal_parent_ids ?? [],
       payload,
       payload_hash: canonicalHash(payload),
       versions: { schema_registry_version: "0.1.0" },
     })
+
+    // Feed the sentinel→action bridge (when wired). Mirrors guard.wrap()'s emit:
+    // the arbiter buffers the alerts that land and projects the decision/belief
+    // views; we surface each landed alert as `sentinel.alerted@1` on this SAME
+    // writer (the proxy stays the sole log writer). The arbiter ignores
+    // `sentinel.alerted` events and the recursive emit passes `feedArbiter:false`,
+    // so the re-entry bottoms out at depth one for any sentinel set. Unlike guard,
+    // the proxy has no agent-facing emit channel — every event it writes is
+    // host-authored — so the "only host events feed the arbiter" boundary is
+    // structural here (the opaque agent cannot emit at all).
+    if (this.arbiter !== undefined && options?.feedArbiter !== false) {
+      try {
+        const alerts = await this.arbiter.observe(envelope)
+        for (const alert of alerts) {
+          await this.emit(SENTINEL_ALERTED_EVENT_TYPE, alert.payload, {
+            causal_parent_ids: alert.causal_parent_ids,
+            actor_id: this.arbiter.actorId,
+            schema_version: SENTINEL_ALERTED_SCHEMA_VERSION,
+            feedArbiter: false,
+          })
+        }
+      } catch (err) {
+        // Best-effort and non-blocking: a faulty/hostile sentinel — or a finding
+        // that fails schema validation — must NOT abort the governed session.
+        // Record a `guard.sentinel.failed` status event directly on the writer
+        // (so it cannot re-enter the arbiter) and continue; only this one alert
+        // pass is lost. Mirrors guard.wrap() (PR #54 review, F2).
+        const failure = {
+          for_event_id: envelope.id,
+          for_event_type: envelope.type,
+          error: err instanceof Error ? err.message : String(err),
+        }
+        await this.writer
+          .append({
+            id: randomUUID(),
+            type: "guard.sentinel.failed",
+            schema_version: "0.1.0",
+            project_id: this.config.project_id,
+            session_id: this.sessionId,
+            actor_id: this.config.actor_id,
+            timestamp: new Date().toISOString(),
+            causal_parent_ids: [envelope.id],
+            payload: failure,
+            payload_hash: canonicalHash(failure),
+            versions: { schema_registry_version: "0.1.0" },
+          })
+          // If even the status append fails, give up silently — observability
+          // must never break governance.
+          .catch(() => {})
+      }
+    }
   }
 
   private blastRadiusFor(_toolName: string): ActionContract["blast_radius"] {
