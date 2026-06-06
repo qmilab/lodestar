@@ -9,6 +9,7 @@
         "@qmilab/lodestar-action-kernel": "workspace:*",
         "@qmilab/lodestar-adapter-filesystem": "workspace:*",
         "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-adapter-nostr": "workspace:*",
         "@qmilab/lodestar-adapter-shell": "workspace:*",
         "@qmilab/lodestar-cognitive-core": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
@@ -138,6 +139,21 @@
       "dependencies": {
         "@qmilab/lodestar-action-kernel": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
+    "packages/adapters/nostr": {
+      "name": "@qmilab/lodestar-adapter-nostr",
+      "version": "0.1.5",
+      "dependencies": {
+        "@noble/curves": "^2.2.0",
+        "@noble/hashes": "^2.2.0",
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "@scure/base": "^2.2.0",
         "zod": "^3.23.8",
       },
       "devDependencies": {
@@ -394,6 +410,10 @@
 
     "@modelcontextprotocol/server-filesystem": ["@modelcontextprotocol/server-filesystem@2026.1.14", "", { "dependencies": { "@modelcontextprotocol/sdk": "^1.25.2", "diff": "^5.1.0", "glob": "^10.5.0", "minimatch": "^10.0.1", "zod-to-json-schema": "^3.23.5" }, "bin": { "mcp-server-filesystem": "dist/index.js" } }, "sha512-bGAfu3fWRVeF10NxvPhFBDlRen6ExSx6YkKJzoVgQMNrbdVVV4okfGGQ3KBRu9ygXYfw5/N9ermHAJXA0uys+g=="],
 
+    "@noble/curves": ["@noble/curves@2.2.0", "", { "dependencies": { "@noble/hashes": "2.2.0" } }, "sha512-T/BoHgFXirb0ENSPBquzX0rcjXeM6Lo892a2jlYJkqk83LqZx0l1Of7DzlKJ6jkpvMrkHSnAcgb5JegL8SeIkQ=="],
+
+    "@noble/hashes": ["@noble/hashes@2.2.0", "", {}, "sha512-IYqDGiTXab6FniAgnSdZwgWbomxpy9FtYvLKs7wCUs2a8RkITG+DFGO1DM9cr+E3/RgADRpFjrKVaJ1z6sjtEg=="],
+
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
 
     "@qmilab-examples/claude-code-wrapped": ["@qmilab-examples/claude-code-wrapped@workspace:examples/claude-code-wrapped"],
@@ -411,6 +431,8 @@
     "@qmilab/lodestar-adapter-filesystem": ["@qmilab/lodestar-adapter-filesystem@workspace:packages/adapters/filesystem"],
 
     "@qmilab/lodestar-adapter-git": ["@qmilab/lodestar-adapter-git@workspace:packages/adapters/git"],
+
+    "@qmilab/lodestar-adapter-nostr": ["@qmilab/lodestar-adapter-nostr@workspace:packages/adapters/nostr"],
 
     "@qmilab/lodestar-adapter-shell": ["@qmilab/lodestar-adapter-shell@workspace:packages/adapters/shell"],
 
@@ -443,6 +465,8 @@
     "@qmilab/lodestar-trace": ["@qmilab/lodestar-trace@workspace:packages/trace"],
 
     "@qmilab/lodestar-viewer": ["@qmilab/lodestar-viewer@workspace:packages/viewer"],
+
+    "@scure/base": ["@scure/base@2.2.0", "", {}, "sha512-b8XEupJibegiXV+tDUseI8oLQc8ei3d/4Jkb2RpbHh3MfE054ov3uIz2dhFkB3FI8iwYkEh0gGCApkrYggkPNg=="],
 
     "@sinclair/typebox": ["@sinclair/typebox@0.34.49", "", {}, "sha512-brySQQs7Jtn0joV8Xh9ZV/hZb9Ozb0pmazDIASBkYKCjXrXU3mpcFahmK/z4YDhGkQvP9mWJbVyahdtU5wQA+A=="],
 

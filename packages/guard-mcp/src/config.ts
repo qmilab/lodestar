@@ -54,7 +54,13 @@ export const ToolContractDefaultsSchema = z.object({
   permissions: z
     .array(z.enum(["fs.read", "fs.write", "shell.exec", "network.egress", "secret.sign"]))
     .default([]),
-  sandbox: z.enum(["read", "write-isolated", "write-local", "controlled-shell"]),
+  sandbox: z.enum([
+    "read",
+    "write-isolated",
+    "write-local",
+    "controlled-shell",
+    "controlled-network",
+  ]),
   required_trust_level: z.number().int().min(0).max(5),
   /**
    * Blast radius for the ActionContract. Applied at every invocation

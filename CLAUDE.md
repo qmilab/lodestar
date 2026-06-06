@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-two probes pass under
+publishing), v0.2 architecture locked. Forty-three probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Thirty-eight live in the first-party pack
+below). Thirty-nine live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -52,7 +52,14 @@ in `@qmilab/lodestar-adapter-git` holds its egress invariants through the kernel
 push proposed at L4 stays at `pending_approval` until approved then lands in the
 **operator-pinned** remote despite a poisoned `.git/config`, the configured credential
 never surfaces in inputs/observation, a non-allowlisted clone source and an escaping
-destination both fail, and host author-env does not leak; ADR-0006).
+destination both fail, and host author-env does not leak; ADR-0006), and one
+nostr-adapter transport probe (`nostr-adapter-enforces-egress-invariants` — the
+native `@qmilab/lodestar-adapter-nostr` holds its invariants through the kernel:
+`nostr.publish` proposed at L4 stays at `pending_approval` until approved then lands
+a BIP-340-verifiable note at the **operator-pinned** relay, the signing key never
+surfaces in inputs/observation, a non-pinned relay and a non-allowlisted event kind
+both fail, NIP-42 AUTH is handled with the same key, and `nostr.fetch` flags forged
+signatures + pins reads against SSRF; ADR-0007).
 The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -167,7 +174,7 @@ packages/
     filesystem/        # (exists)
     shell/             # (exists, P2) governed shell commands; config-driven tool factory (defineShellTool), TS-level sandbox (argv-only, allowlist, scoped env, timeout) — not an OS sandbox; ADR-0004
     github/            # (later) forge-API ONLY (PRs/issues/releases) behind a ForgeProvider seam — git transport lives in adapters/git/ (ADR-0006)
-    nostr/             # (later)
+    nostr/             # (exists, P2) governed Nostr transport: nostr.publish (L4, second native egress — signing key IS the credential, in-process BIP-340) + nostr.fetch (L1, untrusted inbound); relay pinning, kind allowlist, NIP-42 AUTH, fetch SSRF guard; controlled-network sandbox; TS-level boundary, not network containment; ADR-0007
 
 examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline
