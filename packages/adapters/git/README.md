@@ -81,8 +81,11 @@ registerGitTransportTools({
 ## Invariants
 
 - **Remote pinning.** `git.push` targets the operator-pinned URL *explicitly*, so a
-  poisoned `.git/config` cannot redirect a push. The agent picks a remote *name*, never
-  a URL.
+  poisoned `.git/config` remote cannot redirect a push, and the push uses a fixed
+  refspec from a validated branch name (no refspec injection). The agent picks a remote
+  *name*, never a URL. The adapter also **rejects** a workspace local config that sets
+  hostile keys (`url.*.insteadOf`/`pushInsteadOf`, `credential.helper`, `filter.*`, …),
+  which could otherwise rewrite the pinned URL or run a helper/filter.
 - **Credential scoping, no silent default.** The token flows via `GIT_ASKPASS` (never
   argv, `ps`-safe) and is redacted from captured output. The credential kind is always
   explicit.

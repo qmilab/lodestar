@@ -229,6 +229,55 @@ function assertSafeBranchName(branch: string): void {
   }
 }
 
+// Local git config keys that can redirect a transport, run code, or rewrite URLs.
+// The scoped env neutralises GLOBAL/SYSTEM config, but the workspace's own
+// `.git/config` is still honoured by git — and a poisoned one could:
+//   - `url.<x>.insteadOf` / `pushInsteadOf` → rewrite the operator-pinned URL,
+//   - `credential.helper` → run a helper / divert credentials,
+//   - `filter.*` (clean/smudge/process), `core.fsmonitor`, `core.sshCommand` → exec,
+//   - `http.*.proxy` → divert/MITM egress,
+//   - `include.path` / `includeIf` → pull in arbitrary config.
+// We reject (fail closed) rather than override, since `insteadOf`/`filter` can't be
+// cleanly cleared with `-c`. Names are matched lowercased (git lowercases section/key).
+const HOSTILE_LOCAL_CONFIG: RegExp[] = [
+  /^url\..*\.insteadof$/,
+  /^url\..*\.pushinsteadof$/,
+  /^credential\..*helper$/,
+  /^core\.sshcommand$/,
+  /^core\.fsmonitor$/,
+  /^core\.hookspath$/,
+  /^core\.pager$/,
+  /^filter\..*\.(process|clean|smudge)$/,
+  /^http\..*proxy$/,
+  /^https\..*proxy$/,
+  /^include\.path$/,
+  /^includeif\..*\.path$/,
+  /^protocol\..*allow$/,
+]
+
+/**
+ * Reject the transport if the repo discovered at `dir` has a local git config
+ * setting any hostile key. A non-repo (or no local config) is fine — git exits
+ * non-zero and we treat it as nothing to reject.
+ */
+async function assertSafeLocalConfig(dir: string, shared: SharedRun): Promise<void> {
+  const res = await runGit(
+    ["config", "--local", "--list", "--name-only", "-z"],
+    runOpts(shared, dir, shared.env, []),
+  )
+  if (res.exit_code !== 0) return
+  const names = res.stdout
+    .split("\0")
+    .map((n) => n.trim().toLowerCase())
+    .filter((n) => n.length > 0)
+  const bad = [...new Set(names.filter((n) => HOSTILE_LOCAL_CONFIG.some((re) => re.test(n))))]
+  if (bad.length > 0) {
+    throw new Error(
+      `git: refusing to run — the workspace's local git config sets keys that can redirect the remote, run helpers/filters, or rewrite URLs: ${bad.join(", ")}`,
+    )
+  }
+}
+
 // -----------------------------------------------------------------------------
 // Tool builders
 // -----------------------------------------------------------------------------
@@ -264,6 +313,8 @@ export function makeGitCommitTool(
     sandbox: "write-local",
     preconditions: () => [],
     execute: async (inputs) => {
+      // `git add` runs clean filters; reject a poisoned local config first.
+      await assertSafeLocalConfig(root, shared)
       const env = shared.env
       const add = await runGit(["add", "-A"], runOpts(shared, root, env, []))
       if (add.exit_code !== 0) {
@@ -355,6 +406,9 @@ export function makeGitPushTool(
     sandbox: "controlled-shell",
     preconditions: () => [],
     execute: async (inputs) => {
+      // A poisoned local `.git/config` could rewrite the pinned URL
+      // (`url.*.pushInsteadOf`) or run a credential helper; reject before pushing.
+      await assertSafeLocalConfig(root, shared)
       const remoteName = inputs.remote ?? "origin"
       const url = remotes[remoteName]
       if (url === undefined) {
@@ -447,6 +501,10 @@ export function makeGitCloneTool(
           `git.clone: source '${redactUrl(inputs.url)}' is not permitted by the operator source allowlist`,
         )
       }
+      // If the clone root sits inside a repo, that repo's local config could carry
+      // `url.*.insteadOf` to rewrite the source URL; reject a poisoned one. (A
+      // non-repo clone root has no local config and is fine.)
+      await assertSafeLocalConfig(cloneRoot, shared)
       const target = resolveCloneTarget(cloneRoot, inputs.destination)
       if (existsSync(target) && readdirSync(target).length > 0) {
         throw new Error(

