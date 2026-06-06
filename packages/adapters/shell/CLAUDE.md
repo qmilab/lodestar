@@ -36,12 +36,17 @@ in-process:
    `process.env` is never spread in. The default scoped env mirrors the dev-tools
    `scopedEnv`: fresh empty `HOME`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null`,
    `PATH` inherited. (Mirrors the Action Kernel's "no host env to sandboxes" rule.)
-4. **Wall-clock timeout.** Every command has a deadline. The child is spawned
-   `detached` (its own process group) so the timeout kills the whole group by its
-   negative pid — a descendant that inherited the stdout/stderr pipes is reclaimed,
-   not just the immediate child (otherwise it would hold the pipes open and run the
-   action past its deadline). A hard grace-timer backstop guarantees the call never
-   hangs even if group-kill fails. `timed_out` is reported.
+4. **Wall-clock timeout + descendant reaping.** Every command has a deadline. The
+   child is spawned `detached` (its own process group) so the timeout kills the whole
+   group by its negative pid — a descendant that inherited the stdout/stderr pipes is
+   reclaimed, not just the immediate child (otherwise it would hold the pipes open and
+   run the action past its deadline). The group is **also reaped on normal
+   completion**, so the inverse case — a command that backgrounds a descendant with
+   stdio redirected/closed (its `close` fires before the deadline) — cannot leave that
+   descendant running after the action. A hard grace-timer backstop guarantees the
+   call never hangs even if group-kill fails. `timed_out` is reported. (A descendant
+   that deliberately `setsid`s into its own session escapes the group kill — the
+   OS-sandbox boundary we do not claim.)
 5. **Bounded output capture.** stdout/stderr are captured up to `maxOutputBytes` and
    flagged when truncated; the child is still drained to EOF so it cannot block.
 6. **Pinned cwd.** Every command runs in `workspaceRoot`; the agent cannot redirect it.

@@ -16,10 +16,11 @@
  *   3. No shell injection. Even a passthrough matcher cannot inject a second
  *      command: argv is an array, never a shell string, so `&& touch PWNED` is a
  *      literal argument and no `PWNED` file appears.
- *   4. Wall-clock timeout. A long command is killed at the deadline and the
- *      observation carries `timed_out: true` — including a descendant that inherited
- *      the pipes (the timeout kills the whole process group, not just the immediate
- *      child), so a pipe-holding child cannot run the action past its deadline.
+ *   4. Wall-clock timeout + descendant reaping. A long command is killed at the
+ *      deadline (`timed_out: true`) — including a descendant that inherited the pipes
+ *      (the whole process group is killed, not just the immediate child). And on
+ *      NORMAL completion the group is reaped too, so a command that backgrounds a
+ *      stdio-redirected descendant cannot leave it running past the action.
  *   5. Bounded output capture. Output beyond the byte cap is truncated and flagged.
  *
  * If any invariant regresses, an agent wrapped by Lodestar could leak host
@@ -287,6 +288,42 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- 4c. NORMAL completion also reaps backgrounded descendants ---------
+    // The complement of 4b: `sh -c '(sleep 1; touch MARKER) >/dev/null 2>&1 &'`
+    // backgrounds a descendant that REDIRECTS its stdio, so the pipes close and sh
+    // exits immediately — `close` fires before any deadline and the timer is cleared.
+    // Without reaping the group on normal completion, that descendant survives the
+    // governed action and touches MARKER ~1s later. The reap must prevent it.
+    const marker = join(workspace, "ORPHAN_MARKER")
+    const bg = await act(
+      "shell.spawner",
+      ["-c", "(sleep 1; touch ORPHAN_MARKER) >/dev/null 2>&1 &"],
+      0,
+    )
+    if (bg.action.phase !== "completed") {
+      return {
+        passed: false,
+        details: `reap-on-completion: shell.spawner did not complete (phase=${bg.action.phase})`,
+      }
+    }
+    if (bg.output?.timed_out) {
+      return {
+        passed: false,
+        details:
+          "reap-on-completion: the backgrounding command unexpectedly timed out instead of completing normally — the test no longer exercises the normal-completion path.",
+      }
+    }
+    // Wait past the descendant's 1s delay: if it survived the action it would have
+    // created the marker by now.
+    await new Promise((resolveWait) => setTimeout(resolveWait, 1500))
+    if (existsSync(marker)) {
+      return {
+        passed: false,
+        details:
+          "reap-on-completion FAILED: a backgrounded, stdio-redirected descendant outlived the completed action and created ORPHAN_MARKER. The process group must be reaped on normal completion, not just at the deadline.",
+      }
+    }
+
     // ---- 5. Bounded output capture ----------------------------------------
     const flood = await act("shell.flood", ["-e", "process.stdout.write('x'.repeat(9000))"], 0)
     if (flood.action.phase !== "completed" || !flood.output) {
@@ -312,7 +349,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native shell adapter held every TS-level invariant through the Action Kernel: host secret stayed out of the subprocess env (scoped var present), the allowlist rejected a forbidden request, argv-array exec blocked '&& touch PWNED' (no PWNED file), the 5s sleep was killed at the 200ms deadline (timed_out), a pipe-holding descendant was reclaimed by the process-group kill (not left to run 10s past the deadline), and 9000 bytes were truncated to the 2000-byte cap.",
+        "Native shell adapter held every TS-level invariant through the Action Kernel: host secret stayed out of the subprocess env (scoped var present, observation sensitivity = internal), the allowlist rejected a forbidden request, argv-array exec blocked '&& touch PWNED' (no PWNED file), the 5s sleep was killed at the 200ms deadline (timed_out), a pipe-holding descendant was reclaimed by the process-group kill (not left to run 10s past the deadline), a backgrounded stdio-redirected descendant was reaped on normal completion (no ORPHAN_MARKER), and 9000 bytes were truncated to the 2000-byte cap.",
     }
   } finally {
     await rm(workspace, { recursive: true, force: true })

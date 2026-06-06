@@ -32,9 +32,11 @@ import { z } from "zod"
  *   - **No host-env passthrough.** The subprocess sees only the declared `env`;
  *     `process.env` is never spread in. The default is a minimal scoped env with a
  *     fresh empty HOME (no host dotfiles) and git's global/system config disabled.
- *   - **Wall-clock timeout.** Every command has a deadline; at the timeout the whole
- *     process group is killed (so a descendant that inherited the pipes is reclaimed,
- *     not just the immediate child) and `timed_out` is reported.
+ *   - **Wall-clock timeout + descendant reaping.** Every command has a deadline; at
+ *     the timeout the whole process group is killed (so a descendant that inherited
+ *     the pipes is reclaimed, not just the immediate child) and `timed_out` is
+ *     reported. The group is also reaped on NORMAL completion, so a command that
+ *     backgrounds a stdio-redirected descendant cannot leave it running past the action.
  *   - **Bounded output capture.** stdout/stderr are captured up to a byte cap and
  *     flagged when truncated; the child is still drained to EOF so it cannot block.
  *   - **Pinned cwd.** Every command runs in `workspaceRoot`; the agent cannot
@@ -267,6 +269,13 @@ async function runScoped(
       settled = true
       clearTimeout(deadline)
       if (graceTimer !== undefined) clearTimeout(graceTimer)
+      // Reap the whole process group on the way out — even on NORMAL completion, not
+      // just at the deadline. A command can background a descendant that redirects or
+      // closes stdio (e.g. `sh -c 'sleep 10 >/dev/null 2>&1 &'`): the immediate child
+      // exits, `close` fires before any deadline, and the descendant would otherwise
+      // outlive the governed action. Reaping here guarantees no descendant survives the
+      // action, whether it completed or timed out. Idempotent if the group is gone.
+      killGroup("SIGKILL")
       resolveFn(code)
     }
     const deadline = setTimeout(() => {
