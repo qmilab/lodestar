@@ -28,6 +28,8 @@
  *      end `failed` — local config can't redirect egress or run helpers/filters.
  *   3d. **Poisoned signing config cannot exec.** `commit.gpgsign` + a hostile
  *      `gpg.program` makes the commit end `failed` and never runs the "signer".
+ *   3e. **`core.worktree` cannot re-point the commit.** A workspace that sets
+ *      `core.worktree` outside the pinned root makes the commit end `failed`.
  *   4. **Clone source allowlist.** A clone of a non-allowlisted URL ends `failed`
  *      and writes nothing.
  *   5. **Clone destination confinement.** A clone whose destination escapes the
@@ -370,6 +372,29 @@ async function run(): Promise<ProbeResult> {
     git(workRepo, ["config", "--local", "--unset", "commit.gpgsign"])
     git(workRepo, ["config", "--local", "--unset", "gpg.program"])
 
+    // ---- 3e. core.worktree cannot re-point the commit outside the repo -----
+    // `core.worktree=<elsewhere>` would make `git add -A`/commit operate on files
+    // outside the pinned workspaceRoot. The guard must reject it.
+    const elsewhere = mkdtempSync(join(tmpdir(), "lodestar-probe-git-elsewhere-"))
+    try {
+      git(workRepo, ["config", "--local", "core.worktree", elsewhere])
+      writeFileSync(join(workRepo, "wt.ts"), "export const w = 1\n")
+      const commitWorktree = await kernel.execute(
+        await kernel.arbitrate(
+          propose("git.commit", { message: "worktree?" }, contractFor(3, "project", "compensable")),
+        ),
+      )
+      if (commitWorktree.phase !== "failed") {
+        return {
+          passed: false,
+          details: `worktree hardening FAILED: a commit with a re-pointed core.worktree did not end 'failed' (phase=${commitWorktree.phase}).`,
+        }
+      }
+      git(workRepo, ["config", "--local", "--unset", "core.worktree"])
+    } finally {
+      rmSync(elsewhere, { recursive: true, force: true })
+    }
+
     // ---- 4. Clone source allowlist ----------------------------------------
     const cloneBlocked = await kernel.arbitrate(
       propose(
@@ -468,7 +493,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a poisoned workspace .git/config (url.*.pushInsteadOf) made an approved push end 'failed' rather than redirect the pinned URL; a commit with commit.gpgsign + a hostile gpg.program ended 'failed' and never ran the signer; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
+        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a poisoned workspace .git/config (url.*.pushInsteadOf) made an approved push end 'failed' rather than redirect the pinned URL; a commit with commit.gpgsign + a hostile gpg.program ended 'failed' and never ran the signer; a commit with a re-pointed core.worktree ended 'failed'; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
     }
   } finally {
     for (const dir of [workRepo, bareRemote, cloneRoot]) {

@@ -51,19 +51,23 @@ adapter). It enforces, in-process:
    fetches it at push time.
 3. **Clone source allowlist + destination pin.** A clone URL must pass `allowSource`;
    the destination is confined under `cloneRoot` (no `..`, no absolute, no overwrite of
-   a non-empty dir). Confinement is **symlink-aware** — a symlink planted under the root
-   (by an untrusted prior setup) cannot redirect the clone outside it. Cloned content is
-   untrusted external input.
+   a non-empty dir). Confinement is **symlink-aware** — a symlink planted under the root,
+   *or `cloneRoot` itself being a symlink* (which would make its real target the trusted
+   root), cannot redirect the clone outside the pinned path. Cloned content is untrusted
+   external input.
 4. **No host-env passthrough; host AND local git config neutralised.** The subprocess
    sees only a scoped env (fresh empty `HOME`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null`,
    `GIT_TERMINAL_PROMPT=0`, `PATH` inherited). `git.commit` disables hooks
-   (`core.hooksPath=/dev/null --no-verify`) and pins identity with `-c` flags. The
+   (`core.hooksPath=/dev/null --no-verify`), force-disables signing (`commit.gpgsign=false`),
+   and pins identity with `-c` flags; `git.push` force-disables signed push. The
    workspace's own `.git/config` is still read by git, so before each transport op the
-   adapter **rejects** a local config that sets hostile keys (`url.*.insteadOf` /
-   `pushInsteadOf`, `credential.helper`, `filter.*`, `core.fsmonitor`/`sshCommand`,
-   `http.*.proxy`, `include.path`, …) — otherwise a poisoned repo config could rewrite
-   the pinned URL or run a helper/filter, bypassing remote pinning + credential scoping
-   (`assertSafeLocalConfig`).
+   adapter **rejects** a local config that sets hostile keys — URL rewrites
+   (`url.*.insteadOf` / `pushInsteadOf`), exec pointers (`credential.helper`, `filter.*`,
+   `core.fsmonitor`/`sshCommand`/`askPass`/`gitProxy`/`editor`, `gpg.program`),
+   working-tree re-point (`core.worktree`), egress diversion (`http.*.proxy`), and config
+   inclusion (`include.path`/`includeIf`). Otherwise a poisoned repo config could rewrite
+   the pinned URL, run a helper/filter/signer, or operate outside `workspaceRoot`,
+   bypassing remote pinning + credential scoping (`assertSafeLocalConfig`).
 5. **Argv-only exec + bounded capture + wall-clock timeout.** `git` is spawned with an
    argv array (never a shell string); output is capped; a deadline reaps the whole
    process group.

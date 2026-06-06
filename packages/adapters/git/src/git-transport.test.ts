@@ -326,6 +326,18 @@ describe("git.clone", () => {
     // Nothing was cloned into the outside directory.
     expect(readdirSync(outside).length).toBe(0)
   })
+
+  test("rejects a clone root that is itself a symlink", async () => {
+    const { bareRemote } = makeRepos()
+    const outside = tmp("lodestar-git-outside-")
+    const linkRoot = join(tmp("lodestar-git-linkparent-"), "cloneroot")
+    symlinkSync(outside, linkRoot) // the pinned clone root IS a symlink → outside
+    const tool = makeGitCloneTool({ cloneRoot: linkRoot, allowSource: () => true })
+    await expect(tool.execute({ url: bareRemote, destination: "copy" }, CTX)).rejects.toThrow(
+      /clone root .* is a symlink/,
+    )
+    expect(readdirSync(outside).length).toBe(0) // nothing written through the link
+  })
 })
 
 describe("git.push branch validation", () => {
@@ -453,6 +465,20 @@ describe("local git config hardening", () => {
     expect(out.committed).toBe(true)
     // %G? === "N": no signature — the force-disable -c flag won over local config.
     expect(git(workRepo, ["log", "-1", "--format=%G?"]).trim()).toBe("N")
+  })
+
+  test("rejects transport on core.askPass (exec) and core.worktree (re-point)", async () => {
+    for (const [key, val] of [
+      ["core.askPass", "/bin/echo"], // would run a credential-prompt helper
+      ["core.worktree", "/tmp"], // would make add/commit operate outside the repo
+    ] as const) {
+      const { workRepo } = makeRepos()
+      git(workRepo, ["config", "--local", key, val])
+      writeFileSync(join(workRepo, "a.ts"), "export const a = 1\n")
+      await expect(
+        makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "m" }, CTX),
+      ).rejects.toThrow(/local git config/)
+    }
   })
 })
 

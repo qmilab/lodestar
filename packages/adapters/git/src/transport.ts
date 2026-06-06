@@ -163,6 +163,19 @@ function resolveCloneTarget(cloneRoot: string, destination: string): string {
   if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`git.clone: destination '${destination}' escapes the clone root`)
   }
+  // Reject the clone root itself being a symlink: otherwise `realpathSync(root)`
+  // below would adopt the (possibly outside) link target as the "trusted" root and
+  // every confinement check would pass while the clone writes outside the pinned
+  // path. (A non-existent root is fine — `mkdirSync` makes a real directory.)
+  let rootStat: ReturnType<typeof lstatSync> | undefined
+  try {
+    rootStat = lstatSync(root)
+  } catch {
+    rootStat = undefined
+  }
+  if (rootStat?.isSymbolicLink()) {
+    throw new Error(`git.clone: clone root '${cloneRoot}' is a symlink`)
+  }
   // Symlink-aware confinement. The string check above only constrains the textual
   // path; a symlink placed under the root (by an untrusted prior setup) could still
   // redirect the clone outside it. Ensure the root exists, then require the REAL
@@ -234,7 +247,9 @@ function assertSafeBranchName(branch: string): void {
 // `.git/config` is still honoured by git — and a poisoned one could:
 //   - `url.<x>.insteadOf` / `pushInsteadOf` → rewrite the operator-pinned URL,
 //   - `credential.helper` → run a helper / divert credentials,
-//   - `filter.*` (clean/smudge/process), `core.fsmonitor`, `core.sshCommand` → exec,
+//   - `filter.*` (clean/smudge/process), `core.fsmonitor`, `core.sshCommand`,
+//     `core.askPass`, `core.gitProxy`, `core.editor` → exec a configured program,
+//   - `core.worktree` → re-point the working tree outside the pinned workspaceRoot,
 //   - `gpg.program` / `gpg.<fmt>.program` → exec a "signer" (signing enablement is
 //     also force-disabled with `-c` on commit/push, but reject the exec pointer too),
 //   - `http.*.proxy` → divert/MITM egress,
@@ -245,10 +260,15 @@ const HOSTILE_LOCAL_CONFIG: RegExp[] = [
   /^url\..*\.insteadof$/,
   /^url\..*\.pushinsteadof$/,
   /^credential\..*helper$/,
+  /^core\.askpass$/, // exec a credential prompt helper
   /^core\.sshcommand$/,
+  /^core\.gitproxy$/, // exec a proxy command for git:// transport
   /^core\.fsmonitor$/,
   /^core\.hookspath$/,
   /^core\.pager$/,
+  /^core\.editor$/, // exec an "editor" (commit uses -m, but reject defensively)
+  /^core\.worktree$/, // re-point the working tree outside the pinned workspaceRoot
+  /^sequence\.editor$/,
   /^filter\..*\.(process|clean|smudge)$/,
   /^gpg\.program$/,
   /^gpg\..*\.program$/,
