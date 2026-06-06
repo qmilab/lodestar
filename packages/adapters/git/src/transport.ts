@@ -235,6 +235,8 @@ function assertSafeBranchName(branch: string): void {
 //   - `url.<x>.insteadOf` / `pushInsteadOf` → rewrite the operator-pinned URL,
 //   - `credential.helper` → run a helper / divert credentials,
 //   - `filter.*` (clean/smudge/process), `core.fsmonitor`, `core.sshCommand` → exec,
+//   - `gpg.program` / `gpg.<fmt>.program` → exec a "signer" (signing enablement is
+//     also force-disabled with `-c` on commit/push, but reject the exec pointer too),
 //   - `http.*.proxy` → divert/MITM egress,
 //   - `include.path` / `includeIf` → pull in arbitrary config.
 // We reject (fail closed) rather than override, since `insteadOf`/`filter` can't be
@@ -248,6 +250,8 @@ const HOSTILE_LOCAL_CONFIG: RegExp[] = [
   /^core\.hookspath$/,
   /^core\.pager$/,
   /^filter\..*\.(process|clean|smudge)$/,
+  /^gpg\.program$/,
+  /^gpg\..*\.program$/,
   /^http\..*proxy$/,
   /^https\..*proxy$/,
   /^include\.path$/,
@@ -308,9 +312,12 @@ export function makeGitCommitTool(
     output_schema_key: "git.commit@1",
     effects,
     reversibility: "compensable",
-    permissions: ["fs.write"] as Permission[],
+    // Spawns `git` (a subprocess), so it honestly needs shell.exec + the
+    // controlled-shell sandbox — a policy composing enforcement from these must
+    // grant process execution, not just fs.write.
+    permissions: ["shell.exec", "fs.write"] as Permission[],
     required_trust_level: opts.trust ?? 3,
-    sandbox: "write-local",
+    sandbox: "controlled-shell",
     preconditions: () => [],
     execute: async (inputs) => {
       // `git add` runs clean filters; reject a poisoned local config first.
@@ -328,12 +335,16 @@ export function makeGitCommitTool(
           timed_out: add.timed_out,
         }
       }
-      // Hooks disabled and identity pinned with -c flags so neither a planted repo
-      // hook nor (now-neutralised) host config can influence the commit.
+      // Hooks disabled, signing force-disabled, and identity pinned with -c flags so
+      // neither a planted repo hook, a poisoned signing config (commit.gpgsign +
+      // gpg.program would spawn a signer), nor (now-neutralised) host config can
+      // influence the commit.
       const commit = await runGit(
         [
           "-c",
           "core.hooksPath=/dev/null",
+          "-c",
+          "commit.gpgsign=false",
           "-c",
           `user.email=${identity.email}`,
           "-c",
@@ -401,7 +412,7 @@ export function makeGitPushTool(
     output_schema_key: "git.push@1",
     effects,
     reversibility: "irreversible",
-    permissions: ["network.egress", "fs.read"] as Permission[],
+    permissions: ["shell.exec", "network.egress", "fs.read"] as Permission[],
     required_trust_level: opts.trust ?? 4,
     sandbox: "controlled-shell",
     preconditions: () => [],
@@ -441,7 +452,17 @@ export function makeGitPushTool(
       // (touch or delete other refs on the remote). Hooks disabled.
       const refspec = `refs/heads/${branch}:refs/heads/${branch}`
       const push = await runGit(
-        ["-c", "core.hooksPath=/dev/null", "push", "--porcelain", url, refspec],
+        // Force-disable signed push (push.gpgSign + gpg.program would spawn a signer).
+        [
+          "-c",
+          "core.hooksPath=/dev/null",
+          "-c",
+          "push.gpgSign=false",
+          "push",
+          "--porcelain",
+          url,
+          refspec,
+        ],
         runOpts(shared, root, env, redactions),
       )
       const combined = `${push.stdout}${push.stderr}`
@@ -491,7 +512,7 @@ export function makeGitCloneTool(
     output_schema_key: "git.clone@1",
     effects,
     reversibility: "reversible",
-    permissions: ["network.egress", "fs.write"] as Permission[],
+    permissions: ["shell.exec", "network.egress", "fs.write"] as Permission[],
     required_trust_level: opts.trust ?? 3,
     sandbox: "controlled-shell",
     preconditions: () => [],

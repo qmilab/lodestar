@@ -76,14 +76,16 @@ and tool descriptions.
 
 ## Trust contracts
 
-| Tool | Trust | blast_radius | reversibility | sandbox |
-|------|-------|--------------|---------------|---------|
-| `git.commit` | L3 | `project` | `compensable` | `write-local` |
-| `git.push` | **L4** | `external` | `irreversible` | `controlled-shell` |
-| `git.clone` | L3 | `project` | `reversible` | `controlled-shell` |
+| Tool | Trust | blast_radius | reversibility | sandbox | permissions |
+|------|-------|--------------|---------------|---------|-------------|
+| `git.commit` | L3 | `project` | `compensable` | `controlled-shell` | `shell.exec`, `fs.write` |
+| `git.push` | **L4** | `external` | `irreversible` | `controlled-shell` | `shell.exec`, `network.egress`, `fs.read` |
+| `git.clone` | L3 | `project` | `reversible` | `controlled-shell` | `shell.exec`, `network.egress`, `fs.write` |
 
 `git.push` @ L4 is the headline: it parks at `pending_approval` until a human resolves
-it. Do **not** lower the floor to make a demo pass.
+it. Do **not** lower the floor to make a demo pass. All three spawn `git` (a subprocess),
+so they honestly declare `shell.exec` + the `controlled-shell` sandbox — a policy that
+composes enforcement from `permissions`/`sandbox` must grant process execution.
 
 ## When you extend this
 

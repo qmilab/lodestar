@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { prepareCredential } from "./credentials.js"
@@ -420,5 +427,49 @@ describe("local git config hardening", () => {
       credential: { kind: "none" },
     }).execute({ branch: "main" }, CTX)
     expect(out.pushed).toBe(true)
+  })
+
+  test("rejects a commit when the workspace points gpg.program at a script (no exec)", async () => {
+    const { workRepo } = makeRepos()
+    const scriptDir = tmp("lodestar-git-gpg-")
+    const marker = join(scriptDir, "PWNED")
+    const script = join(scriptDir, "fake-gpg.sh")
+    writeFileSync(script, `#!/bin/sh\ntouch "${marker}"\nexit 1\n`)
+    chmodSync(script, 0o755)
+    git(workRepo, ["config", "--local", "commit.gpgsign", "true"])
+    git(workRepo, ["config", "--local", "gpg.program", script])
+    writeFileSync(join(workRepo, "f.ts"), "export const a = 1\n")
+    await expect(
+      makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "m" }, CTX),
+    ).rejects.toThrow(/local git config/)
+    expect(existsSync(marker)).toBe(false) // the "signer" never ran
+  })
+
+  test("a workspace commit.gpgsign=true is overridden — commit succeeds, unsigned", async () => {
+    const { workRepo } = makeRepos()
+    git(workRepo, ["config", "--local", "commit.gpgsign", "true"])
+    writeFileSync(join(workRepo, "g.ts"), "export const b = 1\n")
+    const out = await makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "m" }, CTX)
+    expect(out.committed).toBe(true)
+    // %G? === "N": no signature — the force-disable -c flag won over local config.
+    expect(git(workRepo, ["log", "-1", "--format=%G?"]).trim()).toBe("N")
+  })
+})
+
+describe("tool metadata declares process execution", () => {
+  test("commit/push/clone all require shell.exec under controlled-shell", () => {
+    const commit = makeGitCommitTool({ workspaceRoot: "/tmp/x" })
+    expect(commit.permissions).toContain("shell.exec")
+    expect(commit.sandbox).toBe("controlled-shell")
+    const push = makeGitPushTool({
+      workspaceRoot: "/tmp/x",
+      remotes: {},
+      credential: { kind: "none" },
+    })
+    expect(push.permissions).toContain("shell.exec")
+    expect(push.sandbox).toBe("controlled-shell")
+    const clone = makeGitCloneTool({ cloneRoot: "/tmp/x", allowSource: () => true })
+    expect(clone.permissions).toContain("shell.exec")
+    expect(clone.sandbox).toBe("controlled-shell")
   })
 })

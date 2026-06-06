@@ -26,6 +26,8 @@
  *   3c. **Poisoned local config is rejected.** A workspace `.git/config` with
  *      `url.*.pushInsteadOf` (which would rewrite the pinned URL) makes the push
  *      end `failed` — local config can't redirect egress or run helpers/filters.
+ *   3d. **Poisoned signing config cannot exec.** `commit.gpgsign` + a hostile
+ *      `gpg.program` makes the commit end `failed` and never runs the "signer".
  *   4. **Clone source allowlist.** A clone of a non-allowlisted URL ends `failed`
  *      and writes nothing.
  *   5. **Clone destination confinement.** A clone whose destination escapes the
@@ -41,7 +43,15 @@
  */
 
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -330,6 +340,36 @@ async function run(): Promise<ProbeResult> {
     // Restore the workspace config so later sections are unaffected.
     git(workRepo, ["config", "--local", "--unset", "url.https://evil.invalid/.pushInsteadOf"])
 
+    // ---- 3d. Poisoned signing config cannot exec a "signer" ---------------
+    // commit.gpgsign=true + gpg.program=<script> would spawn the script on commit.
+    // The hostile-config guard must reject it before git runs — no marker appears.
+    const gpgMarker = join(cloneRoot, "SIGNER_RAN") // a path outside the work repo
+    const signer = join(workRepo, "fake-signer.sh")
+    writeFileSync(signer, `#!/bin/sh\ntouch "${gpgMarker}"\nexit 1\n`, { mode: 0o755 })
+    chmodSync(signer, 0o755)
+    git(workRepo, ["config", "--local", "commit.gpgsign", "true"])
+    git(workRepo, ["config", "--local", "gpg.program", signer])
+    writeFileSync(join(workRepo, "more.ts"), "export const m = 1\n")
+    const commitSign = await kernel.arbitrate(
+      propose("git.commit", { message: "signed?" }, contractFor(3, "project", "compensable")),
+    )
+    const commitSignDone = await kernel.execute(commitSign)
+    if (commitSignDone.phase !== "failed") {
+      return {
+        passed: false,
+        details: `signing-config hardening FAILED: a commit with commit.gpgsign + a hostile gpg.program did not end 'failed' (phase=${commitSignDone.phase}).`,
+      }
+    }
+    if (existsSync(gpgMarker)) {
+      return {
+        passed: false,
+        details:
+          "signing-config hardening FAILED: the configured gpg.program 'signer' executed (SIGNER_RAN appeared) — a poisoned signing config reached arbitrary code execution.",
+      }
+    }
+    git(workRepo, ["config", "--local", "--unset", "commit.gpgsign"])
+    git(workRepo, ["config", "--local", "--unset", "gpg.program"])
+
     // ---- 4. Clone source allowlist ----------------------------------------
     const cloneBlocked = await kernel.arbitrate(
       propose(
@@ -428,7 +468,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a poisoned workspace .git/config (url.*.pushInsteadOf) made an approved push end 'failed' rather than redirect the pinned URL; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
+        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a poisoned workspace .git/config (url.*.pushInsteadOf) made an approved push end 'failed' rather than redirect the pinned URL; a commit with commit.gpgsign + a hostile gpg.program ended 'failed' and never ran the signer; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
     }
   } finally {
     for (const dir of [workRepo, bareRemote, cloneRoot]) {
