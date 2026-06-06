@@ -190,14 +190,16 @@ Cognitive Core. The resulting event log is renderable by
     declare which beliefs back its next action. So when a `SentinelArbiter` is
     wired (`MCPProxyOverrides.arbiter`, with `policyGate` compiled from the *same*
     arbiter via `compileProxyPolicyWithSentinels`), the proxy **synthesizes** a
-    `decision.made` per action from the arbiter's causal-recency window
-    (`peekRecentBeliefIds()` — the beliefs adopted since the previous *executed*
-    action, which land in `observationSink` *after* the prior call executes) and
-    proposes the action with that `decision_id`. It *peeks* (does not drain) at
-    synthesis and `consumeBeliefIds()`-consumes those beliefs only when the action
-    actually executes (`completed`) — so a held / denied / re-proposed action
-    keeps re-gating from the same window (a soft-denied `tools/call` cannot drain
-    its way out of the gate; Codex P1 round 2). That gives a belief-scoped sentinel alert
+    `decision.made` per action from the arbiter's conservative belief-dependency
+    set (`observedBeliefIds()` — every belief observed this session). The set is
+    cumulative and **never reduced by execution** (the proxy never removes from
+    it): an opaque agent must not be able to drain a later action's obligations via
+    a soft-denied retry (Codex round 2) or a low-trust filler call (Codex round 4)
+    — every execution-driven shrink is an attacker-controlled drain. Temporal
+    scoping still holds (a decision is a point-in-time snapshot, so an action
+    proposed before a belief was observed does not depend on it); the cost is
+    verbosity (over-linked decisions, repeated alerts), bounded only at session
+    end. A bounded set is the deferred F4 item. That gives a belief-scoped sentinel alert
     the `decision.made` it fires on and the gate the `decision_id →
     belief_dependencies` thread it scopes by, so a poisoned-read-then-act sequence
     is held at `pending_approval` through the existing hold path. The synthesized
@@ -219,12 +221,12 @@ Cognitive Core. The resulting event log is renderable by
     the deferred F6 binding-token item. The proxy never resolves sentinel ids
     itself; the CLI resolves them against `FIRST_PARTY_SENTINELS` and injects the
     matched `{ gate, arbiter }` pair.
-    The window is peeked-at-synthesis / consumed-on-execution (so a held call's
-    beliefs re-gate its retry; scoping stays legible across the execute boundary)
-    and its concurrency posture (overlapping calls over-attribute) is the
-    documented best-effort gap in ADR-0003. The
-    `mcp-proxy-arbiter-gates-dependent-action` probe pins all of this end-to-end —
-    including that a re-proposed held edit stays held; it must keep passing.
+    Because nothing is ever removed, there is no consume/drain race; the only
+    concurrency effect is over-linking (the safe direction), the documented
+    best-effort posture in ADR-0003. The `mcp-proxy-arbiter-gates-dependent-action`
+    probe pins all of this end-to-end — including that a re-proposed held edit
+    stays held and that an action proposed before the poison is not gated; it must
+    keep passing.
 
 ## Persistence
 
@@ -294,8 +296,8 @@ want auto-approved at lower trust levels.
 - HTTP transport for the upstream face — Batch later.
 - The `SentinelArbiter` itself — `@qmilab/lodestar-guard` (ADR-0001). This package
   *uses* it (wires the feed + synthesizes decisions, see invariant 10); the
-  reusable bridge and the `peekRecentBeliefIds()` / `consumeBeliefIds()` recency
-  window live in guard.
+  reusable bridge and the `observedBeliefIds()` belief-dependency set live in
+  guard.
 - Resolving sentinel **ids** (`config.sentinels`) against the
   `FIRST_PARTY_SENTINELS` registry — the CLI does that and passes resolved
   `Sentinel` instances to `compileProxyPolicyWithSentinels`, so this package never

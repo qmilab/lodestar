@@ -41,8 +41,8 @@ wiring probes — `guard-arbiter-gates-dependent-action` (a real
 dependent action at `pending_approval` through the host; ADR-0001) and
 `mcp-proxy-arbiter-gates-dependent-action` (the **MCP-proxy** analogue —
 the opaque agent cannot declare decisions, so the proxy *synthesizes* a
-`decision.made` from the arbiter's causal-recency window, and a poisoned
-downstream read then holds the dependent `tools/call`; ADR-0002 / ADR-0003).
+`decision.made` from the arbiter's conservative observed-belief set, and a
+poisoned downstream read then holds the dependent `tools/call`; ADR-0002 / ADR-0003).
 The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -145,7 +145,7 @@ packages/
       zep/             # (exists) Zep facts import adapter
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
   cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
-  guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel; SentinelArbiter + compileWithSentinels wire the harness sentinels into the gate's arbitrate hook (sentinel→action, ADR-0001); arbiter also exposes peekRecentBeliefIds()/consumeBeliefIds() — the recency window guard-mcp peeks to synthesize decisions for its opaque agent and consumes on execute (ADR-0003)
+  guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel; SentinelArbiter + compileWithSentinels wire the harness sentinels into the gate's arbitrate hook (sentinel→action, ADR-0001); arbiter also exposes observedBeliefIds() — the conservative observed-belief set guard-mcp reads to synthesize decisions for its opaque agent (cumulative, never reduced by execution; ADR-0003)
   trace/               # (exists) read side + `lodestar report` CLI
   viewer/              # (exists, post-v1) read-side Governing UI — `lodestar view`; Elysia + no-build vanilla SPA over the log; strictly read-only (no mutation route, never writes the log); surfaces pending approvals for visibility only
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`; held L4 actions wait up to `approval_timeout_ms` polling for an out-of-band `approval.granted@1`, else synthetic `approval_timeout`; optionally wires a SentinelArbiter (config.sentinels) and synthesizes a decision.made per action from the recency window so a belief-scoped alert holds the dependent tools/call — opaque-agent decision source (ADR-0003)

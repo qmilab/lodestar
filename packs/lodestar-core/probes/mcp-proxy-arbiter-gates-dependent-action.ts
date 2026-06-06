@@ -14,14 +14,16 @@
  * and the very next tool call that depends on it is **held at `pending_approval`**
  * by a real `SuspiciousMemoryOriginSentinel` run by the proxy's `SentinelArbiter`.
  *
- * Window semantics (ADR-0003): the proxy *peeks* the recency window to synthesize
- * each decision and *consumes* those beliefs only once the dependent action
- * actually EXECUTES. So:
- *   - a clean-belief action (a decision linking only `tool_result`-quality beliefs)
- *     is NOT held and executes, consuming its window — scoping holds;
- *   - a HELD action does not consume, so re-proposing it (the proxy's
- *     `approval_required` → re-plan flow) re-reads the same poisoned window and
- *     stays held — a drain-at-synthesis design would let the retry slip through.
+ * Window semantics (ADR-0003): the synthesized decision depends on the
+ * CONSERVATIVE set — every belief observed so far this session — and that set is
+ * never reduced by execution (only reset at session end). So:
+ *   - an action proposed BEFORE a flagged belief was observed does not depend on
+ *     it (a decision is a point-in-time snapshot), so it is not held — temporal
+ *     scoping holds;
+ *   - the set never shrinks, so neither re-proposing a held call (the
+ *     `approval_required` → re-plan flow) nor running a low-trust filler can drain
+ *     a later consequential action's obligations — both would be under-gating
+ *     bypasses if execution consumed beliefs.
  *
  * Setup (all through the real proxy, no gate poking):
  *  - A fake downstream `devfs` advertises `read_file` (a `__status__` path returns
@@ -47,10 +49,10 @@
  *     belief; the held actions' `decision_id`s are those decisions.
  *  1c.(armed) A `sentinel.alerted@1` naming the poisoned belief is on the log,
  *     authored by the sentinel actor (`lodestar-sentinel`) with schema_version 1.
- *  2. (armed) The clean-belief `apply_change` completes and is not denied, and the
- *     held action's synthesized decision links ONLY the poison read's beliefs —
- *     not the earlier clean belief, which was consumed when its action executed.
- *     Scoping + consume-on-execute together.
+ *  2. (armed) The clean-belief `apply_change` (proposed before the poison read)
+ *     completes and is not denied, and its own synthesized decision does NOT
+ *     depend on the poison — temporal scoping: the cumulative set never gates
+ *     backwards.
  *  3. (un-armed) Through a proxy with no arbiter, the same sequence sails through:
  *     no `decision.made`, no `sentinel.alerted`, no `pending_approval`, the
  *     dependent calls complete. Enforcement is the proxy wiring the arbiter, not
@@ -294,23 +296,13 @@ async function run(): Promise<ProbeResult> {
       }
     }
     const poisonBeliefId = poisonBelief.id
-    // The clean read is the first tool call, so its supported envelope belief is
-    // the first belief.adopted — used below to prove it was consumed on execute.
-    const cleanEnvelopeBeliefId = armedBeliefs[0]?.id
-    if (cleanEnvelopeBeliefId === undefined || cleanEnvelopeBeliefId === poisonBeliefId) {
-      return {
-        passed: false,
-        details:
-          "setup: could not identify the clean read's envelope belief as the first adopted belief.",
-      }
-    }
 
     // ── 1. The dependent apply_change AND its retry were both HELD ──
     const pending = eventsOfType(armed.events, "action.pending_approval")
     if (pending.length !== 2) {
       return {
         passed: false,
-        details: `[1] expected exactly two action.pending_approval (the held edit and its retry) in the armed session; got ${pending.length}. A held call must NOT consume the poisoned window, so the retry stays held.`,
+        details: `[1] expected exactly two action.pending_approval (the held edit and its retry) in the armed session; got ${pending.length}. The belief-dependency set is cumulative (never reduced by execution), so the re-proposed held edit stays held.`,
       }
     }
     const requests = eventsOfType(armed.events, "approval.requested")
@@ -355,7 +347,7 @@ async function run(): Promise<ProbeResult> {
     if (decisionsLinkingPoison.length < 2) {
       return {
         passed: false,
-        details: `[1b] expected at least two synthesized decisions linking the poisoned belief (the hold and its retry); got ${decisionsLinkingPoison.length} — the retry did not re-synthesize the dependency, so the window was wrongly consumed.`,
+        details: `[1b] expected at least two synthesized decisions linking the poisoned belief (the hold and its retry); got ${decisionsLinkingPoison.length} — the retry did not re-link the dependency, so the cumulative set was wrongly reduced.`,
       }
     }
     for (const d of decisionsLinkingPoison) {
@@ -397,29 +389,38 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
-    // ── 2. Clean-belief action not held; the held decision is SCOPED (the earlier
-    //       clean belief was consumed when its action executed) ──
+    // ── 2. The clean-belief action (proposed BEFORE the poison was observed) is
+    //       not held and completes, and its decision does not depend on the
+    //       poison — temporal scoping: the cumulative set never gates backwards ──
     if (isPolicyDeniedResult(armed.cleanEditResult)) {
       return {
         passed: false,
         details:
-          "[2] the clean-belief apply_change was denied; a decision linking only tool_result-quality beliefs must not gate, and it must execute.",
+          "[2] the clean-belief apply_change was denied; an action proposed before any flagged belief was observed must not be gated.",
       }
     }
     const completedEdits = eventsOfType(armed.events, "action.completed")
       .map((e) => e.payload as Action)
       .filter((a) => a.tool === EDIT_LODESTAR)
-    if (completedEdits.length < 1) {
+    if (completedEdits.length !== 1) {
       return {
         passed: false,
-        details: "[2] the clean-belief apply_change did not complete in the armed session.",
+        details: `[2] expected exactly one completed apply_change (the clean edit); got ${completedEdits.length} — the poison edits must stay held, the clean edit must complete.`,
       }
     }
-    if (heldDecisions.some((d) => d.belief_dependencies.includes(cleanEnvelopeBeliefId))) {
+    const cleanEditDecisionId = completedEdits[0]?.decision_id
+    const cleanEditDecision = decisions.find((d) => d.id === cleanEditDecisionId)
+    if (cleanEditDecision === undefined) {
+      return {
+        passed: false,
+        details: "[2] the completed clean edit carried no synthesized decision.",
+      }
+    }
+    if (cleanEditDecision.belief_dependencies.includes(poisonBeliefId)) {
       return {
         passed: false,
         details:
-          "[2] a held edit's synthesized decision still linked the earlier clean belief — it should have been consumed when the clean edit executed (consume-on-execute), leaving the window scoped to the poison read.",
+          "[2] the clean edit's decision depended on the poisoned belief — but it was proposed BEFORE the poison read executed, so temporal scoping is broken (a decision is a point-in-time snapshot of the observed set).",
       }
     }
 
@@ -467,7 +468,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Through the real MCP proxy: a clean-belief apply_change executed (consuming its window), then a poisoned read's dependent apply_change was held at pending_approval — the proxy synthesized a decision (authored by lodestar-proxy-synthesis) linking the laundered belief, the SentinelArbiter flagged it, and the held decision was scoped to the poison read (the earlier clean belief had been consumed on execute). Re-proposing the held edit stayed held (a held call does not consume the window), and an un-armed proxy let the whole sequence through. Enforcement lives in the proxy wiring the arbiter; the opaque agent's missing decision is supplied by synthesis, and a soft-denied call cannot drain its way out of the gate (ADR-0003).",
+        "Through the real MCP proxy: a clean-belief apply_change (proposed before any poison) completed and its decision did not depend on the later-observed poison (temporal scoping), then a poisoned read's dependent apply_change was held at pending_approval — the proxy synthesized a decision (authored by lodestar-proxy-synthesis) over the conservative observed-belief set, the SentinelArbiter flagged the laundered belief, and the dependent action was held. Re-proposing the held edit stayed held — the set is cumulative and never reduced by execution, so neither a soft-denied retry nor a low-trust filler can drain a later action's obligations. An un-armed proxy let the whole sequence through. Enforcement lives in the proxy wiring the arbiter (ADR-0003).",
     }
   } finally {
     await rm(logRoot, { recursive: true, force: true })

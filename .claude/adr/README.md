@@ -52,5 +52,6 @@ The options we rejected, each with a one-line reason.
   host sequencing: guard.wrap() first (agent-declared decisions), MCP proxy as
   an immediate follow-up (synthesized decisions).
 - [ADR-0003](0003-proxy-decision-synthesis-window.md) — MCP-proxy decision
-  synthesis: the causal-recency window (drained-on-synthesis), its concurrency
-  posture, and honest synthesized-decision attribution.
+  synthesis: the conservative belief-dependency set (cumulative, never reduced by
+  execution — so an opaque agent can't drain its obligations) and honest
+  synthesized-decision attribution.

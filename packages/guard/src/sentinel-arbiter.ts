@@ -132,17 +132,24 @@ export class SentinelArbiter {
   /** decision_id → belief_dependencies, projected from the bound session's `decision.made`. */
   private readonly decisions = new Map<string, string[]>()
   /**
-   * The causal-recency window: belief ids adopted (in order, deduped) since the
-   * last {@link consumeBeliefIds}. This is the opaque-agent decision source
-   * (ADR-0003) — a host whose wrapped agent cannot *declare* its
-   * `belief_dependencies` (the MCP proxy) {@link peekRecentBeliefIds}-s this to
-   * synthesize a `decision.made` linking "the beliefs the agent just saw, then
-   * acted on", and {@link consumeBeliefIds}-s them only once that action
-   * executes. A host that uses declared decisions (`guard.wrap()`) simply never
-   * touches it; it is cleared on session end like the rest of the per-session
-   * state.
+   * The conservative belief-dependency set: every belief id the bound session has
+   * observed (deduped, insertion order), reset only on session end. This is the
+   * opaque-agent decision source (ADR-0003) — a host whose wrapped agent cannot
+   * *declare* its `belief_dependencies` (the MCP proxy) reads it via
+   * {@link observedBeliefIds} to synthesize a `decision.made`.
+   *
+   * It is **cumulative and never reduced by execution**. An opaque agent does not
+   * tell the proxy which subset of what it has read a given action actually used,
+   * so the proxy must assume the worst — the whole observed set. Letting an
+   * executed action *shrink* the set would let the agent drain its own
+   * obligations: a soft-denied call re-proposed (rounds 2) or a low-trust filler
+   * call (round 4) would consume a belief a later consequential action still
+   * depends on, so that action would synthesize with no backing belief and slip
+   * the gate. A host that uses declared decisions (`guard.wrap()`) never touches
+   * it. (A bounded window is the deferred F4 refinement; bounding it safely is its
+   * own design question, since any eviction is a drain an agent could exploit.)
    */
-  private recentBeliefIds: string[] = []
+  private readonly observedBeliefs = new Set<string>()
   private calibration: CalibrationSnapshot | null
 
   constructor(options: SentinelArbiterOptions) {
@@ -237,41 +244,26 @@ export class SentinelArbiter {
   }
 
   /**
-   * Peek the causal-recency window — the belief ids adopted since the last
-   * {@link consumeBeliefIds}, as a copy (it does NOT clear the buffer). The
-   * opaque-agent decision source (ADR-0003).
+   * The conservative belief-dependency set for synthesizing an opaque agent's
+   * decision (ADR-0003): every belief id the session has observed so far, deduped
+   * and in insertion order, as a copy. The opaque-agent decision source.
    *
    * A host whose wrapped agent cannot declare its dependency edges (the MCP
    * proxy) calls this immediately before proposing an action, builds a
    * `decision.made` whose `belief_dependencies` are the returned ids, and
-   * proposes the action with that decision id. The window is "since the previous
-   * action that executed" because proxied tool-call N's beliefs are adopted
-   * during N's execution and so become the window N+1 acts on. An empty result
-   * means no decision need be synthesized (e.g. the first read of a session).
+   * proposes the action with that decision id. An empty result (the first read of
+   * a session) means no decision need be synthesized.
    *
-   * Crucially this only *peeks*: the beliefs are removed from the window via
-   * {@link consumeBeliefIds} only once the dependent action actually EXECUTES.
-   * A held / denied / timed-out action never consumes, so a re-proposal of it
-   * (the proxy's soft-denial → re-plan flow) re-reads the same window and stays
-   * gated — draining at synthesis time would let a retry slip through ungated.
+   * It is cumulative and never shrinks mid-session: an action proposed *before* a
+   * belief was adopted will not depend on it (decisions are point-in-time
+   * snapshots, so temporal scoping holds), but once observed a belief stays in
+   * every later action's set until session end. Execution does NOT remove
+   * anything — that is deliberate (see the field doc): an opaque agent must not be
+   * able to drain its own obligations by re-proposing a held call or running a
+   * low-trust filler.
    */
-  peekRecentBeliefIds(): string[] {
-    return [...this.recentBeliefIds]
-  }
-
-  /**
-   * Remove the given belief ids from the causal-recency window — the host calls
-   * this once the action that {@link peekRecentBeliefIds}-ed them has EXECUTED,
-   * marking them "acted upon" so they do not re-gate the next, genuinely
-   * different action (ADR-0003). Ids not in the window are ignored; beliefs
-   * adopted *after* the peek (e.g. the executing action's own results) remain,
-   * becoming the next action's window. Synchronous, so it is atomic with respect
-   * to concurrent peeks.
-   */
-  consumeBeliefIds(ids: readonly string[]): void {
-    if (ids.length === 0) return
-    const remove = new Set(ids)
-    this.recentBeliefIds = this.recentBeliefIds.filter((id) => !remove.has(id))
+  observedBeliefIds(): string[] {
+    return [...this.observedBeliefs]
   }
 
   private unbind(): void {
@@ -279,7 +271,7 @@ export class SentinelArbiter {
     this.alerts = []
     this.beliefs.clear()
     this.decisions.clear()
-    this.recentBeliefIds = []
+    this.observedBeliefs.clear()
   }
 
   /**
@@ -318,11 +310,11 @@ export class SentinelArbiter {
         confidence: v.confidence ?? 1,
         truth_status: (v.truth_status ?? "unverified") as TruthStatus,
       })
-      // Track it in the causal-recency window for opaque-agent decision
-      // synthesis (ADR-0003). Dedup against the un-drained window so a re-adopted
-      // belief does not list twice; a host that uses declared decisions never
-      // drains this and the entry is freed on session end.
-      if (!this.recentBeliefIds.includes(v.id)) this.recentBeliefIds.push(v.id)
+      // Add it to the conservative belief-dependency set for opaque-agent
+      // decision synthesis (ADR-0003). The Set dedups a re-adopted belief; a host
+      // that uses declared decisions never reads it, and it is freed on session
+      // end.
+      this.observedBeliefs.add(v.id)
       return
     }
     if (event.type === "decision.made") {
