@@ -346,6 +346,12 @@ export function makeNostrFetchTool(
           })
           relayValid += 1
         }
+        // A relay that cut off (max-events/byte bound, or a dropped oversized
+        // frame) means the overall result is incomplete — even if malformed drops
+        // kept the valid count below maxEvents, so the count-based check above
+        // never fired. Fold it into the top-level flag so callers aren't told the
+        // fetch was complete when it wasn't.
+        if (rr.truncated) truncated = true
         return {
           relay: rr.relay,
           event_count: relayValid,

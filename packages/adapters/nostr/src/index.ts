@@ -35,4 +35,6 @@ export {
   type RelayFetchResult,
   DEFAULT_RELAY_TIMEOUT_MS,
   DEFAULT_MAX_EVENTS,
+  DEFAULT_MAX_FRAME_BYTES,
+  DEFAULT_MAX_TOTAL_BYTES,
 } from "./relay.js"

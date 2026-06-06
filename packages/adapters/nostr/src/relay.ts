@@ -19,9 +19,23 @@ import { type NostrEvent, signEvent } from "./event.js"
 
 export const DEFAULT_RELAY_TIMEOUT_MS = 10_000
 export const DEFAULT_MAX_EVENTS = 200
+/** Per-frame byte cap: a single relay frame larger than this is dropped BEFORE it
+ * is parsed or recorded. An untrusted relay must not be able to exhaust memory or
+ * inflate an observation with one giant frame — `maxEvents` bounds frame *count*,
+ * not size, so this is the size half of "bounded capture". */
+export const DEFAULT_MAX_FRAME_BYTES = 256 * 1024 // 256 KiB
+/** Cumulative byte cap on a fetch's collected events; once exceeded the fetch
+ * stops and reports `truncated`. Bounds total captured size across many frames. */
+export const DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024 // 4 MiB
 
 /** NIP-42 client authentication event kind. */
 const KIND_CLIENT_AUTH = 22242
+
+/** Byte length of a UTF-8 text frame (what crosses the wire), not its UTF-16
+ * char count — so the cap is an honest byte bound for multibyte content. */
+function frameBytes(text: string): number {
+  return Buffer.byteLength(text, "utf8")
+}
 
 export interface RelayPublishResult {
   relay: string
@@ -39,7 +53,8 @@ export interface RelayFetchResult {
   events: unknown[]
   /** True if the relay sent EOSE (end of stored events). */
   eose: boolean
-  /** True if we stopped collecting at the max-events bound. */
+  /** True if results were cut short — the max-events or cumulative-byte bound was
+   * hit, or an oversized frame was dropped. The collected set is incomplete. */
   truncated: boolean
   /** A relay NOTICE/CLOSED reason or our timeout note, redacted. */
   message: string
@@ -57,10 +72,12 @@ export function applyRedactions(text: string, redactions: string[]): string {
   return out
 }
 
-function parseFrame(data: unknown): unknown[] | null {
-  if (typeof data !== "string") return null
+/** Parse an already size-checked text frame into a JSON array, or null. The
+ * caller enforces the typeof/byte-size guard so the parse never runs on an
+ * oversized frame. */
+function parseFrame(text: string): unknown[] | null {
   try {
-    const frame = JSON.parse(data)
+    const frame = JSON.parse(text)
     return Array.isArray(frame) ? frame : null
   } catch {
     return null
@@ -78,9 +95,10 @@ export function publishToRelay(
   url: string,
   event: NostrEvent,
   signer: ResolvedSigner,
-  opts: { timeoutMs: number; redactions: string[] },
+  opts: { timeoutMs: number; redactions: string[]; maxFrameBytes?: number },
 ): Promise<RelayPublishResult> {
   const redact = (s: string): string => applyRedactions(s, opts.redactions)
+  const maxFrameBytes = opts.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES
   return new Promise((resolveResult) => {
     let settled = false
     let authed = false
@@ -133,6 +151,9 @@ export function publishToRelay(
     ws.onclose = (): void =>
       finish({ accepted: false, message: redact("relay closed connection before OK") })
     ws.onmessage = (msg: MessageEvent): void => {
+      // Bound the untrusted frame before parsing it. The OK/AUTH frames we need
+      // are tiny; an oversized frame is never one of them, so drop it.
+      if (typeof msg.data !== "string" || frameBytes(msg.data) > maxFrameBytes) return
       const frame = parseFrame(msg.data)
       if (!frame) return
       const type = frame[0]
@@ -192,14 +213,23 @@ export function publishToRelay(
 export function fetchFromRelay(
   url: string,
   filters: unknown[],
-  opts: { timeoutMs: number; maxEvents: number; redactions: string[] },
+  opts: {
+    timeoutMs: number
+    maxEvents: number
+    redactions: string[]
+    maxFrameBytes?: number
+    maxTotalBytes?: number
+  },
 ): Promise<RelayFetchResult> {
   const redact = (s: string): string => applyRedactions(s, opts.redactions)
+  const maxFrameBytes = opts.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES
+  const maxTotalBytes = opts.maxTotalBytes ?? DEFAULT_MAX_TOTAL_BYTES
   const subId = bytesToHex(randomBytes(8))
   const events: unknown[] = []
   return new Promise((resolveResult) => {
     let settled = false
     let truncated = false
+    let totalBytes = 0
     let ws: WebSocket | undefined
 
     const finish = (r: { eose: boolean; message: string }): void => {
@@ -235,6 +265,14 @@ export function fetchFromRelay(
     ws.onerror = (): void => finish({ eose: false, message: "relay connection error" })
     ws.onclose = (): void => finish({ eose: false, message: "relay closed connection" })
     ws.onmessage = (msg: MessageEvent): void => {
+      if (typeof msg.data !== "string") return
+      const bytes = frameBytes(msg.data)
+      // An oversized frame is dropped before parsing — the results are then
+      // incomplete, so report truncation rather than silently swallowing it.
+      if (bytes > maxFrameBytes) {
+        truncated = true
+        return
+      }
       const frame = parseFrame(msg.data)
       if (!frame) return
       const [type, sid] = frame
@@ -242,9 +280,15 @@ export function fetchFromRelay(
 
       if (type === "EVENT") {
         events.push(frame[2])
-        if (events.length >= opts.maxEvents) {
+        totalBytes += bytes
+        // Stop at the frame-count OR the cumulative-byte bound — many medium
+        // frames must not add up to an unbounded capture either.
+        if (events.length >= opts.maxEvents || totalBytes >= maxTotalBytes) {
           truncated = true
-          finish({ eose: false, message: "max events reached" })
+          finish({
+            eose: false,
+            message: totalBytes >= maxTotalBytes ? "max bytes reached" : "max events reached",
+          })
         }
         return
       }

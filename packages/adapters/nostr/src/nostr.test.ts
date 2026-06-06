@@ -306,4 +306,43 @@ describe("nostr.fetch", () => {
       relay.stop()
     }
   })
+
+  test("an oversized relay frame is dropped (not parsed/recorded) and reported truncated", async () => {
+    // A single frame larger than the 256 KiB per-frame cap must be dropped before
+    // JSON.parse — an untrusted relay can't exhaust memory or inflate the result.
+    const huge = signEvent(TEST_SK, {
+      created_at: 1,
+      kind: 1,
+      tags: [],
+      content: "x".repeat(300 * 1024),
+    })
+    const relay = startRelay({ storedEvents: [huge] })
+    try {
+      const tool = makeNostrFetchTool({ relays: [relay.url] })
+      const out = await tool.execute({}, CTX)
+      expect(out.event_count).toBe(0) // the giant frame was never parsed or kept
+      expect(out.truncated).toBe(true) // results are incomplete — reported honestly
+    } finally {
+      relay.stop()
+    }
+  })
+
+  test("top-level truncated reflects a relay cut off below maxEvents by malformed drops", async () => {
+    // maxEvents=2: the relay client stops after 2 raw frames (truncated). If one of
+    // those is malformed and dropped, the valid count (1) never reaches maxEvents,
+    // yet the fetch IS incomplete — the top-level flag must say so. (Codex P3.)
+    const good = signEvent(TEST_SK, { created_at: 1, kind: 1, tags: [], content: "kept" })
+    const malformed = { id: "abc", pubkey: "def" }
+    const extra = signEvent(TEST_SK, { created_at: 2, kind: 1, tags: [], content: "never-reached" })
+    const relay = startRelay({ storedEvents: [good, malformed, extra] })
+    try {
+      const tool = makeNostrFetchTool({ relays: [relay.url], maxEvents: 2 })
+      const out = await tool.execute({}, CTX)
+      expect(out.event_count).toBe(1) // only `good` is valid
+      expect(out.malformed_count).toBe(1)
+      expect(out.truncated).toBe(true) // incomplete despite valid count < maxEvents
+    } finally {
+      relay.stop()
+    }
+  })
 })
