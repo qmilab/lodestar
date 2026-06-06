@@ -23,6 +23,7 @@ export {
   runGit,
   baseGitEnv,
   redactUrl,
+  urlSecretRedactions,
   applyRedactions,
   type GitRunResult,
   type GitRunOptions,

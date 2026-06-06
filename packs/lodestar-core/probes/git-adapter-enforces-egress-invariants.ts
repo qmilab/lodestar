@@ -20,10 +20,14 @@
  *   3. **Credentials never leak.** The configured token is absent from the
  *      recorded action inputs and the emitted observation (it flows via askpass
  *      env, never argv, and is redacted from captured output).
+ *   3b. **No refspec injection.** A push branch like `main:refs/heads/evil` is
+ *      rejected even once approved — it cannot touch/delete another ref on the
+ *      pinned remote (the push builds a fixed `refs/heads/X:refs/heads/X`).
  *   4. **Clone source allowlist.** A clone of a non-allowlisted URL ends `failed`
  *      and writes nothing.
  *   5. **Clone destination confinement.** A clone whose destination escapes the
- *      pinned clone root ends `failed` and writes nothing outside it.
+ *      pinned clone root — by string path OR through a planted symlink — ends
+ *      `failed` and writes nothing outside it.
  *   6. **No host-env passthrough.** A host `GIT_AUTHOR_NAME` (which overrides
  *      `-c user.name` in git) does NOT reach the commit subprocess — the author
  *      stays the pinned identity.
@@ -34,7 +38,7 @@
  */
 
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -263,6 +267,42 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- 3b. Push branch refspec injection is rejected --------------------
+    // A caller-supplied branch like "main:refs/heads/evil" must NOT become a
+    // refspec that touches another ref on the pinned remote — even once approved.
+    const pushInject = await kernel.arbitrate(
+      propose(
+        "git.push",
+        { branch: "main:refs/heads/evil" },
+        contractFor(4, "external", "irreversible"),
+      ),
+    )
+    const pushInjectDone = await kernel.execute(
+      kernel.resolve(pushInject, {
+        kind: "granted",
+        action_id: pushInject.id,
+        request_id: "probe-req-inject",
+        approver_id: "probe.human",
+      }),
+    )
+    if (pushInjectDone.phase !== "failed") {
+      return {
+        passed: false,
+        details: `branch validation FAILED: an approved push with a refspec-injection branch did not end 'failed' (phase=${pushInjectDone.phase}).`,
+      }
+    }
+    if (
+      git(bareRemote, ["for-each-ref", "--format=%(refname)", "refs/heads/"]).out.includes(
+        "refs/heads/evil",
+      )
+    ) {
+      return {
+        passed: false,
+        details:
+          "branch validation FAILED: a refspec-injection branch created/touched refs/heads/evil on the pinned remote.",
+      }
+    }
+
     // ---- 4. Clone source allowlist ----------------------------------------
     const cloneBlocked = await kernel.arbitrate(
       propose(
@@ -303,6 +343,38 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- 5b. Clone through a symlink cannot escape the clone root ----------
+    // A symlink under the root (planted by an untrusted prior setup) must not
+    // redirect the clone outside it — the string-path check alone would miss this.
+    const outsideDir = mkdtempSync(join(tmpdir(), "lodestar-probe-git-outside-"))
+    try {
+      symlinkSync(outsideDir, join(cloneRoot, "link"))
+      const cloneSymlinkDone = await kernel.execute(
+        await kernel.arbitrate(
+          propose(
+            "git.clone",
+            { url: bareRemote, destination: "link" },
+            contractFor(3, "project", "reversible"),
+          ),
+        ),
+      )
+      if (cloneSymlinkDone.phase !== "failed") {
+        return {
+          passed: false,
+          details: `clone symlink confinement FAILED: a symlinked destination escaping the root did not end 'failed' (phase=${cloneSymlinkDone.phase}).`,
+        }
+      }
+      if (readdirSync(outsideDir).length !== 0) {
+        return {
+          passed: false,
+          details:
+            "clone symlink confinement FAILED: the clone wrote through a symlink into a directory outside the clone root.",
+        }
+      }
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true })
+    }
+
     // ---- positive control: an allowlisted, confined clone DOES work --------
     const cloneOk = await kernel.arbitrate(
       propose(
@@ -329,7 +401,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; a non-allowlisted clone source and an escaping destination both ended 'failed' writing nothing; and a valid, confined clone completed.",
+        "Native git transport held every egress invariant through the Action Kernel: a host GIT_AUTHOR_NAME did not leak into the commit (author stayed the pinned identity); a push proposed at L4 parked at pending_approval and the ref stayed out of the remote until approval; the approved push landed HEAD in the operator-pinned remote despite a poisoned decoy origin (offline); the configured token never surfaced in inputs or the observation; an approved push with a refspec-injection branch ('main:refs/heads/evil') ended 'failed' and created no stray ref; a non-allowlisted clone source, a path-escaping destination, and a symlink-escaping destination all ended 'failed' writing nothing outside the clone root; and a valid, confined clone completed.",
     }
   } finally {
     for (const dir of [workRepo, bareRemote, cloneRoot]) {

@@ -93,6 +93,26 @@ export function redactUrl(url: string): string {
   return url.replace(/(\w+:\/\/)([^/@\s]+)@/g, (_m, scheme: string) => `${scheme}***@`)
 }
 
+/**
+ * The literal credential substrings embedded in a URL's userinfo
+ * (`scheme://user:secret@host`), so they can be added to a `runGit` redaction set.
+ * git can echo a failing remote URL verbatim in its stderr, so even though we tell
+ * operators never to embed credentials in the pinned URL, redact them if present.
+ * Returns the full `user:secret` and the bare `secret`.
+ */
+export function urlSecretRedactions(url: string): string[] {
+  const match = url.match(/\w+:\/\/([^/@\s]+)@/)
+  const userinfo = match?.[1] ?? ""
+  if (userinfo.length === 0) return []
+  const out = [userinfo]
+  const colon = userinfo.indexOf(":")
+  if (colon >= 0) {
+    const secret = userinfo.slice(colon + 1)
+    if (secret.length > 0) out.push(secret)
+  }
+  return out
+}
+
 interface StreamSink {
   readonly onData: (chunk: Buffer) => void
   text(): string

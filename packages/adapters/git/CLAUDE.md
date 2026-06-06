@@ -37,18 +37,23 @@ real tools through the real kernel.
 A **TS-level governance boundary, not an OS sandbox** (same framing as ADR-0004's shell
 adapter). It enforces, in-process:
 
-1. **Remote pinning.** `git.push` targets the operator-pinned URL *explicitly*
-   (`git push <url> <branch>`), bypassing the workspace's `.git/config`. The agent
-   names a remote; the operator pins name → URL. The agent cannot push to an un-pinned
-   remote.
+1. **Remote pinning + fixed refspec.** `git.push` targets the operator-pinned URL
+   *explicitly*, bypassing the workspace's `.git/config`. The agent names a remote; the
+   operator pins name → URL. The caller-supplied branch is validated as a branch name and
+   the push builds a fixed `refs/heads/X:refs/heads/X`, so it cannot inject refspec
+   syntax (e.g. `main:refs/heads/other` to touch — or `:refs/heads/main` to delete —
+   another ref on the remote). The agent cannot push to an un-pinned remote.
 2. **Credential scoping, no silent default.** The operator picks the `credential` kind
    explicitly. For `https-token` the secret flows through a generated `GIT_ASKPASS`
    helper that reads it from the *scoped env* — so the token never appears in argv
-   (`ps`-safe) and is redacted from captured output. `token` may be a
-   `() => Promise<string>` resolver so production fetches it at push time.
+   (`ps`-safe) and is redacted from captured output (the askpass token AND any credential
+   embedded in a URL). `token` may be a `() => Promise<string>` resolver so production
+   fetches it at push time.
 3. **Clone source allowlist + destination pin.** A clone URL must pass `allowSource`;
    the destination is confined under `cloneRoot` (no `..`, no absolute, no overwrite of
-   a non-empty dir). Cloned content is untrusted external input.
+   a non-empty dir). Confinement is **symlink-aware** — a symlink planted under the root
+   (by an untrusted prior setup) cannot redirect the clone outside it. Cloned content is
+   untrusted external input.
 4. **No host-env passthrough; host git config neutralised.** The subprocess sees only a
    scoped env (fresh empty `HOME`, `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM=/dev/null`,
    `GIT_TERMINAL_PROMPT=0`, `PATH` inherited). `git.commit` disables hooks

@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { prepareCredential } from "./credentials.js"
-import { applyRedactions, baseGitEnv, redactUrl } from "./run.js"
+import { applyRedactions, baseGitEnv, redactUrl, urlSecretRedactions } from "./run.js"
 import { makeGitCloneTool, makeGitCommitTool, makeGitPushTool } from "./transport.js"
 
 // A ToolContext stand-in (the transport tools ignore it).
@@ -297,5 +297,78 @@ describe("git.clone", () => {
       /must be relative/,
     )
     expect(readdirSync(cloneRoot).length).toBe(0)
+  })
+
+  test("rejects a destination symlink that escapes the clone root (leaf, intermediate, dangling)", async () => {
+    const { cloneRoot, bareRemote } = makeRepos()
+    const outside = tmp("lodestar-git-outside-")
+    const tool = makeGitCloneTool({ cloneRoot, allowSource: () => true })
+
+    // (a) leaf symlink → an empty dir outside the root.
+    symlinkSync(outside, join(cloneRoot, "link"))
+    await expect(tool.execute({ url: bareRemote, destination: "link" }, CTX)).rejects.toThrow()
+
+    // (b) intermediate symlink → outside; destination descends through it.
+    symlinkSync(outside, join(cloneRoot, "sub"))
+    await expect(tool.execute({ url: bareRemote, destination: "sub/inner" }, CTX)).rejects.toThrow()
+
+    // (c) dangling symlink leaf (git would still follow it).
+    symlinkSync(join(tmpdir(), "lodestar-git-nonexistent-zzz"), join(cloneRoot, "dangling"))
+    await expect(tool.execute({ url: bareRemote, destination: "dangling" }, CTX)).rejects.toThrow()
+
+    // Nothing was cloned into the outside directory.
+    expect(readdirSync(outside).length).toBe(0)
+  })
+})
+
+describe("git.push branch validation", () => {
+  test("rejects refspec injection in the branch name and creates no stray ref", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    // Update-another-ref, delete-a-ref, and traversal forms are all rejected.
+    await expect(tool.execute({ branch: "main:refs/heads/evil" }, CTX)).rejects.toThrow(
+      /not a valid branch name/,
+    )
+    await expect(tool.execute({ branch: ":refs/heads/main" }, CTX)).rejects.toThrow(
+      /not a valid branch name/,
+    )
+    await expect(tool.execute({ branch: "../evil" }, CTX)).rejects.toThrow(
+      /not a valid branch name/,
+    )
+    // No ref was created/touched on the pinned remote.
+    expect(git(bareRemote, ["for-each-ref", "--format=%(refname)"])).not.toContain("evil")
+  })
+
+  test("a normal branch still pushes via the fixed refspec", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    const out = await tool.execute({ branch: "main" }, CTX)
+    expect(out.pushed).toBe(true)
+    expect(git(bareRemote, ["rev-parse", "refs/heads/main"]).trim()).toBe(
+      git(workRepo, ["rev-parse", "HEAD"]).trim(),
+    )
+  })
+})
+
+describe("URL credential redaction", () => {
+  test("urlSecretRedactions extracts userinfo + secret; the pipeline strips them", () => {
+    expect(urlSecretRedactions("https://user:TOPSECRET@host/r.git")).toEqual([
+      "user:TOPSECRET",
+      "TOPSECRET",
+    ])
+    expect(urlSecretRedactions("https://host/r.git")).toEqual([])
+    expect(urlSecretRedactions("https://justuser@host/r.git")).toEqual(["justuser"])
+    const reds = urlSecretRedactions("https://u:TOPSECRET@host/r.git")
+    expect(
+      applyRedactions("fatal: unable to access https://u:TOPSECRET@host/r.git", reds),
+    ).not.toContain("TOPSECRET")
   })
 })

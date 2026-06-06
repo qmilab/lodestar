@@ -1,6 +1,6 @@
-import { existsSync, mkdtempSync, readdirSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { isAbsolute, join, relative, resolve, sep } from "node:path"
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import {
   type Effect,
   type Permission,
@@ -16,6 +16,7 @@ import {
   baseGitEnv,
   redactUrl,
   runGit,
+  urlSecretRedactions,
 } from "./run.js"
 
 /**
@@ -162,7 +163,70 @@ function resolveCloneTarget(cloneRoot: string, destination: string): string {
   if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
     throw new Error(`git.clone: destination '${destination}' escapes the clone root`)
   }
+  // Symlink-aware confinement. The string check above only constrains the textual
+  // path; a symlink placed under the root (by an untrusted prior setup) could still
+  // redirect the clone outside it. Ensure the root exists, then require the REAL
+  // path of the target's nearest existing ancestor to stay within the real root,
+  // and reject a symlink at the target leaf itself — git follows it (even a dangling
+  // one) and would write outside the root.
+  mkdirSync(root, { recursive: true })
+  const realRoot = realpathSync(root)
+  let ancestor = target
+  while (!existsSync(ancestor)) {
+    const parent = dirname(ancestor)
+    if (parent === ancestor) break
+    ancestor = parent
+  }
+  const realAncestor = realpathSync(ancestor)
+  const realRel = relative(realRoot, realAncestor)
+  if (
+    realRel !== "" &&
+    (realRel === ".." || realRel.startsWith(`..${sep}`) || isAbsolute(realRel))
+  ) {
+    throw new Error(
+      `git.clone: destination '${destination}' resolves outside the clone root via a symlink`,
+    )
+  }
+  let leaf: ReturnType<typeof lstatSync> | undefined
+  try {
+    leaf = lstatSync(target)
+  } catch {
+    leaf = undefined
+  }
+  if (leaf?.isSymbolicLink()) {
+    throw new Error(`git.clone: destination '${destination}' is a symlink`)
+  }
   return target
+}
+
+/**
+ * Validate a git branch name. Rejects refspec syntax (a colon) and other unsafe
+ * forms so a caller-supplied branch cannot become an arbitrary refspec like
+ * `main:refs/heads/other` (touch another ref) or `:refs/heads/main` (delete one)
+ * on the pinned remote. The push then builds a fixed `refs/heads/X:refs/heads/X`.
+ */
+const BRANCH_METACHARS = "~^:?*[\\" // git's special chars; the colon blocks refspec injection
+function assertSafeBranchName(branch: string): void {
+  // Reject control chars + space (code <= 0x20), DEL (0x7f), and git metacharacters,
+  // so a caller-supplied branch cannot become an arbitrary refspec.
+  const hasUnsafeChar = [...branch].some((ch) => {
+    const code = ch.codePointAt(0) ?? 0
+    return code <= 0x20 || code === 0x7f || BRANCH_METACHARS.includes(ch)
+  })
+  if (
+    branch.length === 0 ||
+    branch.includes("..") ||
+    branch.includes("@{") ||
+    branch.startsWith("-") ||
+    branch.startsWith("/") ||
+    branch.endsWith("/") ||
+    branch.endsWith(".lock") ||
+    hasUnsafeChar
+  ) {
+    throw new Error(
+      `git.push: '${branch}' is not a valid branch name (refspec syntax and metacharacters are rejected)`,
+    )
+  }
 }
 
 // -----------------------------------------------------------------------------
@@ -311,13 +375,19 @@ export function makeGitPushTool(
           )
         }
       }
+      assertSafeBranchName(branch)
       const cred = await prepared.resolve()
       const env = { ...shared.env, ...prepared.baseEnv, ...cred.env }
-      const redactions = cred.redactions
+      // Redact the askpass token AND any credential embedded in the pinned URL —
+      // git can echo a failing remote URL verbatim into stderr.
+      const redactions = [...cred.redactions, ...urlSecretRedactions(url)]
       // Push to the pinned URL explicitly (not the remote name) so a poisoned
-      // `.git/config` cannot redirect the push. Hooks disabled.
+      // `.git/config` cannot redirect the push. The refspec is fixed from the
+      // validated branch name so the agent cannot inject arbitrary refspec syntax
+      // (touch or delete other refs on the remote). Hooks disabled.
+      const refspec = `refs/heads/${branch}:refs/heads/${branch}`
       const push = await runGit(
-        ["-c", "core.hooksPath=/dev/null", "push", "--porcelain", url, branch],
+        ["-c", "core.hooksPath=/dev/null", "push", "--porcelain", url, refspec],
         runOpts(shared, root, env, redactions),
       )
       const combined = `${push.stdout}${push.stderr}`
@@ -385,9 +455,11 @@ export function makeGitCloneTool(
       }
       const cred = prepared !== undefined ? await prepared.resolve() : { env: {}, redactions: [] }
       const env = { ...shared.env, ...(prepared?.baseEnv ?? {}), ...cred.env }
+      // Redact the askpass token AND any credential embedded in the source URL.
+      const redactions = [...cred.redactions, ...urlSecretRedactions(inputs.url)]
       const clone = await runGit(
         ["clone", inputs.url, target],
-        runOpts(shared, cloneRoot, env, cred.redactions),
+        runOpts(shared, cloneRoot, env, redactions),
       )
       const cloned = clone.exit_code === 0
       let head_sha = ""
