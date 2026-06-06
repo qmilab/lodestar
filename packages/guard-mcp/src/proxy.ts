@@ -465,13 +465,17 @@ export class MCPProxy {
     // sync with that.
     this.namespacedTools = []
 
-    // Bind the sentinel arbiter (when wired) to this proxy's session BEFORE the
-    // first emit feeds it — the arbiter is single-session and `resolveContext`
-    // must report exactly this session, never "whichever event was seen last".
-    // A fresh proxy carries a fresh arbiter, so this never collides.
-    this.arbiter?.bindSession(this.sessionId)
-
     try {
+      // Bind the sentinel arbiter (when wired) to this proxy's session BEFORE the
+      // first emit feeds it — the arbiter is single-session and `resolveContext`
+      // must report exactly this session, never "whichever event was seen last".
+      // A fresh proxy carries a fresh arbiter, so this never collides; but a
+      // caller that reuses a still-bound arbiter makes `bindSession` throw, so it
+      // sits INSIDE the rollback try — otherwise the throw would escape with
+      // `started=true` and a follow-up `stop()` would emit `guard.session.ended`
+      // for a session that never started (Codex review, round 5).
+      this.arbiter?.bindSession(this.sessionId)
+
       // 4. First I/O: write the session-start envelope. Inside the
       //    try so a bad `log_root` (unwritable directory, full
       //    disk, …) routes through the rollback path instead of

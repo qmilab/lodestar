@@ -1,6 +1,8 @@
 import { describe, expect, it } from "bun:test"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
 import type { Policy } from "@qmilab/lodestar-core"
 import { SentinelArbiter, compileWithSentinels } from "@qmilab/lodestar-guard"
 import { SuspiciousMemoryOriginSentinel } from "@qmilab/lodestar-harness"
@@ -99,5 +101,35 @@ describe("MCPProxy constructor sentinels guard", () => {
           downstreamFactory: () => [],
         }),
     ).not.toThrow()
+  })
+})
+
+describe("MCPProxy.start rollback", () => {
+  it("resets started when arbiter binding fails, so the proxy stays retryable", async () => {
+    _resetToolsForTests()
+    const { gate, arbiter } = compileWithSentinels(POLICY, {
+      decider_id: "test",
+      allow_unsigned: true,
+      sentinels: [new SuspiciousMemoryOriginSentinel()],
+    })
+    // The arbiter is already bound to another live session, so `bindSession()` in
+    // start() throws. That throw must route through the startup rollback (which
+    // resets `started`), not escape with `started` left true (Codex review, r5).
+    arbiter.bindSession("a-different-live-session")
+    const logRoot = await mkdtemp(join(tmpdir(), "lodestar-start-rollback-"))
+    try {
+      const proxy = new MCPProxy(rawConfig({ log_root: logRoot }) as unknown as ProxyConfig, {
+        policyGate: gate,
+        arbiter,
+        downstreamFactory: () => [],
+      })
+      await expect(proxy.start()).rejects.toThrow(/single-session/)
+      // `started` was reset by the rollback: a retry reaches `bindSession` again
+      // (same single-session error) rather than throwing "already started" —
+      // which is what would happen if `started` had leaked true.
+      await expect(proxy.start()).rejects.toThrow(/single-session/)
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
   })
 })
