@@ -54,7 +54,10 @@ function contractFor(level: number): ActionContract {
     blast_radius: "self",
     reversibility: "reversible",
     scope: { level: "project", identifier: "probe-shell" },
-    data_sensitivity: "internal",
+    // Action-level sensitivity is public | private | secret (NOT the 4-value
+    // observation sensitivity); `sensitivityForContract` maps private -> internal.
+    // Using "internal" here would fall through to an undefined observation sensitivity.
+    data_sensitivity: "private",
     preconditions: [],
   }
 }
@@ -156,7 +159,11 @@ async function run(): Promise<ProbeResult> {
       tool: string,
       args: string[],
       level: number,
-    ): Promise<{ action: Action; output: ShellRunOutput | undefined }> {
+    ): Promise<{
+      action: Action
+      output: ShellRunOutput | undefined
+      observation: Observation | undefined
+    }> {
       const proposed = kernel.propose({
         intent: `probe ${tool}`,
         tool,
@@ -165,10 +172,16 @@ async function run(): Promise<ProbeResult> {
         proposed_by: "probe.shell-adapter",
       })
       const arbitrated = await kernel.arbitrate(proposed)
-      if (arbitrated.phase !== "approved") return { action: arbitrated, output: undefined }
+      if (arbitrated.phase !== "approved") {
+        return { action: arbitrated, output: undefined, observation: undefined }
+      }
       const executed = await kernel.execute(arbitrated)
       const obs = observations.find((o) => o.source.invocation_id === executed.id)
-      return { action: executed, output: obs?.payload as ShellRunOutput | undefined }
+      return {
+        action: executed,
+        output: obs?.payload as ShellRunOutput | undefined,
+        observation: obs,
+      }
     }
 
     // ---- 1. No host-env passthrough ---------------------------------------
@@ -183,6 +196,15 @@ async function run(): Promise<ProbeResult> {
       return {
         passed: false,
         details: `env-isolation FAILED: the host secret leaked into the subprocess env. stdout=${JSON.stringify(leak.output.stdout)}`,
+      }
+    }
+    // The kernel must emit a VALID observation: the contract's `private`
+    // data_sensitivity maps to observation sensitivity `internal`. A bad action
+    // sensitivity would fall through to `undefined` here — so assert it explicitly.
+    if (leak.observation?.sensitivity !== "internal") {
+      return {
+        passed: false,
+        details: `observation FAILED: expected the kernel to map contract data_sensitivity 'private' to observation sensitivity 'internal', got '${leak.observation?.sensitivity}'.`,
       }
     }
     const positive = await act("shell.envcheck", ["LODESTAR_SCOPED_OK"], 0)
