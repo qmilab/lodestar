@@ -87,6 +87,19 @@ describe("MCPProxy constructor sentinels guard", () => {
     ).toThrow(/no CompiledPolicy gate/)
   })
 
+  it("throws when an arbiter is wired DIRECTLY (no config.sentinels) without a compiled gate", () => {
+    // The library path: a host injects MCPProxyOverrides.arbiter directly and
+    // never sets config.sentinels. The guard must key on the arbiter, not the
+    // config field — otherwise the arbiter emits alerts the preset gate ignores.
+    expect(
+      () =>
+        new MCPProxy(rawConfig() as unknown as ProxyConfig, {
+          arbiter: new SentinelArbiter({ sentinels: [] }),
+          downstreamFactory: () => [],
+        }),
+    ).toThrow(/no CompiledPolicy gate/)
+  })
+
   it("constructs with the matched { gate, arbiter } pair from compileWithSentinels", () => {
     const { gate, arbiter } = compileWithSentinels(POLICY, {
       decider_id: "test",

@@ -211,16 +211,19 @@ Cognitive Core. The resulting event log is renderable by
     faulty sentinel logs `guard.sentinel.failed` and never aborts the session).
     **Opt-in:** with no arbiter the proxy synthesizes nothing, feeds nothing, and
     its event stream is byte-for-byte unchanged — every existing proxy probe holds.
-    **No silent non-enforcement:** a declared sentinel must never be quietly
-    dropped — the `ProxyConfigSchema` superRefine rejects a `sentinels`-without-
-    `policy` config at parse, and the constructor throws if `config.sentinels` is
-    set without BOTH an injected arbiter AND a `CompiledPolicy` gate (the default
-    `auto_approve_ceiling` preset and a bare `PolicyGate` have no arbitrate hook,
-    so the sentinels could never hold an action). Same shape as the `policy` /
-    `persistence` guards. Verifying the gate was compiled from *that* arbiter is
-    the deferred F6 binding-token item. The proxy never resolves sentinel ids
-    itself; the CLI resolves them against `FIRST_PARTY_SENTINELS` and injects the
-    matched `{ gate, arbiter }` pair.
+    **No silent non-enforcement:** a wired sentinel must never be quietly dropped.
+    Three guards, each keyed on what it actually requires: the `ProxyConfigSchema`
+    superRefine rejects a `sentinels`-without-`policy` config at parse; the
+    constructor throws if (A) `config.sentinels` is set but no arbiter was injected,
+    and if (B) **an arbiter is injected but the gate is not a `CompiledPolicy`** —
+    the default `auto_approve_ceiling` preset and a bare `PolicyGate` have no
+    arbitrate hook, so the arbiter's alerts could never hold an action. Guard (B)
+    keys on the *arbiter*, not `config.sentinels`, so it also catches a library
+    host that wires `MCPProxyOverrides.arbiter` directly. Same shape as the
+    `policy` / `persistence` guards. Verifying the gate was compiled from *that*
+    arbiter is the deferred F6 binding-token item. The proxy never resolves
+    sentinel ids itself; the CLI resolves them against `FIRST_PARTY_SENTINELS` and
+    injects the matched `{ gate, arbiter }` pair.
     Because nothing is ever removed, there is no consume/drain race; the only
     concurrency effect is over-linking (the safe direction), the documented
     best-effort posture in ADR-0003. The `mcp-proxy-arbiter-gates-dependent-action`

@@ -341,40 +341,40 @@ export class MCPProxy {
           "MCPProxyOverrides.stores. The `lodestar guard mcp-proxy` CLI does this for you.",
       )
     }
-    // `config.sentinels` is only ENFORCEABLE when the proxy has BOTH (a) an
-    // injected arbiter it feeds and synthesizes decisions for, AND (b) a
-    // `CompiledPolicy` gate whose arbitrate hook consults that arbiter. The
-    // default `auto_approve_ceiling` preset and a bare `PolicyGate` have NO
-    // arbitrate hook, so a declared sentinel would synthesize decisions and emit
-    // alerts that can never hold an action — silent non-enforcement of a
-    // security-relevant setting, which this package forbids. The schema
-    // superRefine rejects a `sentinels`-without-`policy` config at parse, but the
-    // `ProxyConfig` TS type does not encode it, so a direct caller can still reach
-    // here (e.g. arbiter injected, `policyGate` omitted → the preset fallback);
-    // fail fast. The proxy does not resolve sentinel ids itself (that keeps the
-    // harness registry out of its import graph — the CLI resolves them against
-    // FIRST_PARTY_SENTINELS). Verifying the injected `CompiledPolicy` was compiled
-    // from THIS arbiter is the deferred F6 binding-token item;
-    // `compileProxyPolicyWithSentinels` / `compileWithSentinels` is the safe path.
-    if ((config.sentinels?.length ?? 0) > 0) {
-      if (this.arbiter === undefined) {
-        throw new Error(
-          "MCPProxy: config.sentinels is set but no arbiter was injected. Resolve the " +
-            "ids against FIRST_PARTY_SENTINELS (@qmilab/lodestar-harness) and inject a " +
-            "SentinelArbiter via MCPProxyOverrides.arbiter, with policyGate compiled from " +
-            "the same arbiter (compileProxyPolicyWithSentinels / compileWithSentinels). " +
-            "The `lodestar guard mcp-proxy` CLI does this for you.",
-        )
-      }
-      if (!compiledPolicyInjected) {
-        throw new Error(
-          "MCPProxy: config.sentinels is set but no CompiledPolicy gate was injected — the " +
-            "default auto_approve_ceiling preset and a bare PolicyGate have no arbitrate " +
-            "hook, so a declared sentinel could never hold an action. Inject a policyGate " +
-            "compiled from the SAME arbiter (compileProxyPolicyWithSentinels / " +
-            "compileWithSentinels). The `lodestar guard mcp-proxy` CLI does this for you.",
-        )
-      }
+    // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
+    // synthesizes decisions for it) AND a `CompiledPolicy` gate whose arbitrate
+    // hook consults that arbiter. Two distinct silent-non-enforcement traps, two
+    // guards — keyed on what each actually requires:
+    //
+    // (A) `config.sentinels` declared but no arbiter wired to run them. The CLI
+    //     always injects an arbiter for declared sentinels; a non-CLI host that set
+    //     the field but forgot the arbiter would run the sentinels nowhere.
+    if ((config.sentinels?.length ?? 0) > 0 && this.arbiter === undefined) {
+      throw new Error(
+        "MCPProxy: config.sentinels is set but no arbiter was injected. Resolve the " +
+          "ids against FIRST_PARTY_SENTINELS (@qmilab/lodestar-harness) and inject a " +
+          "SentinelArbiter via MCPProxyOverrides.arbiter, with policyGate compiled from " +
+          "the same arbiter (compileProxyPolicyWithSentinels / compileWithSentinels). " +
+          "The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // (B) an arbiter is wired but the gate cannot arbitrate. The default
+    //     `auto_approve_ceiling` preset and a bare `PolicyGate` have NO arbitrate
+    //     hook, so the proxy would synthesize decisions and emit `sentinel.alerted`
+    //     that can never hold an action — silent non-enforcement. This keys on the
+    //     ARBITER, not `config.sentinels`, so it also catches a library host that
+    //     wires `MCPProxyOverrides.arbiter` directly and omits the compiled gate.
+    //     Verifying the gate was compiled from THIS arbiter is the deferred F6
+    //     binding-token item; `compileProxyPolicyWithSentinels` /
+    //     `compileWithSentinels` is the safe path.
+    if (this.arbiter !== undefined && !compiledPolicyInjected) {
+      throw new Error(
+        "MCPProxy: an arbiter was injected but no CompiledPolicy gate was — the default " +
+          "auto_approve_ceiling preset and a bare PolicyGate have no arbitrate hook, so " +
+          "the arbiter's sentinel alerts could never hold an action. Inject a policyGate " +
+          "compiled from the SAME arbiter (compileProxyPolicyWithSentinels / " +
+          "compileWithSentinels). The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
     }
   }
 
