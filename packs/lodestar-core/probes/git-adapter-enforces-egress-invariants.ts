@@ -136,6 +136,9 @@ async function run(): Promise<ProbeResult> {
   try {
     // Fixture: a work repo on `main` with one commit; an empty bare "remote".
     git(bareRemote, ["init", "--bare", "-q"])
+    // Pin the bare remote's default branch to `main` so the positive clone control
+    // checks it out regardless of the host git's init.defaultBranch (CI: `master`).
+    git(bareRemote, ["symbolic-ref", "HEAD", "refs/heads/main"])
     git(workRepo, ["init", "-q"])
     writeFileSync(join(workRepo, "README.md"), "# probe fixture\n")
     git(workRepo, ["add", "-A"])

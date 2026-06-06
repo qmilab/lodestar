@@ -64,6 +64,9 @@ function makeRepos(): Repos {
   const bareRemote = tmp("lodestar-git-remote-")
   const cloneRoot = tmp("lodestar-git-cloneroot-")
   git(bareRemote, ["init", "--bare", "-q"])
+  // Pin the bare remote's default branch to `main` so a later clone checks it out
+  // regardless of the host git's init.defaultBranch (CI defaults to `master`).
+  git(bareRemote, ["symbolic-ref", "HEAD", "refs/heads/main"])
   git(workRepo, ["init", "-q"])
   writeFileSync(join(workRepo, "README.md"), "# fixture\n")
   git(workRepo, ["add", "-A"])
