@@ -17,7 +17,9 @@
  *      command: argv is an array, never a shell string, so `&& touch PWNED` is a
  *      literal argument and no `PWNED` file appears.
  *   4. Wall-clock timeout. A long command is killed at the deadline and the
- *      observation carries `timed_out: true`.
+ *      observation carries `timed_out: true` — including a descendant that inherited
+ *      the pipes (the timeout kills the whole process group, not just the immediate
+ *      child), so a pipe-holding child cannot run the action past its deadline.
  *   5. Bounded output capture. Output beyond the byte cap is truncated and flagged.
  *
  * If any invariant regresses, an agent wrapped by Lodestar could leak host
@@ -115,6 +117,17 @@ async function run(): Promise<ProbeResult> {
           trust: 0,
           reversibility: "reversible",
           timeoutMs: 200,
+        },
+        {
+          // Spawns a descendant that inherits the stdout/stderr pipes, then the
+          // shell exits — the classic case where killing only the immediate child
+          // leaves the descendant holding the pipes and the read hanging.
+          name: "shell.spawner",
+          bin: "sh",
+          argsMatcher: (a) => a,
+          trust: 0,
+          reversibility: "reversible",
+          timeoutMs: 400,
         },
       ],
     })
@@ -226,6 +239,32 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- 4b. Timeout kills DESCENDANTS, not just the immediate child -------
+    // `sh -c 'sleep 10 &'` backgrounds a sleep that inherits the stdout/stderr
+    // pipes, then sh exits. If the deadline killed only the immediate process, the
+    // descendant would hold the pipes open and the read would hang ~10s past the
+    // deadline (and orphan the sleep). The process-group kill must reclaim it.
+    const orphan = await act("shell.spawner", ["-c", "sleep 10 &"], 0)
+    if (orphan.action.phase !== "completed" || !orphan.output) {
+      return {
+        passed: false,
+        details: `descendant-timeout: shell.spawner did not complete (phase=${orphan.action.phase})`,
+      }
+    }
+    if (!orphan.output.timed_out) {
+      return {
+        passed: false,
+        details:
+          "descendant-timeout FAILED: a pipe-holding descendant under a 400ms deadline did not report timed_out.",
+      }
+    }
+    if (orphan.output.duration_ms >= 5000) {
+      return {
+        passed: false,
+        details: `descendant-timeout FAILED: the call ran ${orphan.output.duration_ms}ms — a descendant kept the pipes open past the deadline. The timeout must kill the whole process group, not just the immediate child.`,
+      }
+    }
+
     // ---- 5. Bounded output capture ----------------------------------------
     const flood = await act("shell.flood", ["-e", "process.stdout.write('x'.repeat(9000))"], 0)
     if (flood.action.phase !== "completed" || !flood.output) {
@@ -251,7 +290,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native shell adapter held every TS-level invariant through the Action Kernel: host secret stayed out of the subprocess env (scoped var present), the allowlist rejected a forbidden request, argv-array exec blocked '&& touch PWNED' (no PWNED file), the 5s sleep was killed at the 200ms deadline (timed_out), and 9000 bytes were truncated to the 2000-byte cap.",
+        "Native shell adapter held every TS-level invariant through the Action Kernel: host secret stayed out of the subprocess env (scoped var present), the allowlist rejected a forbidden request, argv-array exec blocked '&& touch PWNED' (no PWNED file), the 5s sleep was killed at the 200ms deadline (timed_out), a pipe-holding descendant was reclaimed by the process-group kill (not left to run 10s past the deadline), and 9000 bytes were truncated to the 2000-byte cap.",
     }
   } finally {
     await rm(workspace, { recursive: true, force: true })

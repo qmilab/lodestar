@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
@@ -31,8 +32,9 @@ import { z } from "zod"
  *   - **No host-env passthrough.** The subprocess sees only the declared `env`;
  *     `process.env` is never spread in. The default is a minimal scoped env with a
  *     fresh empty HOME (no host dotfiles) and git's global/system config disabled.
- *   - **Wall-clock timeout.** Every command has a deadline; the process is killed
- *     at the timeout and `timed_out` is reported.
+ *   - **Wall-clock timeout.** Every command has a deadline; at the timeout the whole
+ *     process group is killed (so a descendant that inherited the pipes is reclaimed,
+ *     not just the immediate child) and `timed_out` is reported.
  *   - **Bounded output capture.** stdout/stderr are captured up to a byte cap and
  *     flagged when truncated; the child is still drained to EOF so it cannot block.
  *   - **Pinned cwd.** Every command runs in `workspaceRoot`; the agent cannot
@@ -83,6 +85,10 @@ export type ShellRunOutput = z.infer<typeof ShellRunOutputSchema>
 
 const DEFAULT_MAX_OUTPUT_BYTES = 1024 * 1024 // 1 MiB per stream
 const DEFAULT_TIMEOUT_MS = 120_000 // 2 minutes
+// After the deadline kills the process group, the pipes close and `close` fires
+// promptly. This is a hard backstop so the call can never hang past the deadline if
+// group-kill fails to close them (e.g. a descendant escaped into its own session).
+const TIMEOUT_GRACE_MS = 500
 
 /**
  * A single governed shell command. Each spec becomes one `Tool`.
@@ -173,91 +179,120 @@ function resolveOptions(options: ShellAdapterOptions): ResolvedOptions {
 }
 
 /**
- * Read a stream up to `maxBytes`, marking truncation. The stream is always drained
- * to EOF (even past the cap) so a chatty child cannot block on a full pipe; only the
- * first `maxBytes` are retained. Truncation is byte-bounded, so a multibyte UTF-8
- * sequence cut at the boundary decodes to the replacement character — acceptable for
- * captured-for-audit output.
+ * Accumulate a child stream up to `maxBytes`, marking truncation. Buffers are kept
+ * whole and decoded once, so a multibyte UTF-8 sequence spanning two `data` chunks is
+ * not corrupted; only the final truncation boundary may split a code point (acceptable
+ * for captured-for-audit output). The stream stays in flowing mode even past the cap
+ * (we keep consuming, just stop storing), so a chatty child never blocks on a full pipe.
  */
-async function readCapped(
-  stream: ReadableStream<Uint8Array>,
-  maxBytes: number,
-): Promise<{ text: string; truncated: boolean }> {
-  const reader = stream.getReader()
-  const chunks: Uint8Array[] = []
+interface StreamSink {
+  readonly onData: (chunk: Buffer) => void
+  text(): string
+  truncated(): boolean
+}
+
+function makeStreamSink(maxBytes: number): StreamSink {
+  const chunks: Buffer[] = []
   let stored = 0
   let truncated = false
-  try {
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      if (value === undefined || value.byteLength === 0) continue
-      if (stored < maxBytes) {
-        const remaining = maxBytes - stored
-        if (value.byteLength <= remaining) {
-          chunks.push(value)
-          stored += value.byteLength
-        } else {
-          chunks.push(value.subarray(0, remaining))
-          stored += remaining
-          truncated = true
-        }
+  return {
+    onData(chunk: Buffer): void {
+      if (stored >= maxBytes) {
+        truncated = true
+        return
+      }
+      const remaining = maxBytes - stored
+      if (chunk.length <= remaining) {
+        chunks.push(chunk)
+        stored += chunk.length
       } else {
+        chunks.push(chunk.subarray(0, remaining))
+        stored += remaining
         truncated = true
       }
-    }
-  } finally {
-    reader.releaseLock()
+    },
+    text: () => Buffer.concat(chunks).toString("utf8"),
+    truncated: () => truncated,
   }
-  const buf = new Uint8Array(stored)
-  let offset = 0
-  for (const chunk of chunks) {
-    buf.set(chunk, offset)
-    offset += chunk.byteLength
-  }
-  return { text: new TextDecoder().decode(buf), truncated }
 }
 
 async function runScoped(
-  argv: string[],
+  bin: string,
+  args: string[],
   opts: { cwd: string; env: Record<string, string>; timeoutMs: number; maxOutputBytes: number },
 ): Promise<ShellRunOutput> {
   const start = Date.now()
-  const proc = Bun.spawn(argv, {
+  const command = [bin, ...args]
+
+  // `detached: true` puts the child in its OWN process group (POSIX setsid), so the
+  // timeout can later signal the whole group by its negative pid — killing any
+  // descendants it spawned, not just the immediate process. This is load-bearing:
+  // a descendant that inherited the stdout/stderr pipes keeps them open, so killing
+  // only the immediate child would leave the reads hanging and the descendant
+  // orphaned, defeating the wall-clock timeout.
+  const child = spawn(bin, args, {
     cwd: opts.cwd,
     env: opts.env,
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
   })
 
-  let timedOut = false
-  const timer = setTimeout(() => {
-    timedOut = true
-    proc.kill("SIGKILL")
-  }, opts.timeoutMs)
+  const stdoutSink = makeStreamSink(opts.maxOutputBytes)
+  const stderrSink = makeStreamSink(opts.maxOutputBytes)
+  child.stdout?.on("data", stdoutSink.onData)
+  child.stderr?.on("data", stderrSink.onData)
 
-  let stdout: { text: string; truncated: boolean }
-  let stderr: { text: string; truncated: boolean }
-  try {
-    ;[stdout, stderr] = await Promise.all([
-      readCapped(proc.stdout, opts.maxOutputBytes),
-      readCapped(proc.stderr, opts.maxOutputBytes),
-    ])
-    await proc.exited
-  } finally {
-    clearTimeout(timer)
+  // Signal the child's whole process group (negative pid). Falls back to the lone
+  // child if the platform has no process groups or the group is already gone.
+  const killGroup = (signal: NodeJS.Signals): void => {
+    const pid = child.pid
+    if (pid === undefined) return
+    try {
+      process.kill(-pid, signal)
+    } catch {
+      try {
+        child.kill(signal)
+      } catch {
+        /* already exited */
+      }
+    }
   }
 
+  let timedOut = false
+  const exitCode = await new Promise<number>((resolveFn) => {
+    let settled = false
+    let graceTimer: ReturnType<typeof setTimeout> | undefined
+    const finish = (code: number): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      if (graceTimer !== undefined) clearTimeout(graceTimer)
+      resolveFn(code)
+    }
+    const deadline = setTimeout(() => {
+      timedOut = true
+      killGroup("SIGKILL")
+      // Once the group is SIGKILLed the pipes close and `close` fires promptly. If it
+      // does not (a descendant escaped into its own session, or no group kill on this
+      // platform), stop waiting anyway so the call never hangs past the deadline.
+      graceTimer = setTimeout(() => finish(-1), TIMEOUT_GRACE_MS)
+    }, opts.timeoutMs)
+
+    // `close` (not `exit`) fires after every stdio stream reaches EOF, so the captured
+    // output is complete; after a timeout kill, EOF arrives because the group is dead.
+    child.once("close", (code) => finish(code ?? -1))
+    child.once("error", () => finish(-1))
+  })
+
   return {
-    command: argv,
-    exit_code: proc.exitCode ?? -1,
-    stdout: stdout.text,
-    stderr: stderr.text,
+    command,
+    exit_code: exitCode,
+    stdout: stdoutSink.text(),
+    stderr: stderrSink.text(),
     duration_ms: Date.now() - start,
     timed_out: timedOut,
-    stdout_truncated: stdout.truncated,
-    stderr_truncated: stderr.truncated,
+    stdout_truncated: stdoutSink.truncated(),
+    stderr_truncated: stderrSink.truncated(),
   }
 }
 
@@ -284,8 +319,7 @@ export function defineShellTool(
       // The allowlist runs first and throws on a forbidden request, so nothing is
       // spawned for a rejected call. Args are finalized here (the binary is fixed).
       const finalArgs = spec.argsMatcher(inputs.args ?? [])
-      const argv = [spec.bin, ...finalArgs]
-      return runScoped(argv, {
+      return runScoped(spec.bin, finalArgs, {
         cwd: resolved.workspaceRoot,
         env: resolved.env,
         timeoutMs,
