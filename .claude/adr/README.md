@@ -59,3 +59,7 @@ The options we rejected, each with a one-line reason.
   (P2 slice 1) is a TS-level governance boundary, not an OS sandbox; exposed as a
   config-driven tool factory (per-command trust). git commit/push deferred to the
   github adapter.
+- [ADR-0005](0005-native-adapter-prioritization-and-extended-p2.md) — Build an
+  adapter when governance is load-bearing (consequential action / untrusted output /
+  egress). Extends P2 to shell → github → nostr → http → messaging; names the
+  memory-import and runtime-adapter (incl. Flue, Pi) backlogs.

@@ -259,8 +259,19 @@ Work past the v1 line, tracked here as it lands:
   allowlist, no host-env passthrough (scoped env), a wall-clock timeout that kills
   the process, bounded output capture, and a pinned cwd; OS-level enforcement
   (namespaces/cgroups/network) stays deferred. Locked by the
-  `shell-adapter-enforces-sandbox-invariants` probe. Design lock: ADR-0004. **Next
-  in P2: the `github` adapter (commit/push/remote), then `nostr`.**
+  `shell-adapter-enforces-sandbox-invariants` probe. Design lock: ADR-0004.
+
+  **Extended P2 sequence (ADR-0005).** Build an adapter when governance is
+  load-bearing — a consequential action (trust ladder / L4), untrusted output
+  (`external_document` → the firewall), or outward data movement (`blast_radius:
+  external` → the dormant `read → egress → write` sentinel). On that basis the
+  ordered native-tool sequence is now **shell ✓ → github → nostr → http/web-fetch →
+  messaging (email/Slack)**, with a governance-rich backlog (SQL/database, vector/RAG
+  retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http` is the
+  highest-leverage next pick (it hits injection + egress + untrusted content at once
+  and lights up the egress sentinel); `messaging` is the cleanest demo of the
+  human-approval gate. Memory-firewall import adapters (Pinecone/Weaviate/Chroma,
+  Redis, …) continue the `mem0`/`letta`/`zep` pattern.
 
 ## What this roadmap explicitly does not include
 
@@ -269,7 +280,7 @@ These are real items, but they belong later than v1:
 - **Public marketplace registry** — v1.5+. Requires signing infrastructure.
 - **Hosted dashboard** — v2. Requires team workflow design.
 - **Compliance exports** (SOC 2, GDPR DSR) — v2+. Requires legal review.
-- **Non-MCP runtime adapters** (Hermes, OpenClaw, LangGraph, CrewAI) — v1.5+. Each adapter is its own work item; do not block v1.
+- **Non-MCP runtime adapters** (Hermes, OpenClaw, LangGraph, CrewAI, Flue, Pi) — v1.5+. Each adapter is its own work item; do not block v1. (ADR-0005.)
 - **Advanced replay UI** — v2.
 - **Quantum world-model integration** — separate research arc under QMI Lab Pillar III. Not Lodestar's path.
 
