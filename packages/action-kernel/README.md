@@ -85,7 +85,7 @@ const action = kernel.propose({
     blast_radius: "self",
     reversibility: "reversible",
     scope: { level: "project", identifier: "my-project" },
-    data_sensitivity: "internal",
+    data_sensitivity: "private", // action sensitivity is public | private | secret
     preconditions: [],
   },
   proposed_by: "agent-1",

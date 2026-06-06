@@ -159,6 +159,11 @@ jobs:
             "packages/trace",
             "packages/adapters/filesystem",
             "packages/adapters/git",
+            // shell adapter (new, P2): depends only on core + action-kernel,
+            // both published above. Like guard-mcp/viewer/otel, this new
+            // package's first stage-publish needs the manual trusted-publisher
+            // bootstrap before CI can publish it through this path.
+            "packages/adapters/shell",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -167,6 +172,10 @@ jobs:
             // publishes before guard. Publishable since the Policy Kernel
             // marathon — it was simply never added to this order.
             "packages/policy-kernel",
+            // harness depends only on core + event-log. `guard` now depends on
+            // it (its SentinelArbiter wires the harness sentinels), and the CLI
+            // depends on it too — so harness publishes before guard.
+            "packages/harness",
             "packages/guard",
             // guard-mcp depends on core/event-log/action-kernel/
             // memory-firewall/cognitive-core/guard; lives after
@@ -175,9 +184,6 @@ jobs:
             // mini-marathon described in the Batch 3 release notes
             // before CI can stage-publish it through this path.
             "packages/guard-mcp",
-            // harness depends on core + event-log; the CLI depends on it
-            // (`lodestar harness run`/`list`), so it publishes before cli.
-            "packages/harness",
             // viewer depends on core/event-log/trace; the CLI now depends
             // on it, so it publishes before `cli`. Like guard-mcp, its
             // first publish needs the manual trusted-publisher mini-marathon
@@ -229,7 +235,7 @@ jobs:
       # both the order array there AND the array here — the verifier
       # will catch divergence.
       #
-      # 18 packages today; an explicit list stays reviewable up to ~25.
+      # 19 packages today; an explicit list stays reviewable up to ~25.
       # Past that, factor into a shared JSON file both steps read.
       #
       # Failures are NOT swallowed. If any single publish fails, the
@@ -247,19 +253,23 @@ jobs:
             packages/trace
             packages/adapters/filesystem
             packages/adapters/git
+            # shell adapter (new, P2): depends only on core + action-kernel.
+            # First publish needs the manual trusted-publisher bootstrap.
+            packages/adapters/shell
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep
             # guard depends on policy-kernel (re-exports autoApprovePolicy).
             packages/policy-kernel
+            # guard depends on harness (SentinelArbiter wires the harness
+            # sentinels); the CLI depends on it too. Publishes before guard.
+            packages/harness
             packages/guard
             # First publish of guard-mcp requires the manual
             # bootstrap (one `npm publish` + trusted-publisher rule
             # configured on npm) before this stage-publish step can
             # succeed — see docs/roadmap.md "Batch 3 follow-ups."
             packages/guard-mcp
-            # cli depends on harness (`lodestar harness run`/`list`).
-            packages/harness
             # viewer is a CLI dependency; publishes before `cli`. Like
             # guard-mcp, its first publish needs the manual bootstrap.
             packages/viewer

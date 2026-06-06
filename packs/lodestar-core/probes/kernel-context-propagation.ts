@@ -111,7 +111,10 @@ async function run(): Promise<ProbeResult> {
       blast_radius: "self",
       reversibility: "reversible",
       scope: { level: "project", identifier: REAL_PROJECT_ID },
-      data_sensitivity: "internal",
+      // Action-level sensitivity is public | private | secret. "internal" is not a
+      // valid action sensitivity — it would map to an undefined observation
+      // sensitivity via `sensitivityForContract`. "private" maps to internal.
+      data_sensitivity: "private",
       preconditions: [],
     }
     const proposed: Action = kernel.propose({
