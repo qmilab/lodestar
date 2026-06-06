@@ -16,7 +16,8 @@
     "documentation_provenance",
     "policy_kernel",
     "governing_ui",
-    "otel_export"
+    "otel_export",
+    "shell_adapter"
   ],
   "invariants": [
     "no_self_promotion",
@@ -42,7 +43,8 @@
     "proxy_hold_times_out_or_resolves",
     "read_only_viewer",
     "otel_export_sensitivity_ceiling",
-    "otel_action_span_projection"
+    "otel_action_span_projection",
+    "shell_sandbox_invariants"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -140,6 +142,10 @@
     {
       "name": "otel-export-projects-action-spans",
       "file": "probes/otel-export-projects-action-spans.ts"
+    },
+    {
+      "name": "shell-adapter-enforces-sandbox-invariants",
+      "file": "probes/shell-adapter-enforces-sandbox-invariants.ts"
     }
   ]
 }

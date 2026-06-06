@@ -9,6 +9,7 @@
         "@qmilab/lodestar-action-kernel": "workspace:*",
         "@qmilab/lodestar-adapter-filesystem": "workspace:*",
         "@qmilab/lodestar-adapter-git": "workspace:*",
+        "@qmilab/lodestar-adapter-shell": "workspace:*",
         "@qmilab/lodestar-cognitive-core": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
         "@qmilab/lodestar-event-log": "workspace:*",
@@ -133,6 +134,18 @@
     },
     "packages/adapters/git": {
       "name": "@qmilab/lodestar-adapter-git",
+      "version": "0.1.5",
+      "dependencies": {
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
+    "packages/adapters/shell": {
+      "name": "@qmilab/lodestar-adapter-shell",
       "version": "0.1.5",
       "dependencies": {
         "@qmilab/lodestar-action-kernel": "workspace:*",
@@ -398,6 +411,8 @@
     "@qmilab/lodestar-adapter-filesystem": ["@qmilab/lodestar-adapter-filesystem@workspace:packages/adapters/filesystem"],
 
     "@qmilab/lodestar-adapter-git": ["@qmilab/lodestar-adapter-git@workspace:packages/adapters/git"],
+
+    "@qmilab/lodestar-adapter-shell": ["@qmilab/lodestar-adapter-shell@workspace:packages/adapters/shell"],
 
     "@qmilab/lodestar-cli": ["@qmilab/lodestar-cli@workspace:packages/cli"],
 

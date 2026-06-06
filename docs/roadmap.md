@@ -249,6 +249,19 @@ Work past the v1 line, tracked here as it lands:
   `otel-export-projects-action-spans` (the span tree). **Metrics/logs signals
   and live in-process instrumentation are out of scope for v0** (traces only).
 
+- **Native adapters (P2) — shell (a)** — ✅ landed
+  (`packages/adapters/shell/`, `@qmilab/lodestar-adapter-shell`). Graduates the
+  demo-shaped `dev-tools-mcp` server into a configurable native adapter: the
+  operator declares command **specs** and each becomes its own governed `Tool`
+  with its own name + trust floor (`defineShellTool` / `registerShellTools`),
+  plus a `bunTest` (`shell.test`) preset. A **TS-level governance boundary, not an
+  OS sandbox** — fixed-binary argv-only exec (no shell string), an `argsMatcher`
+  allowlist, no host-env passthrough (scoped env), a wall-clock timeout that kills
+  the process, bounded output capture, and a pinned cwd; OS-level enforcement
+  (namespaces/cgroups/network) stays deferred. Locked by the
+  `shell-adapter-enforces-sandbox-invariants` probe. Design lock: ADR-0004. **Next
+  in P2: the `github` adapter (commit/push/remote), then `nostr`.**
+
 ## What this roadmap explicitly does not include
 
 These are real items, but they belong later than v1:

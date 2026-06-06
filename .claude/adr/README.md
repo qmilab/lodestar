@@ -55,3 +55,7 @@ The options we rejected, each with a one-line reason.
   synthesis: the conservative belief-dependency set (cumulative, never reduced by
   execution — so an opaque agent can't drain its obligations) and honest
   synthesized-decision attribution.
+- [ADR-0004](0004-native-shell-adapter-ts-level-sandbox.md) — Native shell adapter
+  (P2 slice 1) is a TS-level governance boundary, not an OS sandbox; exposed as a
+  config-driven tool factory (per-command trust). git commit/push deferred to the
+  github adapter.

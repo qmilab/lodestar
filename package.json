@@ -67,6 +67,7 @@
     "@qmilab/lodestar-cognitive-core": "workspace:*",
     "@qmilab/lodestar-adapter-filesystem": "workspace:*",
     "@qmilab/lodestar-adapter-git": "workspace:*",
+    "@qmilab/lodestar-adapter-shell": "workspace:*",
     "@qmilab/lodestar-trace": "workspace:*",
     "@qmilab/lodestar-viewer": "workspace:*",
     "@qmilab/lodestar-otel-exporter": "workspace:*",
