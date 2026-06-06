@@ -42,6 +42,14 @@ import {
  *     verified locally) but are otherwise UNTRUSTED external content — a valid
  *     signature proves authorship, not truth. Malformed events are dropped and
  *     counted, never silently trusted.
+ *   - **Bounded fetch query.** A `nostr.fetch` filter is serialized into the
+ *     outbound REQ, so its values are agent data leaving the process. Relay
+ *     pinning bounds the destination; the filter is additionally bounded in shape
+ *     and size (hex-only `ids`/`authors`, capped list/filter counts, single-letter
+ *     tag keys, capped tag-value length) so a read cannot become a large
+ *     exfiltration channel — and the query is recorded in the action inputs for
+ *     audit. An operator for whom even a bounded query is sensitive can raise the
+ *     fetch `trust` floor to route it through the approval gate.
  */
 
 // -----------------------------------------------------------------------------
@@ -87,7 +95,9 @@ const RelayFetchResultSchema = z.object({
   relay: z.string(),
   event_count: z.number().int().nonnegative(),
   eose: z.boolean().describe("did the relay signal end-of-stored-events"),
-  truncated: z.boolean().describe("did this relay hit the per-relay max-events bound"),
+  truncated: z
+    .boolean()
+    .describe("this relay was cut off (max-events/byte bound or a dropped oversized frame)"),
   message: z.string().describe("a relay NOTICE/CLOSED reason or timeout note (redacted)"),
 })
 
@@ -178,24 +188,78 @@ const RawNostrEventSchema = z.object({
 // Helpers
 // -----------------------------------------------------------------------------
 
-/** Confine the agent's chosen relays to the operator-pinned allowlist. Returns
- * the resolved target list (all pinned when the agent named none). Throws on any
- * non-pinned URL — the relay-pinning / SSRF guard. */
+/** Confine the agent's chosen relays to the operator-pinned allowlist and
+ * DEDUPE them. Returns the resolved, duplicate-free target list (all pinned when
+ * the agent named none). Throws on any non-pinned URL — the relay-pinning / SSRF
+ * guard. Dedup matters: a repeated URL would otherwise open one socket per copy
+ * and, for fetch, hand each copy a slice of the shared event budget. */
 function resolveTargets(pinned: string[], requested: string[] | undefined, tool: string): string[] {
   const pinnedSet = new Set(pinned.map((r) => r.trim()))
   if (requested === undefined || requested.length === 0) {
-    if (pinned.length === 0) throw new Error(`${tool}: no relays are pinned`)
-    return [...pinned]
+    if (pinnedSet.size === 0) throw new Error(`${tool}: no relays are pinned`)
+    return [...pinnedSet]
   }
-  const targets = requested.map((r) => r.trim())
+  const targets = [...new Set(requested.map((r) => r.trim()))]
   for (const t of targets) {
     if (!pinnedSet.has(t)) {
       throw new Error(
-        `${tool}: relay '${t}' is not in the operator-pinned relays (${pinned.join(", ") || "none"})`,
+        `${tool}: relay '${t}' is not in the operator-pinned relays (${[...pinnedSet].join(", ") || "none"})`,
       )
     }
   }
   return targets
+}
+
+// Bounds on the agent-supplied REQ filter. The filter is serialized into the
+// outbound REQ frame, so its values are agent-controlled data leaving the process
+// to a (pinned, but external) relay. Relay pinning bounds the DESTINATION; these
+// bounds keep the CHANNEL small and structured so a "read" cannot become a large
+// exfiltration path. (The query is also recorded verbatim in the action inputs,
+// so it is auditable; operators for whom even a bounded query is sensitive can
+// raise the fetch `trust` floor to route it through approval.)
+const MAX_FILTERS = 16
+const MAX_FILTER_LIST = 64 // entries in ids / authors / kinds / a tag value list
+const MAX_TAG_KEYS = 8
+const MAX_TAG_VALUE_LEN = 256
+const HEX64 = /^[0-9a-f]{64}$/
+
+/** Reject an over-broad or free-form REQ filter before it leaves the process. */
+function assertBoundedFilter(filter: z.infer<typeof NostrFilterSchema>, tool: string): void {
+  const checkHexList = (name: string, list: string[] | undefined): void => {
+    if (list === undefined) return
+    if (list.length > MAX_FILTER_LIST) {
+      throw new Error(`${tool}: filter '${name}' has too many entries (max ${MAX_FILTER_LIST})`)
+    }
+    for (const v of list) {
+      if (!HEX64.test(v)) throw new Error(`${tool}: filter '${name}' entries must be 64-char hex`)
+    }
+  }
+  checkHexList("ids", filter.ids)
+  checkHexList("authors", filter.authors)
+  if (filter.kinds !== undefined && filter.kinds.length > MAX_FILTER_LIST) {
+    throw new Error(`${tool}: filter 'kinds' has too many entries (max ${MAX_FILTER_LIST})`)
+  }
+  if (filter.tags !== undefined) {
+    const keys = Object.keys(filter.tags)
+    if (keys.length > MAX_TAG_KEYS) {
+      throw new Error(`${tool}: too many tag filters (max ${MAX_TAG_KEYS})`)
+    }
+    for (const [key, vals] of Object.entries(filter.tags)) {
+      if (!/^[a-zA-Z]$/.test(key)) {
+        throw new Error(`${tool}: tag filter key '${key}' must be a single letter (NIP-01 #<x>)`)
+      }
+      if (vals.length > MAX_FILTER_LIST) {
+        throw new Error(
+          `${tool}: tag filter '#${key}' has too many values (max ${MAX_FILTER_LIST})`,
+        )
+      }
+      for (const v of vals) {
+        if (v.length > MAX_TAG_VALUE_LEN) {
+          throw new Error(`${tool}: tag filter '#${key}' value exceeds ${MAX_TAG_VALUE_LEN} chars`)
+        }
+      }
+    }
+  }
 }
 
 /** Translate a typed filter into a NIP-01 wire filter (the `tags` map becomes
@@ -318,6 +382,12 @@ export function makeNostrFetchTool(
     execute: async (inputs) => {
       const targets = resolveTargets(pinned, inputs.relays, "nostr.fetch")
       const filters = inputs.filters ?? [{ kinds: [1] }]
+      // The filter is agent-controlled data that leaves the process in the REQ
+      // frame; bound it so a read can't become a large exfiltration channel.
+      if (filters.length > MAX_FILTERS) {
+        throw new Error(`nostr.fetch: too many filters (max ${MAX_FILTERS})`)
+      }
+      for (const f of filters) assertBoundedFilter(f, "nostr.fetch")
       // Divide the overall budget across the relays we fan out to, so the TOTAL
       // buffered before discarding is bounded by maxEvents / the byte cap — not
       // maxEvents * relays.length. Relays run concurrently, so the cap has to be

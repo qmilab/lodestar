@@ -70,8 +70,8 @@ A **TS-level governance boundary, not network containment** (the same honesty as
 the shell and git adapters, ADR-0004/0006). It enforces, in-process:
 
 1. **Relay pinning.** The agent can publish/fetch only to operator-pinned relay
-   URLs. It cannot exfiltrate a note to an attacker relay, nor make the adapter
-   open a socket to an arbitrary host (an SSRF guard on `fetch`).
+   URLs (deduplicated). It cannot exfiltrate a note to an attacker relay, nor make
+   the adapter open a socket to an arbitrary host (an SSRF guard on `fetch`).
 2. **The signing key never leaves the adapter.** It signs in-process (BIP-340
    Schnorr); only the public key and signature go on the wire. It is
    operator-supplied (no silent default), accepted as hex or `nsec1…`, optionally
@@ -83,6 +83,12 @@ the shell and git adapters, ADR-0004/0006). It enforces, in-process:
 5. **Untrusted inbound.** Fetched events are returned with a locally-verified
    `signature_valid` flag and are otherwise untrusted external content (a valid
    signature attests authorship, not truth). Malformed events are dropped + counted.
+6. **Bounded fetch query.** A `fetch` filter is serialized into the outbound REQ,
+   so it's agent data leaving the process. Beyond destination pinning, the filter
+   is bounded in shape and size (hex-only `ids`/`authors`, capped list/filter
+   counts, single-letter tag keys, capped tag-value length) so a read can't become
+   a large exfiltration channel, and the query is recorded in the action inputs.
+   Raise the fetch `trust` floor if even a bounded query must be approval-gated.
 
 **What it does NOT claim:** it does not OS-sandbox the network. `publish`/`fetch`
 reach the real relay by design — that is the governed action. The governance is

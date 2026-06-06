@@ -45,7 +45,9 @@ ADR-0004/0006). It enforces, in-process:
 1. **Relay pinning.** The operator pins relay URLs; the agent targets only a
    pinned URL (default: all). It cannot redirect a note to an attacker relay, and
    on `fetch` it cannot make the adapter open a socket to an arbitrary host (SSRF
-   guard). `resolveTargets` is the chokepoint; a non-pinned URL throws.
+   guard). `resolveTargets` is the chokepoint; a non-pinned URL throws, and the
+   targets are **deduplicated** (a repeated URL can't open N sockets or split the
+   fetch budget into N shares).
 2. **The signing key never leaves the adapter.** It signs in-process; only the
    pubkey + signature reach the wire. Operator-supplied (no silent default),
    hex-or-`nsec`, resolver-capable, redacted from all output.
@@ -57,6 +59,13 @@ ADR-0004/0006). It enforces, in-process:
 5. **Untrusted inbound.** Fetched events carry a locally-computed `signature_valid`
    (id recomputed AND schnorr verified) but are untrusted content — a valid
    signature attests authorship, not truth. Malformed events are dropped + counted.
+6. **Bounded fetch query.** A `fetch` filter is serialized into the outbound REQ,
+   so its values are agent data leaving the process. Relay pinning bounds the
+   destination; `assertBoundedFilter` additionally bounds the channel — hex-only
+   `ids`/`authors`, capped list/filter counts, single-letter tag keys, capped
+   tag-value length — so a read cannot become a large exfiltration path, and the
+   query is recorded in the action inputs for audit. An operator who needs even a
+   bounded query approval-gated raises the fetch `trust` floor.
 
 **What it does NOT claim:** it does not OS-sandbox the network. `publish`/`fetch`
 reach the real relay *by design* — that is the governed action. Keep this honest

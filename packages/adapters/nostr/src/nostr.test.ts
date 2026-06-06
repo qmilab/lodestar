@@ -266,6 +266,19 @@ describe("nostr.publish", () => {
       relay.stop()
     }
   })
+
+  test("duplicate pinned relays are deduplicated (one socket, one publish)", async () => {
+    const relay = startRelay()
+    try {
+      const tool = makeNostrPublishTool({ relays: [relay.url], credential })
+      const out = await tool.execute({ content: "dedupe", relays: [relay.url, relay.url] }, CTX)
+      expect(out.published).toBe(true)
+      expect(out.relay_results.length).toBe(1) // collapsed to one target
+      expect(relay.received.notes.length).toBe(1) // one socket, one EVENT
+    } finally {
+      relay.stop()
+    }
+  })
 })
 
 // -----------------------------------------------------------------------------
@@ -362,6 +375,24 @@ describe("nostr.fetch", () => {
     } finally {
       relayA.stop()
       relayB.stop()
+    }
+  })
+
+  test("an over-broad / free-form fetch filter is rejected before anything leaves the process", async () => {
+    const relay = startRelay()
+    try {
+      const tool = makeNostrFetchTool({ relays: [relay.url] })
+      // A non-hex `authors` value would be free-form data smuggled out in the REQ.
+      await expect(
+        tool.execute({ filters: [{ authors: ["not-hex-payload-smuggled-out"] }] }, CTX),
+      ).rejects.toThrow(/64-char hex/)
+      // An over-long tag filter value is likewise rejected.
+      await expect(
+        tool.execute({ filters: [{ tags: { t: ["x".repeat(300)] } }] }, CTX),
+      ).rejects.toThrow(/exceeds/)
+      expect(relay.received.raw.length).toBe(0) // nothing was sent
+    } finally {
+      relay.stop()
     }
   })
 })
