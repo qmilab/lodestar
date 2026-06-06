@@ -127,10 +127,14 @@ helper").
   cost is verbosity (over-linked decisions, repeated alerts), not under-gating.
 - A *bounded* set to cap that verbosity is the deferred F4 item; bounding is
   itself an exploitable drain, so it needs its own design (P3 hardening, alongside
-  F1/F6).
+  F1).
+- The arbiter↔gate binding (F6) is closed here: the arbiter carries a
+  `bindingToken` that `compileWithSentinels` stamps onto the `CompiledPolicy`, and
+  the proxy rejects a `{ gate, arbiter }` pair whose tokens disagree — a hand-wired
+  mismatch fails fast instead of observing-but-not-gating.
 - The synthesis layer is a small new public surface (`observedBeliefIds`,
-  `PROXY_DECISION_SYNTHESIS_ACTOR`) and one new arbiter feed in the proxy's
-  `emit` — no new schema, no new core type.
+  `bindingToken`, `PROXY_DECISION_SYNTHESIS_ACTOR`) and one new arbiter feed in the
+  proxy's `emit` — no new schema, no new core type.
 
 ## Alternatives considered
 

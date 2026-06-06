@@ -154,15 +154,16 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   from `belief.adopted`, cleared on session end). guard.wrap() uses declared
   decisions and never touches it. The proxy-side wiring lives in
   `@qmilab/lodestar-guard-mcp`.
-- **Three deferred arbiter-hardening items (from the PR #54 review):** (F1)
+- **Two deferred arbiter-hardening items (from the PR #54 review):** (F1)
   re-projecting `firewall.belief.transitioned` so the belief cache reflects
   post-adoption truth_status — needs a policy-kernel gate-semantics call on
   whether `contradicted`/`superseded` should gate (the low-conf signal tests only
   `=== "unverified"`); today the staleness only skews conservative. (F4) a bounded
   alert recency window so a `tool_sequence` alert does not stay sticky for a whole
-  long session. (F6) a binding token so a hand-wired `arbiter`/`policy_gate`
-  mismatch fails loudly instead of observing-but-not-gating (`compileWithSentinels`
-  is the safe path today). These belong with the P1 hardening / P3 security track.
+  long session. These belong with the P1 hardening / P3 security track. (F6 — the
+  arbiter↔gate binding token — landed in P1b: the arbiter carries a `bindingToken`
+  that `compileWithSentinels` stamps onto the `CompiledPolicy`, and the MCP proxy
+  rejects a mismatched hand-wired pair instead of observing-but-not-gating.)
 - Anything that consumes the event log on the read side — that's
   `@qmilab/lodestar-trace`.
 

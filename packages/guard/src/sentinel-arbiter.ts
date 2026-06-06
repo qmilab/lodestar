@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto"
 import {
   type Action,
   type EventEnvelope,
@@ -109,6 +110,16 @@ export class SentinelArbiter {
    * alert, not the governed agent (Codex review, round 2).
    */
   readonly actorId: string
+  /**
+   * An opaque per-instance identity, stamped onto the gate `compileWithSentinels`
+   * compiles from this arbiter ({@link CompiledPolicy.bindingToken}). A host can
+   * assert `gate.bindingToken === arbiter.bindingToken` to fail fast on a
+   * mismatched `{ gate, arbiter }` pair — a gate compiled without arbitration, or
+   * from a *different* arbiter, whose alerts would silently never gate (the proxy
+   * does exactly this). Not a security boundary (an in-process caller can read it);
+   * a wiring-footgun guard against the accidental mismatch.
+   */
+  readonly bindingToken: string = randomUUID()
   /**
    * The single session this arbiter governs. The arbiter is **single-session by
    * construction**: a host binds it (via {@link bindSession}, or lazily on the
@@ -402,6 +413,9 @@ export function compileWithSentinels(
     arbitration: {
       resolveContext: (action) => arbiter.resolveContext(action),
       escalation: options.escalation,
+      // Stamp the gate with this arbiter's identity so a host can verify the
+      // matched pair (the proxy rejects a gate compiled from a different arbiter).
+      bindingToken: arbiter.bindingToken,
     },
   })
   return { gate, arbiter }

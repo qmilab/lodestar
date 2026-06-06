@@ -364,9 +364,6 @@ export class MCPProxy {
     //     that can never hold an action — silent non-enforcement. This keys on the
     //     ARBITER, not `config.sentinels`, so it also catches a library host that
     //     wires `MCPProxyOverrides.arbiter` directly and omits the compiled gate.
-    //     Verifying the gate was compiled from THIS arbiter is the deferred F6
-    //     binding-token item; `compileProxyPolicyWithSentinels` /
-    //     `compileWithSentinels` is the safe path.
     if (this.arbiter !== undefined && !compiledPolicyInjected) {
       throw new Error(
         "MCPProxy: an arbiter was injected but no CompiledPolicy gate was — the default " +
@@ -374,6 +371,25 @@ export class MCPProxy {
           "the arbiter's sentinel alerts could never hold an action. Inject a policyGate " +
           "compiled from the SAME arbiter (compileProxyPolicyWithSentinels / " +
           "compileWithSentinels). The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // (B′) the injected gate IS a `CompiledPolicy`, but was it compiled from THIS
+    //      arbiter? `compileWithSentinels` stamps a shared `bindingToken` on both;
+    //      a gate compiled without arbitration (plain `compile()`) or from a
+    //      *different* arbiter carries a different/absent token, so its arbitrate
+    //      hook consults someone else (or no one) and this arbiter's alerts would
+    //      silently never gate. Reject the mismatch — the F6 binding-token guard.
+    if (
+      this.arbiter !== undefined &&
+      this.compiledPolicy !== undefined &&
+      this.compiledPolicy.bindingToken !== this.arbiter.bindingToken
+    ) {
+      throw new Error(
+        "MCPProxy: the injected CompiledPolicy gate was not compiled from the injected " +
+          "arbiter (bindingToken mismatch) — its arbitrate hook consults a different " +
+          "arbiter (or none), so this arbiter's sentinel alerts would never hold an action. " +
+          "Compile the gate and arbiter together (compileProxyPolicyWithSentinels / " +
+          "compileWithSentinels) and inject that matched pair.",
       )
     }
   }

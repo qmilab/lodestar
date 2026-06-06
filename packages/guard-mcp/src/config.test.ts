@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
 import type { Policy } from "@qmilab/lodestar-core"
-import { SentinelArbiter, compileWithSentinels } from "@qmilab/lodestar-guard"
+import { SentinelArbiter, compile, compileWithSentinels } from "@qmilab/lodestar-guard"
 import { SuspiciousMemoryOriginSentinel } from "@qmilab/lodestar-harness"
 import { type ProxyConfig, ProxyConfigSchema } from "./config.js"
 import { MCPProxy } from "./proxy.js"
@@ -98,6 +98,42 @@ describe("MCPProxy constructor sentinels guard", () => {
           downstreamFactory: () => [],
         }),
     ).toThrow(/no CompiledPolicy gate/)
+  })
+
+  it("throws when the gate was compiled without arbitration (F6 binding-token mismatch)", () => {
+    // A CompiledPolicy from plain compile() has no bindingToken, so its (absent)
+    // arbitrate hook never consults the arbiter — the alerts would be inert.
+    const gate = compile(POLICY, { decider_id: "test", allow_unsigned: true })
+    expect(
+      () =>
+        new MCPProxy(rawConfig() as unknown as ProxyConfig, {
+          policyGate: gate,
+          arbiter: new SentinelArbiter({ sentinels: [] }),
+          downstreamFactory: () => [],
+        }),
+    ).toThrow(/bindingToken mismatch|not compiled from the injected arbiter/)
+  })
+
+  it("throws when the gate and arbiter come from different compileWithSentinels pairs (F6)", () => {
+    const pairA = compileWithSentinels(POLICY, {
+      decider_id: "test",
+      allow_unsigned: true,
+      sentinels: [new SuspiciousMemoryOriginSentinel()],
+    })
+    const pairB = compileWithSentinels(POLICY, {
+      decider_id: "test",
+      allow_unsigned: true,
+      sentinels: [new SuspiciousMemoryOriginSentinel()],
+    })
+    // gate from A, arbiter from B → their bindingTokens differ.
+    expect(
+      () =>
+        new MCPProxy(rawConfig() as unknown as ProxyConfig, {
+          policyGate: pairA.gate,
+          arbiter: pairB.arbiter,
+          downstreamFactory: () => [],
+        }),
+    ).toThrow(/bindingToken mismatch|not compiled from the injected arbiter/)
   })
 
   it("constructs with the matched { gate, arbiter } pair from compileWithSentinels", () => {

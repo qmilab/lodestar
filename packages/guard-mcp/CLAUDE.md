@@ -219,9 +219,12 @@ Cognitive Core. The resulting event log is renderable by
     the default `auto_approve_ceiling` preset and a bare `PolicyGate` have no
     arbitrate hook, so the arbiter's alerts could never hold an action. Guard (B)
     keys on the *arbiter*, not `config.sentinels`, so it also catches a library
-    host that wires `MCPProxyOverrides.arbiter` directly. Same shape as the
-    `policy` / `persistence` guards. Verifying the gate was compiled from *that*
-    arbiter is the deferred F6 binding-token item. The proxy never resolves
+    host that wires `MCPProxyOverrides.arbiter` directly. And (C) the injected gate
+    *is* a `CompiledPolicy` but was compiled from a **different** arbiter (or
+    without arbitration): `compileWithSentinels` stamps a shared `bindingToken` on
+    both, and the constructor throws on `gate.bindingToken !== arbiter.bindingToken`
+    — closing the F6 footgun (a hand-wired mismatch that would observe-but-not-gate).
+    Same shape as the `policy` / `persistence` guards. The proxy never resolves
     sentinel ids itself; the CLI resolves them against `FIRST_PARTY_SENTINELS` and
     injects the matched `{ gate, arbiter }` pair.
     Because nothing is ever removed, there is no consume/drain race; the only
