@@ -392,6 +392,22 @@ export class MCPProxy {
           "compileWithSentinels) and inject that matched pair.",
       )
     }
+    // (B″) the mirror of B′: the injected gate WAS compiled with arbitration (it
+    //      carries a `bindingToken`) but no arbiter was injected. The proxy never
+    //      feeds the gate's arbiter and never synthesizes decisions, so the gate's
+    //      arbitrate hook resolves an empty context — the sentinels the gate was
+    //      compiled with are silently inert. The host wired the gate but forgot
+    //      `MCPProxyOverrides.arbiter`. (A plain `compile()` gate has no token, so
+    //      a no-sentinels declarative policy without an arbiter is still fine.)
+    if (this.arbiter === undefined && this.compiledPolicy?.bindingToken !== undefined) {
+      throw new Error(
+        "MCPProxy: a sentinel-compiled CompiledPolicy gate (bindingToken set) was injected " +
+          "but no arbiter — the proxy never feeds the gate's arbiter or synthesizes " +
+          "decisions, so the sentinels it was compiled with would be inert. Inject the " +
+          "matching arbiter via MCPProxyOverrides.arbiter (the compileProxyPolicyWithSentinels " +
+          "/ compileWithSentinels pair). The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
   }
 
   /**

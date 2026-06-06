@@ -136,6 +136,24 @@ describe("MCPProxy constructor sentinels guard", () => {
     ).toThrow(/bindingToken mismatch|not compiled from the injected arbiter/)
   })
 
+  it("throws when a sentinel-compiled gate is injected without its arbiter (B″ mirror)", () => {
+    // The host used compileWithSentinels for the gate (so it carries a
+    // bindingToken) but forgot to pass overrides.arbiter — the proxy would never
+    // feed the gate's arbiter or synthesize decisions, so the sentinels are inert.
+    const { gate } = compileWithSentinels(POLICY, {
+      decider_id: "test",
+      allow_unsigned: true,
+      sentinels: [new SuspiciousMemoryOriginSentinel()],
+    })
+    expect(
+      () =>
+        new MCPProxy(rawConfig() as unknown as ProxyConfig, {
+          policyGate: gate,
+          downstreamFactory: () => [],
+        }),
+    ).toThrow(/sentinel-compiled CompiledPolicy gate .* but no arbiter/)
+  })
+
   it("constructs with the matched { gate, arbiter } pair from compileWithSentinels", () => {
     const { gate, arbiter } = compileWithSentinels(POLICY, {
       decider_id: "test",
