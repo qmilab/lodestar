@@ -253,6 +253,9 @@ function assertSafeBranchName(branch: string): void {
 //   - `gpg.program` / `gpg.<fmt>.program` → exec a "signer" (signing enablement is
 //     also force-disabled with `-c` on commit/push, but reject the exec pointer too),
 //   - `http.*.proxy` → divert/MITM egress,
+//   - `http.*.extraHeader` / `cookieFile` / `sslCert` / `sslKey` → supply credentials
+//     (an Authorization header / cookies / a client cert) so a push authenticates even
+//     under `credential: { kind: "none" }`; `http.*.sslCAInfo` overrides trusted CAs,
 //   - `include.path` / `includeIf` → pull in arbitrary config.
 // We reject (fail closed) rather than override, since `insteadOf`/`filter` can't be
 // cleanly cleared with `-c`. Names are matched lowercased (git lowercases section/key).
@@ -274,6 +277,11 @@ const HOSTILE_LOCAL_CONFIG: RegExp[] = [
   /^gpg\..*\.program$/,
   /^http\..*proxy$/,
   /^https\..*proxy$/,
+  /^http\..*extraheader$/, // inject an Authorization header (credential bypass)
+  /^http\..*cookiefile$/, // cookie-based auth
+  /^http\..*sslcert$/, // client-cert auth
+  /^http\..*sslkey$/,
+  /^http\..*sslcainfo$/, // override trusted CAs (egress trust)
   /^include\.path$/,
   /^includeif\..*\.path$/,
   /^protocol\..*allow$/,

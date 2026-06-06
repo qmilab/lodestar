@@ -64,8 +64,9 @@ adapter). It enforces, in-process:
    adapter **rejects** a local config that sets hostile keys — URL rewrites
    (`url.*.insteadOf` / `pushInsteadOf`), exec pointers (`credential.helper`, `filter.*`,
    `core.fsmonitor`/`sshCommand`/`askPass`/`gitProxy`/`editor`, `gpg.program`),
-   working-tree re-point (`core.worktree`), egress diversion (`http.*.proxy`), and config
-   inclusion (`include.path`/`includeIf`). Otherwise a poisoned repo config could rewrite
+   working-tree re-point (`core.worktree`), egress diversion + credential injection
+   (`http.*.proxy`, `http.*.extraHeader`/`cookieFile`/`sslCert`/`sslKey`/`sslCAInfo`), and
+   config inclusion (`include.path`/`includeIf`). Otherwise a poisoned repo config could rewrite
    the pinned URL, run a helper/filter/signer, or operate outside `workspaceRoot`,
    bypassing remote pinning + credential scoping (`assertSafeLocalConfig`).
 5. **Argv-only exec + bounded capture + wall-clock timeout.** `git` is spawned with an

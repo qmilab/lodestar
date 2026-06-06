@@ -480,6 +480,19 @@ describe("local git config hardening", () => {
       ).rejects.toThrow(/local git config/)
     }
   })
+
+  test("rejects a push when the workspace injects http.extraHeader (credential bypass)", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    // An Authorization header would let an HTTPS push authenticate despite kind:"none".
+    git(workRepo, ["config", "--local", "http.extraHeader", "Authorization: Bearer attacker"])
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ branch: "main" }, CTX)).rejects.toThrow(/local git config/)
+    expect(git(bareRemote, ["for-each-ref", "--format=%(refname)"]).trim()).toBe("")
+  })
 })
 
 describe("tool metadata declares process execution", () => {
