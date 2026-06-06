@@ -10,6 +10,7 @@ import { type NostrCredential, type PreparedSigner, prepareSigner } from "./cred
 import { noteIdFromHex, npubFromHex, signEvent, verifyEvent } from "./event.js"
 import {
   DEFAULT_MAX_EVENTS,
+  DEFAULT_MAX_TOTAL_BYTES,
   DEFAULT_RELAY_TIMEOUT_MS,
   fetchFromRelay,
   publishToRelay,
@@ -317,10 +318,22 @@ export function makeNostrFetchTool(
     execute: async (inputs) => {
       const targets = resolveTargets(pinned, inputs.relays, "nostr.fetch")
       const filters = inputs.filters ?? [{ kinds: [1] }]
-      const wireFilters = filters.map((f) => toWireFilter(f, maxEvents))
+      // Divide the overall budget across the relays we fan out to, so the TOTAL
+      // buffered before discarding is bounded by maxEvents / the byte cap — not
+      // maxEvents * relays.length. Relays run concurrently, so the cap has to be
+      // shared up front, not applied only after every relay has buffered its raw
+      // untrusted events. Each relay gets an equal share (at least 1).
+      const perRelayEvents = Math.max(1, Math.ceil(maxEvents / targets.length))
+      const perRelayBytes = Math.max(1, Math.ceil(DEFAULT_MAX_TOTAL_BYTES / targets.length))
+      const wireFilters = filters.map((f) => toWireFilter(f, perRelayEvents))
       const relayResults = await Promise.all(
         targets.map((url) =>
-          fetchFromRelay(url, wireFilters, { timeoutMs, maxEvents, redactions: [] }),
+          fetchFromRelay(url, wireFilters, {
+            timeoutMs,
+            maxEvents: perRelayEvents,
+            maxTotalBytes: perRelayBytes,
+            redactions: [],
+          }),
         ),
       )
 

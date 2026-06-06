@@ -345,4 +345,23 @@ describe("nostr.fetch", () => {
       relay.stop()
     }
   })
+
+  test("multi-relay fetch bounds the total budget across relays (not maxEvents × relays)", async () => {
+    // The overall cap must be shared across relays up front, not applied only
+    // after each relay buffered the full maxEvents. With 2 relays + maxEvents=2,
+    // each gets a share of ceil(2/2)=1, so neither buffers the full cap. (Codex P2.)
+    const mk = (c: string) => signEvent(TEST_SK, { created_at: 1, kind: 1, tags: [], content: c })
+    const relayA = startRelay({ storedEvents: [mk("a1"), mk("a2"), mk("a3")] })
+    const relayB = startRelay({ storedEvents: [mk("b1"), mk("b2"), mk("b3")] })
+    try {
+      const tool = makeNostrFetchTool({ relays: [relayA.url, relayB.url], maxEvents: 2 })
+      const out = await tool.execute({}, CTX)
+      expect(out.event_count).toBeLessThanOrEqual(2) // overall cap honoured
+      for (const rr of out.relay_results) expect(rr.event_count).toBeLessThanOrEqual(1) // per-relay share
+      expect(out.truncated).toBe(true)
+    } finally {
+      relayA.stop()
+      relayB.stop()
+    }
+  })
 })

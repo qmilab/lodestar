@@ -164,6 +164,10 @@ jobs:
             // package's first stage-publish needs the manual trusted-publisher
             // bootstrap before CI can publish it through this path.
             "packages/adapters/shell",
+            // nostr adapter (new, P2 slice 3): depends only on core +
+            // action-kernel (+ @noble/@scure runtime deps), both published above.
+            // Same first-publish trusted-publisher bootstrap as the others.
+            "packages/adapters/nostr",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -256,6 +260,9 @@ jobs:
             # shell adapter (new, P2): depends only on core + action-kernel.
             # First publish needs the manual trusted-publisher bootstrap.
             packages/adapters/shell
+            # nostr adapter (new, P2 slice 3): depends only on core +
+            # action-kernel. Same first-publish bootstrap as the others.
+            packages/adapters/nostr
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep
