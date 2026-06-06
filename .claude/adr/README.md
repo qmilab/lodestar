@@ -57,9 +57,14 @@ The options we rejected, each with a one-line reason.
   synthesized-decision attribution.
 - [ADR-0004](0004-native-shell-adapter-ts-level-sandbox.md) — Native shell adapter
   (P2 slice 1) is a TS-level governance boundary, not an OS sandbox; exposed as a
-  config-driven tool factory (per-command trust). git commit/push deferred to the
-  github adapter.
+  config-driven tool factory (per-command trust). (Its commit/push placement is
+  superseded by ADR-0006; the TS-level-boundary decision still stands.)
 - [ADR-0005](0005-native-adapter-prioritization-and-extended-p2.md) — Build an
   adapter when governance is load-bearing (consequential action / untrusted output /
   egress). Extends P2 to shell → github → nostr → http → messaging; names the
   memory-import and runtime-adapter (incl. Flue, Pi) backlogs.
+- [ADR-0006](0006-forge-agnostic-git-transport-in-adapter-git.md) — Governed git
+  transport (`git.commit`/`push`/`clone`) is forge-agnostic, so it lives in
+  `adapter-git` (not a "github" adapter); `adapter-github` is reserved for the
+  forge-API surface behind a provider seam. Records the remote-pinning + scoped-credential
+  model. Supersedes ADR-0004's commit/push placement.

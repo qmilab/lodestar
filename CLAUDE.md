@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-one probes pass under
+publishing), v0.2 architecture locked. Forty-two probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Thirty-seven live in the first-party pack
+below). Thirty-eight live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -43,10 +43,16 @@ dependent action at `pending_approval` through the host; ADR-0001) and
 the opaque agent cannot declare decisions, so the proxy *synthesizes* a
 `decision.made` from the arbiter's conservative observed-belief set, and a
 poisoned downstream read then holds the dependent `tools/call`; ADR-0002 / ADR-0003),
-and one shell-adapter probe (`shell-adapter-enforces-sandbox-invariants` — the
+one shell-adapter probe (`shell-adapter-enforces-sandbox-invariants` — the
 native `@qmilab/lodestar-adapter-shell` holds its TS-level invariants through the
 kernel: no host-env passthrough, allowlist + argv-only no-injection, wall-clock
-timeout, and bounded output capture; ADR-0004).
+timeout, and bounded output capture; ADR-0004), and one git-adapter egress probe
+(`git-adapter-enforces-egress-invariants` — the native forge-agnostic git transport
+in `@qmilab/lodestar-adapter-git` holds its egress invariants through the kernel: a
+push proposed at L4 stays at `pending_approval` until approved then lands in the
+**operator-pinned** remote despite a poisoned `.git/config`, the configured credential
+never surfaces in inputs/observation, a non-allowlisted clone source and an escaping
+destination both fail, and host author-env does not leak; ADR-0006).
 The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -157,10 +163,10 @@ packages/
   policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). host wiring landed for all three paths: the in-process (guard.wrap() resolver seam), MCP-proxy (deadline/timeout out-of-band hold path), and the separate-process `lodestar approve` CLI (writes a side-channel the proxy promotes; proxy stays sole event-log writer)
   otel-exporter/       # (exists, post-v1) OTel GenAI semantic conventions bridge — `lodestar otel export`; read-side batch projection of a session into OTLP/HTTP-JSON spans (action-centric: invoke_agent root + execute_tool spans), hand-rolled wire format (no OTel SDK dep), with the sensitivity-ceiling export gate (content above the ceiling ships as metadata + payload hash only)
   adapters/
-    git/               # (exists)
+    git/               # (exists, P2) read-only git.status + forge-agnostic transport (git.commit/push/clone); push is the first native egress (L4); remote pinning + scoped credentials (askpass, no argv); TS-level boundary, not an OS sandbox; ADR-0006
     filesystem/        # (exists)
     shell/             # (exists, P2) governed shell commands; config-driven tool factory (defineShellTool), TS-level sandbox (argv-only, allowlist, scoped env, timeout) — not an OS sandbox; ADR-0004
-    github/            # (later)
+    github/            # (later) forge-API ONLY (PRs/issues/releases) behind a ForgeProvider seam — git transport lives in adapters/git/ (ADR-0006)
     nostr/             # (later)
 
 examples/
@@ -172,7 +178,7 @@ examples/
                              #   DocAwareEvidenceLinker via the guard cognitive seam
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 18 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 38 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -250,7 +256,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Forty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Forty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

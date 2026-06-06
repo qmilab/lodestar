@@ -261,12 +261,26 @@ Work past the v1 line, tracked here as it lands:
   (namespaces/cgroups/network) stays deferred. Locked by the
   `shell-adapter-enforces-sandbox-invariants` probe. Design lock: ADR-0004.
 
+- **Native adapters (P2) — git transport (b)** — ✅ landed
+  (`packages/adapters/git/`, `@qmilab/lodestar-adapter-git`). Adds the forge-agnostic
+  transport tools `git.commit` (L3) / `git.push` (**L4 — the first native egress**) /
+  `git.clone` (L3) alongside the existing read-only `git.status`. The headline teeth:
+  **remote pinning** (the agent names a remote; the operator pins name → URL; the push
+  targets the pinned URL explicitly, bypassing a poisoned `.git/config`), **scoped
+  credentials** (explicit, no default; token via `GIT_ASKPASS` → never argv, redacted
+  from output; resolver seam for fetch-at-push-time), and a **clone source allowlist +
+  destination pin** (inbound content is untrusted). A **TS-level governance boundary,
+  not an OS sandbox** — `push`/`clone` reach the network by design. Locked by the
+  `git-adapter-enforces-egress-invariants` probe. Naming/scope lock: ADR-0006 (transport
+  is forge-agnostic, so it lives in `adapter-git`; `adapter-github` is reserved for the
+  forge-API surface behind a provider seam).
+
   **Extended P2 sequence (ADR-0005).** Build an adapter when governance is
   load-bearing — a consequential action (trust ladder / L4), untrusted output
   (`external_document` → the firewall), or outward data movement (`blast_radius:
   external` → the dormant `read → egress → write` sentinel). On that basis the
-  ordered native-tool sequence is now **shell ✓ → github → nostr → http/web-fetch →
-  messaging (email/Slack)**, with a governance-rich backlog (SQL/database, vector/RAG
+  ordered native-tool sequence is now **shell ✓ → git transport ✓ (ADR-0006) → nostr →
+  http/web-fetch → messaging (email/Slack)**, with a governance-rich backlog (SQL/database, vector/RAG
   retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http` is the
   highest-leverage next pick (it hits injection + egress + untrusted content at once
   and lights up the egress sentinel); `messaging` is the cleanest demo of the

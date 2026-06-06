@@ -1,0 +1,514 @@
+import { afterEach, describe, expect, test } from "bun:test"
+import { execFileSync } from "node:child_process"
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { prepareCredential } from "./credentials.js"
+import { applyRedactions, baseGitEnv, redactUrl, urlSecretRedactions } from "./run.js"
+import { makeGitCloneTool, makeGitCommitTool, makeGitPushTool } from "./transport.js"
+
+// A ToolContext stand-in (the transport tools ignore it).
+const CTX = { session_id: "s", project_id: "p", actor_id: "a", capabilities: new Map() }
+
+// process.env requires `delete`: assigning `undefined` coerces to the literal
+// string "undefined" (which git would then read as a real value).
+function unsetEnv(key: string): void {
+  delete process.env[key]
+}
+
+// git for test setup only: host config disabled, identity + hooks pinned so it
+// works regardless of the host environment.
+function git(cwd: string, args: string[]): string {
+  return execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Test Setup",
+      "-c",
+      "user.email=setup@test.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "-c",
+      "core.hooksPath=/dev/null",
+      ...args,
+    ],
+    {
+      cwd,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GIT_CONFIG_GLOBAL: "/dev/null",
+        GIT_CONFIG_SYSTEM: "/dev/null",
+        GIT_TERMINAL_PROMPT: "0",
+      },
+    },
+  )
+}
+
+interface Repos {
+  workRepo: string
+  bareRemote: string
+  cloneRoot: string
+}
+
+const created: string[] = []
+function tmp(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix))
+  created.push(d)
+  return d
+}
+
+/** A work repo on branch `main` with one commit, plus an empty bare "remote". */
+function makeRepos(): Repos {
+  const workRepo = tmp("lodestar-git-work-")
+  const bareRemote = tmp("lodestar-git-remote-")
+  const cloneRoot = tmp("lodestar-git-cloneroot-")
+  git(bareRemote, ["init", "--bare", "-q"])
+  // Pin the bare remote's default branch to `main` so a later clone checks it out
+  // regardless of the host git's init.defaultBranch (CI defaults to `master`).
+  git(bareRemote, ["symbolic-ref", "HEAD", "refs/heads/main"])
+  git(workRepo, ["init", "-q"])
+  writeFileSync(join(workRepo, "README.md"), "# fixture\n")
+  git(workRepo, ["add", "-A"])
+  git(workRepo, ["commit", "-q", "-m", "initial"])
+  git(workRepo, ["branch", "-M", "main"])
+  return { workRepo, bareRemote, cloneRoot }
+}
+
+afterEach(() => {
+  for (const d of created.splice(0)) {
+    try {
+      execFileSync("rm", ["-rf", d])
+    } catch {
+      /* best effort */
+    }
+  }
+})
+
+describe("redaction helpers", () => {
+  test("applyRedactions replaces every occurrence; passes through when none", () => {
+    expect(applyRedactions("a TKN b TKN c", ["TKN"])).toBe("a *** b *** c")
+    expect(applyRedactions("unchanged", undefined)).toBe("unchanged")
+    expect(applyRedactions("unchanged", [])).toBe("unchanged")
+  })
+
+  test("redactUrl strips embedded credentials only", () => {
+    expect(redactUrl("https://user:pat@github.com/o/r.git")).toBe("https://***@github.com/o/r.git")
+    expect(redactUrl("https://github.com/o/r.git")).toBe("https://github.com/o/r.git")
+  })
+})
+
+describe("baseGitEnv", () => {
+  test("excludes host vars and neutralises git config", () => {
+    process.env.LODESTAR_GIT_TEST_SECRET = "must-not-leak"
+    try {
+      const env = baseGitEnv()
+      expect(env.LODESTAR_GIT_TEST_SECRET).toBeUndefined()
+      expect(env.GIT_CONFIG_GLOBAL).toBe("/dev/null")
+      expect(env.GIT_CONFIG_SYSTEM).toBe("/dev/null")
+      expect(env.GIT_TERMINAL_PROMPT).toBe("0")
+    } finally {
+      unsetEnv("LODESTAR_GIT_TEST_SECRET")
+    }
+  })
+})
+
+describe("credential model", () => {
+  test("https-token: token flows via askpass env, never argv; redacted; resolver works", async () => {
+    const dir = tmp("lodestar-git-cred-")
+    const prepared = prepareCredential(
+      { kind: "https-token", token: "SUPER-SECRET-TOKEN", username: "octo" },
+      dir,
+    )
+    expect(prepared.baseEnv.GIT_ASKPASS).toBeDefined()
+    const askpass = prepared.baseEnv.GIT_ASKPASS as string
+    expect(existsSync(askpass)).toBe(true)
+
+    const resolved = await prepared.resolve()
+    expect(resolved.env.LODESTAR_GIT_USERNAME).toBe("octo")
+    expect(resolved.env.LODESTAR_GIT_PASSWORD).toBe("SUPER-SECRET-TOKEN")
+    expect(resolved.redactions).toContain("SUPER-SECRET-TOKEN")
+
+    // The askpass helper echoes the credential from the env — proving the token
+    // reaches git through the environment, not the command line.
+    const env = { PATH: process.env.PATH ?? "", ...resolved.env }
+    const pass = execFileSync("sh", [askpass, "Password for 'https://x':"], {
+      env,
+      encoding: "utf8",
+    })
+    expect(pass).toBe("SUPER-SECRET-TOKEN")
+    const user = execFileSync("sh", [askpass, "Username for 'https://x':"], {
+      env,
+      encoding: "utf8",
+    })
+    expect(user).toBe("octo")
+  })
+
+  test("https-token: a function token is resolved per call (fetch at use time)", async () => {
+    const dir = tmp("lodestar-git-cred-")
+    let calls = 0
+    const prepared = prepareCredential(
+      {
+        kind: "https-token",
+        token: () => {
+          calls++
+          return "DYNAMIC"
+        },
+      },
+      dir,
+    )
+    const r1 = await prepared.resolve()
+    expect(r1.env.LODESTAR_GIT_PASSWORD).toBe("DYNAMIC")
+    expect(r1.env.LODESTAR_GIT_USERNAME).toBe("x-access-token")
+    await prepared.resolve()
+    expect(calls).toBe(2)
+  })
+})
+
+describe("git.commit", () => {
+  test("commits staged changes with a pinned identity and reports the sha", async () => {
+    const { workRepo } = makeRepos()
+    writeFileSync(join(workRepo, "feature.ts"), "export const x = 1\n")
+    const tool = makeGitCommitTool({ workspaceRoot: workRepo })
+    const out = await tool.execute({ message: "add feature" }, CTX)
+    expect(out.committed).toBe(true)
+    expect(out.sha).toMatch(/^[0-9a-f]{40}$/)
+    expect(out.branch).toBe("main")
+    expect(out.files_changed).toBe(1)
+    const author = git(workRepo, ["log", "-1", "--format=%an"]).trim()
+    expect(author).toBe("Lodestar Agent")
+  })
+
+  test("nothing to commit reports committed:false without throwing", async () => {
+    const { workRepo } = makeRepos()
+    const tool = makeGitCommitTool({ workspaceRoot: workRepo })
+    const out = await tool.execute({ message: "noop" }, CTX)
+    expect(out.committed).toBe(false)
+    expect(out.sha).toBe("")
+  })
+
+  test("host author env does NOT leak through the scoped env", async () => {
+    const { workRepo } = makeRepos()
+    process.env.GIT_AUTHOR_NAME = "HOST_LEAK"
+    process.env.GIT_COMMITTER_NAME = "HOST_LEAK"
+    try {
+      writeFileSync(join(workRepo, "iso.ts"), "export const y = 2\n")
+      const out = await makeGitCommitTool({ workspaceRoot: workRepo }).execute(
+        { message: "isolation" },
+        CTX,
+      )
+      expect(out.committed).toBe(true)
+      // GIT_AUTHOR_NAME (env) overrides -c user.name in git — so if the host env
+      // leaked into the subprocess, the author would be HOST_LEAK. It must not.
+      const author = git(workRepo, ["log", "-1", "--format=%an"]).trim()
+      expect(author).toBe("Lodestar Agent")
+    } finally {
+      unsetEnv("GIT_AUTHOR_NAME")
+      unsetEnv("GIT_COMMITTER_NAME")
+    }
+  })
+})
+
+describe("git.push", () => {
+  test("pushes to the operator-pinned URL, bypassing a poisoned .git/config", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    // Poison the workspace's own remote config to an unreachable decoy.
+    git(workRepo, ["remote", "add", "origin", "https://decoy.invalid/should-never-be-used.git"])
+
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote }, // pinned to the real (local) remote
+      credential: { kind: "none" },
+    })
+    const out = await tool.execute({}, CTX)
+    expect(out.pushed).toBe(true)
+    expect(out.branch).toBe("main")
+    expect(out.updated_refs.some((r) => r.includes("refs/heads/main"))).toBe(true)
+
+    // The ref landed in the PINNED remote — proving the decoy origin was bypassed
+    // (the push succeeded entirely offline against the local bare repo).
+    const remoteSha = git(bareRemote, ["rev-parse", "refs/heads/main"]).trim()
+    const localSha = git(workRepo, ["rev-parse", "HEAD"]).trim()
+    expect(remoteSha).toBe(localSha)
+  })
+
+  test("rejects a remote name the operator did not pin", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ remote: "upstream" }, CTX)).rejects.toThrow(
+      /not in the operator-pinned remotes/,
+    )
+  })
+
+  test("the credential token never appears in the tool output", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    const TOKEN = "ghp_PROBE_TOKEN_should_never_surface"
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "https-token", token: TOKEN },
+    })
+    const out = await tool.execute({}, CTX)
+    expect(JSON.stringify(out)).not.toContain(TOKEN)
+  })
+})
+
+describe("git.clone", () => {
+  test("clones an allowlisted source into a confined destination", async () => {
+    const { bareRemote, cloneRoot, workRepo } = makeRepos()
+    // Seed the bare remote with a branch so there is something to clone.
+    git(workRepo, ["remote", "add", "r", bareRemote])
+    git(workRepo, ["push", "-q", "r", "main"])
+
+    const tool = makeGitCloneTool({
+      cloneRoot,
+      allowSource: (url) => url === bareRemote,
+    })
+    const out = await tool.execute({ url: bareRemote, destination: "copy" }, CTX)
+    expect(out.cloned).toBe(true)
+    expect(out.destination).toBe("copy")
+    expect(out.head_sha).toMatch(/^[0-9a-f]{40}$/)
+    expect(existsSync(join(cloneRoot, "copy", "README.md"))).toBe(true)
+  })
+
+  test("rejects a source not on the allowlist", async () => {
+    const { cloneRoot, bareRemote } = makeRepos()
+    const tool = makeGitCloneTool({
+      cloneRoot,
+      allowSource: (url) => url === bareRemote,
+    })
+    await expect(
+      tool.execute({ url: "https://evil.invalid/x.git", destination: "evil" }, CTX),
+    ).rejects.toThrow(/not permitted by the operator source allowlist/)
+    expect(readdirSync(cloneRoot).length).toBe(0)
+  })
+
+  test("rejects a destination that escapes the clone root", async () => {
+    const { cloneRoot, bareRemote } = makeRepos()
+    const tool = makeGitCloneTool({ cloneRoot, allowSource: () => true })
+    await expect(tool.execute({ url: bareRemote, destination: "../escape" }, CTX)).rejects.toThrow(
+      /escapes the clone root/,
+    )
+    await expect(tool.execute({ url: bareRemote, destination: "/tmp/abs" }, CTX)).rejects.toThrow(
+      /must be relative/,
+    )
+    expect(readdirSync(cloneRoot).length).toBe(0)
+  })
+
+  test("rejects a destination symlink that escapes the clone root (leaf, intermediate, dangling)", async () => {
+    const { cloneRoot, bareRemote } = makeRepos()
+    const outside = tmp("lodestar-git-outside-")
+    const tool = makeGitCloneTool({ cloneRoot, allowSource: () => true })
+
+    // (a) leaf symlink → an empty dir outside the root.
+    symlinkSync(outside, join(cloneRoot, "link"))
+    await expect(tool.execute({ url: bareRemote, destination: "link" }, CTX)).rejects.toThrow()
+
+    // (b) intermediate symlink → outside; destination descends through it.
+    symlinkSync(outside, join(cloneRoot, "sub"))
+    await expect(tool.execute({ url: bareRemote, destination: "sub/inner" }, CTX)).rejects.toThrow()
+
+    // (c) dangling symlink leaf (git would still follow it).
+    symlinkSync(join(tmpdir(), "lodestar-git-nonexistent-zzz"), join(cloneRoot, "dangling"))
+    await expect(tool.execute({ url: bareRemote, destination: "dangling" }, CTX)).rejects.toThrow()
+
+    // Nothing was cloned into the outside directory.
+    expect(readdirSync(outside).length).toBe(0)
+  })
+
+  test("rejects a clone root that is itself a symlink", async () => {
+    const { bareRemote } = makeRepos()
+    const outside = tmp("lodestar-git-outside-")
+    const linkRoot = join(tmp("lodestar-git-linkparent-"), "cloneroot")
+    symlinkSync(outside, linkRoot) // the pinned clone root IS a symlink → outside
+    const tool = makeGitCloneTool({ cloneRoot: linkRoot, allowSource: () => true })
+    await expect(tool.execute({ url: bareRemote, destination: "copy" }, CTX)).rejects.toThrow(
+      /clone root .* is a symlink/,
+    )
+    expect(readdirSync(outside).length).toBe(0) // nothing written through the link
+  })
+})
+
+describe("git.push branch validation", () => {
+  test("rejects refspec injection in the branch name and creates no stray ref", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    // Update-another-ref, delete-a-ref, and traversal forms are all rejected.
+    await expect(tool.execute({ branch: "main:refs/heads/evil" }, CTX)).rejects.toThrow(
+      /not a valid branch name/,
+    )
+    await expect(tool.execute({ branch: ":refs/heads/main" }, CTX)).rejects.toThrow(
+      /not a valid branch name/,
+    )
+    await expect(tool.execute({ branch: "../evil" }, CTX)).rejects.toThrow(
+      /not a valid branch name/,
+    )
+    // No ref was created/touched on the pinned remote.
+    expect(git(bareRemote, ["for-each-ref", "--format=%(refname)"])).not.toContain("evil")
+  })
+
+  test("a normal branch still pushes via the fixed refspec", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    const out = await tool.execute({ branch: "main" }, CTX)
+    expect(out.pushed).toBe(true)
+    expect(git(bareRemote, ["rev-parse", "refs/heads/main"]).trim()).toBe(
+      git(workRepo, ["rev-parse", "HEAD"]).trim(),
+    )
+  })
+})
+
+describe("URL credential redaction", () => {
+  test("urlSecretRedactions extracts userinfo + secret; the pipeline strips them", () => {
+    expect(urlSecretRedactions("https://user:TOPSECRET@host/r.git")).toEqual([
+      "user:TOPSECRET",
+      "TOPSECRET",
+    ])
+    expect(urlSecretRedactions("https://host/r.git")).toEqual([])
+    expect(urlSecretRedactions("https://justuser@host/r.git")).toEqual(["justuser"])
+    const reds = urlSecretRedactions("https://u:TOPSECRET@host/r.git")
+    expect(
+      applyRedactions("fatal: unable to access https://u:TOPSECRET@host/r.git", reds),
+    ).not.toContain("TOPSECRET")
+  })
+})
+
+describe("local git config hardening", () => {
+  test("rejects a push when the workspace pins url.*.pushInsteadOf (pinning bypass)", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    // Without the guard, this rewrites the pinned URL → the push goes elsewhere.
+    git(workRepo, ["config", "--local", "url.https://evil.invalid/.pushInsteadOf", bareRemote])
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ branch: "main" }, CTX)).rejects.toThrow(/local git config/)
+    // Nothing reached the pinned remote.
+    expect(git(bareRemote, ["for-each-ref", "--format=%(refname)"]).trim()).toBe("")
+  })
+
+  test("rejects a push when the workspace sets credential.helper", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    git(workRepo, ["config", "--local", "credential.helper", "!touch PWNED"])
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ branch: "main" }, CTX)).rejects.toThrow(/local git config/)
+  })
+
+  test("rejects a commit when the workspace defines a clean filter (code exec on add)", async () => {
+    const { workRepo } = makeRepos()
+    git(workRepo, ["config", "--local", "filter.evil.clean", "sh -c 'touch PWNED'"])
+    writeFileSync(join(workRepo, "x.ts"), "export const z = 1\n")
+    const tool = makeGitCommitTool({ workspaceRoot: workRepo })
+    await expect(tool.execute({ message: "c" }, CTX)).rejects.toThrow(/local git config/)
+  })
+
+  test("a clean repo still commits and pushes", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    writeFileSync(join(workRepo, "ok.ts"), "export const ok = 1\n")
+    expect(
+      (await makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "ok" }, CTX))
+        .committed,
+    ).toBe(true)
+    const out = await makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    }).execute({ branch: "main" }, CTX)
+    expect(out.pushed).toBe(true)
+  })
+
+  test("rejects a commit when the workspace points gpg.program at a script (no exec)", async () => {
+    const { workRepo } = makeRepos()
+    const scriptDir = tmp("lodestar-git-gpg-")
+    const marker = join(scriptDir, "PWNED")
+    const script = join(scriptDir, "fake-gpg.sh")
+    writeFileSync(script, `#!/bin/sh\ntouch "${marker}"\nexit 1\n`)
+    chmodSync(script, 0o755)
+    git(workRepo, ["config", "--local", "commit.gpgsign", "true"])
+    git(workRepo, ["config", "--local", "gpg.program", script])
+    writeFileSync(join(workRepo, "f.ts"), "export const a = 1\n")
+    await expect(
+      makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "m" }, CTX),
+    ).rejects.toThrow(/local git config/)
+    expect(existsSync(marker)).toBe(false) // the "signer" never ran
+  })
+
+  test("a workspace commit.gpgsign=true is overridden — commit succeeds, unsigned", async () => {
+    const { workRepo } = makeRepos()
+    git(workRepo, ["config", "--local", "commit.gpgsign", "true"])
+    writeFileSync(join(workRepo, "g.ts"), "export const b = 1\n")
+    const out = await makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "m" }, CTX)
+    expect(out.committed).toBe(true)
+    // %G? === "N": no signature — the force-disable -c flag won over local config.
+    expect(git(workRepo, ["log", "-1", "--format=%G?"]).trim()).toBe("N")
+  })
+
+  test("rejects transport on core.askPass (exec) and core.worktree (re-point)", async () => {
+    for (const [key, val] of [
+      ["core.askPass", "/bin/echo"], // would run a credential-prompt helper
+      ["core.worktree", "/tmp"], // would make add/commit operate outside the repo
+    ] as const) {
+      const { workRepo } = makeRepos()
+      git(workRepo, ["config", "--local", key, val])
+      writeFileSync(join(workRepo, "a.ts"), "export const a = 1\n")
+      await expect(
+        makeGitCommitTool({ workspaceRoot: workRepo }).execute({ message: "m" }, CTX),
+      ).rejects.toThrow(/local git config/)
+    }
+  })
+
+  test("rejects a push when the workspace injects http.extraHeader (credential bypass)", async () => {
+    const { workRepo, bareRemote } = makeRepos()
+    // An Authorization header would let an HTTPS push authenticate despite kind:"none".
+    git(workRepo, ["config", "--local", "http.extraHeader", "Authorization: Bearer attacker"])
+    const tool = makeGitPushTool({
+      workspaceRoot: workRepo,
+      remotes: { origin: bareRemote },
+      credential: { kind: "none" },
+    })
+    await expect(tool.execute({ branch: "main" }, CTX)).rejects.toThrow(/local git config/)
+    expect(git(bareRemote, ["for-each-ref", "--format=%(refname)"]).trim()).toBe("")
+  })
+})
+
+describe("tool metadata declares process execution", () => {
+  test("commit/push/clone all require shell.exec under controlled-shell", () => {
+    const commit = makeGitCommitTool({ workspaceRoot: "/tmp/x" })
+    expect(commit.permissions).toContain("shell.exec")
+    expect(commit.sandbox).toBe("controlled-shell")
+    const push = makeGitPushTool({
+      workspaceRoot: "/tmp/x",
+      remotes: {},
+      credential: { kind: "none" },
+    })
+    expect(push.permissions).toContain("shell.exec")
+    expect(push.sandbox).toBe("controlled-shell")
+    const clone = makeGitCloneTool({ cloneRoot: "/tmp/x", allowSource: () => true })
+    expect(clone.permissions).toContain("shell.exec")
+    expect(clone.sandbox).toBe("controlled-shell")
+  })
+})

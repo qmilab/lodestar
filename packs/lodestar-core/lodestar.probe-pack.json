@@ -17,7 +17,8 @@
     "policy_kernel",
     "governing_ui",
     "otel_export",
-    "shell_adapter"
+    "shell_adapter",
+    "git_adapter"
   ],
   "invariants": [
     "no_self_promotion",
@@ -44,7 +45,8 @@
     "read_only_viewer",
     "otel_export_sensitivity_ceiling",
     "otel_action_span_projection",
-    "shell_sandbox_invariants"
+    "shell_sandbox_invariants",
+    "git_egress_governance"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -146,6 +148,10 @@
     {
       "name": "shell-adapter-enforces-sandbox-invariants",
       "file": "probes/shell-adapter-enforces-sandbox-invariants.ts"
+    },
+    {
+      "name": "git-adapter-enforces-egress-invariants",
+      "file": "probes/git-adapter-enforces-egress-invariants.ts"
     }
   ]
 }

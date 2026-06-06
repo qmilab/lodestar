@@ -52,9 +52,10 @@ explicitly not an OS sandbox**, exposed through a **config-driven tool factory**
   trust per command (e.g. `shell.test` @L3) falls out for free — preserving the
   dev-tools property without hardcoding three tools.
 - **Scope split:** the shell adapter ships the run-commands-safely mechanism plus a
-  `bunTest` (`shell.test`) preset. **git commit/push move to the `github` adapter**
+  `bunTest` (`shell.test`) preset. **git commit/push move to the git-transport adapter**
   (P2 slice 2), where the remote/credential story lives — mirroring the dev-tools
-  graduation path.
+  graduation path. *(Superseded by ADR-0006: that adapter is `adapter-git`, not a
+  "github" adapter, because git transport is forge-agnostic.)*
 
 The invariants are locked by `shell-adapter-enforces-sandbox-invariants` in
 `packs/lodestar-core/`, which drives the real adapter through the real kernel.
