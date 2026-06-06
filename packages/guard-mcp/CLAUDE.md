@@ -212,9 +212,13 @@ Cognitive Core. The resulting event log is renderable by
     **No silent non-enforcement:** a declared sentinel must never be quietly
     dropped — the `ProxyConfigSchema` superRefine rejects a `sentinels`-without-
     `policy` config at parse, and the constructor throws if `config.sentinels` is
-    set but no arbiter was injected (same shape as the `policy` / `persistence`
-    guards). The proxy never resolves sentinel ids itself; the CLI resolves them
-    against `FIRST_PARTY_SENTINELS` and injects the arbiter.
+    set without BOTH an injected arbiter AND a `CompiledPolicy` gate (the default
+    `auto_approve_ceiling` preset and a bare `PolicyGate` have no arbitrate hook,
+    so the sentinels could never hold an action). Same shape as the `policy` /
+    `persistence` guards. Verifying the gate was compiled from *that* arbiter is
+    the deferred F6 binding-token item. The proxy never resolves sentinel ids
+    itself; the CLI resolves them against `FIRST_PARTY_SENTINELS` and injects the
+    matched `{ gate, arbiter }` pair.
     The window is peeked-at-synthesis / consumed-on-execution (so a held call's
     beliefs re-gate its retry; scoping stays legible across the execute boundary)
     and its concurrency posture (overlapping calls over-attribute) is the
