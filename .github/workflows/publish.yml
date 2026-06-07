@@ -172,6 +172,10 @@ jobs:
             // action-kernel (no extra runtime deps; uses global fetch), both
             // published above. Same first-publish trusted-publisher bootstrap.
             "packages/adapters/http",
+            // messaging adapter (new, P2 slice 5): depends only on core +
+            // action-kernel (no extra runtime deps; uses global fetch), both
+            // published above. Same first-publish trusted-publisher bootstrap.
+            "packages/adapters/messaging",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -270,6 +274,9 @@ jobs:
             # http adapter (new, P2 slice 4): depends only on core +
             # action-kernel. Same first-publish bootstrap as the others.
             packages/adapters/http
+            # messaging adapter (new, P2 slice 5): depends only on core +
+            # action-kernel. Same first-publish bootstrap as the others.
+            packages/adapters/messaging
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep
