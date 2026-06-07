@@ -20,6 +20,16 @@ export {
 export { resolveSamples } from "./samples.js"
 export { formatCalibrationReport, type FormatCalibrationOptions } from "./format.js"
 export {
+  buildCalibrationComputedPayload,
+  calibrationCursor,
+  DEFAULT_CALIBRATOR_ACTOR,
+  eventLogCalibrationSink,
+  type BuildCalibrationComputedInput,
+  type CalibrationComputedEvent,
+  type CalibrationEventSink,
+  type EventLogCalibrationSinkConfig,
+} from "./event.js"
+export {
   type CalibrationClassResult,
   type CalibrationMetrics,
   type CalibrationReport,

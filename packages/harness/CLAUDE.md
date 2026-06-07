@@ -54,8 +54,13 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   resolves `(confidence, correct)` pairs from the log through tolerant
   views (both an action's terminal phase / `Outcome` events and
   `truth_status` transitions); `calibrator.ts` aggregates and flags;
-  `format.ts` renders the markdown table a calibration-paper draft pastes.
-  It measures, never enforces. Design lock:
+  `format.ts` renders the markdown table a calibration-paper draft pastes;
+  `event.ts` is the separate publish step (`buildCalibrationComputedPayload`
+  + `eventLogCalibrationSink`) that records a report as a durable
+  `calibration.computed@1` event (ADR-0011). The report wire format itself
+  graduated to `@qmilab/lodestar-core` (`schemas/calibration.ts`) so the event
+  payload can embed it; `schema.ts` re-exports it unchanged. It measures, never
+  enforces, never emits — the host emits. Design lock:
   `docs/architecture/calibrator.md`.
 
 The three sentinels are now folded into the `coding-agent-safety` pack:
@@ -116,13 +121,21 @@ Coming in later Batch 4+ steps (do not pre-build):
     Like `reflection.completed@1`, its payload is the event payload
     directly and is NOT in the observation registry. Recording is injected
     (`eventLogAlertSink`), same discipline as the probe recorder.
-11. **The Calibrator measures; it never enforces.** `calibrate()` reads the
-    log and returns a `CalibrationReport`. It does not write a revision,
-    transition a belief, or emit an event. Acting on a flag (downweighting
-    an overconfident class) is the Policy Kernel's job — its arbitrate hook
-    now consumes `CalibrationReport.flagged_classes` to escalate a backing
-    action, the same way it reads sentinel alerts. The calibrator stays
-    return-value-only; do not add a write path from it.
+11. **The Calibrator measures; it never enforces, and it never emits.**
+    `calibrate()` reads the log and returns a `CalibrationReport`. It does not
+    write a revision, transition a belief, or emit an event. Acting on a flag
+    (downweighting an overconfident class) is the Policy Kernel's job — its
+    arbitrate hook now consumes `CalibrationReport.flagged_classes` to escalate
+    a backing action, the same way it reads sentinel alerts. The calibrator
+    stays return-value-only; do not add a write path from it. **Recording a
+    returned report as a durable `calibration.computed@1` event is a *separate*
+    publish step** (`buildCalibrationComputedPayload` + the injected
+    `eventLogCalibrationSink`, driven by `lodestar harness calibrate`; ADR-0011)
+    — exactly the measure→record split the sentinels use (a `Sentinel` returns
+    findings; `eventLogAlertSink` writes them). The wire format lives in
+    `@qmilab/lodestar-core` (`schemas/calibration.ts`) and is re-exported here;
+    the event is not signed in v0 (audit/replay, not a forgery boundary — the
+    gate reads an in-process snapshot, not the event).
 12. **Synthetic beliefs are excluded from calibration by default.** A
     belief with `authority: "synthetic"` is a probe artefact and must not
     pollute a real `calibration_class` — the same isolation the firewall

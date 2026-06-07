@@ -31,6 +31,9 @@ export * from "./schemas/event.js"
 // Reflection (Batch 4) — proposals and the reflection.completed@1 payload
 export * from "./schemas/reflection.js"
 
+// Calibration — the report wire format + the calibration.computed@1 payload
+export * from "./schemas/calibration.js"
+
 // Probe pack format (Batch 4) — the lodestar.probe-pack.json manifest contract
 export * from "./schemas/probe-pack.js"
 

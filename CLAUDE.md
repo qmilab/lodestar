@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-six probes pass under
+publishing), v0.2 architecture locked. Forty-seven probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Forty-two live in the first-party pack
+below). Forty-three live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -84,7 +84,18 @@ the provider untouched while an allowlisted-by-domain recipient lands carrying t
 surfaces in inputs/observation even when echoed back, a Slack `ok:false` ends
 `failed` rather than a silent completed, and an oversized provider response is
 captured to the cap; the fourth native egress and the purest human-approval demo —
-egress-only this slice; ADR-0009).
+egress-only this slice; ADR-0009), and one durable-calibration probe
+(`calibration-event-is-durable` — the **P3 forgery-track second slice**: a
+calibration pass is recorded as a governed `calibration.computed@1` event without
+the Calibrator ever growing a write path. Over a real NDJSON log it pins four
+invariants — measure ≠ write (running `calibrate()` writes zero events; the count
+goes 0→1 only on the explicit `eventLogCalibrationSink` publish step), durable +
+schema-valid, tamper-evident (`payload_hash == canonicalHash(payload)` across the
+round-trip), and replayable (re-running `calibrate` over the recorded `cursor`
+window reproduces the verdict). The report wire format graduated to
+`@qmilab/lodestar-core`; the event is audit/replay, not a forgery boundary — not
+signed in v0 because the gate reads an in-process snapshot and a flag only
+escalates; `lodestar harness calibrate` is the CLI publish step; ADR-0011).
 The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -290,7 +301,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Forty-six probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Forty-seven probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

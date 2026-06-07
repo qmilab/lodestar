@@ -98,6 +98,22 @@ lodestar harness list
 
 `run` exits non-zero if any probe fails, so it works as a CI gate.
 
+### `lodestar harness calibrate <session-id>`
+
+Score a session's stated belief confidence against realised outcome per
+`calibration_class` (ECE / Brier / calibration-gap, flagged classes), print
+the markdown report, and — unless `--no-emit` — record the verdict as a
+durable `calibration.computed@1` governed event so calibration drift is
+auditable and replayable. The calibrator only measures; emitting the event is
+this separate publish step (ADR-0011). The recorded `cursor` is a replay key:
+re-running over the same window reproduces the verdict.
+
+```sh
+lodestar harness calibrate session-1779551238212               # print + record
+lodestar harness calibrate session-… --no-emit                 # preview only
+lodestar harness calibrate session-… --out calibration.md      # also write md
+```
+
 ## Exit codes
 
 - `0` — success

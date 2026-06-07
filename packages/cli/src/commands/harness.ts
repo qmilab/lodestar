@@ -1,14 +1,21 @@
 import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
+import { writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   type PackRunResult,
   ProbePackError,
+  buildCalibrationComputedPayload,
+  calibrate,
+  calibrationCursor,
+  eventLogCalibrationSink,
   eventLogRecorder,
+  formatCalibrationReport,
   loadProbePack,
   runPack,
 } from "@qmilab/lodestar-harness"
+import { defaultLogRoot, loadSessionEvents } from "@qmilab/lodestar-trace"
 
 /**
  * `lodestar harness run --pack <name|path>`
@@ -52,8 +59,14 @@ function resolvePackTarget(packArg: string): string {
 }
 
 const USAGE =
-  "usage: lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
-  "       lodestar harness list [--pack <name|path>]\n"
+  "usage: lodestar harness run      [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
+  "       lodestar harness list     [--pack <name|path>]\n" +
+  "       lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
+  "                                  [--actor <id>] [--no-emit] [--out <file>]\n"
+
+const CALIBRATE_USAGE =
+  "usage: lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
+  "                                  [--actor <id>] [--no-emit] [--out <file>]\n"
 
 /** A malformed invocation (missing flag value, unknown flag). Maps to exit 2. */
 class UsageError extends Error {
@@ -244,10 +257,108 @@ async function harnessList(argv: string[]): Promise<number> {
   return 0
 }
 
+/**
+ * `lodestar harness calibrate <session-id> [--project <id>] [--no-emit] [--out <file>]`
+ *
+ * The calibrator's publish step. Reads a session's events, runs the
+ * (measure-only) `calibrate()`, prints the markdown report, and — unless
+ * `--no-emit` — records the verdict as a durable `calibration.computed@1`
+ * event so calibration drift is auditable and replayable (ADR-0011). The
+ * calibrator itself never writes; emission is this separate step, the same
+ * measure/record split the sentinels follow.
+ */
+async function harnessCalibrate(argv: string[]): Promise<number> {
+  let session: string | undefined
+  let project: string | undefined
+  let logRoot = defaultLogRoot()
+  let actor: string | undefined
+  let out: string | undefined
+  let emit = true
+
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]
+    switch (arg) {
+      case "--project":
+        project = argv[++i]
+        break
+      case "--log-root": {
+        const v = argv[++i]
+        if (v) logRoot = resolve(process.cwd(), v)
+        break
+      }
+      case "--actor":
+        actor = argv[++i]
+        break
+      case "--out":
+        out = argv[++i]
+        break
+      case "--no-emit":
+        emit = false
+        break
+      default:
+        if (arg && !arg.startsWith("-") && !session) {
+          session = arg
+          break
+        }
+        process.stderr.write(`unknown argument: ${arg}\n${CALIBRATE_USAGE}`)
+        return 2
+    }
+  }
+
+  if (!session) {
+    process.stderr.write(CALIBRATE_USAGE)
+    return 2
+  }
+
+  const loaded = await loadSessionEvents({ logRoot, session_id: session, project_id: project })
+  if (loaded.events.length === 0) {
+    process.stderr.write(`no events found for session '${session}' under '${logRoot}'\n`)
+    return 3
+  }
+
+  const report = calibrate(loaded.events)
+  const markdown = formatCalibrationReport(report, { title: `calibration — session ${session}` })
+  if (out) {
+    await writeFile(out, `${markdown}\n`, "utf8")
+    process.stderr.write(`wrote ${markdown.length} bytes to ${out}\n`)
+  } else {
+    process.stdout.write(`${markdown}\n`)
+  }
+
+  if (!emit) {
+    process.stderr.write("calibration computed (not recorded — --no-emit)\n")
+    return 0
+  }
+
+  // The highest-seq event is the "computed as of" anchor — one meaningful
+  // causal parent rather than every event the pass read. The cursor is the
+  // precise replay key (re-run calibrate over the window → same report).
+  const anchor = loaded.events.reduce((a, b) => (b.seq > a.seq ? b : a))
+  const payload = buildCalibrationComputedPayload({
+    report,
+    cursor: calibrationCursor(loaded.events),
+    computed_at: new Date().toISOString(),
+    triggered_by: "cli",
+  })
+  const sink = eventLogCalibrationSink({ root: logRoot, actor_id: actor })
+  const eventId = await sink({
+    project_id: loaded.project_id,
+    session_id: session,
+    payload,
+    causal_parent_ids: [anchor.id],
+  })
+  process.stderr.write(
+    `recorded calibration.computed@1 (${payload.computation_id}) → ${logRoot} ` +
+      `(session ${session}, event ${eventId}, ${report.flagged_classes.length} flagged)\n`,
+  )
+  return 0
+}
+
 export async function harnessCommand(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
   if (sub === "run") return harnessRun(rest)
   if (sub === "list") return harnessList(rest)
+  if (sub === "calibrate") return harnessCalibrate(rest)
   process.stderr.write(USAGE)
   return 2
 }

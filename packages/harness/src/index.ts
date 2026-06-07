@@ -28,7 +28,10 @@
  *   `formatCalibrationReport`) — an offline read over the event log that
  *   scores stated confidence against realised outcome per
  *   `calibration_class` and flags miscalibration. Measures, never
- *   enforces; see `docs/architecture/calibrator.md`.
+ *   enforces, never emits; see `docs/architecture/calibrator.md`. The
+ *   separate publish step (`buildCalibrationComputedPayload` +
+ *   `eventLogCalibrationSink`) records a report as a durable
+ *   `calibration.computed@1` event (ADR-0011).
  */
 
 export {
@@ -109,6 +112,14 @@ export {
   type ResolvedCalibratorConfig,
   resolveConfig,
   type SampleSource,
+  buildCalibrationComputedPayload,
+  calibrationCursor,
+  DEFAULT_CALIBRATOR_ACTOR,
+  eventLogCalibrationSink,
+  type BuildCalibrationComputedInput,
+  type CalibrationComputedEvent,
+  type CalibrationEventSink,
+  type EventLogCalibrationSinkConfig,
 } from "./calibration/index.js"
 
 export {
