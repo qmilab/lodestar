@@ -457,9 +457,7 @@ async function caseLogValidAfterForged(): Promise<string | undefined> {
       at,
     }
     const signature = signApprovalResolution(doc, OPERATOR.privateKeyPem)
-    await writer.append(
-      envelope(`valid-${request.request_id}`, { ...forged, signature }),
-    )
+    await writer.append(envelope(`valid-${request.request_id}`, { ...forged, signature }))
 
     const result = await callPromise
     if (result.isError === true) {
