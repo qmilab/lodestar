@@ -119,7 +119,9 @@ async function run(): Promise<ProbeResult> {
 
   try {
     // ── A — the read API surfaces the chain + the pending approval ────────
-    const health = await (await fetch(`${base}/api/health`)).json()
+    const health = (await (await fetch(`${base}/api/health`)).json()) as {
+      read_only?: boolean
+    }
     if (health?.read_only !== true) {
       return fail(
         details,
@@ -140,7 +142,11 @@ async function run(): Promise<ProbeResult> {
     details.push(`A1: session listed with ${listed.event_count} events`)
 
     const chainRes = await fetch(`${base}/api/sessions/${PROJECT}/${SESSION}`)
-    const chain = await chainRes.json()
+    const chain = (await chainRes.json()) as {
+      session_id?: string
+      actor_ids?: unknown
+      event_count?: number
+    }
     if (chainRes.status !== 200 || chain?.session_id !== SESSION) {
       return fail(details, `GET chain projection failed: status ${chainRes.status}`)
     }

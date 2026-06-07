@@ -119,6 +119,7 @@ async function run(): Promise<ProbeResult> {
     }
 
     const config: ProxyConfig = {
+      approval_timeout_ms: 0,
       project_id: REAL_PROJECT_ID,
       actor_id: REAL_ACTOR_ID,
       session_id: REAL_SESSION_ID,
@@ -191,18 +192,21 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
-    // (a) Every envelope carries the real session/project IDs.
+    // (a) Every envelope carries the real session/project IDs — and never a
+    // Round-5-forbidden stub id. The stub check runs first on purpose: the
+    // equality check below narrows session_id/project_id to the real literals,
+    // which would make the stub comparison vacuous (and a strict-TS error).
     for (const env of envelopes) {
-      if (env.session_id !== REAL_SESSION_ID || env.project_id !== REAL_PROJECT_ID) {
-        return {
-          passed: false,
-          details: `event ${env.id} type=${env.type} carries session=${env.session_id} project=${env.project_id} (expected ${REAL_SESSION_ID} / ${REAL_PROJECT_ID}). Likely a stub-fallback regression in the proxy or kernel.`,
-        }
-      }
       if (env.session_id === "session-stub" || env.project_id === "project-stub") {
         return {
           passed: false,
           details: `event ${env.id} type=${env.type} carries a Round-5-forbidden stub id`,
+        }
+      }
+      if (env.session_id !== REAL_SESSION_ID || env.project_id !== REAL_PROJECT_ID) {
+        return {
+          passed: false,
+          details: `event ${env.id} type=${env.type} carries session=${env.session_id} project=${env.project_id} (expected ${REAL_SESSION_ID} / ${REAL_PROJECT_ID}). Likely a stub-fallback regression in the proxy or kernel.`,
         }
       }
     }
@@ -787,6 +791,7 @@ async function subcaseSanitiseFailureRollsBackAllRegistrations(
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-ff",
     actor_id: "agent:probe-roundtrip-ff",
     session_id: "probe-roundtrip-ff-session",
@@ -1132,6 +1137,7 @@ async function subcaseHyphenatedTaskRequiredSkipped(logDir: string): Promise<Pro
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-bb",
     actor_id: "agent:probe-roundtrip-bb",
     session_id: "probe-roundtrip-bb-session",
@@ -1624,6 +1630,7 @@ async function subcaseAdvertisedCatalogSanitised(logDir: string): Promise<ProbeR
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-sanitise",
     actor_id: "agent:probe-roundtrip-sanitise",
     session_id: "probe-roundtrip-sanitise-session",
@@ -1925,6 +1932,7 @@ async function subcaseUnknownBlockMetaStripped(logDir: string): Promise<ProbeRes
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-unknown-spoof",
     actor_id: "agent:probe-roundtrip-unknown-spoof",
     session_id: "probe-roundtrip-unknown-spoof-session",
@@ -2239,6 +2247,7 @@ async function subcaseRefusedCallAudited(logDir: string): Promise<ProbeResult> {
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-refused",
     actor_id: "agent:probe-roundtrip-refused",
     session_id: "probe-roundtrip-refused-session",
@@ -2366,6 +2375,7 @@ async function subcaseRestartDoesNotAccumulateCatalog(logDir: string): Promise<P
     })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-restart-catalog",
     actor_id: "agent:probe-roundtrip-restart-catalog",
     session_id: "probe-roundtrip-restart-catalog-session",
@@ -2478,6 +2488,7 @@ async function subcaseTaskRequiredToolsFiltered(logDir: string): Promise<ProbeRe
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-task",
     actor_id: "agent:probe-roundtrip-task",
     session_id: "probe-roundtrip-task-session",
@@ -2593,6 +2604,7 @@ async function subcaseBadLogRootFailsCleanly(_logDir: string): Promise<ProbeResu
   const badLogRoot = join(filePath, "subdir-that-cannot-exist")
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-badlog",
     actor_id: "agent:probe-roundtrip-badlog",
     session_id: "probe-roundtrip-badlog-session",
@@ -2981,6 +2993,7 @@ async function subcaseRejectsUnadvertisedTools(logDir: string): Promise<ProbeRes
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-gate",
     actor_id: "agent:probe-roundtrip-gate",
     session_id: "probe-roundtrip-gate-session",
@@ -3113,6 +3126,7 @@ async function subcaseMetadataRoundtrip(logDir: string): Promise<ProbeResult> {
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-meta",
     actor_id: "agent:probe-roundtrip-meta",
     session_id: "probe-roundtrip-meta-session",
@@ -3221,6 +3235,7 @@ async function subcaseFailedStartNoSpuriousEnd(logDir: string): Promise<ProbeRes
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-failedstart",
     actor_id: "agent:probe-roundtrip-failedstart",
     session_id: "probe-roundtrip-failedstart-session",
@@ -3326,6 +3341,7 @@ async function subcaseResourceLinkRoundtrip(logDir: string): Promise<ProbeResult
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-link",
     actor_id: "agent:probe-roundtrip-link",
     session_id: "probe-roundtrip-link-session",
@@ -3434,6 +3450,7 @@ async function subcaseStructuredContentRoundtrip(logDir: string): Promise<ProbeR
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-structured",
     actor_id: "agent:probe-roundtrip-structured",
     session_id: "probe-roundtrip-structured-session",
@@ -3537,6 +3554,7 @@ async function subcaseResourceBlobRoundtrip(logDir: string): Promise<ProbeResult
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-blob",
     actor_id: "agent:probe-roundtrip-blob",
     session_id: "probe-roundtrip-blob-session",
@@ -3652,6 +3670,7 @@ async function subcaseHelperRollback(logDir: string): Promise<ProbeResult> {
     })()
 
   const cfg: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-rollback",
     actor_id: "agent:probe-roundtrip-rollback",
     session_id: "probe-roundtrip-rollback-session",
@@ -3777,6 +3796,7 @@ async function subcaseImageRoundtrip(logDir: string): Promise<ProbeResult> {
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-image",
     actor_id: "agent:probe-roundtrip-image",
     session_id: "probe-roundtrip-image-session",
@@ -3893,6 +3913,7 @@ async function subcaseConcurrentCalls(logDir: string): Promise<ProbeResult> {
   })()
 
   const config: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-concurrent",
     actor_id: "agent:probe-roundtrip-concurrent",
     session_id: "probe-roundtrip-concurrent-session",
@@ -3983,6 +4004,7 @@ async function subcaseStopThenRestart(logDir: string): Promise<ProbeResult> {
     })()
 
   const baseConfig: ProxyConfig = {
+    approval_timeout_ms: 0,
     project_id: "probe-roundtrip-lifecycle",
     actor_id: "agent:probe-roundtrip-lifecycle",
     session_id: "probe-roundtrip-lifecycle-1",

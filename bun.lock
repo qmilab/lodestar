@@ -6,6 +6,7 @@
       "name": "lodestar",
       "devDependencies": {
         "@biomejs/biome": "1.9.4",
+        "@modelcontextprotocol/sdk": "^1.29.0",
         "@qmilab/lodestar-action-kernel": "workspace:*",
         "@qmilab/lodestar-adapter-filesystem": "workspace:*",
         "@qmilab/lodestar-adapter-git": "workspace:*",

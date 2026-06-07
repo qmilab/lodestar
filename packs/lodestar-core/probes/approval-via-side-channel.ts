@@ -248,8 +248,12 @@ async function caseGrant(): Promise<string | undefined> {
     // writer to the log would have reused a seq.
     const all = await new EventLogReader(logDir).readAll(PROJECT_ID)
     for (let i = 1; i < all.length; i++) {
-      if (all[i].seq <= all[i - 1].seq) {
-        return `[grant] non-monotonic seq at index ${i}: ${all[i - 1].seq} then ${all[i].seq} — a second writer touched the log (F2 regression).`
+      const cur = all[i]
+      const prev = all[i - 1]
+      // cur/prev are always defined within bounds; the guard only satisfies
+      // noUncheckedIndexedAccess without changing the monotonicity assertion.
+      if (cur && prev && cur.seq <= prev.seq) {
+        return `[grant] non-monotonic seq at index ${i}: ${prev.seq} then ${cur.seq} — a second writer touched the log (F2 regression).`
       }
     }
 
