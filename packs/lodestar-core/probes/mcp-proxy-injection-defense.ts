@@ -170,6 +170,7 @@ async function run(): Promise<ProbeResult> {
     }
 
     const config: ProxyConfig = {
+      approval_timeout_ms: 0,
       project_id: REAL_PROJECT_ID,
       actor_id: REAL_ACTOR_ID,
       session_id: REAL_SESSION_ID,

@@ -79,6 +79,11 @@ const denyingResolver: ApprovalResolver = async (request) => {
 }
 
 let executeCalls = 0
+// Read the counter through a function so the comparisons below see its declared
+// `number` type. It is mutated only inside the `execute` closure, which TS
+// control-flow analysis cannot follow across the kernel call, so a direct read
+// narrows to the literal initializer and flags `!== 0` / `!== 1` as vacuous.
+const callCount = (): number => executeCalls
 
 function registerProbeTool(): void {
   _resetToolsForTests()
@@ -136,7 +141,7 @@ async function run(): Promise<ProbeResult> {
       details: `[1] guarded loop returned '${granted.result}'; expected 'ok'.`,
     }
   }
-  if (executeCalls !== 1) {
+  if (callCount() !== 1) {
     return {
       passed: false,
       details: `[1] tool ran ${executeCalls}x; expected exactly 1 after a grant.`,
@@ -175,7 +180,7 @@ async function run(): Promise<ProbeResult> {
   if (!denyThrew || denied.result !== "threw") {
     return { passed: false, details: "[2] a denied hold did not make callTool throw." }
   }
-  if (executeCalls !== 0) {
+  if (callCount() !== 0) {
     return { passed: false, details: `[2] tool ran ${executeCalls}x after a denial; expected 0.` }
   }
   const denyTypes = await sessionEventTypes(denied.session_id)
@@ -218,7 +223,7 @@ async function run(): Promise<ProbeResult> {
       details: `[3] the no-resolver error did not explain the missing resolver. Got: ${noResolverMessage}`,
     }
   }
-  if (executeCalls !== 0) {
+  if (callCount() !== 0) {
     return { passed: false, details: `[3] tool ran ${executeCalls}x with no resolver; expected 0.` }
   }
 
@@ -261,7 +266,7 @@ async function run(): Promise<ProbeResult> {
       details: `[4] arbitration-escalated hold did not resolve; loop returned '${escalated.result}'. The resolver path must fall back to the parked action when evaluate() re-runs to a non-hold.`,
     }
   }
-  if (executeCalls !== 1) {
+  if (callCount() !== 1) {
     return {
       passed: false,
       details: `[4] tool ran ${executeCalls}x after an escalated hold was granted; expected exactly 1.`,

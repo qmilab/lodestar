@@ -59,6 +59,12 @@ async function run(): Promise<ProbeResult> {
   _resetToolsForTests()
 
   let executeCalls = 0
+  // Read the counter through a function so the comparisons below see its
+  // declared `number` type. It is mutated only inside the `execute` closure,
+  // which TS control-flow analysis cannot follow across the kernel call, so a
+  // direct read narrows to the literal initializer and flags `!== 0` / `!== 1`
+  // as vacuous comparisons.
+  const callCount = (): number => executeCalls
   registerTool({
     name: "probe.push",
     inputs: z.object({}),
@@ -113,7 +119,7 @@ async function run(): Promise<ProbeResult> {
   }
   if (!executeRefused)
     return { passed: false, details: "[1] execute() did not refuse a pending_approval action." }
-  if (executeCalls !== 0)
+  if (callCount() !== 0)
     return { passed: false, details: `[1] tool ran ${executeCalls}x from a parked action.` }
 
   // 2. resolve() refuses the wrong phase.
@@ -194,7 +200,7 @@ async function run(): Promise<ProbeResult> {
       passed: false,
       details: `[4] execute(approved) reached '${done.phase}'; expected 'completed'.`,
     }
-  if (executeCalls !== 1)
+  if (callCount() !== 1)
     return { passed: false, details: `[4] tool ran ${executeCalls}x; expected exactly 1.` }
 
   return {

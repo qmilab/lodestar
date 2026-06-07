@@ -248,8 +248,16 @@ async function caseGrant(): Promise<string | undefined> {
     // writer to the log would have reused a seq.
     const all = await new EventLogReader(logDir).readAll(PROJECT_ID)
     for (let i = 1; i < all.length; i++) {
-      if (all[i].seq <= all[i - 1].seq) {
-        return `[grant] non-monotonic seq at index ${i}: ${all[i - 1].seq} then ${all[i].seq} — a second writer touched the log (F2 regression).`
+      const cur = all[i]
+      const prev = all[i - 1]
+      // Fail closed: within bounds these are always defined, but if a slot were
+      // unexpectedly missing, surface it rather than skip the check (this also
+      // satisfies noUncheckedIndexedAccess).
+      if (!cur || !prev) {
+        return `[grant] unexpected gap in the log at index ${i}: readAll returned a sparse array (F2 regression).`
+      }
+      if (cur.seq <= prev.seq) {
+        return `[grant] non-monotonic seq at index ${i}: ${prev.seq} then ${cur.seq} — a second writer touched the log (F2 regression).`
       }
     }
 

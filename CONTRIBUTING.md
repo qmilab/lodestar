@@ -46,7 +46,7 @@ against the fix.
 
 ```sh
 bun install                       # workspace install
-bun run typecheck                 # strict-TS check across all packages
+bun run typecheck                 # strict-TS check: packages, examples, and probe packs
 bun run probes:ci                 # all 22 probes (both packs) must stay green
                                   #   (set LODESTAR_TEST_DATABASE_URL to a postgres:16
                                   #    to run tool-poisoning-cross-session; it skips otherwise)

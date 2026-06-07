@@ -11,9 +11,10 @@
   ],
   "scripts": {
     "build": "tsc -b",
-    "typecheck": "bun run typecheck:packages && bun run typecheck:examples",
+    "typecheck": "bun run typecheck:packages && bun run typecheck:examples && bun run typecheck:packs",
     "typecheck:packages": "tsc -b",
     "typecheck:examples": "bun run --filter './examples/*' typecheck",
+    "typecheck:packs": "tsc -p packs/tsconfig.json",
     "test": "bun test",
     "lint": "biome check packages examples research packs",
     "format": "biome format --write packages examples research packs",
@@ -57,6 +58,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "1.9.4",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/bun": "latest",
     "typescript": "5.6.3",
     "zod": "^3.23.8",
