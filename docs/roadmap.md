@@ -280,11 +280,11 @@ Work past the v1 line, tracked here as it lands:
   (`external_document` → the firewall), or outward data movement (`blast_radius:
   external` → the dormant `read → egress → write` sentinel). On that basis the
   ordered native-tool sequence is now **shell ✓ → git transport ✓ (ADR-0006) →
-  nostr ✓ (ADR-0007) → http/web-fetch → messaging (email/Slack)**, with a
+  nostr ✓ (ADR-0007) → http ✓ (ADR-0008) → messaging (email/Slack)**, with a
   governance-rich backlog (SQL/database, vector/RAG
-  retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http` is the
-  highest-leverage next pick (it hits injection + egress + untrusted content at once
-  and lights up the egress sentinel); `messaging` is the cleanest demo of the
+  retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http` hit all
+  three governance surfaces at once (injection + egress + untrusted content) and lit
+  up the egress sentinel; `messaging` is the next pick — the cleanest demo of the
   human-approval gate. Memory-firewall import adapters (Pinecone/Weaviate/Chroma,
   Redis, …) continue the `mem0`/`letta`/`zep` pattern.
 
@@ -305,6 +305,25 @@ Work past the v1 line, tracked here as it lands:
   no fs). A **TS-level governance boundary, not network containment** — `publish`/
   `fetch` reach the real relay by design. Locked by the
   `nostr-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0007.
+
+- **Native adapters (P2) — http (d)** — ✅ landed
+  (`packages/adapters/http/`, `@qmilab/lodestar-adapter-http`). The **third native
+  egress** after `git.push` and `nostr.publish`, and the first adapter to hit all
+  three governance surfaces at once (ADR-0005's bar): an injection vector (untrusted
+  fetched content), egress (an agent-authored body to an external host), and an
+  irreversible action. Two tools — `http.request` (**L4**, held until approved) and
+  `http.fetch` (L1, untrusted inbound). The teeth: **host pinning + a scheme
+  allowlist** (HTTPS only unless opted out; the agent reaches only operator-pinned
+  hosts — no arbitrary/internal destination), the headline **per-hop redirect
+  re-validation** (a pinned host that 3xx-redirects to a non-pinned host — the
+  `localhost`/metadata SSRF escape — is stopped), **host-bound credentials** (an
+  operator auth header, resolver-capable, re-resolved per hop so host A's token
+  never reaches host B, redacted from output), and **bounded capture** (a wall-clock
+  timeout + a response-body byte cap on untrusted content). Reuses the
+  `controlled-network` sandbox; needs no new core schema. A **TS-level governance
+  boundary, not network containment** — `fetch`/`request` reach the real host by
+  design, and DNS is not resolved to block private ranges. Locked by the
+  `http-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0008.
 
 ## What this roadmap explicitly does not include
 

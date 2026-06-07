@@ -11,6 +11,7 @@
     { "path": "./packages/adapters/git" },
     { "path": "./packages/adapters/shell" },
     { "path": "./packages/adapters/nostr" },
+    { "path": "./packages/adapters/http" },
     { "path": "./packages/guard" },
     { "path": "./packages/guard-mcp" },
     { "path": "./packages/trace" },
