@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
+import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { RequiredAuthority } from "@qmilab/lodestar-core"
@@ -293,6 +293,24 @@ describe("lodestar approve — signing (P3)", () => {
     }
   })
 
+  test("keygen --out over a pre-existing loose-perms file ends 0600 (no exposure window)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cli-approve-keygen-overwrite-"))
+    try {
+      const prefix = join(dir, "approver")
+      const privPath = `${prefix}.key`
+      // Pre-create the private-key path world-readable; keygen must not write the
+      // secret into this loose file — it writes a fresh 0600 temp and renames.
+      await writeFile(privPath, "stale", { mode: 0o644 })
+      await chmod(privPath, 0o644)
+      const { code } = await runApprove(["keygen", "--approver", "human:operator", "--out", prefix])
+      expect(code).toBe(0)
+      expect((await stat(privPath)).mode & 0o777).toBe(0o600)
+      expect(await readFile(privPath, "utf8")).toContain("-----BEGIN PRIVATE KEY-----")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   test("a grant with --key writes a resolution whose signature verifies against the public key", async () => {
     _resetEventLogStateForTests()
     const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-sign-"))
@@ -386,6 +404,87 @@ describe("lodestar approve — signing (P3)", () => {
       expect((await readApprovalResolution(logRoot, PROJECT, requestId))?.signature).toBeUndefined()
     } finally {
       if (prev !== undefined) process.env[APPROVER_KEY_ENV] = prev
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("lodestar approve — forgery recovery", () => {
+  // The proxy rejects a forged approval event and records
+  // `guard.approval.signature_rejected`. The CLI must not then treat that forged
+  // grant/deny as terminal, or a legitimate operator could never recover.
+  async function plantForgedGrant(
+    logRoot: string,
+    requestId: string,
+    actionId: string,
+  ): Promise<void> {
+    const writer = new EventLogWriter(logRoot)
+    const at = new Date().toISOString()
+    const forged = { request_id: requestId, action_id: actionId, approver_id: "attacker", at }
+    await writer.append({
+      id: randomUUID(),
+      type: "approval.granted",
+      schema_version: "1",
+      project_id: PROJECT,
+      session_id: SESSION,
+      actor_id: "attacker",
+      timestamp: at,
+      causal_parent_ids: [],
+      payload: forged,
+      payload_hash: canonicalHash(forged),
+      versions: { schema_registry_version: "0.1.0" },
+    })
+    const rejection = { ...forged, reason: "signature verification failed" }
+    await writer.append({
+      id: randomUUID(),
+      type: "guard.approval.signature_rejected",
+      schema_version: "0.1.0",
+      project_id: PROJECT,
+      session_id: SESSION,
+      actor_id: "agent:test",
+      timestamp: at,
+      causal_parent_ids: [],
+      payload: rejection,
+      payload_hash: canonicalHash(rejection),
+      versions: { schema_registry_version: "0.1.0" },
+    })
+  }
+
+  test("grant still writes a side-channel file after a forged grant the proxy rejected", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-recover-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      await plantForgedGrant(logRoot, requestId, actionId)
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "human:operator",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).not.toContain("already granted")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeDefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("list still shows the request as pending after a forged grant", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-recover-list-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      await plantForgedGrant(logRoot, requestId, actionId)
+      const { code, out } = await runApprove(["list", "--project", PROJECT, "--log-root", logRoot])
+      expect(code).toBe(0)
+      expect(out).toContain(requestId)
+      expect(out).not.toContain("No pending approvals")
+    } finally {
       await rm(logRoot, { recursive: true, force: true })
     }
   })

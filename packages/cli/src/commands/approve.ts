@@ -1,4 +1,5 @@
-import { chmod, readFile, writeFile } from "node:fs/promises"
+import { randomUUID } from "node:crypto"
+import { readFile, rename, rm, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
   type Actor,
@@ -432,12 +433,19 @@ async function keygen(input: {
   if (outPath !== undefined) {
     const privPath = `${outPath}.key`
     const pubPath = `${outPath}.pub`
+    // The private key must never touch disk with loose permissions. `mode` on
+    // `writeFile` applies only when the file is CREATED, so writing straight to a
+    // pre-existing `privPath` with broader bits would expose the secret until a
+    // follow-up chmod. Instead write to a FRESH 0600 temp (mode applies on
+    // creation) and atomically `rename` it into place — the destination inherits
+    // the temp's inode + 0600. Same temp+rename discipline as the side-channel.
+    const tmpPath = `${privPath}.${randomUUID()}.tmp`
     try {
-      await writeFile(privPath, privateKeyPem, { mode: 0o600 })
-      // Re-assert the mode in case the file pre-existed with looser bits.
-      await chmod(privPath, 0o600)
+      await writeFile(tmpPath, privateKeyPem, { mode: 0o600 })
+      await rename(tmpPath, privPath)
       await writeFile(pubPath, publicKeyPem)
     } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
       process.stderr.write(`[approve] keygen: could not write key files: ${errMessage(err)}\n`)
       return 1
     }
@@ -514,15 +522,41 @@ function collectRequests(events: EventEnvelope[]): Map<string, ApprovalRequest> 
   return out
 }
 
-/** request_ids that already carry a granted / denied / expired event. */
+/**
+ * request_ids the proxy flagged with `guard.approval.signature_rejected` — a
+ * grant/deny event it refused to promote because the signature did not verify
+ * against the pinned approver keys (a forged event a local writer planted in the
+ * log or side-channel). Such a `approval.granted@1` / `approval.denied@1` is NOT a
+ * real resolution and must not make the CLI report the request as already
+ * resolved, or a legitimate operator could never submit a real signed grant after
+ * a forgery (the request would look settled and the proxy would time out).
+ */
+function signatureRejectedRequestIds(events: EventEnvelope[]): Set<string> {
+  const out = new Set<string>()
+  for (const e of events) {
+    if (e.type !== "guard.approval.signature_rejected") continue
+    const id = (e.payload as { request_id?: unknown }).request_id
+    if (typeof id === "string" && id.length > 0) out.add(id)
+  }
+  return out
+}
+
+/**
+ * request_ids that already carry a *genuine* terminal event. A grant/deny only
+ * counts when the request was not signature-rejected (a forgery the proxy
+ * refused); `approval.expired@1` is proxy-authored and always definitive (a
+ * timed-out hold the agent re-proposes). A request that was forged-then-rejected
+ * but not yet timed out stays actionable so an operator can still grant it.
+ */
 function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
+  const rejected = signatureRejectedRequestIds(events)
   const out = new Set<string>()
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
-      if (p.success) out.add(p.data.request_id)
+      if (p.success && !rejected.has(p.data.request_id)) out.add(p.data.request_id)
     } else if (e.type === "approval.expired") {
       const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
       if (p.success) out.add(p.data.request_id)
@@ -531,13 +565,19 @@ function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
   return out
 }
 
-/** The existing log verdict for a request, if any. */
+/**
+ * The existing log verdict for a request, if any — ignoring a grant/deny the
+ * proxy signature-rejected (see {@link collectResolvedRequestIds}), so a forged
+ * resolution does not block a real one. `approval.expired@1` is always honoured.
+ */
 function existingResolution(
   events: EventEnvelope[],
   requestId: string,
 ): { verdict: "granted" | "denied" | "expired"; approver?: string } | undefined {
+  const rejected = signatureRejectedRequestIds(events).has(requestId)
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
+      if (rejected) continue
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
