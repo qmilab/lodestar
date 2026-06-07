@@ -31,16 +31,24 @@ import type {
   EventEnvelope,
   Observation,
   Reversibility,
+  Signature,
 } from "@qmilab/lodestar-core"
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
+  ApprovalSignatureError,
   alwaysHoldsChecker,
   autoApprovePolicyCompiled,
   expireRequest,
   holdEvaluationForParkedAction,
   openApprovalRequest,
+  verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
-import type { CompiledPolicy, PolicyEvaluation, SentinelArbiter } from "@qmilab/lodestar-guard"
+import type {
+  ApprovalResolutionDoc,
+  CompiledPolicy,
+  PolicyEvaluation,
+  SentinelArbiter,
+} from "@qmilab/lodestar-guard"
 import {
   type BeliefStore,
   type ClaimStore,
@@ -263,6 +271,14 @@ export class MCPProxy {
    * `started`, which `stop()` only clears after teardown completes.
    */
   private stopping = false
+  /**
+   * Request ids for which a side-channel resolution failed signature
+   * verification and we already emitted a `guard.approval.signature_rejected`
+   * diagnostic. A forged file persists on disk and would be re-read every poll;
+   * this dedupes the warning to once per request so the log is not spammed while
+   * the action runs out its deadline to `approval_timeout`.
+   */
+  private readonly warnedSignatureRejections = new Set<string>()
 
   constructor(
     public readonly config: ProxyConfig,
@@ -339,6 +355,28 @@ export class MCPProxy {
           "Construct the Postgres stores (createPostgresStores from " +
           "@qmilab/lodestar-memory-firewall/postgres) and pass them via " +
           "MCPProxyOverrides.stores. The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // Signed approvals: a proxy that waits for an out-of-band resolution
+    // (`approval_timeout_ms > 0`) promotes whatever lands in the side-channel,
+    // whose `approver_id` is an unauthenticated string — a forgery surface. The
+    // ProxyConfigSchema superRefine rejects the unguarded combination at parse,
+    // but the TS type does not encode it, so a library host building a literal
+    // config and calling `new MCPProxy(...)` directly would bypass it and run with
+    // unauthenticated approvals. Re-enforce at construction (same pattern as the
+    // persistence / sentinel guards): require either a pinned approver key or an
+    // explicit `allow_unsigned` opt-out. No silent default for a security setting.
+    if (
+      config.approval_timeout_ms > 0 &&
+      (config.approvals?.authorized_keys.length ?? 0) === 0 &&
+      config.approvals?.allow_unsigned !== true
+    ) {
+      throw new Error(
+        "MCPProxy: approval_timeout_ms > 0 lets the proxy promote an out-of-band approval " +
+          "from the side-channel, whose approver_id is unauthenticated. Pin at least one " +
+          "approvals.authorized_keys entry (mint one with `lodestar approve keygen`) so " +
+          "resolutions are Ed25519-verified, or set approvals.allow_unsigned: true to " +
+          "explicitly accept unsigned resolutions (a trusted local / development setup only).",
       )
     }
     // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
@@ -999,16 +1037,16 @@ export class MCPProxy {
       }
     }
 
-    const { outcome, source } = resolution
+    const { outcome, source, signature } = resolution
     // A side-channel resolution (the separate-process `lodestar approve` CLI)
     // carries no event yet — the writer deliberately never appends the log. The
     // proxy is the sole writer of its session's log, so it emits the canonical
-    // `approval.granted@1` / `approval.denied@1` itself, then consumes the
-    // spent file. A resolution found already in the log (an in-process resolver
-    // that shares the single-writer mutex) is left as-is — re-emitting would
-    // duplicate it.
+    // `approval.granted@1` / `approval.denied@1` itself (carrying the verified
+    // signature so the event is self-verifying), then consumes the spent file. A
+    // resolution found already in the log (an in-process resolver that shares the
+    // single-writer mutex) is left as-is — re-emitting would duplicate it.
     if (source === "channel") {
-      await this.emitCanonicalResolution(outcome)
+      await this.emitCanonicalResolution(outcome, signature)
       await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
     }
 
@@ -1060,7 +1098,9 @@ export class MCPProxy {
     request: ApprovalRequest,
     actionId: string,
     deadlineAt: number,
-  ): Promise<{ outcome: ApprovalOutcome; source: "log" | "channel" } | undefined> {
+  ): Promise<
+    { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
+  > {
     const reader = new EventLogReader(this.logRoot)
     for (;;) {
       if (this.stopping) return undefined
@@ -1087,10 +1127,72 @@ export class MCPProxy {
         request.request_id,
       )
       const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
-      if (channelOutcome !== undefined) return { outcome: channelOutcome, source: "channel" }
+      // A deadline-valid channel resolution must additionally clear signature
+      // verification against the operator-pinned approver keys before it can
+      // un-park the action. A forged / unsigned / unpinned-signer file is NOT a
+      // resolution — skip it and keep polling (it can never become valid, so the
+      // action runs out its deadline to a timeout). This is the cross-process
+      // forgery boundary; `resolution` is defined whenever `channelOutcome` is.
+      if (channelOutcome !== undefined && resolution !== undefined) {
+        if (await this.channelResolutionAccepted(resolution)) {
+          return { outcome: channelOutcome, source: "channel", signature: resolution.signature }
+        }
+      }
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return undefined
       await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, remaining))
+    }
+  }
+
+  /**
+   * Decide whether a side-channel resolution may un-park the action, by verifying
+   * its Ed25519 signature against the operator-pinned approver keys. The file's
+   * `approver_id` is otherwise just a claimed string — anything that can write the
+   * `.approvals/` directory could forge it — so this is the cross-process forgery
+   * boundary. Returns `true` to accept, `false` to reject (and keep polling).
+   *
+   * Pure legacy / development mode — no keys pinned *and* an explicit
+   * `allow_unsigned: true` — short-circuits to accept, matching the pre-P3
+   * behaviour for a trusted local setup. Otherwise the resolution is verified:
+   * an absent / tampered / unpinned-signer / bad signature is rejected, with a
+   * best-effort `guard.approval.signature_rejected` diagnostic emitted once per
+   * request (a forged file would otherwise re-trigger every poll).
+   */
+  private async channelResolutionAccepted(resolution: ApprovalResolution): Promise<boolean> {
+    const approvals = this.config.approvals
+    const authorizedKeys = approvals?.authorized_keys ?? []
+    const allowUnsigned = approvals?.allow_unsigned === true
+    if (authorizedKeys.length === 0 && allowUnsigned) return true
+    const doc: ApprovalResolutionDoc = {
+      request_id: resolution.request_id,
+      action_id: resolution.action_id,
+      kind: resolution.kind,
+      approver_id: resolution.approver_id,
+      at: resolution.at,
+    }
+    if (resolution.reason !== undefined) doc.reason = resolution.reason
+    try {
+      verifyApprovalSignature(doc, resolution.signature, { authorizedKeys, allowUnsigned })
+      return true
+    } catch (err) {
+      if (!(err instanceof ApprovalSignatureError)) throw err
+      if (!this.warnedSignatureRejections.has(resolution.request_id)) {
+        this.warnedSignatureRejections.add(resolution.request_id)
+        // Best-effort, like `guard.sentinel.failed`: a failing emit must not
+        // crash the poll loop. The action simply runs out its deadline.
+        try {
+          await this.emit("guard.approval.signature_rejected", {
+            request_id: resolution.request_id,
+            action_id: resolution.action_id,
+            approver_id: resolution.approver_id,
+            reason: err.message,
+            at: new Date().toISOString(),
+          })
+        } catch {
+          // best-effort
+        }
+      }
+      return false
     }
   }
 
@@ -1100,11 +1202,17 @@ export class MCPProxy {
    * path already has its event). `payload.at` carries the *approver's* decision
    * time from the outcome; the envelope timestamp (`emit`) is the proxy's write
    * time — the same record-vs-decision split `approval.expired@1` already uses.
-   * `reason` is omitted entirely when unset (canonical-hash discipline). An
+   * `reason` is omitted entirely when unset (canonical-hash discipline). The
+   * verified `signature` (when the resolution carried one) rides along so the
+   * promoted event is **self-verifying in the log** — a reader re-derives the
+   * canonical hash from the event and re-checks it against the pinned key. An
    * `expired` outcome never reaches here — the side-channel only carries
    * granted/denied; the deadline path emits `approval.expired@1` itself.
    */
-  private async emitCanonicalResolution(outcome: ApprovalOutcome): Promise<void> {
+  private async emitCanonicalResolution(
+    outcome: ApprovalOutcome,
+    signature?: Signature,
+  ): Promise<void> {
     const at = outcome.at ?? new Date().toISOString()
     if (outcome.kind === "granted") {
       const payload: ApprovalGrantedPayload = {
@@ -1114,6 +1222,7 @@ export class MCPProxy {
         at,
       }
       if (outcome.reason !== undefined) payload.reason = outcome.reason
+      if (signature !== undefined) payload.signature = signature
       await this.emit("approval.granted", payload)
     } else if (outcome.kind === "denied") {
       const payload: ApprovalDeniedPayload = {
@@ -1123,6 +1232,7 @@ export class MCPProxy {
         at,
       }
       if (outcome.reason !== undefined) payload.reason = outcome.reason
+      if (signature !== undefined) payload.signature = signature
       await this.emit("approval.denied", payload)
     }
   }
@@ -1635,9 +1745,12 @@ function delay(ms: number): Promise<void> {
  *   is skipped — a late grant is a timeout, not an approval.
  * - **Schema:** the payload is validated against the core
  *   `ApprovalGrantedPayloadSchema` / `ApprovalDeniedPayloadSchema`; a malformed
- *   event is skipped, never accepted with a fabricated `approver_id`. (This is
- *   shape validation, not a trust boundary against a process that can write the
- *   log — signing approval events is the deeper hardening, tracked separately.)
+ *   event is skipped, never accepted with a fabricated `approver_id`. This is
+ *   shape validation only — but this is the *log* path (an in-process resolver
+ *   that shares the single-writer mutex, i.e. the same trusted process). The
+ *   cross-process forgery surface is the *side-channel*, and that path now
+ *   verifies an Ed25519 signature against the operator-pinned approver keys
+ *   before promoting (`channelResolutionAccepted`, ADR-0010).
  */
 function resolutionOutcomeFor(
   events: EventEnvelope[],

@@ -14,10 +14,16 @@ Cognitive Core. The resulting event log is renderable by
   contract defaults, the event log root, the auto-approve policy
   ceiling (`auto_approve_ceiling`, 0..3), `approval_timeout_ms` (how
   long a held action waits for an out-of-band resolution before timing
-  out; 0 = don't wait), and the optional `policy` field (`ProxyPolicyConfig`)
+  out; 0 = don't wait), the optional `policy` field (`ProxyPolicyConfig`)
   pointing at a signed declarative `Policy` document that becomes the gate in
-  place of the ceiling preset. Every field is explicit; nothing in this package
-  has a silent default for a security-relevant setting.
+  place of the ceiling preset, and the optional `approvals` field
+  (`ApprovalsConfig`) pinning the Ed25519 approver public keys
+  (`authorized_keys`) a side-channel resolution is signature-verified against
+  before promotion (ADR-0010). Every field is explicit; nothing in this package
+  has a silent default for a security-relevant setting — in particular, a proxy
+  that waits for an out-of-band resolution (`approval_timeout_ms > 0`) must pin
+  an approver key or set `approvals.allow_unsigned: true`, enforced at both the
+  schema superRefine and the constructor.
 - `src/policy.ts` — `compileProxyPolicy(policyConfig, baseDir)`: loads the
   `ProxyConfig.policy` document off disk, `PolicySchema`-parses it, derives the
   gate's `decider_id` from the signer, and `compile()`s it into the
@@ -157,6 +163,16 @@ Cognitive Core. The resulting event log is renderable by
      then consumes the file. The proxy stays the sole writer of its session's
      log; the event-log writer is untouched, the single-writer invariant intact.
      The channel deadline gate is numeric (offset-safe) on the resolver's `at`.
+     **Before promoting, the proxy verifies the resolution's Ed25519 signature
+     against `approvals.authorized_keys` (`channelResolutionAccepted`, ADR-0010)**
+     — the side-channel file's `approver_id` is otherwise an unauthenticated
+     string, so a forged / unsigned / unpinned-signer / tampered file is *not*
+     promoted (the action stays held to the deadline → `approval_timeout`, with a
+     best-effort `guard.approval.signature_rejected` diagnostic deduped per
+     request); the promoted event carries the verified signature so the log is
+     self-verifying. The pure legacy/dev mode (no pinned keys + explicit
+     `allow_unsigned`) short-circuits to accept, exactly as before P3. See the
+     `forged-approval-cannot-execute` probe.
      This is what keeps the separate-process resolver safe without cross-process
      file locking — see the `approval-via-side-channel` probe (sole-writer seq
      integrity is one of its assertions).

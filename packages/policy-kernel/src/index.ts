@@ -45,3 +45,15 @@ export {
 } from "./presets.js"
 
 export { canonicalPolicyDocument, canonicalPolicyHash } from "./hash.js"
+
+export {
+  canonicalApprovalResolutionDocument,
+  canonicalApprovalResolutionHash,
+  signApprovalResolution,
+  verifyApprovalSignature,
+  generateApproverKeyPair,
+  ApprovalSignatureError,
+  type ApprovalResolutionDoc,
+  type AuthorizedApproverKeys,
+  type VerifyApprovalSignatureOptions,
+} from "./approval-signature.js"

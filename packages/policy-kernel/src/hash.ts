@@ -14,7 +14,7 @@ import type { Policy } from "@qmilab/lodestar-core"
  * policy hash only needs to be *internally* consistent (sign-time === verify-
  * time), not identical to the event-log's per-event hash.
  */
-function stableStringify(value: unknown): string {
+export function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") {
     return JSON.stringify(value) ?? "null"
   }

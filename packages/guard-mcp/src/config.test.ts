@@ -58,6 +58,88 @@ describe("ProxyConfigSchema sentinels↔policy invariant", () => {
   })
 })
 
+describe("ProxyConfigSchema signed-approvals invariant", () => {
+  // A proxy that waits for an out-of-band resolution (approval_timeout_ms > 0)
+  // promotes whatever lands in the side-channel, whose approver_id is
+  // unauthenticated. Require either a pinned approver key or an explicit
+  // allow_unsigned opt-out — no silent default for a security setting.
+  it("rejects approval_timeout_ms > 0 with neither a pinned key nor allow_unsigned", () => {
+    const parsed = ProxyConfigSchema.safeParse(rawConfig({ approval_timeout_ms: 30_000 }))
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toContain("approval_timeout_ms > 0")
+    }
+  })
+
+  it("accepts approval_timeout_ms > 0 when an approver key is pinned", () => {
+    const parsed = ProxyConfigSchema.safeParse(
+      rawConfig({
+        approval_timeout_ms: 30_000,
+        approvals: {
+          authorized_keys: [{ actor_id: "operator", public_key: "-----BEGIN PUBLIC KEY-----\n…" }],
+        },
+      }),
+    )
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts approval_timeout_ms > 0 under an explicit allow_unsigned opt-out", () => {
+    const parsed = ProxyConfigSchema.safeParse(
+      rawConfig({ approval_timeout_ms: 30_000, approvals: { allow_unsigned: true } }),
+    )
+    expect(parsed.success).toBe(true)
+  })
+
+  it("requires nothing when approval_timeout_ms is 0 (no side-channel promotion)", () => {
+    // The default config never waits, so it has no forgery surface and no
+    // approvals requirement.
+    expect(ProxyConfigSchema.safeParse(rawConfig()).success).toBe(true)
+  })
+})
+
+describe("MCPProxy constructor signed-approvals guard", () => {
+  // A direct `new MCPProxy(literal)` bypasses the schema superRefine, so the
+  // constructor re-enforces the signed-approvals requirement (same pattern as
+  // the persistence / sentinel guards).
+  it("throws on approval_timeout_ms > 0 with no pinned key and no allow_unsigned", () => {
+    expect(
+      () =>
+        new MCPProxy(rawConfig({ approval_timeout_ms: 30_000 }) as unknown as ProxyConfig, {
+          downstreamFactory: () => [],
+        }),
+    ).toThrow(/approval_timeout_ms > 0 lets the proxy promote/)
+  })
+
+  it("constructs when allow_unsigned is set explicitly", () => {
+    expect(
+      () =>
+        new MCPProxy(
+          rawConfig({
+            approval_timeout_ms: 30_000,
+            approvals: { authorized_keys: [], allow_unsigned: true },
+          }) as unknown as ProxyConfig,
+          { downstreamFactory: () => [] },
+        ),
+    ).not.toThrow()
+  })
+
+  it("constructs when an approver key is pinned", () => {
+    expect(
+      () =>
+        new MCPProxy(
+          rawConfig({
+            approval_timeout_ms: 30_000,
+            approvals: {
+              authorized_keys: [{ actor_id: "operator", public_key: "pem" }],
+              allow_unsigned: false,
+            },
+          }) as unknown as ProxyConfig,
+          { downstreamFactory: () => [] },
+        ),
+    ).not.toThrow()
+  })
+})
+
 describe("MCPProxy constructor sentinels guard", () => {
   // A direct `new MCPProxy(literal)` bypasses the schema superRefine; the
   // constructor must still refuse to run with declared-but-unenforceable

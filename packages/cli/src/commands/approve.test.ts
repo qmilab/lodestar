@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { RequiredAuthority } from "@qmilab/lodestar-core"
@@ -9,6 +9,7 @@ import {
   _resetEventLogStateForTests,
   canonicalHash,
 } from "@qmilab/lodestar-event-log"
+import { verifyApprovalSignature } from "@qmilab/lodestar-guard"
 import { readApprovalResolution } from "@qmilab/lodestar-guard-mcp"
 import { approveCommand } from "./approve.js"
 
@@ -25,6 +26,10 @@ import { approveCommand } from "./approve.js"
 
 const PROJECT = "cli-approve-test-project"
 const SESSION = "cli-approve-test-session"
+// Computed-member access (not `delete process.env.LITERAL`) so the biome
+// noDelete perf rule doesn't fire — env vars must be *unset*, not set to the
+// string "undefined". Same form as adapter-git's test env reset.
+const APPROVER_KEY_ENV = "LODESTAR_APPROVER_KEY"
 
 async function seedRequest(
   logRoot: string,
@@ -249,6 +254,132 @@ describe("lodestar approve — authority enforcement", () => {
       expect(code).toBe(0)
       expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeDefined()
     } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("lodestar approve — signing (P3)", () => {
+  /** Mint a keypair to files via `approve keygen --out`, returning the paths + public PEM. */
+  async function keygenToFiles(
+    dir: string,
+    approver: string,
+  ): Promise<{ privPath: string; pubPath: string; publicKeyPem: string }> {
+    const prefix = join(dir, "approver")
+    const { code } = await runApprove(["keygen", "--approver", approver, "--out", prefix])
+    expect(code).toBe(0)
+    return {
+      privPath: `${prefix}.key`,
+      pubPath: `${prefix}.pub`,
+      publicKeyPem: await readFile(`${prefix}.pub`, "utf8"),
+    }
+  }
+
+  test("keygen --out writes a 0600 private key + a public key", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "cli-approve-keygen-"))
+    try {
+      const { privPath, pubPath } = await keygenToFiles(dir, "human:operator")
+      expect((await stat(privPath)).mode & 0o777).toBe(0o600)
+      expect(await readFile(privPath, "utf8")).toContain("-----BEGIN PRIVATE KEY-----")
+      expect(await readFile(pubPath, "utf8")).toContain("-----BEGIN PUBLIC KEY-----")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a grant with --key writes a resolution whose signature verifies against the public key", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-sign-"))
+    try {
+      const { privPath, publicKeyPem } = await keygenToFiles(logRoot, "human:operator")
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "human:operator",
+        "--key",
+        privPath,
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("(signed)")
+      const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
+      expect(queued?.signature).toBeDefined()
+      expect(queued?.signature?.signer_id).toBe("human:operator")
+      // The signature verifies against the pinned key for the real resolution doc.
+      expect(() =>
+        verifyApprovalSignature(
+          {
+            request_id: requestId,
+            action_id: actionId,
+            kind: "granted",
+            approver_id: "human:operator",
+            at: queued?.at ?? "",
+          },
+          queued?.signature,
+          { authorizedKeys: [{ actor_id: "human:operator", public_key: publicKeyPem }] },
+        ),
+      ).not.toThrow()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a grant via LODESTAR_APPROVER_KEY env also signs", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-env-"))
+    const prev = process.env[APPROVER_KEY_ENV]
+    try {
+      const { privPath } = await keygenToFiles(logRoot, "human:operator")
+      process.env[APPROVER_KEY_ENV] = await readFile(privPath, "utf8")
+      const { requestId } = await seedRequest(logRoot, {})
+      const { code } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "human:operator",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect((await readApprovalResolution(logRoot, PROJECT, requestId))?.signature).toBeDefined()
+    } finally {
+      if (prev === undefined) delete process.env[APPROVER_KEY_ENV]
+      else process.env[APPROVER_KEY_ENV] = prev
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a grant with no key writes an UNSIGNED resolution and warns", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-nosign-"))
+    const prev = process.env[APPROVER_KEY_ENV]
+    try {
+      // Ensure the env fallback is not set, so this is genuinely unsigned.
+      delete process.env[APPROVER_KEY_ENV]
+      const { requestId } = await seedRequest(logRoot, {})
+      const { code, out, err } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "human:operator",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(err).toContain("WITHOUT a signature")
+      expect(out).toContain("(UNSIGNED)")
+      expect((await readApprovalResolution(logRoot, PROJECT, requestId))?.signature).toBeUndefined()
+    } finally {
+      if (prev !== undefined) process.env[APPROVER_KEY_ENV] = prev
       await rm(logRoot, { recursive: true, force: true })
     }
   })

@@ -126,6 +126,13 @@ function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number)
     default_sensitivity: "internal",
     auto_approve_ceiling: 3,
     approval_timeout_ms: approvalTimeoutMs,
+    // This probe pins the *promotion mechanics* (sole-writer seq integrity,
+    // grant→run-once, deny→reject, post-deadline→timeout) of the unsigned
+    // side-channel path; signature verification is the separate
+    // `forged-approval-cannot-execute` spec. Opt into the unsigned path
+    // explicitly — the signed-approval default would otherwise refuse a
+    // wait-for-approval proxy with no pinned approver key.
+    approvals: { authorized_keys: [], allow_unsigned: true },
     downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
     tool_defaults: {
       [LODESTAR_TOOL_NAME]: {

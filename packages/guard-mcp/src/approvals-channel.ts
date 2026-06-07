@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { ApprovalOutcome } from "@qmilab/lodestar-action-kernel"
-import { TimestampSchema } from "@qmilab/lodestar-core"
+import { SignatureSchema, TimestampSchema } from "@qmilab/lodestar-core"
 import { z } from "zod"
 
 /**
@@ -59,6 +59,9 @@ export const ApprovalResolutionSchema = z
     approver_id: z.string().min(1).describe("actor_id of the resolver"),
     reason: z.string().min(1).optional().describe("approver's note; omitted entirely when unset"),
     at: TimestampSchema.describe("approver's decision time; the proxy gates this ≤ the deadline"),
+    signature: SignatureSchema.optional().describe(
+      "Ed25519 signature over the canonical resolution; the proxy verifies it against the pinned approver keys before promoting. Omitted only on the explicit allow_unsigned path.",
+    ),
   })
   .strict()
 export type ApprovalResolution = z.infer<typeof ApprovalResolutionSchema>

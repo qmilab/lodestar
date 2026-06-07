@@ -88,3 +88,13 @@ The options we rejected, each with a one-line reason.
   the agent never names a host (no SSRF, no redirect following). Adds send-specific
   delivery semantics (a non-2xx / Slack `ok:false` ends `failed`). Egress-only this
   slice (inbound reading deferred); reuses `controlled-network`.
+- [ADR-0010](0010-signed-approval-resolutions.md) — Signed approval resolutions
+  (P3 slice 1): the cross-process forgery boundary. The proxy promoted whatever
+  landed in the `.approvals/` side-channel — a plain-string `approver_id` anyone
+  who can write the dir could forge. Now the approver signs the canonical
+  resolution with a real Ed25519 key (`node:crypto`, no new dep) and the proxy
+  verifies it against operator-pinned `approvals.authorized_keys` before promoting;
+  a forged / unsigned / unpinned / tampered resolution never un-parks the action.
+  Require-signed by default with an explicit `allow_unsigned` opt-out (schema +
+  constructor guard). `lodestar approve --key` signs; `approve keygen` mints keys.
+  In-process `guard.wrap()` unaffected. Probe `forged-approval-cannot-execute`.
