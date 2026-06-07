@@ -63,8 +63,11 @@ ADR-0004/0006/0007/0008). It enforces, in-process:
    delivery FAILURE that ends the action `failed`. A *send* tool must not paper over
    a rejected send as delivered (this is the deliberate difference from
    `http.fetch`, where a 4xx is meaningful captured read data).
-6. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop a
-   hostile/misbehaving provider from hanging the call or inflating an observation.
+6. **Bounded capture, redaction before the cap.** A wall-clock timeout and a
+   response-body byte cap stop a hostile/misbehaving provider from hanging the call
+   or inflating an observation. The cap is applied AFTER redaction (reading a small
+   overlap beyond it) so a credential the provider echoes straddling the byte
+   boundary cannot leave an unredacted prefix in the captured body.
 
 **What it does NOT claim:** it does not OS-sandbox the network, and it does not
 implement SMTP — email goes via an HTTP email API (the common production path, and

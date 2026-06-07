@@ -28,9 +28,11 @@
  *      it back), and the agent never supplied it.
  *   5. **Delivery semantics.** A Slack `ok:false` (HTTP 200) is a delivery
  *      FAILURE — the action ends `failed`, not a silent "completed".
- *   6. **Bounded capture.** An oversized provider response is captured up to the
- *      cap and flagged `response_truncated` — a hostile provider cannot inflate an
- *      observation.
+ *   6. **Bounded capture, redaction before the cap.** An oversized provider
+ *      response is captured up to the cap and flagged `response_truncated` — a
+ *      hostile provider cannot inflate an observation. AND, when that response
+ *      echoes the credential straddling the byte cap, redaction runs first so not
+ *      even a token *prefix* survives the truncation.
  *
  * If any of these regress, a Lodestar-wrapped agent could send a message with no
  * human in the loop, email an attacker, spoof the sender, leak the bot token, or
@@ -124,10 +126,17 @@ async function run(): Promise<ProbeResult> {
       echo: _req.headers.get("authorization"),
     })
   })
-  // The email fake: a normal {id} confirmation, or an oversized body for the cap.
-  const email = startServer((_req, body) => {
+  // The email fake: a normal {id} confirmation, or — for the bounded-capture case
+  // — an oversized body that ECHOES the operator credential positioned so the
+  // byte cap (2048) cuts THROUGH it. If the cap were applied before redaction, a
+  // credential prefix would survive into the observation.
+  const email = startServer((req, body) => {
     const parsed = JSON.parse(body) as { subject?: string }
-    if (parsed.subject === "OVERSIZE") return new Response("X".repeat(50_000), { status: 200 })
+    if (parsed.subject === "OVERSIZE") {
+      const auth = req.headers.get("authorization") ?? ""
+      // 2031 + "Bearer " (7) puts the boundary ~10 chars into the token.
+      return new Response(`${"X".repeat(2031)}${auth}${"X".repeat(500)}`, { status: 200 })
+    }
     return jsonResponse({ id: "email_probe_123" }, 200)
   })
 
@@ -356,7 +365,7 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
-    // ---- 6. Bounded capture -----------------------------------------------
+    // ---- 6. Bounded capture (incl. a credential straddling the cap) --------
     const big = await kernel.arbitrate(
       propose("email.send", { to: "alice@company.com", subject: "OVERSIZE", body: "b" }, L4()),
     )
@@ -368,14 +377,24 @@ async function run(): Promise<ProbeResult> {
     if (bigDone.phase !== "completed" || bigOut?.response_truncated !== true) {
       return {
         passed: false,
-        details: `bounded capture FAILED: a 50 KiB provider response was not truncated at the cap (phase=${bigDone.phase}, out=${JSON.stringify(bigOut)}).`,
+        details: `bounded capture FAILED: an oversized provider response was not truncated at the cap (phase=${bigDone.phase}, out=${JSON.stringify(bigOut)}).`,
+      }
+    }
+    // The oversized body echoed the credential straddling the byte cap; redaction
+    // runs before the cap, so not even a prefix of the token may survive. Check a
+    // 10-char prefix that the full-token check (sub-case 4) would NOT catch.
+    if (JSON.stringify(bigObs).includes("xoxb-PROBE")) {
+      return {
+        passed: false,
+        details:
+          "bounded capture FAILED: a credential prefix survived truncation (the cap was applied before redaction).",
       }
     }
 
     return {
       passed: true,
       details:
-        "Native messaging transport held every invariant through the Action Kernel: a slack.post proposed at L4 parked at pending_approval and reached no provider until approval, then delivered exactly once; an approved post to a non-pinned channel, an approved email to a non-allowlisted recipient, and an approved email whose comma-separated recipient string smuggled an off-allowlist address all ended 'failed' with the provider untouched, while an allowlisted (by domain) recipient landed carrying the operator-fixed From; the operator bot token reached the provider but never surfaced in the inputs or the (token-echoing) observation; a Slack ok:false ended 'failed' rather than a silent completed; and a 50 KiB provider response was captured to the cap and flagged truncated.",
+        "Native messaging transport held every invariant through the Action Kernel: a slack.post proposed at L4 parked at pending_approval and reached no provider until approval, then delivered exactly once; an approved post to a non-pinned channel, an approved email to a non-allowlisted recipient, and an approved email whose comma-separated recipient string smuggled an off-allowlist address all ended 'failed' with the provider untouched, while an allowlisted (by domain) recipient landed carrying the operator-fixed From; the operator bot token reached the provider but never surfaced in the inputs or the (token-echoing) observation; a Slack ok:false ended 'failed' rather than a silent completed; and an oversized provider response that echoed the credential straddling the byte cap was captured to the cap and flagged truncated, with not even a token prefix surviving (redaction runs before the cap).",
     }
   } finally {
     for (const s of [slack, email]) s.stop()

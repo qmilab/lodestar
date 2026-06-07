@@ -362,6 +362,26 @@ describe("email.send", () => {
     expect(out.response_truncated).toBe(true)
     expect(out.response_excerpt.length).toBeLessThanOrEqual(1024)
   })
+
+  test("a credential straddling the cap boundary leaves no partial-token prefix", async () => {
+    // A hostile provider echoes the token positioned so the byte cap cuts THROUGH
+    // it. If the cap were applied before redaction, a prefix ("xoxb-…") would
+    // survive; redaction now runs on a window that reads past the cap first.
+    const token = "xoxb-test-bot-token-9000"
+    const maxBytes = 64
+    const pad = "A".repeat(maxBytes - 5) // the boundary lands 5 chars into the token
+    const s = serve(() => new Response(pad + token + "B".repeat(300), { status: 200 }))
+    const tool = makeEmailSendTool({
+      ...emailOpts(s, ["@company.com"]),
+      credential: { header: "Authorization", value: `Bearer ${token}` },
+      maxBytes,
+    })
+    const out = await tool.execute({ to: "alice@company.com", subject: "s", body: "b" }, CTX)
+    expect(out.response_truncated).toBe(true)
+    expect(out.response_excerpt.length).toBeLessThanOrEqual(maxBytes)
+    expect(out.response_excerpt).not.toContain("xoxb") // not even a prefix survives
+    expect(out.response_excerpt).toContain("***")
+  })
 })
 
 // -----------------------------------------------------------------------------
