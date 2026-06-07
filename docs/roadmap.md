@@ -280,12 +280,12 @@ Work past the v1 line, tracked here as it lands:
   (`external_document` → the firewall), or outward data movement (`blast_radius:
   external` → the dormant `read → egress → write` sentinel). On that basis the
   ordered native-tool sequence is now **shell ✓ → git transport ✓ (ADR-0006) →
-  nostr ✓ (ADR-0007) → http ✓ (ADR-0008) → messaging (email/Slack)**, with a
-  governance-rich backlog (SQL/database, vector/RAG
-  retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http` hit all
-  three governance surfaces at once (injection + egress + untrusted content) and lit
-  up the egress sentinel; `messaging` is the next pick — the cleanest demo of the
-  human-approval gate. Memory-firewall import adapters (Pinecone/Weaviate/Chroma,
+  nostr ✓ (ADR-0007) → http ✓ (ADR-0008) → messaging ✓ (ADR-0009)** — the full
+  ordered sequence is now complete — with a governance-rich backlog (SQL/database,
+  vector/RAG retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http`
+  hit all three governance surfaces at once (injection + egress + untrusted content)
+  and lit up the egress sentinel; `messaging` closed the sequence as the purest
+  human-approval demo. Memory-firewall import adapters (Pinecone/Weaviate/Chroma,
   Redis, …) continue the `mem0`/`letta`/`zep` pattern.
 
 - **Native adapters (P2) — nostr (c)** — ✅ landed
@@ -324,6 +324,31 @@ Work past the v1 line, tracked here as it lands:
   boundary, not network containment** — `fetch`/`request` reach the real host by
   design, and DNS is not resolved to block private ranges. Locked by the
   `http-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0008.
+
+- **Native adapters (P2) — messaging (e)** — ✅ landed
+  (`packages/adapters/messaging/`, `@qmilab/lodestar-adapter-messaging`). The
+  **fourth native egress** family after `git.push` / `nostr.publish` /
+  `http.request`, and the last ordered pick in the P2 sequence — the purest
+  instance of one governance surface: an outward, irreversible send a human must
+  approve, so the cleanest demonstration of the Policy-Kernel human-approval gate.
+  Two L4 tools — `slack.post` (post to a pinned Slack channel) and `email.send`
+  (send to pinned recipients via an HTTP email API, provider-agnostic payload),
+  both held until approved. The teeth: **destination pinning** (the messaging exfil
+  guard — a channel allowlist / a recipient allowlist by exact address *and* whole
+  domain; the agent cannot message an arbitrary recipient), an **operator-fixed
+  endpoint + sender** (the agent never names the host — no agent-driven SSRF — nor
+  the email `from` — no spoofing), **scoped credentials** (a bot token / API key,
+  resolver seam, redacted), **no redirect following** (a provider 3xx is a hard
+  failure — structurally simpler than `http`, which needed per-hop re-validation),
+  and **send delivery semantics** (a non-2xx, or a Slack `ok:false` at HTTP 200,
+  ends the action `failed` — a rejected send is never reported as delivered).
+  Reuses the `controlled-network` sandbox; needs no new core schema or deps
+  (uses global `fetch`). Egress-only this slice — inbound reading (`slack.read` /
+  `email.fetch`) is a deferred follow-up, since `http.fetch` already proves the
+  untrusted-inbound surface. A **TS-level governance boundary, not network
+  containment**; SMTP is intentionally not implemented (email rides an HTTP API,
+  the common production path). Locked by the
+  `messaging-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0009.
 
 ## What this roadmap explicitly does not include
 

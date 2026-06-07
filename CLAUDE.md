@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-four probes pass under
+publishing), v0.2 architecture locked. Forty-five probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Forty live in the first-party pack
+below). Forty-one live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -69,7 +69,18 @@ non-pinned host (`localhost` — the SSRF escape) is not followed, a `file://` f
 fails the scheme allowlist, the operator credential reaches the server but never
 surfaces in inputs/observation, and an oversized untrusted body is captured to the
 cap and flagged truncated; the first adapter to hit injection + egress + untrusted
-content at once; ADR-0008).
+content at once; ADR-0008), and one messaging-adapter egress probe
+(`messaging-adapter-enforces-egress-invariants` — the native
+`@qmilab/lodestar-adapter-messaging` holds its invariants through the kernel:
+`slack.post` proposed at L4 stays at `pending_approval` until approved then
+delivers to the **operator-pinned** channel, an approved post to a non-pinned
+channel and an approved `email.send` to a non-allowlisted recipient both fail with
+the provider untouched while an allowlisted-by-domain recipient lands carrying the
+**operator-fixed** From, the operator bot token reaches the provider but never
+surfaces in inputs/observation even when echoed back, a Slack `ok:false` ends
+`failed` rather than a silent completed, and an oversized provider response is
+captured to the cap; the fourth native egress and the purest human-approval demo —
+egress-only this slice; ADR-0009).
 The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -186,6 +197,7 @@ packages/
     github/            # (later) forge-API ONLY (PRs/issues/releases) behind a ForgeProvider seam — git transport lives in adapters/git/ (ADR-0006)
     nostr/             # (exists, P2) governed Nostr transport: nostr.publish (L4, second native egress — signing key IS the credential, in-process BIP-340) + nostr.fetch (L1, untrusted inbound); relay pinning, kind allowlist, NIP-42 AUTH, fetch SSRF guard; controlled-network sandbox; TS-level boundary, not network containment; ADR-0007
     http/              # (exists, P2) governed HTTP transport: http.request (L4, third native egress — host-bound auth header credential) + http.fetch (L1, untrusted inbound, the injection vector); hostname pinning + scheme allowlist + per-hop redirect re-validation (the SSRF escape) + bounded capture; reuses controlled-network; TS-level boundary, not network containment; ADR-0008
+    messaging/         # (exists, P2) governed messaging transport: slack.post + email.send (both L4, fourth native egress — the purest human-approval demo); destination pinning (channel allowlist / recipient address+domain allowlist — the exfil guard), operator-fixed endpoint+sender (no agent host → no SSRF; no From spoofing), scoped header credential, no redirect following, send delivery semantics (non-2xx / Slack ok:false → failed); egress-only this slice; reuses controlled-network; TS-level boundary, not network containment; ADR-0009
 
 examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline

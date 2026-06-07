@@ -20,7 +20,8 @@
     "shell_adapter",
     "git_adapter",
     "nostr_adapter",
-    "http_adapter"
+    "http_adapter",
+    "messaging_adapter"
   ],
   "invariants": [
     "no_self_promotion",
@@ -50,7 +51,8 @@
     "shell_sandbox_invariants",
     "git_egress_governance",
     "nostr_transport_governance",
-    "http_transport_governance"
+    "http_transport_governance",
+    "messaging_egress_governance"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -164,6 +166,10 @@
     {
       "name": "http-adapter-enforces-egress-invariants",
       "file": "probes/http-adapter-enforces-egress-invariants.ts"
+    },
+    {
+      "name": "messaging-adapter-enforces-egress-invariants",
+      "file": "probes/messaging-adapter-enforces-egress-invariants.ts"
     }
   ]
 }

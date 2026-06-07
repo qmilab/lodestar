@@ -80,3 +80,11 @@ The options we rejected, each with a one-line reason.
   credential and hostname pinning as the destination pin; the headline new teeth is
   per-hop redirect re-validation (the redirect-to-internal SSRF escape), plus a
   scheme allowlist and bounded body capture. Reuses `controlled-network`.
+- [ADR-0009](0009-governed-messaging-transport-adapter.md) — Governed messaging
+  adapter (P2 slice 5, the last ordered pick): `slack.post` + `email.send`, both L4
+  egress — the purest human-approval demo. Same egress model with the *recipient*
+  (channel / email address+domain) as the pinned destination, an operator-fixed
+  endpoint + sender, and a header credential. Structurally simpler than ADR-0008:
+  the agent never names a host (no SSRF, no redirect following). Adds send-specific
+  delivery semantics (a non-2xx / Slack `ok:false` ends `failed`). Egress-only this
+  slice (inbound reading deferred); reuses `controlled-network`.
