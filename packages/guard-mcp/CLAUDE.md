@@ -164,15 +164,21 @@ Cognitive Core. The resulting event log is renderable by
      log; the event-log writer is untouched, the single-writer invariant intact.
      The channel deadline gate is numeric (offset-safe) on the resolver's `at`.
      **Before promoting, the proxy verifies the resolution's Ed25519 signature
-     against `approvals.authorized_keys` (`channelResolutionAccepted`, ADR-0010)**
-     — the side-channel file's `approver_id` is otherwise an unauthenticated
-     string, so a forged / unsigned / unpinned-signer / tampered file is *not*
-     promoted (the action stays held to the deadline → `approval_timeout`, with a
-     best-effort `guard.approval.signature_rejected` diagnostic deduped per
-     request); the promoted event carries the verified signature so the log is
-     self-verifying. The pure legacy/dev mode (no pinned keys + explicit
-     `allow_unsigned`) short-circuits to accept, exactly as before P3. See the
-     `forged-approval-cannot-execute` probe.
+     against `approvals.authorized_keys` (`resolutionVerified`, ADR-0010)** — a
+     resolution's `approver_id` is otherwise an unauthenticated string, so a forged
+     / unsigned / unpinned-signer / tampered resolution is *not* promoted (the
+     action stays held to the deadline → `approval_timeout`, with a best-effort
+     `guard.approval.signature_rejected` diagnostic); the promoted event carries
+     the verified signature so the log is self-verifying. **The same gate runs on
+     BOTH sources** — the log path too, not just the side-channel: `.approvals/` is
+     a sibling of the NDJSON log under one `log_root`, so a local writer who can
+     forge a side-channel file can equally append a forged `approval.granted@1` to
+     the log; both are gated (a rejected side-channel file is deleted, a rejected
+     log event is skipped by event id). Pinning a key REQUIRES a valid signature
+     even with `allow_unsigned` set; the pure legacy/dev mode is *only* no-keys +
+     explicit `allow_unsigned`, which short-circuits to accept exactly as before
+     P3. A bad pinned PEM fails loudly at construction. See the
+     `forged-approval-cannot-execute` probe (six cases, incl. the log-path bypass).
      This is what keeps the separate-process resolver safe without cross-process
      file locking — see the `approval-via-side-channel` probe (sole-writer seq
      integrity is one of its assertions).

@@ -414,7 +414,17 @@ async function keygen(input: {
   outPath: string | undefined
 }): Promise<number> {
   const { approver, outPath } = input
-  const actorId = approver ?? "<approver-id>"
+  // Require --approver: the printed authorized_keys pin and the .pub file are
+  // keyed by actor_id, and that id MUST equal the --approver you later grant/deny
+  // as, or every signature is rejected as an unpinned signer. A placeholder pin
+  // would be a silent footgun, so refuse rather than emit one.
+  if (approver === undefined || approver === "") {
+    process.stderr.write(
+      "missing required --approver <id> for 'keygen'\n          (the actor_id the key signs as; it must match your later grant/deny --approver)\n",
+    )
+    return 2
+  }
+  const actorId = approver
   const { publicKeyPem, privateKeyPem } = generateApproverKeyPair()
 
   const pin = JSON.stringify({ actor_id: actorId, public_key: publicKeyPem }, null, 2)

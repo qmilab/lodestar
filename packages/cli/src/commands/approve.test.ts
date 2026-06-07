@@ -275,6 +275,12 @@ describe("lodestar approve — signing (P3)", () => {
     }
   }
 
+  test("keygen refuses without --approver (no placeholder pin)", async () => {
+    const { code, err } = await runApprove(["keygen"])
+    expect(code).toBe(2)
+    expect(err).toContain("missing required --approver")
+  })
+
   test("keygen --out writes a 0600 private key + a public key", async () => {
     const dir = await mkdtemp(join(tmpdir(), "cli-approve-keygen-"))
     try {

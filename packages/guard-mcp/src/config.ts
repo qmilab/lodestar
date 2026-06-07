@@ -191,6 +191,26 @@ export const ApprovalsConfigSchema = z.object({
 export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>
 
 /**
+ * True when a proxy config would promote an UNAUTHENTICATED out-of-band approval:
+ * it can wait for one (`approval_timeout_ms > 0`) but pins no approver key and has
+ * not set `allow_unsigned`. The single source of truth shared by the
+ * `ProxyConfigSchema` superRefine and the `MCPProxy` constructor guard, so the
+ * parse-time and construct-time checks can never disagree. Uses fully-safe
+ * optional access so a partial literal config (Zod defaults not applied — e.g. a
+ * library host's `approvals: { allow_unsigned: false }` with no `authorized_keys`)
+ * is evaluated, not crashed.
+ */
+export function hasUnauthenticatedApprovalGap(config: {
+  approval_timeout_ms: number
+  approvals?: { authorized_keys?: ReadonlyArray<unknown>; allow_unsigned?: boolean }
+}): boolean {
+  if (config.approval_timeout_ms <= 0) return false
+  const hasPinnedKey = (config.approvals?.authorized_keys?.length ?? 0) > 0
+  const allowsUnsigned = config.approvals?.allow_unsigned === true
+  return !hasPinnedKey && !allowsUnsigned
+}
+
+/**
  * Top-level proxy config. The CLI loads this from a path on disk.
  *
  * Round 5 invariant: the proxy MUST receive a real session_id and
@@ -354,12 +374,11 @@ export const ProxyConfigSchema = z
     // verify an Ed25519 signature against a pinned approver key. Require the
     // operator to either pin at least one key or explicitly opt out with
     // `allow_unsigned: true`. No silent default for a security-relevant setting;
-    // mirrors the policy `allow_unsigned` discipline. (timeout 0 never promotes a
-    // side-channel resolution, so it has no forgery surface and no requirement.)
-    const waitsForApproval = config.approval_timeout_ms > 0
-    const hasPinnedKey = (config.approvals?.authorized_keys.length ?? 0) > 0
-    const allowsUnsigned = config.approvals?.allow_unsigned === true
-    if (waitsForApproval && !hasPinnedKey && !allowsUnsigned) {
+    // mirrors the policy `allow_unsigned` discipline. The same predicate is
+    // re-checked in the MCPProxy constructor (a literal-config library host
+    // bypasses this superRefine); they share `hasUnauthenticatedApprovalGap` so
+    // the two guards can never drift.
+    if (hasUnauthenticatedApprovalGap(config)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["approvals"],

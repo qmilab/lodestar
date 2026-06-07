@@ -52,6 +52,7 @@ export {
   signApprovalResolution,
   verifyApprovalSignature,
   generateApproverKeyPair,
+  assertValidApproverKeys,
   ApprovalSignatureError,
   type ApprovalResolutionDoc,
   type AuthorizedApproverKeys,

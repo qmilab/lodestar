@@ -4,7 +4,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
 import type { Policy } from "@qmilab/lodestar-core"
-import { SentinelArbiter, compile, compileWithSentinels } from "@qmilab/lodestar-guard"
+import {
+  SentinelArbiter,
+  compile,
+  compileWithSentinels,
+  generateApproverKeyPair,
+} from "@qmilab/lodestar-guard"
 import { SuspiciousMemoryOriginSentinel } from "@qmilab/lodestar-harness"
 import { type ProxyConfig, ProxyConfigSchema } from "./config.js"
 import { MCPProxy } from "./proxy.js"
@@ -123,20 +128,43 @@ describe("MCPProxy constructor signed-approvals guard", () => {
     ).not.toThrow()
   })
 
-  it("constructs when an approver key is pinned", () => {
+  it("constructs when a valid Ed25519 approver key is pinned", () => {
+    const { publicKeyPem } = generateApproverKeyPair()
     expect(
       () =>
         new MCPProxy(
           rawConfig({
             approval_timeout_ms: 30_000,
             approvals: {
-              authorized_keys: [{ actor_id: "operator", public_key: "pem" }],
+              authorized_keys: [{ actor_id: "operator", public_key: publicKeyPem }],
               allow_unsigned: false,
             },
           }) as unknown as ProxyConfig,
           { downstreamFactory: () => [] },
         ),
     ).not.toThrow()
+  })
+
+  it("throws on a pinned approver key that is not a valid Ed25519 PEM (operator misconfig fails loudly)", () => {
+    expect(
+      () =>
+        new MCPProxy(
+          rawConfig({
+            approval_timeout_ms: 30_000,
+            approvals: {
+              authorized_keys: [
+                {
+                  actor_id: "operator",
+                  public_key:
+                    "-----BEGIN PUBLIC KEY-----\nnot-a-real-key\n-----END PUBLIC KEY-----",
+                },
+              ],
+              allow_unsigned: false,
+            },
+          }) as unknown as ProxyConfig,
+          { downstreamFactory: () => [] },
+        ),
+    ).toThrow(/unparseable public key|expected ed25519/)
   })
 })
 

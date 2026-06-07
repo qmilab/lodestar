@@ -55,20 +55,37 @@ operator-pinned approver public keys before promoting.** The trust root moves fr
    resolution before promoting; a forged / unsigned / unpinned-signer / tampered
    file is **not promoted** — the action stays held to its deadline and times out,
    and a best-effort `guard.approval.signature_rejected` diagnostic is recorded
-   (deduped once per request). The promoted `approval.granted@1` carries the
-   verified signature, so the **log is self-verifying** (a reader re-derives the
-   hash from the event and re-checks it against the pinned key).
+   (deduped once; the mark is set only after a successful emit, and a rejected
+   side-channel file is deleted so a planted file is not a per-poll crypto sink).
+   The promoted `approval.granted@1` carries the verified signature, so the **log
+   is self-verifying**.
+
+   **The gate covers BOTH resolution sources, not just the side-channel.**
+   `.approvals/` is a *sibling* of the NDJSON log under the same `log_root`, so a
+   local writer who can forge a side-channel file can equally append a forged
+   `approval.granted@1` to the log. The same Ed25519 gate therefore runs on the
+   **log path** (`resolutionOutcomeFor`) too — a forged unsigned log event is
+   rejected, recorded (deduped by event id — the log is append-only), and skipped,
+   not promoted. (Review found the original channel-only check left this bypass;
+   the `forged-approval-cannot-execute` probe now pins both paths.)
 
 3. **Require-signed by default, explicit `allow_unsigned` opt-out.** A proxy that
    can wait for an out-of-band resolution (`approval_timeout_ms > 0`) must either
    pin at least one approver key **or** set `approvals.allow_unsigned: true`. The
    gap is rejected at `ProxyConfigSchema` parse *and* re-checked in the `MCPProxy`
-   constructor (the TS type doesn't encode the superRefine, so a library host
-   building a literal config would otherwise bypass it — the same schema-guard +
-   constructor-guard pairing the persistence / sentinel guards use). No silent
-   default for a security-relevant setting; mirrors the policy `allow_unsigned`
-   discipline. `approval_timeout_ms === 0` never promotes a side-channel
-   resolution, so it has no forgery surface and no requirement.
+   constructor via the shared `hasUnauthenticatedApprovalGap` predicate (the TS
+   type doesn't encode the superRefine, so a library host building a literal config
+   would otherwise bypass it — the same schema-guard + constructor-guard pairing
+   the persistence / sentinel guards use; one predicate so the two cannot drift).
+   No silent default for a security-relevant setting; mirrors the policy
+   `allow_unsigned` discipline. `approval_timeout_ms === 0` never promotes a
+   side-channel resolution, so it has no forgery surface and no requirement.
+   **`allow_unsigned` is the no-keys legacy/dev escape only**: once *any* approver
+   key is pinned, a valid signature is required even if `allow_unsigned` is also
+   set — a stray opt-out flag must not silently weaken a key-pinned path. A pinned
+   key that is not a parseable Ed25519 SPKI PEM fails loudly at construction
+   (`assertValidApproverKeys`), rather than silently rejecting every real approval
+   as if it were a forgery.
 
 4. **The CLI signs; `keygen` mints keys.** `lodestar approve grant/deny` loads the
    approver's private key from `--key <path>` or the `LODESTAR_APPROVER_KEY` env

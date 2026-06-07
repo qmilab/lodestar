@@ -74,6 +74,7 @@ export {
   signApprovalResolution,
   verifyApprovalSignature,
   generateApproverKeyPair,
+  assertValidApproverKeys,
   ApprovalSignatureError,
 } from "@qmilab/lodestar-policy-kernel"
 export type {

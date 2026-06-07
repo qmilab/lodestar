@@ -110,7 +110,15 @@ export function signApprovalResolution(
   privateKeyPem: string,
 ): Signature {
   const payloadHash = canonicalApprovalResolutionHash(doc)
-  const key = createPrivateKey(privateKeyPem)
+  let key: ReturnType<typeof createPrivateKey>
+  try {
+    key = createPrivateKey(privateKeyPem)
+  } catch (err) {
+    // Wrap the raw node:crypto PEM-parse error in the module's typed error, so
+    // every caller (not just the CLI, which already catches) gets a consistent
+    // ApprovalSignatureError rather than an opaque OpenSSL message.
+    throw new ApprovalSignatureError(`approver private key could not be parsed: ${String(err)}`)
+  }
   if (key.asymmetricKeyType !== "ed25519") {
     throw new ApprovalSignatureError(
       `approver private key is ${key.asymmetricKeyType ?? "an unknown type"}, expected ed25519`,
@@ -140,6 +148,34 @@ export function generateApproverKeyPair(): { publicKeyPem: string; privateKeyPem
   return {
     publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
     privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
+  }
+}
+
+/**
+ * Validate that every operator-pinned approver public key is a parseable Ed25519
+ * SPKI PEM, throwing {@link ApprovalSignatureError} on the first bad one. Call
+ * this once at config load / proxy construction: a corrupt pinned key would
+ * otherwise surface only at verification time as a *rejected* resolution
+ * (indistinguishable from a forgery), silently timing out every real approval. A
+ * misconfiguration should fail loudly at startup, not masquerade as an attack.
+ */
+export function assertValidApproverKeys(
+  keys: ReadonlyArray<{ actor_id: string; public_key: string }>,
+): void {
+  for (const k of keys) {
+    let key: ReturnType<typeof createPublicKey>
+    try {
+      key = createPublicKey(k.public_key)
+    } catch (err) {
+      throw new ApprovalSignatureError(
+        `authorized approver '${k.actor_id}' has an unparseable public key: ${String(err)}`,
+      )
+    }
+    if (key.asymmetricKeyType !== "ed25519") {
+      throw new ApprovalSignatureError(
+        `authorized approver '${k.actor_id}' public key is ${key.asymmetricKeyType ?? "an unknown type"}, expected ed25519`,
+      )
+    }
   }
 }
 
