@@ -99,6 +99,17 @@ describe("redaction helpers", () => {
     expect(applyRedactions("unchanged", [])).toBe("unchanged")
   })
 
+  test("applyRedactions redacts the longest of overlapping secrets first", () => {
+    // git mixes cred.redactions with urlSecretRedactions, so a short token that is
+    // a prefix of a longer URL-embedded secret can both be present. In insertion
+    // order the short one would be replaced first and leave the longer secret's
+    // remainder ("-def-ghi"); longest-first replaces the whole secret. The result
+    // is order-independent.
+    const reds = ["abc", "abc-def-ghi"] // token, then a longer secret containing it
+    expect(applyRedactions("leaked abc-def-ghi here", reds)).toBe("leaked *** here")
+    expect(applyRedactions("leaked abc-def-ghi here", [...reds].reverse())).toBe("leaked *** here")
+  })
+
   test("redactUrl strips embedded credentials only", () => {
     expect(redactUrl("https://user:pat@github.com/o/r.git")).toBe("https://***@github.com/o/r.git")
     expect(redactUrl("https://github.com/o/r.git")).toBe("https://github.com/o/r.git")
