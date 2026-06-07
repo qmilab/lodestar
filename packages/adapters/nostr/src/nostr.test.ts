@@ -11,7 +11,7 @@ import {
   signEvent,
   verifyEvent,
 } from "./event.js"
-import { fetchFromRelay } from "./relay.js"
+import { applyRedactions, fetchFromRelay } from "./relay.js"
 import { makeNostrFetchTool, makeNostrPublishTool } from "./tools.js"
 
 // A throwaway-but-valid secret key for tests (NOT a real identity).
@@ -187,6 +187,14 @@ describe("credentials", () => {
     await expect(
       prepareSigner({ kind: "secret-key", key: "not-a-key" }).resolve(),
     ).rejects.toThrow()
+  })
+
+  test("applyRedactions redacts the longest of overlapping secrets first", () => {
+    // A shorter secret that is a substring of a longer one (e.g. a trimmed key
+    // inside its untrimmed form) must not be replaced first, or the longer
+    // secret's unique remainder would survive. Longest-first is order-independent.
+    expect(applyRedactions("secret-extra-private", ["secret", "secret-extra-private"])).toBe("***")
+    expect(applyRedactions("secret-extra-private", ["secret-extra-private", "secret"])).toBe("***")
   })
 })
 

@@ -62,10 +62,16 @@ export interface RelayFetchResult {
 
 /** Replace every occurrence of each non-empty redaction with `***`. Defence in
  * depth: the secret key never goes on the wire (only the pubkey + sig do), but a
- * relay can echo arbitrary text and we never want a key to slip through. */
+ * relay can echo arbitrary text and we never want a key to slip through.
+ *
+ * Redactions are applied LONGEST-FIRST: if a shorter secret is a substring of a
+ * longer one (e.g. a trimmed key inside its untrimmed form, or the hex inside a
+ * longer encoding), replacing the short one first would consume part of the longer
+ * match and could leave its unique remainder in the output. Matching the longest
+ * secret first closes that gap. */
 export function applyRedactions(text: string, redactions: string[]): string {
   let out = text
-  for (const secret of redactions) {
+  for (const secret of [...redactions].sort((a, b) => b.length - a.length)) {
     if (secret.length === 0) continue
     out = out.split(secret).join("***")
   }
