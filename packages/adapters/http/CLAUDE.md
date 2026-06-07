@@ -63,9 +63,11 @@ ADR-0004/0006/0007). It enforces, in-process:
    be agent data leaving to an external host below the L4 gate. `http.request` (L4)
    is human-approved, so its headers are unrestricted. (The intrinsic read channel
    is the URL alone — the analogue of `nostr.fetch` bounding its REQ filter.)
-5. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop an
-   untrusted (possibly hostile) server from hanging the call or inflating an
-   observation.
+5. **Bounded capture, redaction before the cap.** A wall-clock timeout and a
+   response-body byte cap stop an untrusted (possibly hostile) server from hanging
+   the call or inflating an observation. The cap is applied AFTER redaction
+   (reading a small overlap beyond it) so a credential the server echoes straddling
+   the byte boundary cannot leave an unredacted prefix in the captured body.
 6. **Untrusted inbound.** A fetched body is UNTRUSTED external content — treat it
    as `external_document`; it must not self-promote to a supported belief. Deeper
    firewall integration (an HTML/JSON-aware evidence linker, à la the doc-agent's

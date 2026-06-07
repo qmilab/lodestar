@@ -66,29 +66,48 @@ export interface PerformRequestOptions {
   tool: string
 }
 
-/** Read a response body into text, bounded by `maxBytes`. Streams and stops once
- * the cap is exceeded, cancelling the rest — so an oversized body is never fully
- * buffered. */
+/** Read a response body into REDACTED text, bounded by `maxBytes`. Streams and
+ * stops once the cap (plus a redaction overlap) is exceeded, cancelling the rest —
+ * so an oversized body is never fully buffered.
+ *
+ * The cap is applied AFTER redaction, not before. If we truncated the raw bytes at
+ * `maxBytes` first, a credential a hostile server echoes straddling that boundary
+ * would be cut mid-secret, leaving an unredacted credential *prefix* that no full
+ * redaction variant matches. So we read a small overlap beyond the cap — the
+ * longest redaction string — which guarantees any secret with at least one byte
+ * inside `[0, maxBytes)` is FULLY present in the window, redact the whole window,
+ * then bound the redacted text to the cap. Slicing the already-redacted text can
+ * only drop trailing content; it can never reveal a partial secret. */
 async function readCappedBody(
   resp: Response,
   maxBytes: number,
+  redactions: string[],
 ): Promise<{ text: string; bytes: number; truncated: boolean }> {
   if (!resp.body) return { text: "", bytes: 0, truncated: false }
+  // Overlap = the longest redaction string in BYTES (not UTF-16 chars — the read
+  // window is byte-oriented, and a multibyte secret's byte length exceeds its
+  // `.length`), so a secret straddling the cap is fully captured for matching
+  // before we bound the output.
+  const overlap = redactions.reduce((m, r) => Math.max(m, Buffer.byteLength(r, "utf8")), 0)
+  const readLimit = maxBytes + overlap
   const reader = resp.body.getReader()
   const chunks: Uint8Array[] = []
   let captured = 0
-  let truncated = false
+  // Set when we stop early because the stream had more than the read window —
+  // load-bearing when overlap is 0 (no credentials), where `captured` maxes at
+  // exactly `maxBytes` and `captured > maxBytes` could never fire.
+  let hitLimit = false
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
     if (!value) continue
-    const room = maxBytes - captured
+    const room = readLimit - captured
     if (value.byteLength > room) {
       if (room > 0) {
         chunks.push(value.subarray(0, room))
         captured += room
       }
-      truncated = true
+      hitLimit = true
       try {
         await reader.cancel()
       } catch {
@@ -99,8 +118,35 @@ async function readCappedBody(
     chunks.push(value)
     captured += value.byteLength
   }
+  // truncated = the body had more than the cap of real content (either we stopped
+  // early at the read window, or we read into the overlap beyond `maxBytes`).
+  const truncated = hitLimit || captured > maxBytes
   const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)))
-  return { text: buf.toString("utf8"), bytes: buf.byteLength, truncated }
+  // Redact the FULL window (incl. the overlap) FIRST, so a boundary-straddling
+  // secret becomes `***`, THEN bound the redacted text to the cap by BYTES (the
+  // cap is a byte cap; slicing by chars could leave the body several× over it for
+  // multibyte content). Cutting already-redacted text can only drop trailing bytes
+  // — a `***` is ASCII and every secret in the window is already replaced — so a
+  // partial secret can never reappear (a cut multibyte tail is at worst a cosmetic
+  // replacement char).
+  const redacted = applyRedactions(buf.toString("utf8"), redactions)
+  const redactedBuf = Buffer.from(redacted, "utf8")
+  // Cut on a UTF-8 char boundary so we never split a multibyte sequence — a split
+  // would be decoded as U+FFFD (3 bytes) and could push the result a couple of
+  // bytes OVER the cap. Back up over continuation bytes (0b10xxxxxx) so the result
+  // is ≤ maxBytes bytes with no replacement char.
+  const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
+  return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }
+}
+
+/** Decode the first ≤ `maxBytes` bytes of `buf` as UTF-8, cutting on a character
+ * boundary (never mid-sequence). */
+function utf8CutAtMost(buf: Buffer, maxBytes: number): string {
+  let end = Math.min(maxBytes, buf.byteLength)
+  // If `end` lands on a UTF-8 continuation byte, the char starting earlier is
+  // split; back up until `end` is at a sequence start (or 0).
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end--
+  return buf.subarray(0, end).toString("utf8")
 }
 
 /** Snapshot response headers into a plain record, redacting values. */
@@ -233,12 +279,15 @@ export async function performRequest(
         continue
       }
 
-      const capped = await readCappedBody(resp, opts.maxBytes)
       // Redact EVERY captured field, not just the body/headers: a credentialed
       // host can echo the injected token into a redirect `Location` (e.g.
       // `/next?token=<cred>`) or a `content-type`, so the final URL and the whole
       // redirect chain must be redacted too before they reach an observation.
       const red = [...redactions]
+      // readCappedBody redacts BEFORE applying the cap (so a credential straddling
+      // the byte boundary can't leave an unredacted prefix), so `capped.text` is
+      // already redacted — do not (and need not) redact it again here.
+      const capped = await readCappedBody(resp, opts.maxBytes, red)
       const contentType = resp.headers.get("content-type")
       return {
         url: applyRedactions(url.toString(), red),
@@ -249,7 +298,7 @@ export async function performRequest(
         ok: resp.ok,
         headers: captureHeaders(resp, red),
         content_type: contentType === null ? null : applyRedactions(contentType, red),
-        body: applyRedactions(capped.text, red),
+        body: capped.text,
         body_bytes: capped.bytes,
         body_truncated: capped.truncated,
         redirected: hops > 0,
