@@ -168,6 +168,10 @@ jobs:
             // action-kernel (+ @noble/@scure runtime deps), both published above.
             // Same first-publish trusted-publisher bootstrap as the others.
             "packages/adapters/nostr",
+            // http adapter (new, P2 slice 4): depends only on core +
+            // action-kernel (no extra runtime deps; uses global fetch), both
+            // published above. Same first-publish trusted-publisher bootstrap.
+            "packages/adapters/http",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -239,7 +243,7 @@ jobs:
       # both the order array there AND the array here — the verifier
       # will catch divergence.
       #
-      # 19 packages today; an explicit list stays reviewable up to ~25.
+      # 20 packages today; an explicit list stays reviewable up to ~25.
       # Past that, factor into a shared JSON file both steps read.
       #
       # Failures are NOT swallowed. If any single publish fails, the
@@ -263,6 +267,9 @@ jobs:
             # nostr adapter (new, P2 slice 3): depends only on core +
             # action-kernel. Same first-publish bootstrap as the others.
             packages/adapters/nostr
+            # http adapter (new, P2 slice 4): depends only on core +
+            # action-kernel. Same first-publish bootstrap as the others.
+            packages/adapters/http
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep

@@ -69,11 +69,32 @@ export function prepareCredentials(creds: HttpCredential[]): PreparedCredentials
       for (const cred of list) {
         const value = typeof cred.value === "function" ? await cred.value() : cred.value
         headers.push({ name: cred.header, value })
-        if (value.length > 0) redactions.add(value)
+        for (const v of redactionVariants(value)) redactions.add(v)
       }
       return { headers, redactions: [...redactions] }
     },
   }
+}
+
+/** The redaction strings to scrub for one secret: the raw value AND its
+ * URL-encoded forms. A hostile server can echo a credential into a redirect
+ * `Location`, where the URL serialization percent-encodes it (e.g. a space in
+ * `Bearer abc` becomes `Bearer%20abc`); redacting only the raw value would miss
+ * the encoded copy in the captured URL / redirect chain. */
+export function redactionVariants(secret: string): string[] {
+  if (secret.length === 0) return []
+  const variants = new Set<string>([secret])
+  try {
+    variants.add(encodeURIComponent(secret))
+  } catch {
+    /* lone surrogate etc. — the encoder threw; the raw form still redacts */
+  }
+  try {
+    variants.add(encodeURI(secret))
+  } catch {
+    /* as above */
+  }
+  return [...variants]
 }
 
 /** Replace every occurrence of each non-empty redaction with `***`. Defence in

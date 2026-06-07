@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { ToolContext } from "@qmilab/lodestar-action-kernel"
-import { applyRedactions } from "./credentials.js"
+import { applyRedactions, redactionVariants } from "./credentials.js"
 import { makeHttpFetchTool, makeHttpRequestTool } from "./tools.js"
 import { assertAllowedUrl, compileUrlPolicy, normalizeHost } from "./url.js"
 
@@ -238,6 +238,29 @@ describe("redirect re-validation", () => {
     await tool.execute({ url: `${start.base}/go`, method: "HEAD" }, CTX)
     expect(dest.received.method).toBe("HEAD")
   })
+
+  test("redacts a URL-ENCODED credential echo across a redirect", async () => {
+    // Spaces are percent-encoded when the echoed value is serialized into the
+    // captured URL, so redaction must cover the encoded form too.
+    const TOKEN = "Bearer SEKRET tok-99"
+    const dest = serve(() => new Response("landed"))
+    const start = serve(
+      (req) =>
+        new Response(null, {
+          status: 302,
+          headers: { location: `${dest.base}/cb?token=${req.headers.get("authorization") ?? ""}` },
+        }),
+    )
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      credentials: [{ host: "127.0.0.1", header: "Authorization", value: TOKEN }],
+    })
+    const out = await tool.execute({ url: `${start.base}/go` }, CTX)
+    expect(out.url).toContain("***") // the encoded echo was redacted
+    expect(out.url).not.toContain("SEKRET")
+    expect(out.redirect_chain.join("|")).not.toContain("SEKRET")
+  })
 })
 
 // -----------------------------------------------------------------------------
@@ -300,6 +323,12 @@ describe("credentials", () => {
 
   test("applyRedactions replaces every occurrence", () => {
     expect(applyRedactions("a tok b tok c", ["tok"])).toBe("a *** b *** c")
+  })
+
+  test("redactionVariants includes URL-encoded forms of a secret", () => {
+    const v = redactionVariants("Bearer abc def")
+    expect(v).toContain("Bearer abc def") // raw
+    expect(v).toContain("Bearer%20abc%20def") // percent-encoded
   })
 })
 

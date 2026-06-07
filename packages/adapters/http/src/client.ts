@@ -210,7 +210,9 @@ export async function performRequest(
       return {
         url: applyRedactions(url.toString(), red),
         status: resp.status,
-        status_text: resp.statusText,
+        // A custom HTTP reason phrase is server-controlled and can echo the
+        // credential too, so redact it (it also flows into `summary`).
+        status_text: applyRedactions(resp.statusText, red),
         ok: resp.ok,
         headers: captureHeaders(resp, red),
         content_type: contentType === null ? null : applyRedactions(contentType, red),

@@ -28,6 +28,7 @@ export {
   type ResolvedHeader,
   prepareCredentials,
   applyRedactions,
+  redactionVariants,
 } from "./credentials.js"
 export {
   type UrlPolicy,
