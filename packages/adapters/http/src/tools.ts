@@ -108,7 +108,12 @@ const AgentHeadersSchema = z
 const HttpFetchInputSchema = z.object({
   url: z.string().min(1).describe("absolute URL; host MUST be operator-pinned"),
   method: z.enum(["GET", "HEAD"]).optional().describe("read method; default GET"),
-  headers: AgentHeadersSchema,
+  headers: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(
+      "optional request headers; only operator-allowlisted names are sent (default: none) — an L1 read is not an arbitrary-header egress channel",
+    ),
 })
 
 const MUTATING_METHODS = ["POST", "PUT", "PATCH", "DELETE"] as const
@@ -128,11 +133,18 @@ const HttpRequestInputSchema = z.object({
 /** Filter the agent's headers: drop reserved + operator-credential names (the
  * operator owns those), cap the count and per-value length. Reserved/credential
  * headers are dropped silently — the operator's injected value wins regardless,
- * and the agent's attempt is still recorded verbatim in the action inputs. */
+ * and the agent's attempt is still recorded verbatim in the action inputs.
+ *
+ * `allowedNames` is the header-NAME allowlist for the no-approval read path: when
+ * it is a Set, only those names pass (everything else is dropped) so an L1
+ * `http.fetch` cannot become an arbitrary-header egress channel (a Cookie/`X-*`
+ * value is agent data leaving to an external host, with no L4 gate). `null` means
+ * no name restriction — used by `http.request`, which is L4 and human-approved. */
 function buildAgentHeaders(
   raw: Record<string, string> | undefined,
   reservedForHost: string[],
   tool: string,
+  allowedNames: Set<string> | null,
 ): ResolvedHeader[] {
   if (!raw) return []
   const entries = Object.entries(raw)
@@ -142,7 +154,9 @@ function buildAgentHeaders(
   const reserved = new Set([...RESERVED_HEADERS, ...reservedForHost.map((h) => h.toLowerCase())])
   const out: ResolvedHeader[] = []
   for (const [name, value] of entries) {
-    if (reserved.has(name.toLowerCase())) continue
+    const lower = name.toLowerCase()
+    if (reserved.has(lower)) continue
+    if (allowedNames !== null && !allowedNames.has(lower)) continue
     if (value.length > MAX_HEADER_VALUE_LEN) {
       throw new Error(`${tool}: header '${name}' value exceeds ${MAX_HEADER_VALUE_LEN} chars`)
     }
@@ -181,6 +195,12 @@ export interface HttpFetchToolOptions {
   /** Allow plain http:// targets. Default false (HTTPS only) — explicit, no
    * silent insecure default. */
   allowHttp?: boolean
+  /** Header NAMES the agent may set on a fetch (e.g. ["Accept"]). Default none:
+   * an L1 (no-approval) read does not let the agent put arbitrary bytes into
+   * outbound headers — that would be an egress channel below the L4 gate. Values
+   * are still agent-controlled, so allowlist only benign content-negotiation
+   * headers; raise `trust` if even those are sensitive. */
+  allowedRequestHeaders?: string[]
   /** Response-body byte cap. Default 1 MiB. */
   maxBytes?: number
   /** Max redirects to follow (each re-validated). Default 5. */
@@ -199,6 +219,9 @@ export function makeHttpFetchTool(
     allowHttp: opts.allowHttp,
   })
   const credentials: PreparedCredentials = prepareCredentials(opts.credentials ?? [])
+  // Header-name allowlist for the no-approval read path (default: empty → the
+  // agent sends no headers of its own; the egress channel is the URL alone).
+  const allowedHeaderNames = new Set((opts.allowedRequestHeaders ?? []).map((h) => h.toLowerCase()))
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BODY_BYTES
   const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
@@ -219,6 +242,7 @@ export function makeHttpFetchTool(
         inputs.headers,
         credentials.reservedHeaderNames(url.hostname),
         "http.fetch",
+        allowedHeaderNames,
       )
       const resp = await performRequest(url, {
         method: inputs.method ?? "GET",
@@ -292,10 +316,13 @@ export function makeHttpRequestTool(
         )
       }
       const url = assertAllowedUrl(inputs.url, policy, "http.request")
+      // null = no header-name restriction: http.request is L4, so a human
+      // approves the whole request (headers included) before it is sent.
       const headers = buildAgentHeaders(
         inputs.headers,
         credentials.reservedHeaderNames(url.hostname),
         "http.request",
+        null,
       )
       // Default the Content-Type for a body unless the agent already set one.
       if (

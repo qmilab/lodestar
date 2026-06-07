@@ -304,6 +304,52 @@ describe("credentials", () => {
 })
 
 // -----------------------------------------------------------------------------
+// fetch header allowlist — an L1 read is not an arbitrary-header egress channel
+// -----------------------------------------------------------------------------
+
+describe("fetch header allowlist", () => {
+  // The servers echo the headers they saw into the response body, so the
+  // assertions read `out.body` rather than a closure-mutated capture variable.
+  test("drops a non-allowlisted agent header by default (no L1 egress channel)", async () => {
+    const s = serve((req) => new Response(`exfil=${req.headers.get("x-exfil")}`))
+    const tool = makeHttpFetchTool({ allowedHosts: PINNED, allowHttp: true })
+    const out = await tool.execute(
+      { url: `${s.base}/p`, headers: { "X-Exfil": "stolen-bytes" } },
+      CTX,
+    )
+    expect(out.body).toBe("exfil=null") // the agent header never left the process
+  })
+
+  test("sends only operator-allowlisted header names", async () => {
+    const s = serve(
+      (req) =>
+        new Response(`accept=${req.headers.get("accept")};exfil=${req.headers.get("x-exfil")}`),
+    )
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      allowedRequestHeaders: ["Accept"],
+    })
+    const out = await tool.execute(
+      { url: `${s.base}/p`, headers: { Accept: "application/json", "X-Exfil": "stolen" } },
+      CTX,
+    )
+    expect(out.body).toContain("accept=application/json") // allowlisted name passes
+    expect(out.body).toContain("exfil=null") // a non-allowlisted name is still dropped
+  })
+
+  test("http.request (L4, human-approved) is not header-name restricted", async () => {
+    const s = serve((req) => new Response(`custom=${req.headers.get("x-custom")}`))
+    const tool = makeHttpRequestTool({ allowedHosts: PINNED, allowHttp: true })
+    const out = await tool.execute(
+      { url: `${s.base}/p`, body: "{}", headers: { "X-Custom": "v1" } },
+      CTX,
+    )
+    expect(out.body).toBe("custom=v1")
+  })
+})
+
+// -----------------------------------------------------------------------------
 // http.request (L4 egress)
 // -----------------------------------------------------------------------------
 
