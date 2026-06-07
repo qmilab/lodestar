@@ -250,9 +250,13 @@ async function caseGrant(): Promise<string | undefined> {
     for (let i = 1; i < all.length; i++) {
       const cur = all[i]
       const prev = all[i - 1]
-      // cur/prev are always defined within bounds; the guard only satisfies
-      // noUncheckedIndexedAccess without changing the monotonicity assertion.
-      if (cur && prev && cur.seq <= prev.seq) {
+      // Fail closed: within bounds these are always defined, but if a slot were
+      // unexpectedly missing, surface it rather than skip the check (this also
+      // satisfies noUncheckedIndexedAccess).
+      if (!cur || !prev) {
+        return `[grant] unexpected gap in the log at index ${i}: readAll returned a sparse array (F2 regression).`
+      }
+      if (cur.seq <= prev.seq) {
         return `[grant] non-monotonic seq at index ${i}: ${prev.seq} then ${cur.seq} — a second writer touched the log (F2 regression).`
       }
     }
