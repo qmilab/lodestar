@@ -69,10 +69,20 @@ mirroring `defineNostrTools`):
   301/302/303 degrade an unsafe method to GET (browser behaviour). This is the
   HTTP-specific escape that destination pinning alone misses.
 - **Host-bound credentials, no silent default.** An auth header is operator-supplied
-  and bound to a host, resolved at request time (a `() => Promise<string>` resolver
-  seam), re-resolved per hop so host A's token never reaches host B, never in the
-  agent's inputs (an agent-supplied copy of a reserved/credential header is
-  dropped; the operator's value wins), and redacted from all captured output.
+  and bound to the host the agent originally targeted, resolved at request time (a
+  `() => Promise<string>` resolver seam). A cross-host redirect — even to another
+  pinned host — carries no credential, so a server cannot steer the adapter into
+  making host B's authenticated request (a confused-deputy). The credential is
+  never in the agent's inputs (an agent-supplied copy of a reserved/credential
+  header is dropped; the operator's value wins), and redacted from all captured
+  output, including the final URL and the redirect chain (a redirect `Location`
+  can echo the token).
+- **An L1 read is not an arbitrary-header egress channel.** On `http.fetch` the
+  agent may set only operator-allowlisted header names (default none); a Cookie /
+  `X-*` value is agent data leaving to an external host, and a no-approval read
+  must not become an egress path below the L4 gate (the URL is the intrinsic read
+  channel, as `nostr.fetch` bounds its REQ filter). `http.request` is L4-approved,
+  so its headers are unrestricted.
 - **Bounded capture.** A wall-clock timeout (AbortController) and a streamed
   response-body byte cap — an untrusted, possibly hostile server cannot hang the
   call or inflate an observation.

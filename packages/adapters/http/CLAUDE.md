@@ -52,13 +52,21 @@ ADR-0004/0006/0007). It enforces, in-process:
    cloud metadata endpoint) is stopped. 307/308 preserve method+body; 301/302/303
    degrade an unsafe method to GET (browser behaviour).
 3. **Credentials are host-bound and never leave the adapter to the agent.**
-   Operator-supplied (no silent default), bound to a host, re-resolved per hop
-   (host A's token never reaches host B across a redirect), never in the agent's
-   inputs, and redacted from all captured output.
-4. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop an
+   Operator-supplied (no silent default), **bound to the host the agent originally
+   targeted** — a cross-host redirect (even to another pinned host) carries no
+   credential, so a server cannot steer the adapter into making host B's
+   authenticated request (a confused-deputy). Never in the agent's inputs, and
+   redacted from all captured output, including the final URL and redirect chain.
+4. **A no-approval read is not an arbitrary-header egress channel.** On `http.fetch`
+   (L1) the agent may set only operator-allowlisted header NAMES
+   (`allowedRequestHeaders`, default none) — otherwise a Cookie/`X-*` value would
+   be agent data leaving to an external host below the L4 gate. `http.request` (L4)
+   is human-approved, so its headers are unrestricted. (The intrinsic read channel
+   is the URL alone — the analogue of `nostr.fetch` bounding its REQ filter.)
+5. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop an
    untrusted (possibly hostile) server from hanging the call or inflating an
    observation.
-5. **Untrusted inbound.** A fetched body is UNTRUSTED external content — treat it
+6. **Untrusted inbound.** A fetched body is UNTRUSTED external content — treat it
    as `external_document`; it must not self-promote to a supported belief. Deeper
    firewall integration (an HTML/JSON-aware evidence linker, à la the doc-agent's
    `DocAwareEvidenceLinker`) is the natural follow-up, not built here.

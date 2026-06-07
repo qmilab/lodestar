@@ -36,6 +36,10 @@ registerHttpTools({
     credentials: [
       { host: "api.example.com", header: "Authorization", value: () => secrets.get("API_TOKEN") },
     ],
+    // A no-approval read does not let the agent set arbitrary outbound headers
+    // (an egress channel below the L4 gate). Default: none. Opt into benign
+    // content-negotiation header NAMES only.
+    allowedRequestHeaders: ["Accept"],
     maxBytes: 1024 * 1024, // cap on the captured (untrusted) body
   },
   request: {
@@ -53,7 +57,7 @@ the MCP proxy, an example) supplies the policy gate and `KernelContext`. The L4
 ### The agent's inputs
 
 ```ts
-// http.fetch
+// http.fetch — only operator-allowlisted header NAMES are sent (default: none)
 { url: "https://api.example.com/v1/things", method?: "GET", headers?: { Accept: "application/json" } }
 
 // http.request
@@ -63,7 +67,11 @@ the MCP proxy, an example) supplies the policy gate and `KernelContext`. The L4
 `url`'s host must be in the operator-pinned set over an allowed scheme (HTTPS
 unless `allowHttp` is set); anything else fails the action. Reserved and
 operator-credential header names supplied by the agent are dropped (the
-operator's value wins), and the attempt stays auditable in the recorded inputs.
+operator's value wins). On `http.fetch` (L1, no approval) the agent may set only
+operator-allowlisted header names — by default none, so a governed read is not an
+arbitrary-header egress channel; on `http.request` (L4) a human approves the whole
+request, so its headers are unrestricted. Either way the agent's attempt stays
+auditable in the recorded inputs.
 
 ## The boundary this claims — and the one it does not
 
