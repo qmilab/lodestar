@@ -177,16 +177,31 @@ export type CalibrationCursor = z.infer<typeof CalibrationCursorSchema>
  * calibration events as an authority, signing graduates then, the same
  * staged path the approval resolution followed (ADR-0010).
  */
-export const CalibrationComputedPayloadSchema = z.object({
-  /** Stable id for this pass, so the audit chain can reference it. */
-  computation_id: z.string().min(1),
-  triggered_by: CalibrationTriggerSchema,
-  /** The seq window measured — re-running `calibrate` over it reproduces `report`. */
-  cursor: CalibrationCursorSchema,
-  /** The verdict: the full report this pass produced. */
-  report: CalibrationReportSchema,
-  computed_at: TimestampSchema,
-})
+export const CalibrationComputedPayloadSchema = z
+  .object({
+    /** Stable id for this pass, so the audit chain can reference it. */
+    computation_id: z.string().min(1),
+    triggered_by: CalibrationTriggerSchema,
+    /** The seq window measured — re-running `calibrate` over it reproduces `report`. */
+    cursor: CalibrationCursorSchema,
+    /** The verdict: the full report this pass produced. */
+    report: CalibrationReportSchema,
+    computed_at: TimestampSchema,
+  })
+  // The cursor is only an honest replay key if it is *consistent* with the
+  // report. An empty window `(n, n]` selects zero events, so it can reproduce
+  // only a zero-sample report — and a zero-sample report can only have come
+  // from an empty window. Enforce the biconditional: empty window ⟺
+  // `sample_count === 0`. This rejects the two non-replayable shapes a
+  // programmatic caller could otherwise persist — an empty window carrying a
+  // populated report (replaying it yields nothing), and a populated window
+  // carrying a zero-sample report (the window's events would yield samples).
+  .refine((p) => (p.cursor.to_seq === p.cursor.from_seq) === (p.report.sample_count === 0), {
+    message:
+      "an empty cursor window (to_seq === from_seq) must accompany a zero-sample report and vice " +
+      "versa — otherwise the recorded window cannot reproduce the report it claims as its replay key",
+    path: ["cursor", "to_seq"],
+  })
 export type CalibrationComputedPayload = z.infer<typeof CalibrationComputedPayloadSchema>
 
 /**

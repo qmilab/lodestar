@@ -35,10 +35,12 @@
  *      is a faithful replay key: drift recorded today can be recomputed and
  *      diffed tomorrow.
  *
- *   5. WELL-FORMED WINDOW — that replay key is only honest if the window is
- *      valid. An inverted cursor (`to_seq < from_seq`) selects no events and is
- *      rejected at the schema boundary; the degenerate empty window
- *      (`from_seq === to_seq`) is the one accepted equality case.
+ *   5. HONEST WINDOW — that replay key is only honest if the window is valid
+ *      AND consistent with the report. An inverted cursor (`to_seq < from_seq`)
+ *      is rejected; and empty window ⟺ zero samples is enforced at the payload
+ *      boundary, so an empty window carrying a populated report (it replays to
+ *      nothing) and a populated window carrying a zero-sample report are both
+ *      rejected — only the matched pairs validate.
  *
  * What the probe deliberately does NOT assert:
  *
@@ -68,6 +70,7 @@ import {
   canonicalHash,
 } from "@qmilab/lodestar-event-log"
 import {
+  type BuildCalibrationComputedInput,
   buildCalibrationComputedPayload,
   calibrate,
   calibrationCursor,
@@ -315,45 +318,73 @@ async function run(): Promise<ProbeResult> {
       `replayable: re-running calibrate over (${persisted.cursor.from_seq}, ${persisted.cursor.to_seq}] reproduced the verdict`,
     )
 
-    // ── Assertion 5: an inverted cursor cannot be recorded. ──────────────
-    // The replay guarantee is only honest if the window is well-formed. A
-    // cursor with to_seq < from_seq selects no events and cannot reproduce a
-    // non-empty report, so the schema must reject it at the build boundary.
-    let rejectedInverted = false
-    try {
-      buildCalibrationComputedPayload({
-        report,
-        cursor: { from_seq: 5, to_seq: 2 },
-        computed_at: COMPUTED_AT,
-      })
-    } catch {
-      rejectedInverted = true
-    }
-    if (!rejectedInverted) {
-      return {
-        passed: false,
-        details: [
-          ...details,
-          "an inverted cursor (to_seq < from_seq) was accepted — the replay-window guarantee is unenforced.",
-        ],
+    // ── Assertion 5: the recorded cursor must be an honest replay key. ───
+    // (a) An inverted window selects no events; reject it. (b) Empty window
+    // ⟺ zero samples: an empty window `(n, n]` carrying a populated report
+    // can't be replayed (it yields nothing), and a populated window carrying
+    // a zero-sample report is equally inconsistent. Only the matched pairs —
+    // populated window + samples, or empty window + zero samples — are honest.
+    const rejects = (input: BuildCalibrationComputedInput): boolean => {
+      try {
+        buildCalibrationComputedPayload(input)
+        return false
+      } catch {
+        return true
       }
     }
-    // The degenerate empty window from_seq === to_seq is the valid boundary
-    // (the pass ran but observed nothing) and must still be accepted.
-    try {
-      buildCalibrationComputedPayload({
-        report,
-        cursor: { from_seq: 3, to_seq: 3 },
-        computed_at: COMPUTED_AT,
-      })
-    } catch {
-      return {
-        passed: false,
-        details: [...details, "a valid empty window (from_seq === to_seq) was rejected."],
+    const emptyReport = calibrate([]) // sample_count 0, no classes
+    const edgeCases: Array<{
+      name: string
+      input: BuildCalibrationComputedInput
+      mustReject: boolean
+    }> = [
+      {
+        name: "inverted window",
+        input: { report, cursor: { from_seq: 5, to_seq: 2 }, computed_at: COMPUTED_AT },
+        mustReject: true,
+      },
+      {
+        name: "empty window with a populated report (non-replayable)",
+        input: { report, cursor: { from_seq: 3, to_seq: 3 }, computed_at: COMPUTED_AT },
+        mustReject: true,
+      },
+      {
+        name: "populated window with a zero-sample report (inconsistent)",
+        input: {
+          report: emptyReport,
+          cursor: { from_seq: -1, to_seq: 5 },
+          computed_at: COMPUTED_AT,
+        },
+        mustReject: true,
+      },
+      {
+        name: "empty window with a zero-sample report (honest empty pass)",
+        input: {
+          report: emptyReport,
+          cursor: { from_seq: -1, to_seq: -1 },
+          computed_at: COMPUTED_AT,
+        },
+        mustReject: false,
+      },
+      {
+        name: "populated window with samples (the real pass)",
+        input: { report, cursor, computed_at: COMPUTED_AT },
+        mustReject: false,
+      },
+    ]
+    for (const c of edgeCases) {
+      if (rejects(c.input) !== c.mustReject) {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `cursor/report consistency: '${c.name}' should ${c.mustReject ? "be rejected" : "be accepted"} but was not.`,
+          ],
+        }
       }
     }
     details.push(
-      "cursor invariant held: inverted window rejected, empty window (from_seq === to_seq) accepted",
+      "cursor invariant held: inverted rejected, empty window ⟺ zero samples enforced (5 edge cases)",
     )
 
     return { passed: true, details }
