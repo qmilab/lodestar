@@ -20,14 +20,20 @@ confidence in classes where the agent is historically overconfident."*
 
 Written 2026-05-31.
 
-> **Status (current as of 2026-06-03).** The design below landed and still holds.
+> **Status (current as of 2026-06-07).** The design below landed and still holds.
 > The `Calibrator` / `calibrate()` API, the metrics (ECE / Brier / calibration
 > gap), the sample resolver (both signals), the markdown formatter, and the
 > `confidence-drift` probe that drives it end-to-end all ship in
-> `@qmilab/lodestar-harness`. It remains **measure-only**: the
-> `calibration.computed@1` wire format, a `lodestar harness calibrate` CLI, and
-> the Policy-Kernel feedback loop that would act on a flagged class are still
-> deferred (see "What's wired, what isn't"). Reader-facing summary:
+> `@qmilab/lodestar-harness`. It remains **measure-only** — but the verdict is now
+> **durable**: the `calibration.computed@1` wire format (in `@qmilab/lodestar-core`),
+> the `eventLogCalibrationSink` publish step, and a `lodestar harness calibrate
+> --session <id>` CLI have landed (ADR-0011), so a calibration pass is recorded as
+> a governed event and is auditable / replayable. The Calibrator itself still never
+> writes — emission is a separate step, the same measure→record split the sentinels
+> use. Still deferred: the Policy-Kernel feedback loop that would *downweight* a
+> flagged class's confidence (it currently *escalates* a backing action via the
+> arbitrate hook, reading an in-process snapshot), and the temporal drift view (see
+> "What's wired, what isn't"). Reader-facing summary:
 > [sentinels & calibration](../concepts/sentinels-and-calibration.md).
 
 ---
@@ -238,6 +244,19 @@ no event. When the Policy Kernel lands and needs to consume calibration
 verdicts, the wire format graduates to core then — the same staged path
 the sentinel `arbitrate` hook follows.
 
+> **Update (2026-06-07, ADR-0011): the wire format graduated.** The Policy
+> Kernel's arbitrate hook now consumes a `CalibrationReport`'s
+> `flagged_classes`, so the deferral condition above is met. The report
+> schema moved to `@qmilab/lodestar-core` (`schemas/calibration.ts`), the
+> harness re-exports it unchanged, and a `calibration.computed@1` event
+> (report + a replay `cursor` + provenance) is recorded by the separate
+> `eventLogCalibrationSink` / `lodestar harness calibrate` publish step. The
+> Calibrator stays measure-only — it never emits; the host does, the same way
+> a sentinel finding is written by `eventLogAlertSink`. The event is **not
+> signed** in v0: the gate reads the in-process snapshot, not the event, and a
+> flag only escalates (the conservative direction), so it is audit/replay, not
+> a forgery boundary (contrast ADR-0010).
+
 ## The `confidence-drift` probe
 
 Lands in `packs/coding-agent-safety/` (the first non-core pack), joining
@@ -302,18 +321,22 @@ not a runtime intercept").
 - **Wired:** the metrics, the sample resolver (both signals, tolerant
   views), the `Calibrator` / `calibrate()` API, the markdown formatter,
   and the `confidence-drift` probe that drives it end-to-end over a real
-  log.
+  log. **Plus (ADR-0011):** the `calibration.computed@1` core wire format,
+  the `eventLogCalibrationSink` publish step, and the `lodestar harness
+  calibrate --session <id>` CLI — a calibration pass is now a durable,
+  auditable, replayable governed event. Pinned by the
+  `calibration-event-is-durable` probe (measure ≠ write, durable + valid,
+  tamper-evident hash, replayable from the cursor).
 - **Not wired (deliberately):**
-  - `calibration.computed@1` core wire format + an event sink — lands with
-    its consumer (Policy Kernel), like the sentinel `arbitrate` hook.
   - The Policy-Kernel feedback loop that downweights a flagged class's
-    confidence. The calibrator produces the signal; acting on it is policy.
-    Designed in [policy-kernel.md](./policy-kernel.md) ("The arbitrate hook").
-  - A `lodestar harness calibrate --session <id>` CLI and the
-    `/lodestar-calibrate` slash command. The calibrator is a library
-    surface today; a CLI is additive and can follow without changing the
-    contract. (Severity recalibration for sentinels — sentinels.md's
-    "calibrator-era concern" — is downstream of that loop.)
+    confidence. The arbitrate hook *escalates* a backing action today
+    (reading an in-process snapshot); actually *lowering* a class's stated
+    confidence is a further step. The calibrator produces the signal; acting
+    on it is policy. Designed in [policy-kernel.md](./policy-kernel.md)
+    ("The arbitrate hook"). (Severity recalibration for sentinels —
+    sentinels.md's "calibrator-era concern" — is downstream of that loop.)
+  - A `/lodestar-calibrate` slash command wrapping the new CLI — additive,
+    a thin follow-up.
   - Temporal drift view (gap as a function of position in the action
     sequence). Aggregate per-class miscalibration is what the roadmap
     asks for; the trend view is a future extension.

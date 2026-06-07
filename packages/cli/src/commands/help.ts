@@ -15,6 +15,7 @@ Usage:
   lodestar probe <name>
   lodestar harness run [--pack <name|path>] [--log-root <path>] [--no-record]
   lodestar harness list [--pack <name|path>]
+  lodestar harness calibrate <session-id> [--project <id>] [--no-emit] [--out <file>]
   lodestar reflect <session-id> [--since-seq <n>] [--trigger <name>] [--json]
   lodestar help
 
@@ -40,10 +41,13 @@ Commands:
   probe      Run a single probe by short name (poison, chain, external,
              quarantine, sensitivity, autoobs, guard-import). Probes are spec,
              not test scaffolding.
-  harness    Drive a whole probe pack. Two modes:
-               run   — run every probe in a pack; records each run as a
-                       synthetic observation so the run is itself auditable.
-               list  — inspect a pack's manifest without executing anything.
+  harness    Drive a whole probe pack, or calibrate a session. Modes:
+               run       — run every probe in a pack; records each run as a
+                           synthetic observation so the run is itself auditable.
+               list      — inspect a pack's manifest without executing anything.
+               calibrate — score a session's stated confidence against realised
+                           outcome per class and record the verdict as a durable
+                           'calibration.computed@1' event (--no-emit to preview).
   reflect    Dry-run a reflection pass over a session's event log: print the
              typed proposals reflection would produce. Applying is the host's
              job (Guard / the MCP proxy own the live firewall).
@@ -61,5 +65,6 @@ Examples:
   lodestar probe chain
   lodestar harness run --pack lodestar-core
   lodestar harness list
+  lodestar harness calibrate session-1779551238212
   lodestar reflect session-1779551238212
 `

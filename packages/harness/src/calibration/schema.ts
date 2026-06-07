@@ -1,32 +1,58 @@
+import {
+  type CalibrationClassResult,
+  CalibrationClassResultSchema,
+  type CalibrationMetrics,
+  CalibrationMetricsSchema,
+  type CalibrationReport,
+  CalibrationReportSchema,
+  type ReliabilityBin,
+  ReliabilityBinSchema,
+  type ResolvedCalibratorConfig,
+  ResolvedCalibratorConfigSchema,
+  type SampleSource,
+  SampleSourceSchema,
+} from "@qmilab/lodestar-core"
 import { z } from "zod"
 
 /**
- * Calibration wire/return types. These live in the harness, not in
- * `@qmilab/lodestar-core`: the calibrator is a return-value surface in
- * v0, not an event payload. When the Policy Kernel needs to *consume*
- * calibration verdicts (downweight an overconfident class), a
- * `calibration.computed@1` core wire format graduates then — the same
- * staged path the sentinel `arbitrate` hook follows. See
- * `docs/architecture/calibrator.md`.
+ * Calibration return types.
  *
- * Everything here is validated at the calibrator boundary, the same
- * discipline the probe-run observation and sentinel-alert builders hold.
+ * The report wire format (metrics, bins, per-class result, config, and the
+ * `CalibrationReport` itself) **graduated to `@qmilab/lodestar-core`** when
+ * the durable `calibration.computed@1` event landed (ADR-0011) — the event
+ * payload embeds the report, and core is the dependency root. They are
+ * re-exported here unchanged so harness consumers keep importing calibration
+ * types from the harness surface.
+ *
+ * What stays harness-local: `CalibrationSample` (the resolver's internal
+ * prediction/outcome pair — samples are not part of the report wire format),
+ * the caller-facing `CalibratorOptions`, and `resolveConfig`. These are
+ * runtime concerns of the offline read, not wire format.
+ *
+ * The calibrator remains measure-only: `calibrate()` returns a
+ * `CalibrationReport` and never writes. See `docs/architecture/calibrator.md`.
  */
 
-/**
- * Which signal in the event log produced a sample.
- * - `action_outcome`: a belief → decision → action chain where the
- *   action's realised result (terminal phase or an explicit Outcome) is
- *   the label.
- * - `truth_status`: the firewall transitioned the belief's `truth_status`
- *   to `supported` / `contradicted` — the world adjudicating the belief.
- */
-export const SampleSourceSchema = z.enum(["action_outcome", "truth_status"])
-export type SampleSource = z.infer<typeof SampleSourceSchema>
+export {
+  type CalibrationClassResult,
+  CalibrationClassResultSchema,
+  type CalibrationMetrics,
+  CalibrationMetricsSchema,
+  type CalibrationReport,
+  CalibrationReportSchema,
+  type ReliabilityBin,
+  ReliabilityBinSchema,
+  type ResolvedCalibratorConfig,
+  ResolvedCalibratorConfigSchema,
+  type SampleSource,
+  SampleSourceSchema,
+}
 
 /**
  * One prediction/outcome pair: the agent stated `confidence` for a belief
  * in `calibration_class`; the world later revealed it `correct` or not.
+ * Resolver-internal — the report aggregates these away, so it stays in the
+ * harness rather than the core wire format.
  */
 export const CalibrationSampleSchema = z.object({
   calibration_class: z.string(),
@@ -39,72 +65,6 @@ export const CalibrationSampleSchema = z.object({
   outcome_ref: z.string(),
 })
 export type CalibrationSample = z.infer<typeof CalibrationSampleSchema>
-
-/** The scored metrics for a set of samples (one class, or the pool). */
-export const CalibrationMetricsSchema = z.object({
-  n: z.number().int().nonnegative(),
-  /** mean of stated confidence */
-  mean_confidence: z.number().min(0).max(1),
-  /** realised positive rate, mean(correct) */
-  empirical_accuracy: z.number().min(0).max(1),
-  /** mean((p - y)^2); 0 is perfect, lower is better */
-  brier_score: z.number().min(0).max(1),
-  /** expected calibration error over equal-width confidence bins */
-  ece: z.number().min(0).max(1),
-  /** signed mean_confidence - empirical_accuracy; > 0 is overconfident */
-  calibration_gap: z.number().min(-1).max(1),
-  overconfident: z.boolean(),
-})
-export type CalibrationMetrics = z.infer<typeof CalibrationMetricsSchema>
-
-/** One non-empty bin of a reliability diagram. */
-export const ReliabilityBinSchema = z.object({
-  lower: z.number().min(0).max(1),
-  upper: z.number().min(0).max(1),
-  n: z.number().int().positive(),
-  mean_confidence: z.number().min(0).max(1),
-  empirical_accuracy: z.number().min(0).max(1),
-})
-export type ReliabilityBin = z.infer<typeof ReliabilityBinSchema>
-
-/** Per-class result: metrics, the reliability bins, and the verdict. */
-export const CalibrationClassResultSchema = z.object({
-  calibration_class: z.string(),
-  metrics: CalibrationMetricsSchema,
-  /** non-empty bins only, ascending by `lower` */
-  reliability_bins: z.array(ReliabilityBinSchema),
-  flagged: z.boolean(),
-  /** human-legible reason when flagged; `null` when not */
-  flag_reason: z.string().nullable(),
-})
-export type CalibrationClassResult = z.infer<typeof CalibrationClassResultSchema>
-
-/** The thresholds and toggles actually applied, echoed for reproducibility. */
-export const ResolvedCalibratorConfigSchema = z.object({
-  bins: z.number().int().positive(),
-  min_samples: z.number().int().positive(),
-  ece_threshold: z.number().min(0).max(1),
-  gap_threshold: z.number().min(0).max(1),
-  outcome_sources: z.array(SampleSourceSchema).min(1),
-  include_synthetic_authority: z.boolean(),
-})
-export type ResolvedCalibratorConfig = z.infer<typeof ResolvedCalibratorConfigSchema>
-
-/**
- * The calibrator's output: per-class tables, a pooled `overall` block,
- * the flagged class names, and the config that produced it. A pure
- * function of `(events, config)` — no clock, no scope inference — so it
- * is deterministic and testable.
- */
-export const CalibrationReportSchema = z.object({
-  /** total samples resolved and included (after exclusions) */
-  sample_count: z.number().int().nonnegative(),
-  classes: z.array(CalibrationClassResultSchema),
-  overall: CalibrationMetricsSchema,
-  flagged_classes: z.array(z.string()),
-  config: ResolvedCalibratorConfigSchema,
-})
-export type CalibrationReport = z.infer<typeof CalibrationReportSchema>
 
 /** Caller-facing options; every field defaults (see {@link resolveConfig}). */
 export interface CalibratorOptions {

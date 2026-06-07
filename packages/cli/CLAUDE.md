@@ -19,7 +19,7 @@ src/
     ├── trace.ts              # `lodestar trace inspect`
     ├── probe.ts              # `lodestar probe <name>`
     ├── reflect.ts            # `lodestar reflect <session-id>`
-    └── harness.ts            # `lodestar harness run/list`
+    └── harness.ts            # `lodestar harness run/list/calibrate`
 ```
 
 The `approve` command is the reference approval resolver: it writes a

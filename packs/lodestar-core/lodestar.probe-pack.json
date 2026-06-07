@@ -21,7 +21,8 @@
     "git_adapter",
     "nostr_adapter",
     "http_adapter",
-    "messaging_adapter"
+    "messaging_adapter",
+    "calibration"
   ],
   "invariants": [
     "no_self_promotion",
@@ -52,7 +53,8 @@
     "git_egress_governance",
     "nostr_transport_governance",
     "http_transport_governance",
-    "messaging_egress_governance"
+    "messaging_egress_governance",
+    "durable_calibration_event"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -174,6 +176,10 @@
     {
       "name": "messaging-adapter-enforces-egress-invariants",
       "file": "probes/messaging-adapter-enforces-egress-invariants.ts"
+    },
+    {
+      "name": "calibration-event-is-durable",
+      "file": "probes/calibration-event-is-durable.ts"
     }
   ]
 }
