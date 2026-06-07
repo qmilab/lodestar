@@ -46,7 +46,16 @@ export async function resolveCredential(
   cred: MessagingCredential | undefined,
 ): Promise<ResolvedCredential> {
   if (!cred) return { headers: [], redactions: [] }
-  const value = typeof cred.value === "function" ? await cred.value() : cred.value
+  let value: string
+  try {
+    value = typeof cred.value === "function" ? await cred.value() : cred.value
+  } catch {
+    // The resolver threw. Its error may embed secret material we never obtained
+    // (so cannot add to the redaction set), e.g. a vault client that echoes the
+    // attempted value. Do NOT propagate the resolver's message — it would reach
+    // the kernel's failed-action audit unredacted. Fail with a generic message.
+    throw new Error("credential resolution failed")
+  }
   return { headers: [{ name: cred.header, value }], redactions: redactionVariants(value) }
 }
 
@@ -74,8 +83,12 @@ export function redactionVariants(secret: string): string[] {
   // (`Bearer <token>` / `Basic <b64>`). The segment guard (≥ 6 chars) avoids
   // redacting a short scheme word; real tokens are long.
   const bases = new Set<string>([secret])
-  const parts = secret.trim().split(/\s+/)
-  const token = parts.length > 1 ? parts[parts.length - 1] : undefined
+  // The token after a scheme prefix is EVERYTHING after the first whitespace run
+  // (`Bearer <token>` / `Basic <b64>`) — redact the whole token even if it itself
+  // contains spaces, not just its last segment. The ≥ 6-char guard avoids
+  // redacting a tiny fragment; real tokens are long.
+  const afterScheme = secret.trim().match(/^\S+\s+(\S.*)$/)
+  const token = afterScheme?.[1]
   if (token !== undefined && token.length >= 6) bases.add(token)
   const variants = new Set<string>()
   for (const base of bases) {

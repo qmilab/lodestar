@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import type { ToolContext } from "@qmilab/lodestar-action-kernel"
-import { applyRedactions, redactionVariants } from "./credentials.js"
+import { applyRedactions, redactionVariants, resolveCredential } from "./credentials.js"
 import {
   assertAllowedChannel,
   assertAllowedRecipients,
@@ -188,6 +188,33 @@ describe("credentials", () => {
   test("redactionVariants covers lowercase percent-escape re-encodings", () => {
     const v = redactionVariants("Bearer a/b c") // encodeURIComponent → %2F (upper)
     expect(v.some((x) => x.includes("%2f"))).toBe(true) // lowercase variant present
+  })
+
+  test("redactionVariants redacts the WHOLE token after the scheme (incl. spaces)", () => {
+    // A multi-word token: the entire portion after `Bearer ` must redact, not just
+    // its last whitespace segment.
+    const v = redactionVariants("Bearer foo bar-secret")
+    expect(v).toContain("foo bar-secret")
+  })
+
+  test("resolveCredential never propagates a throwing resolver's (secret-bearing) message", async () => {
+    // The resolver fails with a message embedding the secret; we never obtained the
+    // value, so cannot redact it — the error must be generic, not passed through.
+    const cred = {
+      header: "Authorization",
+      value: () => {
+        throw new Error("vault echoed xoxb-leaked-in-resolver-error")
+      },
+    }
+    let msg = "NO ERROR"
+    try {
+      await resolveCredential(cred)
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    expect(msg).not.toBe("NO ERROR")
+    expect(msg).not.toContain("xoxb-leaked-in-resolver-error")
+    expect(msg).toBe("credential resolution failed")
   })
 })
 
