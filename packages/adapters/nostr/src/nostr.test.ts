@@ -11,6 +11,7 @@ import {
   signEvent,
   verifyEvent,
 } from "./event.js"
+import { fetchFromRelay } from "./relay.js"
 import { makeNostrFetchTool, makeNostrPublishTool } from "./tools.js"
 
 // A throwaway-but-valid secret key for tests (NOT a real identity).
@@ -34,6 +35,9 @@ const CTX: ToolContext = {
 
 interface FakeRelayOptions {
   requireAuth?: boolean
+  /** With requireAuth: stay SILENT on a pre-auth EVENT (no auth-required OK) —
+   * the relay gates EVENT on the connect-time challenge and waits for AUTH. */
+  silentUntilAuth?: boolean
   storedEvents?: unknown[]
 }
 
@@ -63,6 +67,7 @@ function startRelay(opts: FakeRelayOptions = {}): FakeRelay {
         if (type === "EVENT") {
           const ev = frame[1]
           if (opts.requireAuth && !ws.data.authed) {
+            if (opts.silentUntilAuth) return // gate on the connect-time challenge; no ack
             ws.send(JSON.stringify(["OK", ev.id, false, "auth-required: authenticate first"]))
             return
           }
@@ -267,6 +272,23 @@ describe("nostr.publish", () => {
     }
   })
 
+  test("NIP-42 AUTH: authenticates proactively when the relay gates EVENT on a connect-time challenge", async () => {
+    // The relay sends an AUTH challenge on connect and never acks the pre-auth
+    // EVENT (no `auth-required` OK to react to). Without proactive auth this would
+    // hang until timeout; the publish must authenticate off the challenge alone.
+    const relay = startRelay({ requireAuth: true, silentUntilAuth: true })
+    try {
+      const tool = makeNostrPublishTool({ relays: [relay.url], credential })
+      const out = await tool.execute({ content: "proactive auth" }, CTX)
+      expect(out.published).toBe(true)
+      expect(out.relay_results[0]?.authenticated).toBe(true)
+      expect(relay.received.authEvents.length).toBe(1)
+      expect(relay.received.notes.length).toBe(1)
+    } finally {
+      relay.stop()
+    }
+  })
+
   test("duplicate pinned relays are deduplicated (one socket, one publish)", async () => {
     const relay = startRelay()
     try {
@@ -391,6 +413,27 @@ describe("nostr.fetch", () => {
         tool.execute({ filters: [{ tags: { t: ["x".repeat(300)] } }] }, CTX),
       ).rejects.toThrow(/exceeds/)
       expect(relay.received.raw.length).toBe(0) // nothing was sent
+    } finally {
+      relay.stop()
+    }
+  })
+
+  test("collection never exceeds the bound even when extra frames are already queued", async () => {
+    // The relay bursts 6 events before EOSE; with maxEvents=2 the client finishes
+    // at 2, and the `settled` guard must drop the queued remainder rather than
+    // appending past the bound (into the already-resolved array).
+    const evs = Array.from({ length: 6 }, (_, i) =>
+      signEvent(TEST_SK, { created_at: i + 1, kind: 1, tags: [], content: `e${i}` }),
+    )
+    const relay = startRelay({ storedEvents: evs })
+    try {
+      const res = await fetchFromRelay(relay.url, [{ kinds: [1] }], {
+        timeoutMs: 5000,
+        maxEvents: 2,
+        redactions: [],
+      })
+      expect(res.events.length).toBe(2)
+      expect(res.truncated).toBe(true)
     } finally {
       relay.stop()
     }

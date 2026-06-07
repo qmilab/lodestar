@@ -151,6 +151,7 @@ export function publishToRelay(
     ws.onclose = (): void =>
       finish({ accepted: false, message: redact("relay closed connection before OK") })
     ws.onmessage = (msg: MessageEvent): void => {
+      if (settled) return // already resolved; ignore any further/queued frames
       // Bound the untrusted frame before parsing it. The OK/AUTH frames we need
       // are tiny; an oversized frame is never one of them, so drop it.
       if (typeof msg.data !== "string" || frameBytes(msg.data) > maxFrameBytes) return
@@ -159,9 +160,12 @@ export function publishToRelay(
       const type = frame[0]
 
       if (type === "AUTH" && typeof frame[1] === "string") {
-        // Relay-offered challenge — remember it; we act on it only if the event
-        // is rejected with auth-required (the standard NIP-42 client flow).
         latestChallenge = frame[1]
+        // Authenticate as soon as the relay offers a challenge: some relays gate
+        // EVENT on prior auth and never send an `OK ... auth-required` to react
+        // to — waiting for one would just time out. Resending the event after the
+        // auth OK covers relays that ignored the pre-auth EVENT. Only once.
+        if (!authTried) sendAuth(frame[1])
         return
       }
 
@@ -186,12 +190,16 @@ export function publishToRelay(
         finish({ accepted: true, message: redact(reason) })
         return
       }
-      // Rejected. If it's auth-required and we have a challenge, authenticate once.
-      if (reason.startsWith("auth-required:") && !authTried && latestChallenge) {
-        sendAuth(latestChallenge)
-        return
-      }
-      if (reason.startsWith("auth-required:") && !latestChallenge) {
+      // Rejected.
+      if (reason.startsWith("auth-required:")) {
+        // If we haven't authenticated yet and have a challenge, do it now.
+        if (!authTried && latestChallenge) {
+          sendAuth(latestChallenge)
+          return
+        }
+        // If an auth attempt is already in flight (proactive or reactive), wait
+        // for its OK to resend the event — don't reject this pre-auth rejection.
+        if (authTried) return
         finish({
           accepted: false,
           message: redact(`auth-required but relay offered no challenge: ${reason}`),
@@ -246,7 +254,16 @@ export function fetchFromRelay(
       } catch {
         /* already closed */
       }
-      resolveResult({ relay: url, events, eose: r.eose, truncated, message: redact(r.message) })
+      // Snapshot the array: the result must not keep growing if a late frame
+      // somehow slips through after resolution (defence in depth alongside the
+      // `settled` guard in onmessage).
+      resolveResult({
+        relay: url,
+        events: [...events],
+        eose: r.eose,
+        truncated,
+        message: redact(r.message),
+      })
     }
 
     const timer = setTimeout(
@@ -265,6 +282,7 @@ export function fetchFromRelay(
     ws.onerror = (): void => finish({ eose: false, message: "relay connection error" })
     ws.onclose = (): void => finish({ eose: false, message: "relay closed connection" })
     ws.onmessage = (msg: MessageEvent): void => {
+      if (settled) return // already resolved (bound hit / EOSE / timeout) — drop queued frames
       if (typeof msg.data !== "string") return
       const bytes = frameBytes(msg.data)
       // An oversized frame is dropped before parsing — the results are then
