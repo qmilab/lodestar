@@ -100,10 +100,15 @@ export function redactionVariants(secret: string): string[] {
 /** Replace every occurrence of each non-empty redaction with `***`. Defence in
  * depth: the secret should not appear in a response, but a misbehaving or hostile
  * server can echo arbitrary text and a credential must never slip into an
- * observation or the log. (Mirrors the Nostr adapter's `applyRedactions`.) */
+ * observation or the log. (Mirrors the Nostr adapter's `applyRedactions`.)
+ *
+ * Redactions are applied LONGEST-FIRST: if a shorter secret is a substring of a
+ * longer one (e.g. two related tokens, or a value that shares a prefix), replacing
+ * the short one first would consume part of the longer match and leave its unique
+ * remainder in the output. Matching the longest secret first closes that gap. */
 export function applyRedactions(text: string, redactions: string[]): string {
   let out = text
-  for (const secret of redactions) {
+  for (const secret of [...redactions].sort((a, b) => b.length - a.length)) {
     if (secret.length === 0) continue
     out = out.split(secret).join("***")
   }

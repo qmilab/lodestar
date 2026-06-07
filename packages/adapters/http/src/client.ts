@@ -131,11 +131,22 @@ async function readCappedBody(
   // replacement char).
   const redacted = applyRedactions(buf.toString("utf8"), redactions)
   const redactedBuf = Buffer.from(redacted, "utf8")
-  const text =
-    redactedBuf.byteLength > maxBytes
-      ? redactedBuf.subarray(0, maxBytes).toString("utf8")
-      : redacted
+  // Cut on a UTF-8 char boundary so we never split a multibyte sequence — a split
+  // would be decoded as U+FFFD (3 bytes) and could push the result a couple of
+  // bytes OVER the cap. Back up over continuation bytes (0b10xxxxxx) so the result
+  // is ≤ maxBytes bytes with no replacement char.
+  const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
   return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }
+}
+
+/** Decode the first ≤ `maxBytes` bytes of `buf` as UTF-8, cutting on a character
+ * boundary (never mid-sequence). */
+function utf8CutAtMost(buf: Buffer, maxBytes: number): string {
+  let end = Math.min(maxBytes, buf.byteLength)
+  // If `end` lands on a UTF-8 continuation byte, the char starting earlier is
+  // split; back up until `end` is at a sequence start (or 0).
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end--
+  return buf.subarray(0, end).toString("utf8")
 }
 
 /** Snapshot response headers into a plain record, redacting values. */

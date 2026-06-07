@@ -308,16 +308,19 @@ describe("credentials", () => {
     expect(Buffer.byteLength(out.body, "utf8")).toBeLessThanOrEqual(maxBytes)
   })
 
-  test("bounds the captured body by BYTES, not chars, for a multibyte response", async () => {
+  test("bounds the captured body by BYTES (UTF-8 safe), not chars", async () => {
     // The cap is a byte cap. A char-based slice would let a multibyte body run
-    // several× over it (each "é" is 2 bytes). 500 × "é" = 1000 bytes capped at 64.
-    const maxBytes = 64
+    // several× over it (each "é" is 2 bytes). maxBytes=63 is odd vs the 2-byte
+    // char so the cut lands mid-sequence — it must back up to a char boundary, not
+    // emit a U+FFFD that overshoots the cap.
+    const maxBytes = 63
     const s = serve(() => new Response("é".repeat(500)))
     const tool = makeHttpFetchTool({ allowedHosts: PINNED, allowHttp: true, maxBytes })
     const out = await tool.execute({ url: `${s.base}/p` }, CTX)
     expect(out.body_truncated).toBe(true)
     expect(Buffer.byteLength(out.body, "utf8")).toBeLessThanOrEqual(maxBytes)
     expect(out.body_bytes).toBeLessThanOrEqual(maxBytes)
+    expect(out.body).not.toContain("�") // cut on a char boundary, no split
   })
 
   test("an agent-supplied credential header cannot shadow the operator's", async () => {
@@ -357,6 +360,14 @@ describe("credentials", () => {
 
   test("applyRedactions replaces every occurrence", () => {
     expect(applyRedactions("a tok b tok c", ["tok"])).toBe("a *** b *** c")
+  })
+
+  test("applyRedactions redacts the longest of overlapping secrets first", () => {
+    // "secret" is a prefix of "secret-extra-private"; insertion-order replacement
+    // would leave "-extra-private". Longest-first replaces the whole token.
+    expect(applyRedactions("secret-extra-private", ["secret", "secret-extra-private"])).toBe("***")
+    // order-independent: same result whichever way the set is listed.
+    expect(applyRedactions("secret-extra-private", ["secret-extra-private", "secret"])).toBe("***")
   })
 
   test("redactionVariants includes URL-encoded forms of a secret", () => {
