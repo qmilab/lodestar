@@ -125,6 +125,14 @@ export function assertAllowedRecipients(
   for (const raw of recipients) {
     const addr = raw.trim()
     const lower = addr.toLowerCase()
+    // A recipient must be a SINGLE, clean mailbox. Reject anything with a comma,
+    // whitespace, display-name/angle-bracket syntax, or more than one `@`. Without
+    // this, `attacker@evil.com, alice@company.com` as one string would slip past
+    // the allowlist (the domain check sees only the LAST `@`'s domain) while a
+    // provider that accepts comma-separated lists still delivers to the attacker.
+    if (/[\s,;<>"]/.test(addr) || addr.split("@").length !== 2) {
+      throw new Error(`${tool}: '${addr}' is not a valid single email address`)
+    }
     const domain = domainOf(lower)
     if (domain === null) {
       throw new Error(`${tool}: '${addr}' is not a valid email address`)

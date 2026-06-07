@@ -206,11 +206,13 @@ export function makeSlackPostTool(
         maxBytes,
         tool: "slack.post",
       })
-      // Slack signals logical failure with HTTP 200 + { ok: false, error }. A
-      // truncated (oversized) body won't parse — treat a 2xx + unparseable body as
-      // delivered (we got a 2xx; the body was merely too big to confirm `ok`).
+      // Slack signals logical failure with HTTP 200 + { ok: false, error }, so a
+      // 2xx alone is NOT delivery — require a confirmed `ok: true`. An unparseable
+      // body (non-JSON, or truncated at the cap) cannot confirm delivery, so it is
+      // a FAILURE, not a silent success: a send tool must never report an
+      // unconfirmed send as delivered.
       const parsed = parseJsonSafe(result.body)
-      const delivered = result.ok && (parsed === null || parsed.ok === true)
+      const delivered = result.ok && parsed?.ok === true
       if (!delivered) {
         const slackError = typeof parsed?.error === "string" ? `, error '${parsed.error}'` : ""
         throw new Error(`slack.post: delivery failed (status ${result.status}${slackError})`)

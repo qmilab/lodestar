@@ -14,9 +14,11 @@
  *      at `pending_approval`, and NOTHING reaches the provider while it waits.
  *      Only after `resolve(granted)` + `execute` does it land with its message.
  *   2. **Destination pinning beats exfiltration.** An approved `slack.post` to a
- *      NON-pinned channel — and an approved `email.send` to a NON-allowlisted
- *      recipient — both end `failed`, and the provider receives nothing. A send to
- *      an allowlisted recipient (by domain) lands.
+ *      NON-pinned channel — an approved `email.send` to a NON-allowlisted
+ *      recipient — and an approved `email.send` whose `to` is a comma-separated
+ *      string smuggling an off-allowlist address — all end `failed`, and the
+ *      provider receives nothing. A send to an allowlisted recipient (by domain)
+ *      lands.
  *   3. **Operator-fixed sender.** The email reaches the provider with the
  *      operator's `from`, never an agent-chosen one (the agent has no `from`
  *      input — anti-spoofing).
@@ -258,6 +260,32 @@ async function run(): Promise<ProbeResult> {
         details: "recipient pinning FAILED: the off-allowlist recipient reached the provider.",
       }
     }
+    // 2b-2: a comma-separated recipient STRING cannot smuggle an off-allowlist
+    // address past the per-recipient check (the domain check would otherwise see
+    // only the last `@`'s domain while a provider splits on the comma).
+    const commaInj = await kernel.arbitrate(
+      propose(
+        "email.send",
+        { to: "attacker@evil.com, alice@company.com", subject: "x", body: "y" },
+        L4(),
+      ),
+    )
+    const commaInjDone = await kernel.execute(
+      kernel.resolve(commaInj, grant(commaInj, "req-comma")),
+    )
+    if (commaInjDone.phase !== "failed") {
+      return {
+        passed: false,
+        details: `multi-address bypass FAILED: an approved email.send with a comma-separated recipient string did not end 'failed' (phase=${commaInjDone.phase}).`,
+      }
+    }
+    if (email.count() !== 0) {
+      return {
+        passed: false,
+        details:
+          "multi-address bypass FAILED: a comma-injected off-allowlist recipient reached the provider.",
+      }
+    }
     // 2c: an allowlisted (by domain) recipient lands — and the From is the operator's.
     const okEmail = await kernel.arbitrate(
       propose("email.send", { to: "alice@company.com", subject: "status", body: "all good" }, L4()),
@@ -347,7 +375,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native messaging transport held every invariant through the Action Kernel: a slack.post proposed at L4 parked at pending_approval and reached no provider until approval, then delivered exactly once; an approved post to a non-pinned channel and an approved email to a non-allowlisted recipient both ended 'failed' with the provider untouched, while an allowlisted (by domain) recipient landed carrying the operator-fixed From; the operator bot token reached the provider but never surfaced in the inputs or the (token-echoing) observation; a Slack ok:false ended 'failed' rather than a silent completed; and a 50 KiB provider response was captured to the cap and flagged truncated.",
+        "Native messaging transport held every invariant through the Action Kernel: a slack.post proposed at L4 parked at pending_approval and reached no provider until approval, then delivered exactly once; an approved post to a non-pinned channel, an approved email to a non-allowlisted recipient, and an approved email whose comma-separated recipient string smuggled an off-allowlist address all ended 'failed' with the provider untouched, while an allowlisted (by domain) recipient landed carrying the operator-fixed From; the operator bot token reached the provider but never surfaced in the inputs or the (token-echoing) observation; a Slack ok:false ended 'failed' rather than a silent completed; and a 50 KiB provider response was captured to the cap and flagged truncated.",
     }
   } finally {
     for (const s of [slack, email]) s.stop()

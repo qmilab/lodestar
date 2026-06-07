@@ -50,24 +50,59 @@ export async function resolveCredential(
   return { headers: [{ name: cred.header, value }], redactions: redactionVariants(value) }
 }
 
-/** The redaction strings to scrub for one secret: the raw value AND its
- * URL-encoded forms. A hostile or misbehaving provider can echo a credential into
- * its JSON response (e.g. a debug field); redacting only the raw value would miss
- * an encoded copy. (Mirrors the HTTP adapter's `redactionVariants`.) */
+/** Lowercase only the `%XX` percent-escapes in a string, leaving the rest intact.
+ * `encodeURIComponent` emits UPPERCASE hex (`%2F`); a provider that re-encodes a
+ * credential it echoes may emit lowercase (`%2f`), which an exact-match redaction
+ * of the uppercase form would miss. */
+function lowercasePercentEscapes(s: string): string {
+  return s.replace(/%[0-9A-Fa-f]{2}/g, (m) => m.toLowerCase())
+}
+
+/** The redaction strings to scrub for one secret. A hostile or misbehaving
+ * provider can echo a credential into its JSON response (e.g. a debug field) or an
+ * error string; we must catch every form it could surface in:
+ *
+ *   - the raw value AND the bare token after a scheme prefix (a provider can echo
+ *     just `xoxb-…`, not the whole `Bearer xoxb-…` header value), and
+ *   - the URL-encoded forms of each (with lowercase percent-escapes too).
+ *
+ * Redacting only the full header value would miss a bare-token or re-encoded echo.
+ * (A stronger sibling of the HTTP adapter's `redactionVariants`.) */
 export function redactionVariants(secret: string): string[] {
   if (secret.length === 0) return []
-  const variants = new Set<string>([secret])
-  try {
-    variants.add(encodeURIComponent(secret))
-  } catch {
-    /* lone surrogate etc. — the encoder threw; the raw form still redacts */
-  }
-  try {
-    variants.add(encodeURI(secret))
-  } catch {
-    /* as above */
+  // Base strings to redact: the whole value, plus the token after a scheme prefix
+  // (`Bearer <token>` / `Basic <b64>`). The segment guard (≥ 6 chars) avoids
+  // redacting a short scheme word; real tokens are long.
+  const bases = new Set<string>([secret])
+  const parts = secret.trim().split(/\s+/)
+  const token = parts.length > 1 ? parts[parts.length - 1] : undefined
+  if (token !== undefined && token.length >= 6) bases.add(token)
+  const variants = new Set<string>()
+  for (const base of bases) {
+    variants.add(base)
+    for (const enc of encodedForms(base)) {
+      variants.add(enc)
+      variants.add(lowercasePercentEscapes(enc))
+    }
   }
   return [...variants]
+}
+
+/** URL-encoded forms of a value (component- and URI-encoded), skipping any that
+ * throw (e.g. a lone surrogate) — the raw form still redacts in that case. */
+function encodedForms(value: string): string[] {
+  const out: string[] = []
+  try {
+    out.push(encodeURIComponent(value))
+  } catch {
+    /* encoder threw; skip */
+  }
+  try {
+    out.push(encodeURI(value))
+  } catch {
+    /* encoder threw; skip */
+  }
+  return out
 }
 
 /** Replace every occurrence of each non-empty redaction with `***`. Defence in

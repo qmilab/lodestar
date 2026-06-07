@@ -141,6 +141,26 @@ describe("recipient allowlist", () => {
     const policy = compileRecipientPolicy(["@company.com"])
     expect(() => assertAllowedRecipients(["not-an-email"], policy, "t")).toThrow(/not a valid/)
   })
+
+  test("rejects a comma-separated address string (multi-address exfil bypass)", () => {
+    // The last `@`'s domain (company.com) is allowlisted, but the string also
+    // carries attacker@evil.com — a provider that splits on the comma would
+    // deliver to it. A single recipient must be one clean mailbox.
+    const policy = compileRecipientPolicy(["@company.com"])
+    expect(() =>
+      assertAllowedRecipients(["attacker@evil.com, alice@company.com"], policy, "t"),
+    ).toThrow(/not a valid single email/)
+  })
+
+  test("rejects display-name / angle-bracket and multi-@ recipient syntax", () => {
+    const policy = compileRecipientPolicy(["@company.com"])
+    expect(() => assertAllowedRecipients(['"Alice" <alice@company.com>'], policy, "t")).toThrow(
+      /not a valid single email/,
+    )
+    expect(() => assertAllowedRecipients(["a@evil.com@company.com"], policy, "t")).toThrow(
+      /not a valid single email/,
+    )
+  })
 })
 
 // -----------------------------------------------------------------------------
@@ -156,6 +176,18 @@ describe("credentials", () => {
     const v = redactionVariants("Bearer abc def")
     expect(v).toContain("Bearer abc def")
     expect(v).toContain("Bearer%20abc%20def")
+  })
+
+  test("redactionVariants also covers the bare token after a scheme prefix", () => {
+    // A provider can echo just the token, not the whole `Bearer <token>` header.
+    const v = redactionVariants("Bearer xoxb-abc-123-secret")
+    expect(v).toContain("Bearer xoxb-abc-123-secret")
+    expect(v).toContain("xoxb-abc-123-secret")
+  })
+
+  test("redactionVariants covers lowercase percent-escape re-encodings", () => {
+    const v = redactionVariants("Bearer a/b c") // encodeURIComponent → %2F (upper)
+    expect(v.some((x) => x.includes("%2f"))).toBe(true) // lowercase variant present
   })
 })
 
@@ -192,6 +224,31 @@ describe("slack.post", () => {
     await expect(tool.execute({ channel: "#alerts", text: "x" }, CTX)).rejects.toThrow(
       /delivery failed.*channel_not_found/,
     )
+  })
+
+  test("an unparseable HTTP 200 is a delivery FAILURE (no silent delivered)", async () => {
+    // A 2xx with a non-JSON (or truncated) body cannot confirm ok:true, so it must
+    // fail rather than silently report delivery.
+    const s = serve(() => new Response("not json", { status: 200 }))
+    const tool = makeSlackPostTool(slackOpts(s, ["#alerts"]))
+    await expect(tool.execute({ channel: "#alerts", text: "x" }, CTX)).rejects.toThrow(
+      /delivery failed/,
+    )
+  })
+
+  test("redacts a bare-token echo (provider reflects just the token, no scheme)", async () => {
+    const bareToken = "xoxb-test-bot-token-9000"
+    const s = serve((req) =>
+      json({
+        ok: true,
+        ts: "1.3",
+        leaked: (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/, ""),
+      }),
+    )
+    const tool = makeSlackPostTool(slackOpts(s, ["#alerts"]))
+    const out = await tool.execute({ channel: "#alerts", text: "hi" }, CTX)
+    expect(out.response_excerpt).not.toContain(bareToken)
+    expect(out.response_excerpt).toContain("***")
   })
 
   test("injects the bot token and redacts it from captured output", async () => {
