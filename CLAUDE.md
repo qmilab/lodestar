@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-three probes pass under
+publishing), v0.2 architecture locked. Forty-four probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Thirty-nine live in the first-party pack
+below). Forty live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -59,7 +59,17 @@ native `@qmilab/lodestar-adapter-nostr` holds its invariants through the kernel:
 a BIP-340-verifiable note at the **operator-pinned** relay, the signing key never
 surfaces in inputs/observation, a non-pinned relay and a non-allowlisted event kind
 both fail, NIP-42 AUTH is handled with the same key, and `nostr.fetch` flags forged
-signatures + pins reads against SSRF; ADR-0007).
+signatures + pins reads against SSRF; ADR-0007), and one http-adapter transport
+probe (`http-adapter-enforces-egress-invariants` — the native
+`@qmilab/lodestar-adapter-http` holds its invariants through the kernel:
+`http.request` proposed at L4 stays at `pending_approval` until approved then
+delivers its body to the **operator-pinned** host, an approved request to a
+non-pinned host fails and the decoy gets nothing, a pinned host that redirects to a
+non-pinned host (`localhost` — the SSRF escape) is not followed, a `file://` fetch
+fails the scheme allowlist, the operator credential reaches the server but never
+surfaces in inputs/observation, and an oversized untrusted body is captured to the
+cap and flagged truncated; the first adapter to hit injection + egress + untrusted
+content at once; ADR-0008).
 The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -175,6 +185,7 @@ packages/
     shell/             # (exists, P2) governed shell commands; config-driven tool factory (defineShellTool), TS-level sandbox (argv-only, allowlist, scoped env, timeout) — not an OS sandbox; ADR-0004
     github/            # (later) forge-API ONLY (PRs/issues/releases) behind a ForgeProvider seam — git transport lives in adapters/git/ (ADR-0006)
     nostr/             # (exists, P2) governed Nostr transport: nostr.publish (L4, second native egress — signing key IS the credential, in-process BIP-340) + nostr.fetch (L1, untrusted inbound); relay pinning, kind allowlist, NIP-42 AUTH, fetch SSRF guard; controlled-network sandbox; TS-level boundary, not network containment; ADR-0007
+    http/              # (exists, P2) governed HTTP transport: http.request (L4, third native egress — host-bound auth header credential) + http.fetch (L1, untrusted inbound, the injection vector); hostname pinning + scheme allowlist + per-hop redirect re-validation (the SSRF escape) + bounded capture; reuses controlled-network; TS-level boundary, not network containment; ADR-0008
 
 examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline
@@ -185,7 +196,7 @@ examples/
                              #   DocAwareEvidenceLinker via the guard cognitive seam
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 38 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 40 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,

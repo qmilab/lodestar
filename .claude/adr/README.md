@@ -73,3 +73,10 @@ The options we rejected, each with a one-line reason.
   Same egress model as ADR-0006 with the signing key as the (in-process) credential
   and relay pinning as the destination pin; adds NIP-42 AUTH, a kind allowlist, a
   fetch SSRF guard, and the `controlled-network` sandbox profile.
+- [ADR-0008](0008-governed-http-transport-adapter.md) — Governed HTTP adapter
+  (P2 slice 4): `http.request` (L4 egress) + `http.fetch` (untrusted inbound). The
+  first adapter to hit all three governance surfaces at once (injection + egress +
+  untrusted content). Same egress model with a host-bound auth header as the
+  credential and hostname pinning as the destination pin; the headline new teeth is
+  per-hop redirect re-validation (the redirect-to-internal SSRF escape), plus a
+  scheme allowlist and bounded body capture. Reuses `controlled-network`.
