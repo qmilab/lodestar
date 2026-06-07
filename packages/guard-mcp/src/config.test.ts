@@ -115,6 +115,27 @@ describe("MCPProxy constructor signed-approvals guard", () => {
     ).toThrow(/approval_timeout_ms > 0 lets the proxy promote/)
   })
 
+  it("constructs when approval_timeout_ms is omitted entirely (coalesced to 0 — no wait, no forgery surface)", () => {
+    // A literal host that omits the field: the hold path coalesces it to 0 (never
+    // waits / promotes), so the gap predicate must not flag it. A bare `<= 0` test
+    // would read `undefined <= 0` as false and wrongly throw.
+    const cfg: Record<string, unknown> = {
+      project_id: "p",
+      actor_id: "a",
+      session_id: "s",
+      log_root: join(tmpdir(), "lodestar-cfg-test"),
+      default_scope: { level: "project", identifier: "p" },
+      default_sensitivity: "internal",
+      auto_approve_ceiling: 2,
+      downstream_servers: [{ name: "d", command: "x", args: [] }],
+      tool_defaults: {},
+      // approval_timeout_ms intentionally omitted
+    }
+    expect(
+      () => new MCPProxy(cfg as unknown as ProxyConfig, { downstreamFactory: () => [] }),
+    ).not.toThrow()
+  })
+
   it("constructs when allow_unsigned is set explicitly", () => {
     expect(
       () =>

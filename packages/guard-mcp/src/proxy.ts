@@ -1118,22 +1118,25 @@ export class MCPProxy {
         // "no resolution yet" and keep polling rather than failing the call.
         events = []
       }
-      const logResult = resolutionOutcomeFor(events, request.request_id, actionId, request.deadline)
       // The log-path event is shape-valid, but a local writer who can append the
       // side-channel can equally append this sibling NDJSON log — so it clears the
-      // SAME signature gate before un-parking the action (ADR-0010). The log is
-      // append-only, so a rejected event is immutable: record + skip it once (by
-      // event id), then fall through to the side-channel (where the legitimate
-      // cross-process resolver writes), so a forged log event cannot DoS a real
-      // channel grant.
+      // SAME signature gate before un-parking the action (ADR-0010). A forged event
+      // is recorded once (by event id; the log is append-only, the event never
+      // changes) and skipped by `resolutionOutcomeFor` on later polls, so the scan
+      // moves on to a LATER valid signed log resolution rather than letting a
+      // planted forgery permanently mask a genuine in-process / UI approval.
+      const logResult = resolutionOutcomeFor(
+        events,
+        request.request_id,
+        actionId,
+        request.deadline,
+        (id) => this.warnedSignatureRejections.has(`log:${id}`),
+      )
       if (logResult !== undefined) {
-        const logKey = `log:${logResult.eventId}`
-        if (!this.warnedSignatureRejections.has(logKey)) {
-          if (this.resolutionVerified(logResult.doc, logResult.signature)) {
-            return { outcome: logResult.outcome, source: "log" }
-          }
-          await this.emitSignatureRejected(logKey, logResult.doc)
+        if (this.resolutionVerified(logResult.doc, logResult.signature)) {
+          return { outcome: logResult.outcome, source: "log" }
         }
+        await this.emitSignatureRejected(`log:${logResult.eventId}`, logResult.doc)
       }
       // Then the separate-process side-channel. Read errors / malformed files
       // surface as `undefined` (the helper is tolerant); keep polling.
@@ -1786,13 +1789,19 @@ function delay(ms: number): Promise<void> {
  * The caller therefore runs the SAME Ed25519 signature gate on this log outcome
  * as on a channel one (ADR-0010): this function returns the verification `doc`
  * (the matched payload + its `kind`) and the event's `signature` + `eventId` so
- * `waitForResolution` can verify it and skip a known-rejected immutable event.
+ * `waitForResolution` can verify it.
+ *
+ * `isRejected(eventId)` skips events a prior poll already rejected, so the scan
+ * continues PAST a forged event to a later *valid* signed log resolution for the
+ * same request — a forged event planted first must not permanently mask a genuine
+ * in-process / UI log approval that lands after it.
  */
 function resolutionOutcomeFor(
   events: EventEnvelope[],
   requestId: string,
   actionId: string,
   notAfter: string | undefined,
+  isRejected: (eventId: string) => boolean,
 ):
   | {
       outcome: ApprovalOutcome
@@ -1804,6 +1813,7 @@ function resolutionOutcomeFor(
   for (const e of events) {
     if (e.type !== "approval.granted" && e.type !== "approval.denied") continue
     if (notAfter !== undefined && e.timestamp > notAfter) continue
+    if (isRejected(e.id)) continue
     const schema =
       e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
     const parsed = schema.safeParse(e.payload)

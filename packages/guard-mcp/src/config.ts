@@ -201,10 +201,16 @@ export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>
  * is evaluated, not crashed.
  */
 export function hasUnauthenticatedApprovalGap(config: {
-  approval_timeout_ms: number
+  approval_timeout_ms?: number
   approvals?: { authorized_keys?: ReadonlyArray<unknown>; allow_unsigned?: boolean }
 }): boolean {
-  if (config.approval_timeout_ms <= 0) return false
+  // Coalesce a missing timeout to 0, exactly as the hold path does
+  // (`this.config.approval_timeout_ms ?? 0`). A literal config that OMITS the
+  // field does not wait for — and so never promotes — an out-of-band approval, so
+  // it has no forgery surface and must not be flagged (a bare `<= 0` test would
+  // read `undefined <= 0` as false and wrongly report a gap).
+  const timeoutMs = config.approval_timeout_ms ?? 0
+  if (timeoutMs <= 0) return false
   const hasPinnedKey = (config.approvals?.authorized_keys?.length ?? 0) > 0
   const allowsUnsigned = config.approvals?.allow_unsigned === true
   return !hasPinnedKey && !allowsUnsigned
