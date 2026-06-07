@@ -44,9 +44,13 @@ import {
   type PreconditionChecker,
   _resetToolsForTests,
 } from "@qmilab/lodestar-action-kernel"
-import { registerNostrTools, signEvent, verifyEvent } from "@qmilab/lodestar-adapter-nostr"
-import type { BlastRadius, NostrEvent, Observation, Reversibility } from "@qmilab/lodestar-core"
-import type { ActionContract } from "@qmilab/lodestar-core"
+import {
+  type NostrEvent,
+  registerNostrTools,
+  signEvent,
+  verifyEvent,
+} from "@qmilab/lodestar-adapter-nostr"
+import type { ActionContract, BlastRadius, Observation, Reversibility } from "@qmilab/lodestar-core"
 
 interface ProbeResult {
   passed: boolean
@@ -72,6 +76,9 @@ interface FakeRelay {
   notes: unknown[]
   authEvents: unknown[]
   rawCount: () => number
+  /** Read the note count through a function so TS doesn't narrow `notes.length`
+   * to a literal across an `await kernel.execute(...)` it can't see mutate it. */
+  noteCount: () => number
   stop: () => void
 }
 
@@ -119,6 +126,7 @@ function startRelay(opts: { requireAuth?: boolean; storedEvents?: unknown[] } = 
     notes,
     authEvents,
     rawCount: () => raw,
+    noteCount: () => notes.length,
     stop: () => server.stop(true),
   }
 }
@@ -212,7 +220,7 @@ async function run(): Promise<ProbeResult> {
         details: `L4 hold FAILED: a publish proposed at L4 did not park at pending_approval (phase=${pubHeld.phase}).`,
       }
     }
-    if (relayHold.notes.length !== 0) {
+    if (relayHold.noteCount() !== 0) {
       return {
         passed: false,
         details:
@@ -228,10 +236,10 @@ async function run(): Promise<ProbeResult> {
         details: `approved publish did not complete (phase=${pubDone.phase}); audit: ${JSON.stringify(pubDone.audit.at(-1))}`,
       }
     }
-    if (relayHold.notes.length !== 1) {
+    if (relayHold.noteCount() !== 1) {
       return {
         passed: false,
-        details: `egress FAILED: the approved publish did not land exactly one note at the pinned relay (got ${relayHold.notes.length}).`,
+        details: `egress FAILED: the approved publish did not land exactly one note at the pinned relay (got ${relayHold.noteCount()}).`,
       }
     }
     if (!verifyEvent(relayHold.notes[0] as NostrEvent)) {
@@ -300,10 +308,10 @@ async function run(): Promise<ProbeResult> {
         details: `kind allowlist FAILED: an approved publish of a non-allowlisted kind (5) did not end 'failed' (phase=${kindDone.phase}).`,
       }
     }
-    if (relayHold.notes.length !== 1) {
+    if (relayHold.noteCount() !== 1) {
       return {
         passed: false,
-        details: `kind allowlist FAILED: a non-allowlisted kind was published anyway (relay note count is ${relayHold.notes.length}, expected 1).`,
+        details: `kind allowlist FAILED: a non-allowlisted kind was published anyway (relay note count is ${relayHold.noteCount()}, expected 1).`,
       }
     }
 
@@ -323,10 +331,10 @@ async function run(): Promise<ProbeResult> {
       }
     }
     const authEvent = relayAuth.authEvents[0] as { kind?: number } | undefined
-    if (!authEvent || authEvent.kind !== 22242 || relayAuth.notes.length !== 1) {
+    if (!authEvent || authEvent.kind !== 22242 || relayAuth.noteCount() !== 1) {
       return {
         passed: false,
-        details: `NIP-42 AUTH FAILED: the relay did not see a kind-22242 auth event followed by the note (auth=${JSON.stringify(authEvent)}, notes=${relayAuth.notes.length}).`,
+        details: `NIP-42 AUTH FAILED: the relay did not see a kind-22242 auth event followed by the note (auth=${JSON.stringify(authEvent)}, notes=${relayAuth.noteCount()}).`,
       }
     }
 
