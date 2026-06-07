@@ -190,18 +190,24 @@ export async function performRequest(
       }
 
       const capped = await readCappedBody(resp, opts.maxBytes)
+      // Redact EVERY captured field, not just the body/headers: a credentialed
+      // host can echo the injected token into a redirect `Location` (e.g.
+      // `/next?token=<cred>`) or a `content-type`, so the final URL and the whole
+      // redirect chain must be redacted too before they reach an observation.
+      const red = [...redactions]
+      const contentType = resp.headers.get("content-type")
       return {
-        url: url.toString(),
+        url: applyRedactions(url.toString(), red),
         status: resp.status,
         status_text: resp.statusText,
         ok: resp.ok,
-        headers: captureHeaders(resp, [...redactions]),
-        content_type: resp.headers.get("content-type"),
-        body: applyRedactions(capped.text, [...redactions]),
+        headers: captureHeaders(resp, red),
+        content_type: contentType === null ? null : applyRedactions(contentType, red),
+        body: applyRedactions(capped.text, red),
         body_bytes: capped.bytes,
         body_truncated: capped.truncated,
         redirected: hops > 0,
-        redirect_chain: redirectChain,
+        redirect_chain: redirectChain.map((u) => applyRedactions(u, red)),
         // `cred` is this (final) hop's resolution — reuse it rather than
         // resolving again (which would re-invoke a credential resolver function).
         authenticated: cred.headers.length > 0,

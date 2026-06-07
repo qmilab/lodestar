@@ -163,6 +163,31 @@ describe("redirect re-validation", () => {
       /not in the operator-allowed hosts/,
     )
   })
+
+  test("redacts a credential echoed into a redirect Location", async () => {
+    // A token with no spaces so it survives verbatim in a URL query.
+    const TOKEN = "sk_live_redirectleak_0099"
+    const dest = serve(() => new Response("landed"))
+    const start = serve(
+      (req) =>
+        new Response(null, {
+          status: 302,
+          headers: { location: `${dest.base}/cb?token=${req.headers.get("authorization") ?? ""}` },
+        }),
+    )
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      credentials: [{ host: "127.0.0.1", header: "Authorization", value: TOKEN }],
+    })
+    const out = await tool.execute({ url: `${start.base}/go` }, CTX)
+    // The credential reached the host and was echoed into the redirect URL...
+    expect(start.received.authorization).toBe(TOKEN)
+    // ...but neither the final URL nor the redirect chain leaks it.
+    expect(out.url).not.toContain(TOKEN)
+    expect(out.url).toContain("***")
+    expect(out.redirect_chain.join("|")).not.toContain(TOKEN)
+  })
 })
 
 // -----------------------------------------------------------------------------
