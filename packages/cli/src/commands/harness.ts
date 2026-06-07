@@ -73,6 +73,21 @@ class UsageError extends Error {
   override readonly name = "UsageError"
 }
 
+/**
+ * Read the value for a value-taking flag. A value that is missing or that
+ * looks like another flag (`--actor --no-emit`) is almost always a forgotten
+ * argument — consuming it silently would bind a flag name as the value and
+ * leave the swallowed flag unapplied (e.g. a `--no-emit` dry-run that records
+ * after all), so reject it loudly. Shared by every harness subcommand parser.
+ */
+function takeFlagValue(argv: string[], i: number, flag: string): string {
+  const value = argv[i + 1]
+  if (value === undefined || value.startsWith("--")) {
+    throw new UsageError(`flag ${flag} requires a value`)
+  }
+  return value
+}
+
 interface ParsedFlags {
   pack: string
   logRoot: string
@@ -91,17 +106,7 @@ function parseFlags(argv: string[]): ParsedFlags {
     actor: "lodestar-harness",
     record: true,
   }
-  // Read the value for a value-taking flag. A value that is missing or
-  // that looks like another flag (`--pack --no-record`) is almost always
-  // a forgotten argument — consuming it silently would mis-resolve the
-  // pack and leave the swallowed flag unapplied, so reject it loudly.
-  const takeValue = (i: number, flag: string): string => {
-    const value = argv[i + 1]
-    if (value === undefined || value.startsWith("--")) {
-      throw new UsageError(`flag ${flag} requires a value`)
-    }
-    return value
-  }
+  const takeValue = (i: number, flag: string): string => takeFlagValue(argv, i, flag)
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
     switch (arg) {
@@ -275,34 +280,43 @@ async function harnessCalibrate(argv: string[]): Promise<number> {
   let out: string | undefined
   let emit = true
 
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    switch (arg) {
-      case "--project":
-        project = argv[++i]
-        break
-      case "--log-root": {
-        const v = argv[++i]
-        if (v) logRoot = resolve(process.cwd(), v)
-        break
-      }
-      case "--actor":
-        actor = argv[++i]
-        break
-      case "--out":
-        out = argv[++i]
-        break
-      case "--no-emit":
-        emit = false
-        break
-      default:
-        if (arg && !arg.startsWith("-") && !session) {
-          session = arg
+  try {
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      switch (arg) {
+        case "--project":
+          project = takeFlagValue(argv, i, arg)
+          i++
           break
-        }
-        process.stderr.write(`unknown argument: ${arg}\n${CALIBRATE_USAGE}`)
-        return 2
+        case "--log-root":
+          logRoot = resolve(process.cwd(), takeFlagValue(argv, i, arg))
+          i++
+          break
+        case "--actor":
+          actor = takeFlagValue(argv, i, arg)
+          i++
+          break
+        case "--out":
+          out = takeFlagValue(argv, i, arg)
+          i++
+          break
+        case "--no-emit":
+          emit = false
+          break
+        default:
+          if (arg && !arg.startsWith("-") && !session) {
+            session = arg
+            break
+          }
+          throw new UsageError(`unknown argument: ${arg}`)
+      }
     }
+  } catch (err) {
+    if (err instanceof UsageError) {
+      process.stderr.write(`${err.message}\n${CALIBRATE_USAGE}`)
+      return 2
+    }
+    throw err
   }
 
   if (!session) {
