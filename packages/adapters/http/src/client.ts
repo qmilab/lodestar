@@ -66,29 +66,46 @@ export interface PerformRequestOptions {
   tool: string
 }
 
-/** Read a response body into text, bounded by `maxBytes`. Streams and stops once
- * the cap is exceeded, cancelling the rest — so an oversized body is never fully
- * buffered. */
+/** Read a response body into REDACTED text, bounded by `maxBytes`. Streams and
+ * stops once the cap (plus a redaction overlap) is exceeded, cancelling the rest —
+ * so an oversized body is never fully buffered.
+ *
+ * The cap is applied AFTER redaction, not before. If we truncated the raw bytes at
+ * `maxBytes` first, a credential a hostile server echoes straddling that boundary
+ * would be cut mid-secret, leaving an unredacted credential *prefix* that no full
+ * redaction variant matches. So we read a small overlap beyond the cap — the
+ * longest redaction string — which guarantees any secret with at least one byte
+ * inside `[0, maxBytes)` is FULLY present in the window, redact the whole window,
+ * then bound the redacted text to the cap. Slicing the already-redacted text can
+ * only drop trailing content; it can never reveal a partial secret. */
 async function readCappedBody(
   resp: Response,
   maxBytes: number,
+  redactions: string[],
 ): Promise<{ text: string; bytes: number; truncated: boolean }> {
   if (!resp.body) return { text: "", bytes: 0, truncated: false }
+  // Overlap = the longest redaction string, so a secret straddling the cap is
+  // fully captured for matching before we bound the output.
+  const overlap = redactions.reduce((m, r) => Math.max(m, r.length), 0)
+  const readLimit = maxBytes + overlap
   const reader = resp.body.getReader()
   const chunks: Uint8Array[] = []
   let captured = 0
-  let truncated = false
+  // Set when we stop early because the stream had more than the read window —
+  // load-bearing when overlap is 0 (no credentials), where `captured` maxes at
+  // exactly `maxBytes` and `captured > maxBytes` could never fire.
+  let hitLimit = false
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
     if (!value) continue
-    const room = maxBytes - captured
+    const room = readLimit - captured
     if (value.byteLength > room) {
       if (room > 0) {
         chunks.push(value.subarray(0, room))
         captured += room
       }
-      truncated = true
+      hitLimit = true
       try {
         await reader.cancel()
       } catch {
@@ -99,8 +116,15 @@ async function readCappedBody(
     chunks.push(value)
     captured += value.byteLength
   }
+  // truncated = the body had more than the cap of real content (either we stopped
+  // early at the read window, or we read into the overlap beyond `maxBytes`).
+  const truncated = hitLimit || captured > maxBytes
   const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)))
-  return { text: buf.toString("utf8"), bytes: buf.byteLength, truncated }
+  // Redact the FULL window (incl. the overlap) FIRST, so a boundary-straddling
+  // secret becomes `***`, THEN bound the redacted text to the cap.
+  const redacted = applyRedactions(buf.toString("utf8"), redactions)
+  const text = truncated ? redacted.slice(0, maxBytes) : redacted
+  return { text, bytes: Math.min(captured, maxBytes), truncated }
 }
 
 /** Snapshot response headers into a plain record, redacting values. */
@@ -233,12 +257,15 @@ export async function performRequest(
         continue
       }
 
-      const capped = await readCappedBody(resp, opts.maxBytes)
       // Redact EVERY captured field, not just the body/headers: a credentialed
       // host can echo the injected token into a redirect `Location` (e.g.
       // `/next?token=<cred>`) or a `content-type`, so the final URL and the whole
       // redirect chain must be redacted too before they reach an observation.
       const red = [...redactions]
+      // readCappedBody redacts BEFORE applying the cap (so a credential straddling
+      // the byte boundary can't leave an unredacted prefix), so `capped.text` is
+      // already redacted — do not (and need not) redact it again here.
+      const capped = await readCappedBody(resp, opts.maxBytes, red)
       const contentType = resp.headers.get("content-type")
       return {
         url: applyRedactions(url.toString(), red),
@@ -249,7 +276,7 @@ export async function performRequest(
         ok: resp.ok,
         headers: captureHeaders(resp, red),
         content_type: contentType === null ? null : applyRedactions(contentType, red),
-        body: applyRedactions(capped.text, red),
+        body: capped.text,
         body_bytes: capped.bytes,
         body_truncated: capped.truncated,
         redirected: hops > 0,

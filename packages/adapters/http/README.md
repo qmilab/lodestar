@@ -89,7 +89,9 @@ the shell / git / Nostr adapters, ADR-0004/0006/0007). It enforces, in-process:
    host, re-resolved per hop (host A's token is never carried to host B), never in
    the agent's inputs, and redacted from all captured output.
 4. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop an
-   untrusted server from hanging the call or inflating an observation.
+   untrusted server from hanging the call or inflating an observation. Redaction
+   runs before the cap, so a credential echoed straddling the byte boundary cannot
+   leave an unredacted prefix.
 5. **Untrusted inbound.** A fetched body is untrusted external content — treat it
    as `external_document`; it must not self-promote to a supported belief.
 

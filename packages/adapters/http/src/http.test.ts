@@ -286,6 +286,28 @@ describe("credentials", () => {
     expect(out.authenticated).toBe(true)
   })
 
+  test("a credential straddling the cap boundary leaves no partial prefix", async () => {
+    // A hostile server echoes the credential positioned so the byte cap cuts
+    // THROUGH it. If the cap were applied before redaction, a prefix
+    // ("Bearer sk_live") would survive; redaction now runs on a window that reads
+    // past the cap first.
+    const cred = "Bearer sk_live_capboundary_secret_123"
+    const maxBytes = 64
+    const pad = "A".repeat(maxBytes - 14) // boundary lands ~14 chars into the cred
+    const s = serve(() => new Response(pad + cred + "B".repeat(300)))
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      maxBytes,
+      credentials: [{ host: "127.0.0.1", header: "Authorization", value: cred }],
+    })
+    const out = await tool.execute({ url: `${s.base}/p` }, CTX)
+    expect(out.body_truncated).toBe(true)
+    expect(out.body.length).toBeLessThanOrEqual(maxBytes)
+    expect(out.body).not.toContain("sk_live") // not even a prefix survives
+    expect(out.body).toContain("***")
+  })
+
   test("an agent-supplied credential header cannot shadow the operator's", async () => {
     const s = serve((_req, r) => new Response(`auth=${r.authorization}`))
     const tool = makeHttpFetchTool({

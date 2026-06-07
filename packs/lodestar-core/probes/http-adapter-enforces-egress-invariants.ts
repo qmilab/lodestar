@@ -28,9 +28,11 @@
  *   5. **Credentials never leak.** The operator credential is injected on the
  *      request (the server sees it) but is absent from the recorded action inputs
  *      AND the emitted observation (redacted), and the agent never supplied it.
- *   6. **Bounded capture.** An oversized response body is captured up to the cap
- *      and flagged `body_truncated` — an untrusted server cannot inflate an
- *      observation without bound.
+ *   6. **Bounded capture, redaction before the cap.** An oversized response body
+ *      is captured up to the cap and flagged `body_truncated` — an untrusted server
+ *      cannot inflate an observation without bound. AND, when that body echoes the
+ *      credential straddling the byte cap, redaction runs first so not even a token
+ *      *prefix* survives the truncation.
  *
  * If any of these regress, a Lodestar-wrapped agent could POST to an attacker
  * host, follow a redirect into the internal network, read local files, leak an
@@ -122,8 +124,16 @@ async function run(): Promise<ProbeResult> {
   )
   // The non-pinned exfil/SSRF target (reached only via its `localhostUrl`).
   const decoy = startServer(() => new Response("decoy-should-never-be-hit"))
-  // An oversized-body server for the bounded-capture check.
-  const big = startServer(() => new Response("X".repeat(50_000)))
+  // An oversized-body server for the bounded-capture check. It ECHOES the operator
+  // credential positioned so the 4 KiB cap cuts THROUGH it — if the cap were
+  // applied before redaction, a credential prefix would survive into the body.
+  const big = startServer(
+    (req) =>
+      // pad = 4080 so the 4096 cap lands ~16 chars into the echoed credential.
+      new Response(
+        `${"X".repeat(4080)}${req.headers.get("authorization") ?? ""}${"X".repeat(2000)}`,
+      ),
+  )
 
   const observations: Observation[] = []
   const observationSink = async (obs: Observation): Promise<void> => {
@@ -350,11 +360,21 @@ async function run(): Promise<ProbeResult> {
         details: `bounded capture FAILED: captured ${bigOut.body_bytes} bytes, above the 4096 cap.`,
       }
     }
+    // The oversized body echoed the credential straddling the cap; redaction runs
+    // before the cap, so not even a prefix may survive. Check an 8-char prefix the
+    // full-credential check (sub-case 5) would NOT catch.
+    if (JSON.stringify(bigObs).includes(CREDENTIAL_SENTINEL.slice(0, 8))) {
+      return {
+        passed: false,
+        details:
+          "bounded capture FAILED: a credential prefix survived truncation (the cap was applied before redaction).",
+      }
+    }
 
     return {
       passed: true,
       details:
-        "Native HTTP transport held every invariant through the Action Kernel: an http.request proposed at L4 parked at pending_approval and reached no server until approval, then delivered its body exactly once; an approved request to a non-pinned host (localhost) ended 'failed' and the decoy got nothing; a fetch redirected to localhost ended 'failed' and the decoy got nothing, while a redirect to a still-pinned host was followed; a file:// fetch ended 'failed' (scheme allowlist); the operator credential reached the server but never surfaced in the inputs or the observation; and a 50 KiB body was captured up to the 4 KiB cap and flagged truncated.",
+        "Native HTTP transport held every invariant through the Action Kernel: an http.request proposed at L4 parked at pending_approval and reached no server until approval, then delivered its body exactly once; an approved request to a non-pinned host (localhost) ended 'failed' and the decoy got nothing; a fetch redirected to localhost ended 'failed' and the decoy got nothing, while a redirect to a still-pinned host was followed; a file:// fetch ended 'failed' (scheme allowlist); the operator credential reached the server but never surfaced in the inputs or the observation; and an oversized body that echoed the credential straddling the 4 KiB cap was captured up to the cap and flagged truncated, with not even a credential prefix surviving (redaction runs before the cap).",
     }
   } finally {
     for (const s of [target, redirector, decoy, big]) s.stop()
