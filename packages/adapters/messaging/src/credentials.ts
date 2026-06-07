@@ -121,10 +121,16 @@ function encodedForms(value: string): string[] {
 /** Replace every occurrence of each non-empty redaction with `***`. Defence in
  * depth: the secret should not appear in a response, but a misbehaving or hostile
  * provider can echo arbitrary text and a credential must never slip into an
- * observation or the log. */
+ * observation or the log.
+ *
+ * Redactions are applied LONGEST-FIRST: if a shorter secret is a substring of a
+ * longer one (e.g. the bare token is a substring of the full `Bearer <token>`
+ * header, or two related tokens), replacing the short one first would consume part
+ * of the longer match and could leave its unique remainder in the output. Matching
+ * the longest secret first closes that gap. */
 export function applyRedactions(text: string, redactions: string[]): string {
   let out = text
-  for (const secret of redactions) {
+  for (const secret of [...redactions].sort((a, b) => b.length - a.length)) {
     if (secret.length === 0) continue
     out = out.split(secret).join("***")
   }

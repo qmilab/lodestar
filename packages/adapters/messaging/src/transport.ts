@@ -77,13 +77,19 @@ async function readCappedBody(
   redactions: string[],
 ): Promise<{ text: string; bytes: number; truncated: boolean }> {
   if (!resp.body) return { text: "", bytes: 0, truncated: false }
-  // Overlap = the longest redaction string, so a secret straddling the cap is
-  // fully captured for matching before we bound the output.
-  const overlap = redactions.reduce((m, r) => Math.max(m, r.length), 0)
+  // Overlap = the longest redaction string in BYTES (not UTF-16 chars — the read
+  // window is byte-oriented, and a multibyte secret's byte length exceeds its
+  // `.length`), so a secret straddling the cap is fully captured for matching
+  // before we bound the output.
+  const overlap = redactions.reduce((m, r) => Math.max(m, Buffer.byteLength(r, "utf8")), 0)
   const readLimit = maxBytes + overlap
   const reader = resp.body.getReader()
   const chunks: Uint8Array[] = []
   let captured = 0
+  // Set when we stop early because the stream had more than the read window —
+  // load-bearing when overlap is 0, where `captured` maxes at exactly `maxBytes`
+  // and `captured > maxBytes` could never fire.
+  let hitLimit = false
   for (;;) {
     const { done, value } = await reader.read()
     if (done) break
@@ -94,6 +100,7 @@ async function readCappedBody(
         chunks.push(value.subarray(0, room))
         captured += room
       }
+      hitLimit = true
       try {
         await reader.cancel()
       } catch {
@@ -104,15 +111,28 @@ async function readCappedBody(
     chunks.push(value)
     captured += value.byteLength
   }
-  // truncated = the body had more than the cap of real content (the overlap we
-  // deliberately read beyond `maxBytes` counts as content past the cap).
-  const truncated = captured > maxBytes
+  // truncated = the body had more than the cap of real content (either we stopped
+  // early at the read window, or we read into the overlap beyond `maxBytes`).
+  const truncated = hitLimit || captured > maxBytes
   const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)))
   // Redact the FULL window (incl. the overlap) FIRST, so a boundary-straddling
-  // secret becomes `***`, THEN bound the redacted text to the cap.
+  // secret becomes `***`, THEN bound the redacted text to the cap by BYTES (the
+  // cap is a byte cap; slicing by chars could leave the body several× over it for
+  // multibyte content). Cutting already-redacted text can only drop trailing bytes
+  // — every secret in the window is already `***` — so a partial secret can never
+  // reappear (a cut multibyte tail is at worst a cosmetic replacement char).
   const redacted = applyRedactions(buf.toString("utf8"), redactions)
-  const text = truncated ? redacted.slice(0, maxBytes) : redacted
-  return { text, bytes: Math.min(captured, maxBytes), truncated }
+  const redactedBuf = Buffer.from(redacted, "utf8")
+  const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
+  return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }
+}
+
+/** Decode the first ≤ `maxBytes` bytes of `buf` as UTF-8, cutting on a character
+ * boundary (never mid-sequence, which would decode to U+FFFD and overshoot). */
+function utf8CutAtMost(buf: Buffer, maxBytes: number): string {
+  let end = Math.min(maxBytes, buf.byteLength)
+  while (end > 0 && ((buf[end] ?? 0) & 0xc0) === 0x80) end--
+  return buf.subarray(0, end).toString("utf8")
 }
 
 /** Settle with `promise`, but reject as soon as `signal` aborts. Brings an async

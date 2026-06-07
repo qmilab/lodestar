@@ -172,6 +172,14 @@ describe("credentials", () => {
     expect(applyRedactions("a tok b tok c", ["tok"])).toBe("a *** b *** c")
   })
 
+  test("applyRedactions redacts the longest of overlapping secrets first", () => {
+    // "secret" is a prefix of "secret-extra-private"; insertion-order replacement
+    // would leave "-extra-private". Longest-first replaces the whole token,
+    // order-independently.
+    expect(applyRedactions("secret-extra-private", ["secret", "secret-extra-private"])).toBe("***")
+    expect(applyRedactions("secret-extra-private", ["secret-extra-private", "secret"])).toBe("***")
+  })
+
   test("redactionVariants includes URL-encoded forms", () => {
     const v = redactionVariants("Bearer abc def")
     expect(v).toContain("Bearer abc def")
@@ -378,9 +386,22 @@ describe("email.send", () => {
     })
     const out = await tool.execute({ to: "alice@company.com", subject: "s", body: "b" }, CTX)
     expect(out.response_truncated).toBe(true)
-    expect(out.response_excerpt.length).toBeLessThanOrEqual(maxBytes)
     expect(out.response_excerpt).not.toContain("xoxb") // not even a prefix survives
     expect(out.response_excerpt).toContain("***")
+    expect(Buffer.byteLength(out.response_excerpt, "utf8")).toBeLessThanOrEqual(maxBytes)
+  })
+
+  test("bounds the captured response by BYTES (UTF-8 safe), not chars", async () => {
+    // The cap is a byte cap. maxBytes=63 is odd vs the 2-byte "é" so the cut lands
+    // mid-sequence — it must back up to a char boundary, not emit a U+FFFD that
+    // overshoots the cap.
+    const maxBytes = 63
+    const s = serve(() => new Response("é".repeat(500), { status: 200 }))
+    const tool = makeEmailSendTool({ ...emailOpts(s, ["@company.com"]), maxBytes })
+    const out = await tool.execute({ to: "alice@company.com", subject: "s", body: "b" }, CTX)
+    expect(out.response_truncated).toBe(true)
+    expect(Buffer.byteLength(out.response_excerpt, "utf8")).toBeLessThanOrEqual(maxBytes)
+    expect(out.response_excerpt).not.toContain("�") // cut on a char boundary
   })
 })
 
