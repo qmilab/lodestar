@@ -196,6 +196,22 @@ describe("credentials", () => {
     expect(applyRedactions("secret-extra-private", ["secret", "secret-extra-private"])).toBe("***")
     expect(applyRedactions("secret-extra-private", ["secret-extra-private", "secret"])).toBe("***")
   })
+
+  test("applyRedactions skips empty strings", () => {
+    expect(applyRedactions("abc", ["", "abc"])).toBe("***")
+  })
+
+  test("applyRedactions scrubs the actual resolved key (hex + nsec forms)", async () => {
+    // Drive the real toSecretKey-derived redaction set: an nsec input yields the
+    // nsec string AND the decoded hex; both must be scrubbed from captured output.
+    const { encodeBech32 } = require("./event.js") as typeof import("./event.js")
+    const nsec = encodeBech32("nsec", TEST_SK_HEX)
+    const resolved = await prepareSigner({ kind: "secret-key", key: nsec }).resolve()
+    const echoed = `relay closed: saw key ${TEST_SK_HEX} (${nsec})`
+    const out = applyRedactions(echoed, resolved.redactions)
+    expect(out).not.toContain(TEST_SK_HEX)
+    expect(out).not.toContain(nsec)
+  })
 })
 
 // -----------------------------------------------------------------------------
