@@ -15,8 +15,18 @@ import type { z } from "zod"
  *                no shell
  * - controlled-shell: read/write + shell with command allowlist; container
  *                     sandbox; restricted network egress
+ * - controlled-network: network egress to an operator allowlist of destinations;
+ *                       in-process signing with scoped secrets; no shell, no fs
+ *                       writes. For native egress tools that talk a protocol
+ *                       directly rather than via a subprocess (e.g. the Nostr
+ *                       adapter's relay client). Sibling of controlled-shell.
  */
-export type SandboxProfile = "read" | "write-isolated" | "write-local" | "controlled-shell"
+export type SandboxProfile =
+  | "read"
+  | "write-isolated"
+  | "write-local"
+  | "controlled-shell"
+  | "controlled-network"
 
 /**
  * Permission tokens. Narrower than sandbox profiles; declarative.

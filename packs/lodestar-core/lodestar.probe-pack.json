@@ -18,7 +18,8 @@
     "governing_ui",
     "otel_export",
     "shell_adapter",
-    "git_adapter"
+    "git_adapter",
+    "nostr_adapter"
   ],
   "invariants": [
     "no_self_promotion",
@@ -46,7 +47,8 @@
     "otel_export_sensitivity_ceiling",
     "otel_action_span_projection",
     "shell_sandbox_invariants",
-    "git_egress_governance"
+    "git_egress_governance",
+    "nostr_transport_governance"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -152,6 +154,10 @@
     {
       "name": "git-adapter-enforces-egress-invariants",
       "file": "probes/git-adapter-enforces-egress-invariants.ts"
+    },
+    {
+      "name": "nostr-adapter-enforces-egress-invariants",
+      "file": "probes/nostr-adapter-enforces-egress-invariants.ts"
     }
   ]
 }

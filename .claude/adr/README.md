@@ -68,3 +68,8 @@ The options we rejected, each with a one-line reason.
   `adapter-git` (not a "github" adapter); `adapter-github` is reserved for the
   forge-API surface behind a provider seam. Records the remote-pinning + scoped-credential
   model. Supersedes ADR-0004's commit/push placement.
+- [ADR-0007](0007-governed-nostr-transport-adapter.md) — Governed Nostr adapter
+  (P2 slice 3): `nostr.publish` (L4 egress) + `nostr.fetch` (untrusted inbound).
+  Same egress model as ADR-0006 with the signing key as the (in-process) credential
+  and relay pinning as the destination pin; adds NIP-42 AUTH, a kind allowlist, a
+  fetch SSRF guard, and the `controlled-network` sandbox profile.

@@ -279,13 +279,32 @@ Work past the v1 line, tracked here as it lands:
   load-bearing — a consequential action (trust ladder / L4), untrusted output
   (`external_document` → the firewall), or outward data movement (`blast_radius:
   external` → the dormant `read → egress → write` sentinel). On that basis the
-  ordered native-tool sequence is now **shell ✓ → git transport ✓ (ADR-0006) → nostr →
-  http/web-fetch → messaging (email/Slack)**, with a governance-rich backlog (SQL/database, vector/RAG
+  ordered native-tool sequence is now **shell ✓ → git transport ✓ (ADR-0006) →
+  nostr ✓ (ADR-0007) → http/web-fetch → messaging (email/Slack)**, with a
+  governance-rich backlog (SQL/database, vector/RAG
   retrieval, `fs.write`, payments, cloud/infra) pulled by demand. `http` is the
   highest-leverage next pick (it hits injection + egress + untrusted content at once
   and lights up the egress sentinel); `messaging` is the cleanest demo of the
   human-approval gate. Memory-firewall import adapters (Pinecone/Weaviate/Chroma,
   Redis, …) continue the `mem0`/`letta`/`zep` pattern.
+
+- **Native adapters (P2) — nostr (c)** — ✅ landed
+  (`packages/adapters/nostr/`, `@qmilab/lodestar-adapter-nostr`). The **second native
+  egress** after `git.push`, proving the egress model generalises beyond git: a
+  different transport (a relay WebSocket) and a different credential (a signing key).
+  Two tools — `nostr.publish` (**L4**, held until approved) and `nostr.fetch` (L1,
+  untrusted inbound). The teeth: **relay pinning** (the agent targets only
+  operator-pinned relays — no exfil to an attacker relay; also an SSRF guard on
+  reads), the **signing key as the credential** (operator-supplied hex/`nsec`,
+  signed **in-process** via BIP-340 Schnorr so it never reaches the wire, redacted
+  from output, resolver seam), a **kind allowlist** (default kind 1; no agent-driven
+  deletions/profile overwrites), **NIP-42 AUTH** (restricted relays authenticated
+  with the same key), and **untrusted inbound** (fetched events carry a locally
+  verified `signature_valid`; a valid signature attests authorship, not truth).
+  Adds the honest **`controlled-network`** sandbox profile (network egress, no shell,
+  no fs). A **TS-level governance boundary, not network containment** — `publish`/
+  `fetch` reach the real relay by design. Locked by the
+  `nostr-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0007.
 
 ## What this roadmap explicitly does not include
 
