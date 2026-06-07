@@ -11,7 +11,7 @@ import {
   signEvent,
   verifyEvent,
 } from "./event.js"
-import { fetchFromRelay } from "./relay.js"
+import { applyRedactions, fetchFromRelay } from "./relay.js"
 import { makeNostrFetchTool, makeNostrPublishTool } from "./tools.js"
 
 // A throwaway-but-valid secret key for tests (NOT a real identity).
@@ -187,6 +187,30 @@ describe("credentials", () => {
     await expect(
       prepareSigner({ kind: "secret-key", key: "not-a-key" }).resolve(),
     ).rejects.toThrow()
+  })
+
+  test("applyRedactions redacts the longest of overlapping secrets first", () => {
+    // A shorter secret that is a substring of a longer one (e.g. a trimmed key
+    // inside its untrimmed form) must not be replaced first, or the longer
+    // secret's unique remainder would survive. Longest-first is order-independent.
+    expect(applyRedactions("secret-extra-private", ["secret", "secret-extra-private"])).toBe("***")
+    expect(applyRedactions("secret-extra-private", ["secret-extra-private", "secret"])).toBe("***")
+  })
+
+  test("applyRedactions skips empty strings", () => {
+    expect(applyRedactions("abc", ["", "abc"])).toBe("***")
+  })
+
+  test("applyRedactions scrubs the actual resolved key (hex + nsec forms)", async () => {
+    // Drive the real toSecretKey-derived redaction set: an nsec input yields the
+    // nsec string AND the decoded hex; both must be scrubbed from captured output.
+    const { encodeBech32 } = require("./event.js") as typeof import("./event.js")
+    const nsec = encodeBech32("nsec", TEST_SK_HEX)
+    const resolved = await prepareSigner({ kind: "secret-key", key: nsec }).resolve()
+    const echoed = `relay closed: saw key ${TEST_SK_HEX} (${nsec})`
+    const out = applyRedactions(echoed, resolved.redactions)
+    expect(out).not.toContain(TEST_SK_HEX)
+    expect(out).not.toContain(nsec)
   })
 })
 
