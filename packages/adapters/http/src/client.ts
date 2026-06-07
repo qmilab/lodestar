@@ -12,8 +12,8 @@ import { type UrlPolicy, assertAllowedUrl } from "./url.js"
  * hop's host is re-validated** against the operator pin (`assertAllowedUrl`). A
  * pinned host that 3xx-redirects to a non-pinned host is the classic SSRF/exfil
  * escape that destination pinning alone misses; here it stops the request.
- * Credentials are re-resolved per hop and bound to the target host, so a token is
- * never carried to a different host across a redirect.
+ * Credentials are bound to the host the agent originally targeted, so a cross-host
+ * redirect carries no token — a server cannot steer the credential elsewhere.
  *
  * Same honesty boundary as ADR-0004/0006/0007: a **TS-level governance boundary,
  * not network containment**. `fetch`/`request` reach the real host by design.
@@ -112,6 +112,33 @@ function captureHeaders(resp: Response, redactions: string[]): Record<string, st
   return out
 }
 
+/** Settle with `promise`, but reject as soon as `signal` aborts. Brings an async
+ * step that does NOT take an AbortSignal (the credential resolver) under the same
+ * wall-clock deadline as the fetch — the AbortController is shared — so a hung
+ * secret-store lookup cannot outlast `timeoutMs`. The original promise's eventual
+ * settlement is still consumed, so a late rejection is never unhandled. */
+function raceAbort<T>(
+  promise: Promise<T>,
+  signal: AbortSignal,
+  onTimeout: () => Error,
+): Promise<T> {
+  if (signal.aborted) return Promise.reject(onTimeout())
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(onTimeout())
+    signal.addEventListener("abort", onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(value)
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(err)
+      },
+    )
+  })
+}
+
 /**
  * Issue one request, following redirects manually and re-validating every hop's
  * host against the operator pin. Resolves to a captured response for ANY HTTP
@@ -142,8 +169,14 @@ export async function performRequest(
       // host. It is re-resolved per hop there (fresh secret each request); its
       // redactions persist across the whole chain so a later echo stays redacted.
       const onOriginalHost = url.hostname.toLowerCase() === originalHost
+      // Race the (possibly async) credential resolution against the shared
+      // deadline so a hung resolver can't outlast the advertised wall-clock cap.
       const cred = onOriginalHost
-        ? await opts.credentials.resolveFor(url.hostname)
+        ? await raceAbort(
+            opts.credentials.resolveFor(url.hostname),
+            controller.signal,
+            () => new Error(`${opts.tool}: request timed out after ${opts.timeoutMs}ms`),
+          )
         : { headers: [] as ResolvedHeader[], redactions: [] as string[] }
       for (const r of cred.redactions) redactions.add(r)
 

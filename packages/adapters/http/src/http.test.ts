@@ -473,4 +473,19 @@ describe("timeout", () => {
     const tool = makeHttpFetchTool({ allowedHosts: PINNED, allowHttp: true, timeoutMs: 80 })
     await expect(tool.execute({ url: `${s.base}/slow` }, CTX)).rejects.toThrow(/timed out/)
   })
+
+  test("the wall-clock deadline also covers a hung credential resolver", async () => {
+    const s = serve(() => new Response("ok"))
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      timeoutMs: 80,
+      // A resolver that never settles (e.g. a stalled secret-store lookup): the
+      // shared deadline must still fail the action rather than hang forever.
+      credentials: [
+        { host: "127.0.0.1", header: "Authorization", value: () => new Promise<string>(() => {}) },
+      ],
+    })
+    await expect(tool.execute({ url: `${s.base}/p` }, CTX)).rejects.toThrow(/timed out/)
+  })
 })
