@@ -59,6 +59,17 @@ mirroring `defineGitTransportTools`):
   not truth — content stays untrusted. Relay pinning applies to reads too: the
   agent cannot make the adapter open a socket to an arbitrary URL (an **SSRF
   guard**).
+  - **Fetch carries no redaction set, by design.** `publish` redacts captured
+    output against the signer's secret; `fetch` passes an empty set. This
+    asymmetry is intentional, not an oversight: the redaction set is derived
+    solely from the operator signing key, which signs in-process so only the
+    pubkey + signature reach the wire. A relay never possesses that secret, so it
+    cannot embed it in a returned event body — redacting inbound bodies against it
+    would be a literal no-op. Inbound safety is the `signature_valid` check plus
+    L1-untrusted tagging, not redaction. The only condition that would make a fetch
+    redaction set real is a future `NostrCredential` kind (NIP-46 remote signer,
+    NIP-49 `ncryptsec`) whose secret is wire-visible and could be replayed by a
+    relay; the call site flags that revisit condition.
 
 **Add a `controlled-network` `SandboxProfile`.** None of the existing profiles is
 honest for a tool that does network egress with no shell and no fs writes (git
