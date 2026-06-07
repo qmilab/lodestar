@@ -402,6 +402,16 @@ export function makeNostrFetchTool(
             timeoutMs,
             maxEvents: perRelayEvents,
             maxTotalBytes: perRelayBytes,
+            // Deliberately empty — NOT an oversight (publish passes the signer's
+            // redaction set; fetch passes none). The redaction set is built only
+            // from the operator signing key (credentials.ts), which signs
+            // in-process so only pubkey + sig ever reach the wire. A relay cannot
+            // possess that secret, so it cannot echo it back in an event body —
+            // redacting inbound bodies against it would be a literal no-op. Inbound
+            // safety is the signature check (signature_valid) + L1-untrusted
+            // tagging, not redaction. REVISIT only if a future NostrCredential kind
+            // (NIP-46 remote signer, NIP-49 ncryptsec) carries a wire-visible
+            // secret a relay could replay — then a fetch redaction set is real.
             redactions: [],
           }),
         ),
