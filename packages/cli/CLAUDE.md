@@ -39,9 +39,23 @@ trust boundary), `approve grant/deny` builds the approver's `Actor` from
 approver is refused (exit 4) and no side-channel file is written. This is
 parity with the in-process `guard.wrap()` resolver contract, and
 honest-mistake protection only: the approver's authority is self-declared
-(auth flags default conservatively — `public` / `0` / no scope), not a
-cryptographic boundary. A hard boundary (signed actors / a trusted actor
-registry the proxy verifies) is the deferred deeper hardening.
+(auth flags default conservatively — `public` / `0` / no scope).
+
+**The cryptographic boundary is now wired (ADR-0010).** Authorisation
+(above) answers *is this approver allowed*; signing answers *is this really
+that approver*. `approve grant/deny` loads the approver's Ed25519 private
+key from `--key <path>` or the `LODESTAR_APPROVER_KEY` env (never argv) and
+**signs** the canonical resolution after `authorizeResolution` passes; the
+proxy verifies the signature against its operator-pinned
+`approvals.authorized_keys` before promoting, so a side-channel file a
+malicious local writer forged (real `approver_id`, no/wrong key) never
+un-parks the action. With a key pinned and no `allow_unsigned`, an unsigned
+resolution is refused — secure by default. `approve keygen --approver <id>
+[--out <prefix>]` mints a keypair (private PKCS#8 at mode 0600, public SPKI)
+and prints the `authorized_keys` pin to paste into the proxy config. A grant
+written without a key is still produced (the `allow_unsigned` path) but
+loudly marked `(UNSIGNED)`. See ADR-0010 and the
+`forged-approval-cannot-execute` probe.
 
 ## Invariants
 

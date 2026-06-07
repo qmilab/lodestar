@@ -38,7 +38,21 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   **Its ceiling caps at L3** — auto-approving L4 is not expressible, by design
   (the ladder floor always holds L4).
 - `src/hash.ts` — the canonical hash used for the policy signature's
-  `payload_hash` (deterministic JSON over `{ id, version, rules }`).
+  `payload_hash` (deterministic JSON over `{ id, version, rules }`). Exports
+  `stableStringify` (reused by the approval-signature canonical hash).
+- `src/approval-signature.ts` — signed approval **resolutions** (P3, ADR-0010).
+  `canonicalApprovalResolutionHash` + **real Ed25519** `signApprovalResolution` /
+  `verifyApprovalSignature` / `generateApproverKeyPair`, over the canonical
+  resolution document `{ request_id, action_id, kind, approver_id, reason?, at }`.
+  Unlike the policy signature (a host-injected `verifySignature` seam, placeholder
+  crypto in-repo), this is **real** `node:crypto` Ed25519 — the approval
+  side-channel is a genuine cross-process forgery surface, so the verification must
+  have teeth. Pure compute (no I/O); the host (proxy / `lodestar approve` CLI)
+  supplies the pinned keys / private key. The reject set mirrors
+  `verifyPolicySignature` plus the operator-pinned-signer check that is the whole
+  point. `payload_hash` alone is *not* forgery-proof (an attacker recomputes it) —
+  the signature bytes are. The MCP proxy enforces it on the side-channel; the
+  in-process `guard.wrap()` resolver does not (same trusted process).
 - `src/index.ts` — public exports.
 
 ## Invariants

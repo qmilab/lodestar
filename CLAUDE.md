@@ -3,9 +3,9 @@
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-five probes pass under
+publishing), v0.2 architecture locked. Forty-six probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Forty-one live in the first-party pack
+below). Forty-two live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -13,15 +13,18 @@ context propagation, event-log single-writer), two Batch 3 MCP probes
 Batch 4 probes (`reflection-cannot-promote-to-normal-alone`,
 `contradicted-belief-flags-dependent-decisions`,
 `event-log-canonical-hash`), one Batch 5 probe
-(`documentation-evidence-provenance`), and thirteen Policy Kernel probes —
+(`documentation-evidence-provenance`), and fourteen Policy Kernel probes —
 the three-valued gate, the trust-ladder floor, the approval lifecycle,
 signature verification, the arbitrate hook, and the host wiring — the
 `guard.wrap()` approval-resolver seam, the MCP-proxy deadline/timeout
 hold path, the separate-process `lodestar approve` side-channel
-resolver, and the proxy compiling a declarative `CompiledPolicy` (from a
+resolver, the proxy compiling a declarative `CompiledPolicy` (from a
 signed `ProxyConfig.policy` document) so a matched `require_approval`
 rule's `required_authority` (`min_trust_baseline` / `scope`) reaches its
-holds
+holds, and the **signed-approval forgery boundary** (P3 — the proxy
+verifies a side-channel resolution's Ed25519 signature against
+operator-pinned approver keys before promoting, so a forged / unsigned /
+tampered grant cannot un-park a held L4; ADR-0010)
 (`l4-action-requires-approval`, `l4-floor-preserves-stricter-rule`,
 `pending-approval-cannot-execute`, `ladder-floor-overrides-allow-rule`,
 `unmatched-action-defaults-to-deny`, `policy-version-signature-required`,
@@ -29,7 +32,8 @@ holds
 `sentinel-alert-gates-dependent-action`,
 `calibration-flag-escalates-action`,
 `guard-hold-resolves-via-resolver`, `approval-timeout-denies`,
-`approval-via-side-channel`, `proxy-hold-carries-rule-authority`), one
+`approval-via-side-channel`, `forged-approval-cannot-execute`,
+`proxy-hold-carries-rule-authority`), one
 Governing-UI read-side probe (`viewer-is-read-only` — the read-side
 viewer surfaces the chain + pending approvals but exposes no mutation
 route and never writes the log), two OTel-exporter probes
@@ -286,7 +290,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Forty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Forty-six probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

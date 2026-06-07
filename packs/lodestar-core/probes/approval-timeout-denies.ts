@@ -117,6 +117,11 @@ function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number)
     default_sensitivity: "internal",
     auto_approve_ceiling: 3,
     approval_timeout_ms: approvalTimeoutMs,
+    // This probe drives the in-process log resolver path (a grant written
+    // directly to the log), not the cross-process side-channel that signature
+    // verification guards. Opt into unsigned explicitly so the signed-approval
+    // default does not refuse a wait-for-approval proxy with no pinned key.
+    approvals: { authorized_keys: [], allow_unsigned: true },
     downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
     tool_defaults: {
       [LODESTAR_TOOL_NAME]: {

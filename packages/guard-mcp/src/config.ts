@@ -149,6 +149,74 @@ export const ProxyPolicyConfigSchema = z.object({
 export type ProxyPolicyConfig = z.infer<typeof ProxyPolicyConfigSchema>
 
 /**
+ * One operator-pinned approver: an `actor_id` and the SPKI-PEM Ed25519 public
+ * key whose private half that approver signs resolutions with. This set is the
+ * trust root for the separate-process approval path — only a resolution signed
+ * by a key listed here can un-park a held action.
+ */
+export const AuthorizedApproverSchema = z.object({
+  /** actor_id the approver signs as; must equal the resolution's `approver_id`. */
+  actor_id: z.string().min(1),
+  /** Ed25519 public key, SPKI PEM (the form `lodestar approve keygen` emits). */
+  public_key: z.string().min(1),
+})
+export type AuthorizedApprover = z.infer<typeof AuthorizedApproverSchema>
+
+/**
+ * Signed-approval policy for the *separate-process* resolver path. The side-
+ * channel `<request_id>.json` file carries only a claimed `approver_id` string;
+ * anything that can write the `.approvals/` directory could forge it. Pinning
+ * approver public keys here turns the trust root from "can write the file" into
+ * "holds the approver private key": the proxy verifies a resolution's Ed25519
+ * signature against `authorized_keys` before promoting it, and a forged /
+ * unsigned / unpinned-signer resolution never un-parks the action.
+ *
+ * Security-relevant, so there is no silent default: a proxy that can wait for an
+ * out-of-band resolution (`approval_timeout_ms > 0`) must either pin at least one
+ * approver key here, or explicitly opt out with `allow_unsigned: true`. The
+ * schema rejects the gap at parse (mirrors the policy `allow_unsigned`
+ * discipline).
+ */
+export const ApprovalsConfigSchema = z.object({
+  authorized_keys: z.array(AuthorizedApproverSchema).default([]),
+  /**
+   * Permit an unsigned side-channel resolution to un-park a held action.
+   * Defaults to `false`. Set `true` only for a trusted local / development
+   * setup where the `.approvals/` directory is not a forgery surface — never the
+   * production cross-process path. The in-process `guard.wrap()` resolver is
+   * unaffected either way (same trusted process, no side-channel).
+   */
+  allow_unsigned: z.boolean().default(false),
+})
+export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>
+
+/**
+ * True when a proxy config would promote an UNAUTHENTICATED out-of-band approval:
+ * it can wait for one (`approval_timeout_ms > 0`) but pins no approver key and has
+ * not set `allow_unsigned`. The single source of truth shared by the
+ * `ProxyConfigSchema` superRefine and the `MCPProxy` constructor guard, so the
+ * parse-time and construct-time checks can never disagree. Uses fully-safe
+ * optional access so a partial literal config (Zod defaults not applied — e.g. a
+ * library host's `approvals: { allow_unsigned: false }` with no `authorized_keys`)
+ * is evaluated, not crashed.
+ */
+export function hasUnauthenticatedApprovalGap(config: {
+  approval_timeout_ms?: number
+  approvals?: { authorized_keys?: ReadonlyArray<unknown>; allow_unsigned?: boolean }
+}): boolean {
+  // Coalesce a missing timeout to 0, exactly as the hold path does
+  // (`this.config.approval_timeout_ms ?? 0`). A literal config that OMITS the
+  // field does not wait for — and so never promotes — an out-of-band approval, so
+  // it has no forgery surface and must not be flagged (a bare `<= 0` test would
+  // read `undefined <= 0` as false and wrongly report a gap).
+  const timeoutMs = config.approval_timeout_ms ?? 0
+  if (timeoutMs <= 0) return false
+  const hasPinnedKey = (config.approvals?.authorized_keys?.length ?? 0) > 0
+  const allowsUnsigned = config.approvals?.allow_unsigned === true
+  return !hasPinnedKey && !allowsUnsigned
+}
+
+/**
  * Top-level proxy config. The CLI loads this from a path on disk.
  *
  * Round 5 invariant: the proxy MUST receive a real session_id and
@@ -259,6 +327,15 @@ export const ProxyConfigSchema = z
      * sole writer — the event-log writer's process-local counters never collide).
      */
     approval_timeout_ms: z.number().int().min(0).default(0),
+    /**
+     * Signed-approval policy for the separate-process resolver path. Pins the
+     * approver public keys the proxy verifies a side-channel resolution against
+     * before promoting it. Omitted is only valid when the proxy never waits for
+     * an out-of-band resolution (`approval_timeout_ms === 0`); otherwise the
+     * superRefine below requires either a pinned key or an explicit
+     * `allow_unsigned`. See {@link ApprovalsConfigSchema}.
+     */
+    approvals: ApprovalsConfigSchema.optional(),
     downstream_servers: z
       .array(DownstreamServerConfigSchema)
       .min(1)
@@ -294,6 +371,25 @@ export const ProxyConfigSchema = z
         path: ["sentinels"],
         message:
           "`sentinels` requires `policy`: a declarative policy document is needed to compile the gate with arbitration — the auto_approve_ceiling preset cannot be armed with sentinels. Declare a `policy`, or remove `sentinels`.",
+      })
+    }
+    // Signed approvals: a proxy that waits for an out-of-band resolution
+    // (`approval_timeout_ms > 0`) promotes whatever lands in the side-channel.
+    // That file's `approver_id` is a plain string — anything that can write the
+    // `.approvals/` directory could forge a grant — so the promotion path must
+    // verify an Ed25519 signature against a pinned approver key. Require the
+    // operator to either pin at least one key or explicitly opt out with
+    // `allow_unsigned: true`. No silent default for a security-relevant setting;
+    // mirrors the policy `allow_unsigned` discipline. The same predicate is
+    // re-checked in the MCPProxy constructor (a literal-config library host
+    // bypasses this superRefine); they share `hasUnauthenticatedApprovalGap` so
+    // the two guards can never drift.
+    if (hasUnauthenticatedApprovalGap(config)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["approvals"],
+        message:
+          "`approval_timeout_ms > 0` lets the proxy promote an out-of-band approval from the side-channel, whose `approver_id` is unauthenticated. Pin at least one `approvals.authorized_keys` entry so resolutions are signature-verified, or set `approvals.allow_unsigned: true` to explicitly accept unsigned resolutions (a trusted local / development setup only).",
       })
     }
   })

@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto"
+import { readFile, rename, rm, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
   type Actor,
@@ -13,12 +15,19 @@ import {
   SensitivitySchema,
 } from "@qmilab/lodestar-core"
 import { EventLogReader } from "@qmilab/lodestar-event-log"
-import { authorizeResolution } from "@qmilab/lodestar-guard"
+import {
+  authorizeResolution,
+  generateApproverKeyPair,
+  signApprovalResolution,
+} from "@qmilab/lodestar-guard"
 import {
   type ApprovalResolution,
   readApprovalResolution,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard-mcp"
+
+/** Env var holding the approver's PKCS#8 PEM private key (off argv; never logged). */
+const APPROVER_KEY_ENV = "LODESTAR_APPROVER_KEY"
 
 /**
  * `lodestar approve` — the reference approval resolver.
@@ -71,7 +80,7 @@ export async function approveCommand(argv: string[]): Promise<number> {
     writeUsage(sub === undefined ? process.stderr : process.stdout)
     return sub === undefined ? 2 : 0
   }
-  if (sub !== "list" && sub !== "grant" && sub !== "deny") {
+  if (sub !== "list" && sub !== "grant" && sub !== "deny" && sub !== "keygen") {
     process.stderr.write(`unknown subcommand: ${sub}\n`)
     writeUsage(process.stderr)
     return 2
@@ -82,6 +91,11 @@ export async function approveCommand(argv: string[]): Promise<number> {
   let logRoot = ".lodestar/events"
   let approver: string | undefined
   let reason: string | undefined
+  // Path to the approver's PKCS#8 PEM private key for signing the resolution
+  // (grant/deny), or the output path prefix for `keygen`. The key material itself
+  // is never an argv value — only a file path or the LODESTAR_APPROVER_KEY env.
+  let keyPath: string | undefined
+  let outPath: string | undefined
   // Approver authority — conservative defaults (no silent clearance). The
   // approver asserts what they hold; `authorizeResolution` checks it against the
   // request's `required_authority` before grant/deny is written.
@@ -95,6 +109,8 @@ export async function approveCommand(argv: string[]): Promise<number> {
     else if (arg === "--log-root") logRoot = rest[++i] ?? logRoot
     else if (arg === "--approver" || arg === "-a") approver = rest[++i]
     else if (arg === "--reason" || arg === "-r") reason = rest[++i]
+    else if (arg === "--key" || arg === "-k") keyPath = rest[++i]
+    else if (arg === "--out" || arg === "-o") outPath = rest[++i]
     else if (arg === "--clearance") {
       const v = rest[++i]
       const parsed = SensitivitySchema.safeParse(v)
@@ -135,6 +151,11 @@ export async function approveCommand(argv: string[]): Promise<number> {
     }
   }
 
+  // keygen mints an approver keypair; it needs neither a project nor a log.
+  if (sub === "keygen") {
+    return keygen({ approver, outPath })
+  }
+
   if (projectId === undefined || projectId === "") {
     process.stderr.write("missing required --project <id>\n")
     writeUsage(process.stderr)
@@ -169,6 +190,7 @@ export async function approveCommand(argv: string[]): Promise<number> {
     clearance,
     trustBaseline,
     scopes,
+    keyPath,
   })
 }
 
@@ -238,9 +260,37 @@ async function resolveRequest(input: {
   clearance: Sensitivity
   trustBaseline: number
   scopes: ResourceScope[]
+  keyPath: string | undefined
 }): Promise<number> {
-  const { root, projectId, requestId, kind, approver, reason, clearance, trustBaseline, scopes } =
-    input
+  const {
+    root,
+    projectId,
+    requestId,
+    kind,
+    approver,
+    reason,
+    clearance,
+    trustBaseline,
+    scopes,
+    keyPath,
+  } = input
+
+  // Load the approver's signing key, if one is supplied. A signed resolution is
+  // what the proxy verifies against its pinned approver keys; an unsigned one is
+  // rejected unless the proxy runs `approvals.allow_unsigned`. The key material
+  // is read from a file (`--key`) or the LODESTAR_APPROVER_KEY env — never argv.
+  let privateKeyPem: string | undefined
+  try {
+    privateKeyPem = await loadApproverKey(keyPath)
+  } catch (err) {
+    process.stderr.write(`[approve] could not read the signing key: ${errMessage(err)}\n`)
+    return 1
+  }
+  if (privateKeyPem === undefined) {
+    process.stderr.write(
+      `[approve] note: resolving WITHOUT a signature (no --key and no ${APPROVER_KEY_ENV}).\n          The proxy will reject this unless it runs approvals.allow_unsigned.\n          Run 'lodestar approve keygen --approver ${approver}' to mint a key.\n`,
+    )
+  }
 
   let events: EventEnvelope[]
   try {
@@ -321,6 +371,19 @@ async function resolveRequest(input: {
   }
   if (reason !== undefined && reason !== "") resolution.reason = reason
 
+  // Sign over the canonical resolution document. The signature's signer_id is
+  // bound to approver_id, so the proxy rejects a signature lifted onto a
+  // different approver's resolution. A bad key (wrong type, malformed PEM)
+  // surfaces here, before any file is written.
+  if (privateKeyPem !== undefined) {
+    try {
+      resolution.signature = signApprovalResolution(resolution, privateKeyPem)
+    } catch (err) {
+      process.stderr.write(`[approve] could not sign the resolution: ${errMessage(err)}\n`)
+      return 1
+    }
+  }
+
   let path: string
   try {
     path = await writeApprovalResolution(root, projectId, resolution)
@@ -330,9 +393,99 @@ async function resolveRequest(input: {
   }
 
   process.stdout.write(
-    `[approve] ${kind} request '${requestId}' (action '${request.action_id}') as '${approver}'.\n          Queued at ${path}\n          The proxy will pick it up on its next poll and emit the canonical approval.${kind === "granted" ? "granted" : "denied"}@1 event.\n`,
+    `[approve] ${kind} request '${requestId}' (action '${request.action_id}') as '${approver}'${privateKeyPem !== undefined ? " (signed)" : " (UNSIGNED)"}.\n          Queued at ${path}\n          The proxy will pick it up on its next poll and emit the canonical approval.${kind === "granted" ? "granted" : "denied"}@1 event.\n`,
   )
   return 0
+}
+
+// ── keygen ───────────────────────────────────────────────────────────────────
+
+/**
+ * Mint an Ed25519 approver keypair. The private key signs resolutions; the
+ * public key is what the operator pins in the proxy's `approvals.authorized_keys`.
+ *
+ * With `--out <prefix>`, writes `<prefix>.key` (private PKCS#8 PEM, mode 0600)
+ * and `<prefix>.pub` (public SPKI PEM), and prints the ready-to-paste pin. Without
+ * `--out`, prints both PEMs to stdout (the private key included — for piping into
+ * a file / secret store yourself). `--approver <id>` labels the printed pin's
+ * `actor_id`; it must match the `--approver` you later grant/deny as.
+ */
+async function keygen(input: {
+  approver: string | undefined
+  outPath: string | undefined
+}): Promise<number> {
+  const { approver, outPath } = input
+  // Require --approver: the printed authorized_keys pin and the .pub file are
+  // keyed by actor_id, and that id MUST equal the --approver you later grant/deny
+  // as, or every signature is rejected as an unpinned signer. A placeholder pin
+  // would be a silent footgun, so refuse rather than emit one.
+  if (approver === undefined || approver === "") {
+    process.stderr.write(
+      "missing required --approver <id> for 'keygen'\n          (the actor_id the key signs as; it must match your later grant/deny --approver)\n",
+    )
+    return 2
+  }
+  const actorId = approver
+  const { publicKeyPem, privateKeyPem } = generateApproverKeyPair()
+
+  const pin = JSON.stringify({ actor_id: actorId, public_key: publicKeyPem }, null, 2)
+
+  if (outPath !== undefined) {
+    const privPath = `${outPath}.key`
+    const pubPath = `${outPath}.pub`
+    // The private key must never touch disk with loose permissions. `mode` on
+    // `writeFile` applies only when the file is CREATED, so writing straight to a
+    // pre-existing `privPath` with broader bits would expose the secret until a
+    // follow-up chmod. Instead write to a FRESH 0600 temp (mode applies on
+    // creation) and atomically `rename` it into place — the destination inherits
+    // the temp's inode + 0600. Same temp+rename discipline as the side-channel.
+    const tmpPath = `${privPath}.${randomUUID()}.tmp`
+    try {
+      await writeFile(tmpPath, privateKeyPem, { mode: 0o600 })
+      await rename(tmpPath, privPath)
+      await writeFile(pubPath, publicKeyPem)
+    } catch (err) {
+      await rm(tmpPath, { force: true }).catch(() => {})
+      process.stderr.write(`[approve] keygen: could not write key files: ${errMessage(err)}\n`)
+      return 1
+    }
+    process.stdout.write(
+      `[approve] wrote approver keypair:\n  private (keep secret, mode 0600): ${privPath}\n  public  (pin in the proxy):        ${pubPath}\n\n` +
+        `Sign with it:   lodestar approve grant <request-id> --approver ${actorId} --key ${privPath} --project <id>\n` +
+        `Pin it in the proxy config under approvals.authorized_keys:\n${pin}\n`,
+    )
+    return 0
+  }
+
+  process.stdout.write(
+    `# Ed25519 approver keypair. Keep the PRIVATE key secret (a secret store / a 0600 file).
+# Sign with:  lodestar approve grant <request-id> --approver ${actorId} --key <private-key-file> --project <id>
+#       or:  ${APPROVER_KEY_ENV}="$(cat <private-key-file>)" lodestar approve grant ...
+
+# --- PRIVATE KEY (PKCS#8) ---
+${privateKeyPem}
+# --- PUBLIC KEY (SPKI) — pin this in the proxy config ---
+${publicKeyPem}
+# proxy config approvals.authorized_keys entry:
+${pin}
+`,
+  )
+  return 0
+}
+
+/**
+ * Resolve the approver's PKCS#8 PEM private key, or `undefined` when none is
+ * supplied (the unsigned path). A `--key <path>` is read from disk; otherwise the
+ * `LODESTAR_APPROVER_KEY` env carries the PEM contents directly. The key material
+ * is never an argv value — a path is fine, the secret itself is not.
+ */
+async function loadApproverKey(keyPath: string | undefined): Promise<string | undefined> {
+  if (keyPath !== undefined && keyPath !== "") {
+    return await readFile(keyPath, "utf8")
+  }
+  const fromEnv = process.env[APPROVER_KEY_ENV]
+  if (fromEnv !== undefined && fromEnv.trim() !== "") return fromEnv
+  return undefined
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -369,15 +522,41 @@ function collectRequests(events: EventEnvelope[]): Map<string, ApprovalRequest> 
   return out
 }
 
-/** request_ids that already carry a granted / denied / expired event. */
+/**
+ * request_ids the proxy flagged with `guard.approval.signature_rejected` — a
+ * grant/deny event it refused to promote because the signature did not verify
+ * against the pinned approver keys (a forged event a local writer planted in the
+ * log or side-channel). Such a `approval.granted@1` / `approval.denied@1` is NOT a
+ * real resolution and must not make the CLI report the request as already
+ * resolved, or a legitimate operator could never submit a real signed grant after
+ * a forgery (the request would look settled and the proxy would time out).
+ */
+function signatureRejectedRequestIds(events: EventEnvelope[]): Set<string> {
+  const out = new Set<string>()
+  for (const e of events) {
+    if (e.type !== "guard.approval.signature_rejected") continue
+    const id = (e.payload as { request_id?: unknown }).request_id
+    if (typeof id === "string" && id.length > 0) out.add(id)
+  }
+  return out
+}
+
+/**
+ * request_ids that already carry a *genuine* terminal event. A grant/deny only
+ * counts when the request was not signature-rejected (a forgery the proxy
+ * refused); `approval.expired@1` is proxy-authored and always definitive (a
+ * timed-out hold the agent re-proposes). A request that was forged-then-rejected
+ * but not yet timed out stays actionable so an operator can still grant it.
+ */
 function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
+  const rejected = signatureRejectedRequestIds(events)
   const out = new Set<string>()
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
-      if (p.success) out.add(p.data.request_id)
+      if (p.success && !rejected.has(p.data.request_id)) out.add(p.data.request_id)
     } else if (e.type === "approval.expired") {
       const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
       if (p.success) out.add(p.data.request_id)
@@ -386,13 +565,19 @@ function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
   return out
 }
 
-/** The existing log verdict for a request, if any. */
+/**
+ * The existing log verdict for a request, if any — ignoring a grant/deny the
+ * proxy signature-rejected (see {@link collectResolvedRequestIds}), so a forged
+ * resolution does not block a real one. `approval.expired@1` is always honoured.
+ */
 function existingResolution(
   events: EventEnvelope[],
   requestId: string,
 ): { verdict: "granted" | "denied" | "expired"; approver?: string } | undefined {
+  const rejected = signatureRejectedRequestIds(events).has(requestId)
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
+      if (rejected) continue
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
@@ -446,12 +631,19 @@ function delay(ms: number): Promise<void> {
 
 function writeUsage(stream: NodeJS.WritableStream): void {
   stream.write(
-    "usage: lodestar approve list  --project <id> [--log-root <path>]\n" +
-      "       lodestar approve grant <request-id> --approver <id> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
-      "       lodestar approve deny  <request-id> --approver <id> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
+    "usage: lodestar approve list   --project <id> [--log-root <path>]\n" +
+      "       lodestar approve grant  <request-id> --approver <id> --key <path> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
+      "       lodestar approve deny   <request-id> --approver <id> --key <path> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
+      "       lodestar approve keygen --approver <id> [--out <prefix>]\n" +
       "\n" +
       "  Resolve an action a running `lodestar guard mcp-proxy` is holding for approval.\n" +
       "  --log-root defaults to .lodestar/events (match the proxy's config).\n" +
+      "\n" +
+      "  Signing (the cross-process forgery boundary):\n" +
+      "    --key, -k <path>   the approver's Ed25519 PKCS#8 PEM private key; signs the\n" +
+      "                       resolution. Or set LODESTAR_APPROVER_KEY to the PEM contents.\n" +
+      "                       The proxy rejects an unsigned resolution unless it runs\n" +
+      "                       approvals.allow_unsigned. Mint a key with 'approve keygen'.\n" +
       "\n" +
       "  Approver authority (asserted; checked against the request's required_authority):\n" +
       "    --clearance <public|internal|confidential|secret>   (default public)\n" +

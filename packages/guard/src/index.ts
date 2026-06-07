@@ -66,6 +66,16 @@ export {
   holdEvaluationForParkedAction,
   canonicalPolicyHash,
   PolicyCompileError,
+  // Signed approval resolutions (P3): real Ed25519 over the canonical resolution,
+  // so a host (the MCP proxy promotion path, the `lodestar approve` CLI signer)
+  // can verify a cross-process approval without importing policy-kernel directly.
+  canonicalApprovalResolutionDocument,
+  canonicalApprovalResolutionHash,
+  signApprovalResolution,
+  verifyApprovalSignature,
+  generateApproverKeyPair,
+  assertValidApproverKeys,
+  ApprovalSignatureError,
 } from "@qmilab/lodestar-policy-kernel"
 export type {
   AutoApproveInput,
@@ -75,6 +85,9 @@ export type {
   PolicyVerdict,
   AuthorizationResult,
   OpenApprovalRequestOptions,
+  ApprovalResolutionDoc,
+  AuthorizedApproverKeys,
+  VerifyApprovalSignatureOptions,
 } from "@qmilab/lodestar-policy-kernel"
 
 // ── Re-exports from the underlying packages ─────────────────────────────────

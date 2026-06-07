@@ -139,6 +139,10 @@
       "file": "probes/approval-via-side-channel.ts"
     },
     {
+      "name": "forged-approval-cannot-execute",
+      "file": "probes/forged-approval-cannot-execute.ts"
+    },
+    {
       "name": "proxy-hold-carries-rule-authority",
       "file": "probes/proxy-hold-carries-rule-authority.ts"
     },

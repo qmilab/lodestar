@@ -31,16 +31,25 @@ import type {
   EventEnvelope,
   Observation,
   Reversibility,
+  Signature,
 } from "@qmilab/lodestar-core"
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
+  ApprovalSignatureError,
   alwaysHoldsChecker,
+  assertValidApproverKeys,
   autoApprovePolicyCompiled,
   expireRequest,
   holdEvaluationForParkedAction,
   openApprovalRequest,
+  verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
-import type { CompiledPolicy, PolicyEvaluation, SentinelArbiter } from "@qmilab/lodestar-guard"
+import type {
+  ApprovalResolutionDoc,
+  CompiledPolicy,
+  PolicyEvaluation,
+  SentinelArbiter,
+} from "@qmilab/lodestar-guard"
 import {
   type BeliefStore,
   type ClaimStore,
@@ -56,7 +65,11 @@ import {
   readApprovalResolution,
   resolutionToOutcome,
 } from "./approvals-channel.js"
-import type { ProxyConfig, ToolContractDefaults } from "./config.js"
+import {
+  type ProxyConfig,
+  type ToolContractDefaults,
+  hasUnauthenticatedApprovalGap,
+} from "./config.js"
 import { DownstreamConnection } from "./downstream.js"
 import {
   MCPAwareEvidenceLinker,
@@ -263,6 +276,14 @@ export class MCPProxy {
    * `started`, which `stop()` only clears after teardown completes.
    */
   private stopping = false
+  /**
+   * Request ids for which a side-channel resolution failed signature
+   * verification and we already emitted a `guard.approval.signature_rejected`
+   * diagnostic. A forged file persists on disk and would be re-read every poll;
+   * this dedupes the warning to once per request so the log is not spammed while
+   * the action runs out its deadline to `approval_timeout`.
+   */
+  private readonly warnedSignatureRejections = new Set<string>()
 
   constructor(
     public readonly config: ProxyConfig,
@@ -341,6 +362,29 @@ export class MCPProxy {
           "MCPProxyOverrides.stores. The `lodestar guard mcp-proxy` CLI does this for you.",
       )
     }
+    // Signed approvals: a proxy that waits for an out-of-band resolution
+    // (`approval_timeout_ms > 0`) promotes whatever lands in the side-channel,
+    // whose `approver_id` is an unauthenticated string — a forgery surface. The
+    // ProxyConfigSchema superRefine rejects the unguarded combination at parse,
+    // but the TS type does not encode it, so a library host building a literal
+    // config and calling `new MCPProxy(...)` directly would bypass it and run with
+    // unauthenticated approvals. Re-enforce at construction via the SAME predicate
+    // the superRefine uses (`hasUnauthenticatedApprovalGap` — fully-safe optional
+    // access, so a partial literal `approvals` is evaluated, not crashed).
+    if (hasUnauthenticatedApprovalGap(config)) {
+      throw new Error(
+        "MCPProxy: approval_timeout_ms > 0 lets the proxy promote an out-of-band approval " +
+          "from the side-channel, whose approver_id is unauthenticated. Pin at least one " +
+          "approvals.authorized_keys entry (mint one with `lodestar approve keygen`) so " +
+          "resolutions are Ed25519-verified, or set approvals.allow_unsigned: true to " +
+          "explicitly accept unsigned resolutions (a trusted local / development setup only).",
+      )
+    }
+    // A pinned approver key that is not a parseable Ed25519 SPKI PEM is an operator
+    // misconfiguration. Fail loudly at construction rather than letting every real
+    // approval be silently rejected (indistinguishable from a forgery) at verify
+    // time and time out. No-op when no keys are pinned.
+    assertValidApproverKeys(config.approvals?.authorized_keys ?? [])
     // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
     // synthesizes decisions for it) AND a `CompiledPolicy` gate whose arbitrate
     // hook consults that arbiter. Two distinct silent-non-enforcement traps, two
@@ -999,16 +1043,16 @@ export class MCPProxy {
       }
     }
 
-    const { outcome, source } = resolution
+    const { outcome, source, signature } = resolution
     // A side-channel resolution (the separate-process `lodestar approve` CLI)
     // carries no event yet — the writer deliberately never appends the log. The
     // proxy is the sole writer of its session's log, so it emits the canonical
-    // `approval.granted@1` / `approval.denied@1` itself, then consumes the
-    // spent file. A resolution found already in the log (an in-process resolver
-    // that shares the single-writer mutex) is left as-is — re-emitting would
-    // duplicate it.
+    // `approval.granted@1` / `approval.denied@1` itself (carrying the verified
+    // signature so the event is self-verifying), then consumes the spent file. A
+    // resolution found already in the log (an in-process resolver that shares the
+    // single-writer mutex) is left as-is — re-emitting would duplicate it.
     if (source === "channel") {
-      await this.emitCanonicalResolution(outcome)
+      await this.emitCanonicalResolution(outcome, signature)
       await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
     }
 
@@ -1060,7 +1104,9 @@ export class MCPProxy {
     request: ApprovalRequest,
     actionId: string,
     deadlineAt: number,
-  ): Promise<{ outcome: ApprovalOutcome; source: "log" | "channel" } | undefined> {
+  ): Promise<
+    { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
+  > {
     const reader = new EventLogReader(this.logRoot)
     for (;;) {
       if (this.stopping) return undefined
@@ -1072,13 +1118,26 @@ export class MCPProxy {
         // "no resolution yet" and keep polling rather than failing the call.
         events = []
       }
-      const logOutcome = resolutionOutcomeFor(
+      // The log-path event is shape-valid, but a local writer who can append the
+      // side-channel can equally append this sibling NDJSON log — so it clears the
+      // SAME signature gate before un-parking the action (ADR-0010). A forged event
+      // is recorded once (by event id; the log is append-only, the event never
+      // changes) and skipped by `resolutionOutcomeFor` on later polls, so the scan
+      // moves on to a LATER valid signed log resolution rather than letting a
+      // planted forgery permanently mask a genuine in-process / UI approval.
+      const logResult = resolutionOutcomeFor(
         events,
         request.request_id,
         actionId,
         request.deadline,
+        (id) => this.warnedSignatureRejections.has(`log:${id}`),
       )
-      if (logOutcome !== undefined) return { outcome: logOutcome, source: "log" }
+      if (logResult !== undefined) {
+        if (this.resolutionVerified(logResult.doc, logResult.signature)) {
+          return { outcome: logResult.outcome, source: "log" }
+        }
+        await this.emitSignatureRejected(`log:${logResult.eventId}`, logResult.doc)
+      }
       // Then the separate-process side-channel. Read errors / malformed files
       // surface as `undefined` (the helper is tolerant); keep polling.
       const resolution = await readApprovalResolution(
@@ -1087,10 +1146,89 @@ export class MCPProxy {
         request.request_id,
       )
       const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
-      if (channelOutcome !== undefined) return { outcome: channelOutcome, source: "channel" }
+      // A deadline-valid channel resolution must additionally clear signature
+      // verification against the operator-pinned approver keys before it can
+      // un-park the action. `resolution` is defined whenever `channelOutcome` is.
+      if (channelOutcome !== undefined && resolution !== undefined) {
+        if (this.resolutionVerified(resolution, resolution.signature)) {
+          return { outcome: channelOutcome, source: "channel", signature: resolution.signature }
+        }
+        // A forged / unsigned / tampered file can never become valid: record it
+        // once (the diagnostic is the durable forensic record) and DELETE the
+        // spent file so it is not re-read + re-verified every poll (a planted file
+        // would otherwise be a per-poll crypto-amplification sink). A legitimate
+        // later resolution arrives as a fresh file and is verified normally.
+        await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution)
+        await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
+      }
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return undefined
       await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, remaining))
+    }
+  }
+
+  /**
+   * Decide whether an out-of-band resolution (from either source) may un-park the
+   * action, by verifying its Ed25519 signature against the operator-pinned
+   * approver keys. A resolution's `approver_id` is otherwise just a claimed string
+   * — anything that can write the side-channel (or the sibling NDJSON log) could
+   * forge it — so this is the forgery boundary. Pure: no I/O, no emit. `doc` may be
+   * any superset of `ApprovalResolutionDoc` (a side-channel `ApprovalResolution`,
+   * or a log payload + kind); `verifyApprovalSignature` selects the canonical
+   * fields itself.
+   *
+   * Legacy / development mode ONLY — no keys pinned *and* an explicit
+   * `allow_unsigned: true` — short-circuits to accept, matching the pre-P3
+   * behaviour for a trusted local setup. Once *any* key is pinned a valid
+   * signature is REQUIRED even if `allow_unsigned` is also set: pinning a key is
+   * the secure-by-default contract and must not be silently weakened by a stray
+   * opt-out flag (so verification runs with `allowUnsigned: false`).
+   */
+  private resolutionVerified(
+    doc: ApprovalResolutionDoc,
+    signature: Signature | undefined,
+  ): boolean {
+    const authorizedKeys = this.config.approvals?.authorized_keys ?? []
+    const allowUnsigned = this.config.approvals?.allow_unsigned === true
+    if (authorizedKeys.length === 0 && allowUnsigned) return true
+    try {
+      verifyApprovalSignature(doc, signature, { authorizedKeys, allowUnsigned: false })
+      return true
+    } catch (err) {
+      if (err instanceof ApprovalSignatureError) return false
+      throw err
+    }
+  }
+
+  /**
+   * Record a rejected (forged / unsigned / tampered) resolution as a best-effort
+   * `guard.approval.signature_rejected` audit event, deduped by `dedupKey` so a
+   * file/event that persists across polls is logged once. `feedArbiter: false`:
+   * this is a host status event, not an agent signal (matches the
+   * `guard.sentinel.failed` discipline). The dedup mark is set only AFTER a
+   * successful emit, so a transient writer failure leaves the request unmarked and
+   * a later poll retries the audit rather than losing it forever.
+   */
+  private async emitSignatureRejected(
+    dedupKey: string,
+    res: { request_id: string; action_id: string; approver_id: string },
+  ): Promise<void> {
+    if (this.warnedSignatureRejections.has(dedupKey)) return
+    try {
+      await this.emit(
+        "guard.approval.signature_rejected",
+        {
+          request_id: res.request_id,
+          action_id: res.action_id,
+          approver_id: res.approver_id,
+          reason: "approval signature verification failed against the pinned approver keys",
+          at: new Date().toISOString(),
+        },
+        { feedArbiter: false },
+      )
+      this.warnedSignatureRejections.add(dedupKey)
+    } catch {
+      // best-effort — leave unmarked so a later poll can retry the audit
     }
   }
 
@@ -1100,11 +1238,17 @@ export class MCPProxy {
    * path already has its event). `payload.at` carries the *approver's* decision
    * time from the outcome; the envelope timestamp (`emit`) is the proxy's write
    * time — the same record-vs-decision split `approval.expired@1` already uses.
-   * `reason` is omitted entirely when unset (canonical-hash discipline). An
+   * `reason` is omitted entirely when unset (canonical-hash discipline). The
+   * verified `signature` (when the resolution carried one) rides along so the
+   * promoted event is **self-verifying in the log** — a reader re-derives the
+   * canonical hash from the event and re-checks it against the pinned key. An
    * `expired` outcome never reaches here — the side-channel only carries
    * granted/denied; the deadline path emits `approval.expired@1` itself.
    */
-  private async emitCanonicalResolution(outcome: ApprovalOutcome): Promise<void> {
+  private async emitCanonicalResolution(
+    outcome: ApprovalOutcome,
+    signature?: Signature,
+  ): Promise<void> {
     const at = outcome.at ?? new Date().toISOString()
     if (outcome.kind === "granted") {
       const payload: ApprovalGrantedPayload = {
@@ -1114,6 +1258,7 @@ export class MCPProxy {
         at,
       }
       if (outcome.reason !== undefined) payload.reason = outcome.reason
+      if (signature !== undefined) payload.signature = signature
       await this.emit("approval.granted", payload)
     } else if (outcome.kind === "denied") {
       const payload: ApprovalDeniedPayload = {
@@ -1123,6 +1268,7 @@ export class MCPProxy {
         at,
       }
       if (outcome.reason !== undefined) payload.reason = outcome.reason
+      if (signature !== undefined) payload.signature = signature
       await this.emit("approval.denied", payload)
     }
   }
@@ -1630,37 +1776,66 @@ function delay(ms: number): Promise<void> {
  * none qualifies yet. First qualifying match wins — one resolution is expected
  * per request, and `ActionKernel.resolve()` re-validates the binding regardless.
  *
- * Two guards beyond the id match:
+ * Guards beyond the id match:
  * - **Deadline:** an event recorded *after* `notAfter` (the request's deadline)
  *   is skipped — a late grant is a timeout, not an approval.
  * - **Schema:** the payload is validated against the core
  *   `ApprovalGrantedPayloadSchema` / `ApprovalDeniedPayloadSchema`; a malformed
- *   event is skipped, never accepted with a fabricated `approver_id`. (This is
- *   shape validation, not a trust boundary against a process that can write the
- *   log — signing approval events is the deeper hardening, tracked separately.)
+ *   event is skipped, never accepted with a fabricated `approver_id`.
+ *
+ * Shape validation is *not* the trust boundary. `.approvals/` is a sibling of the
+ * NDJSON log under the same `log_root`, so a local writer who can forge a
+ * side-channel file can equally append a forged `approval.granted@1` to the log.
+ * The caller therefore runs the SAME Ed25519 signature gate on this log outcome
+ * as on a channel one (ADR-0010): this function returns the verification `doc`
+ * (the matched payload + its `kind`) and the event's `signature` + `eventId` so
+ * `waitForResolution` can verify it.
+ *
+ * `isRejected(eventId)` skips events a prior poll already rejected, so the scan
+ * continues PAST a forged event to a later *valid* signed log resolution for the
+ * same request — a forged event planted first must not permanently mask a genuine
+ * in-process / UI log approval that lands after it.
  */
 function resolutionOutcomeFor(
   events: EventEnvelope[],
   requestId: string,
   actionId: string,
   notAfter: string | undefined,
-): ApprovalOutcome | undefined {
+  isRejected: (eventId: string) => boolean,
+):
+  | {
+      outcome: ApprovalOutcome
+      doc: ApprovalResolutionDoc
+      signature: Signature | undefined
+      eventId: string
+    }
+  | undefined {
   for (const e of events) {
     if (e.type !== "approval.granted" && e.type !== "approval.denied") continue
     if (notAfter !== undefined && e.timestamp > notAfter) continue
+    if (isRejected(e.id)) continue
     const schema =
       e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
     const parsed = schema.safeParse(e.payload)
     if (!parsed.success) continue
     const p = parsed.data
     if (p.request_id !== requestId || p.action_id !== actionId) continue
+    const kind = e.type === "approval.granted" ? "granted" : "denied"
     return {
-      kind: e.type === "approval.granted" ? "granted" : "denied",
-      action_id: p.action_id,
-      request_id: p.request_id,
-      approver_id: p.approver_id,
-      reason: p.reason,
-      at: p.at,
+      outcome: {
+        kind,
+        action_id: p.action_id,
+        request_id: p.request_id,
+        approver_id: p.approver_id,
+        reason: p.reason,
+        at: p.at,
+      },
+      // The full parsed payload + kind is a superset of ApprovalResolutionDoc;
+      // `verifyApprovalSignature` rebuilds the canonical fields itself (so this
+      // can never drift from the signed field set), `signature` rides separately.
+      doc: { ...p, kind },
+      signature: p.signature,
+      eventId: e.id,
     }
   }
   return undefined

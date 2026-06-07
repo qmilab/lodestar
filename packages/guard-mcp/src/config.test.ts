@@ -4,7 +4,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
 import type { Policy } from "@qmilab/lodestar-core"
-import { SentinelArbiter, compile, compileWithSentinels } from "@qmilab/lodestar-guard"
+import {
+  SentinelArbiter,
+  compile,
+  compileWithSentinels,
+  generateApproverKeyPair,
+} from "@qmilab/lodestar-guard"
 import { SuspiciousMemoryOriginSentinel } from "@qmilab/lodestar-harness"
 import { type ProxyConfig, ProxyConfigSchema } from "./config.js"
 import { MCPProxy } from "./proxy.js"
@@ -55,6 +60,132 @@ describe("ProxyConfigSchema sentinels↔policy invariant", () => {
 
   it("accepts a config with no sentinels (the default)", () => {
     expect(ProxyConfigSchema.safeParse(rawConfig()).success).toBe(true)
+  })
+})
+
+describe("ProxyConfigSchema signed-approvals invariant", () => {
+  // A proxy that waits for an out-of-band resolution (approval_timeout_ms > 0)
+  // promotes whatever lands in the side-channel, whose approver_id is
+  // unauthenticated. Require either a pinned approver key or an explicit
+  // allow_unsigned opt-out — no silent default for a security setting.
+  it("rejects approval_timeout_ms > 0 with neither a pinned key nor allow_unsigned", () => {
+    const parsed = ProxyConfigSchema.safeParse(rawConfig({ approval_timeout_ms: 30_000 }))
+    expect(parsed.success).toBe(false)
+    if (!parsed.success) {
+      expect(parsed.error.issues[0]?.message).toContain("approval_timeout_ms > 0")
+    }
+  })
+
+  it("accepts approval_timeout_ms > 0 when an approver key is pinned", () => {
+    const parsed = ProxyConfigSchema.safeParse(
+      rawConfig({
+        approval_timeout_ms: 30_000,
+        approvals: {
+          authorized_keys: [{ actor_id: "operator", public_key: "-----BEGIN PUBLIC KEY-----\n…" }],
+        },
+      }),
+    )
+    expect(parsed.success).toBe(true)
+  })
+
+  it("accepts approval_timeout_ms > 0 under an explicit allow_unsigned opt-out", () => {
+    const parsed = ProxyConfigSchema.safeParse(
+      rawConfig({ approval_timeout_ms: 30_000, approvals: { allow_unsigned: true } }),
+    )
+    expect(parsed.success).toBe(true)
+  })
+
+  it("requires nothing when approval_timeout_ms is 0 (no side-channel promotion)", () => {
+    // The default config never waits, so it has no forgery surface and no
+    // approvals requirement.
+    expect(ProxyConfigSchema.safeParse(rawConfig()).success).toBe(true)
+  })
+})
+
+describe("MCPProxy constructor signed-approvals guard", () => {
+  // A direct `new MCPProxy(literal)` bypasses the schema superRefine, so the
+  // constructor re-enforces the signed-approvals requirement (same pattern as
+  // the persistence / sentinel guards).
+  it("throws on approval_timeout_ms > 0 with no pinned key and no allow_unsigned", () => {
+    expect(
+      () =>
+        new MCPProxy(rawConfig({ approval_timeout_ms: 30_000 }) as unknown as ProxyConfig, {
+          downstreamFactory: () => [],
+        }),
+    ).toThrow(/approval_timeout_ms > 0 lets the proxy promote/)
+  })
+
+  it("constructs when approval_timeout_ms is omitted entirely (coalesced to 0 — no wait, no forgery surface)", () => {
+    // A literal host that omits the field: the hold path coalesces it to 0 (never
+    // waits / promotes), so the gap predicate must not flag it. A bare `<= 0` test
+    // would read `undefined <= 0` as false and wrongly throw.
+    const cfg: Record<string, unknown> = {
+      project_id: "p",
+      actor_id: "a",
+      session_id: "s",
+      log_root: join(tmpdir(), "lodestar-cfg-test"),
+      default_scope: { level: "project", identifier: "p" },
+      default_sensitivity: "internal",
+      auto_approve_ceiling: 2,
+      downstream_servers: [{ name: "d", command: "x", args: [] }],
+      tool_defaults: {},
+      // approval_timeout_ms intentionally omitted
+    }
+    expect(
+      () => new MCPProxy(cfg as unknown as ProxyConfig, { downstreamFactory: () => [] }),
+    ).not.toThrow()
+  })
+
+  it("constructs when allow_unsigned is set explicitly", () => {
+    expect(
+      () =>
+        new MCPProxy(
+          rawConfig({
+            approval_timeout_ms: 30_000,
+            approvals: { authorized_keys: [], allow_unsigned: true },
+          }) as unknown as ProxyConfig,
+          { downstreamFactory: () => [] },
+        ),
+    ).not.toThrow()
+  })
+
+  it("constructs when a valid Ed25519 approver key is pinned", () => {
+    const { publicKeyPem } = generateApproverKeyPair()
+    expect(
+      () =>
+        new MCPProxy(
+          rawConfig({
+            approval_timeout_ms: 30_000,
+            approvals: {
+              authorized_keys: [{ actor_id: "operator", public_key: publicKeyPem }],
+              allow_unsigned: false,
+            },
+          }) as unknown as ProxyConfig,
+          { downstreamFactory: () => [] },
+        ),
+    ).not.toThrow()
+  })
+
+  it("throws on a pinned approver key that is not a valid Ed25519 PEM (operator misconfig fails loudly)", () => {
+    expect(
+      () =>
+        new MCPProxy(
+          rawConfig({
+            approval_timeout_ms: 30_000,
+            approvals: {
+              authorized_keys: [
+                {
+                  actor_id: "operator",
+                  public_key:
+                    "-----BEGIN PUBLIC KEY-----\nnot-a-real-key\n-----END PUBLIC KEY-----",
+                },
+              ],
+              allow_unsigned: false,
+            },
+          }) as unknown as ProxyConfig,
+          { downstreamFactory: () => [] },
+        ),
+    ).toThrow(/unparseable public key|expected ed25519/)
   })
 })
 

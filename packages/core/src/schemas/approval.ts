@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { SignatureSchema } from "./actor.js"
 import { TimestampSchema } from "./common.js"
 import { RequiredAuthoritySchema } from "./policy.js"
 
@@ -61,6 +62,18 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
  * The payload of an `approval.granted@1` event. The event *type* is the
  * verdict — there is no `approved` boolean. `reason` (the approver's note) is
  * omitted entirely when unset.
+ *
+ * `signature` is an optional Ed25519 signature over the canonical resolution
+ * document (`{ request_id, action_id, kind, approver_id, reason?, at }`),
+ * produced by the approver's private key. When present it makes the granted
+ * event **self-verifying in the log**: a reader can later re-check the grant
+ * came from an operator-pinned approver key, not merely trust that the proxy
+ * verified it at promotion time. Its `signer_id` equals `approver_id` (the same
+ * actor that resolved). Omitted entirely when unset (never `undefined`), so the
+ * canonical-hash discipline above carries through; the cross-process proxy path
+ * requires it (a forged side-channel grant cannot un-park an action), while the
+ * in-process resolver path may omit it (same trusted process, no forgery
+ * surface). Hash + verification live in `@qmilab/lodestar-policy-kernel`.
  */
 export const ApprovalGrantedPayloadSchema = z.object({
   request_id: z.string().min(1),
@@ -68,6 +81,9 @@ export const ApprovalGrantedPayloadSchema = z.object({
   approver_id: z.string().min(1).describe("actor_id of the resolver"),
   reason: z.string().min(1).optional().describe("approver's note; omitted entirely when unset"),
   at: TimestampSchema,
+  signature: SignatureSchema.optional().describe(
+    "Ed25519 signature over the canonical resolution; signer_id === approver_id; omitted entirely when unset",
+  ),
 })
 export type ApprovalGrantedPayload = z.infer<typeof ApprovalGrantedPayloadSchema>
 
@@ -75,7 +91,9 @@ export type ApprovalGrantedPayload = z.infer<typeof ApprovalGrantedPayloadSchema
  * The payload of an `approval.denied@1` event. Identical shape to
  * `approval.granted@1` — the verdict is carried by the event type, not a
  * field. Defined as its own schema (rather than re-exporting one shared
- * object) so the two event types stay independently evolvable.
+ * object) so the two event types stay independently evolvable. `signature`
+ * follows the same contract as the grant payload (a denial is also authority-
+ * bearing — it must not be forgeable into un-holding via a later grant either).
  */
 export const ApprovalDeniedPayloadSchema = z.object({
   request_id: z.string().min(1),
@@ -83,6 +101,9 @@ export const ApprovalDeniedPayloadSchema = z.object({
   approver_id: z.string().min(1).describe("actor_id of the resolver"),
   reason: z.string().min(1).optional().describe("approver's note; omitted entirely when unset"),
   at: TimestampSchema,
+  signature: SignatureSchema.optional().describe(
+    "Ed25519 signature over the canonical resolution; signer_id === approver_id; omitted entirely when unset",
+  ),
 })
 export type ApprovalDeniedPayload = z.infer<typeof ApprovalDeniedPayloadSchema>
 
