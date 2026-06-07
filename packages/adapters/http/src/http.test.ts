@@ -188,6 +188,56 @@ describe("redirect re-validation", () => {
     expect(out.url).toContain("***")
     expect(out.redirect_chain.join("|")).not.toContain(TOKEN)
   })
+
+  test("does not inject a second host's credential on a cross-host redirect", async () => {
+    // One loopback server addressed as two distinct pinned hosts. A request to
+    // 127.0.0.1 redirects to `localhost`; the localhost credential must NOT be
+    // injected on a target the first host chose (a confused-deputy guard).
+    const TOKEN_A = "tok_host_a_111"
+    const TOKEN_B = "tok_host_b_222"
+    const seen: { path: string; auth: string | null }[] = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        const u = new URL(req.url)
+        seen.push({ path: u.pathname, auth: req.headers.get("authorization") })
+        if (u.pathname === "/start") {
+          return new Response(null, {
+            status: 302,
+            headers: { location: `http://localhost:${u.port}/landed` },
+          })
+        }
+        return new Response("landed")
+      },
+    })
+    try {
+      const tool = makeHttpFetchTool({
+        allowedHosts: ["127.0.0.1", "localhost"],
+        allowHttp: true,
+        credentials: [
+          { host: "127.0.0.1", header: "Authorization", value: TOKEN_A },
+          { host: "localhost", header: "Authorization", value: TOKEN_B },
+        ],
+      })
+      await tool.execute({ url: `http://127.0.0.1:${server.port}/start` }, CTX)
+      expect(seen.find((s) => s.path === "/start")?.auth).toBe(TOKEN_A)
+      // cross-host redirect: the localhost credential is NOT injected.
+      expect(seen.find((s) => s.path === "/landed")?.auth).toBeNull()
+    } finally {
+      server.stop(true)
+    }
+  })
+
+  test("preserves HEAD across a 301/302/303 redirect (no silent GET downgrade)", async () => {
+    const dest = serve(() => new Response("body"))
+    const start = serve(
+      () => new Response(null, { status: 302, headers: { location: `${dest.base}/d` } }),
+    )
+    const tool = makeHttpFetchTool({ allowedHosts: PINNED, allowHttp: true })
+    await tool.execute({ url: `${start.base}/go`, method: "HEAD" }, CTX)
+    expect(dest.received.method).toBe("HEAD")
+  })
 })
 
 // -----------------------------------------------------------------------------

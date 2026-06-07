@@ -132,10 +132,19 @@ export async function performRequest(
     let method = opts.method.toUpperCase()
     let body = opts.body
     let hops = 0
+    // The host the agent/operator explicitly targeted. Credentials are bound to
+    // it: a server chooses where it redirects, so a cross-host redirect (even to
+    // another pinned host) must NOT carry that host's credential — otherwise one
+    // host could weaponise another's operator token (a confused-deputy).
+    const originalHost = initialUrl.hostname.toLowerCase()
     for (;;) {
-      // Re-resolve the operator credential for THIS host (never carry host A's
-      // token to host B), and accumulate its redactions.
-      const cred = await opts.credentials.resolveFor(url.hostname)
+      // Inject the operator credential ONLY while we are still on the original
+      // host. It is re-resolved per hop there (fresh secret each request); its
+      // redactions persist across the whole chain so a later echo stays redacted.
+      const onOriginalHost = url.hostname.toLowerCase() === originalHost
+      const cred = onOriginalHost
+        ? await opts.credentials.resolveFor(url.hostname)
+        : { headers: [] as ResolvedHeader[], redactions: [] as string[] }
       for (const r of cred.redactions) redactions.add(r)
 
       const headers = new Headers()
@@ -172,10 +181,12 @@ export async function performRequest(
         // against the operator pin — the per-hop SSRF/exfil guard. A non-pinned
         // redirect target throws here and the request never reaches it.
         const next = assertAllowedUrl(new URL(location, url).toString(), opts.policy, opts.tool)
-        // 307/308 preserve method + body; 301/302/303 degrade to GET with no body
-        // (matching browser behaviour for an unsafe method).
+        // 307/308 preserve method + body. 301/302/303 drop the body and degrade
+        // an UNSAFE method to GET (browser behaviour) — but a safe method keeps
+        // its verb: a HEAD must stay HEAD, so a metadata-only request does not
+        // start downloading the body across a redirect.
         if (resp.status !== 307 && resp.status !== 308) {
-          method = "GET"
+          if (method !== "GET" && method !== "HEAD") method = "GET"
           body = undefined
         }
         try {
