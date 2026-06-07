@@ -84,9 +84,11 @@ async function readCappedBody(
   redactions: string[],
 ): Promise<{ text: string; bytes: number; truncated: boolean }> {
   if (!resp.body) return { text: "", bytes: 0, truncated: false }
-  // Overlap = the longest redaction string, so a secret straddling the cap is
-  // fully captured for matching before we bound the output.
-  const overlap = redactions.reduce((m, r) => Math.max(m, r.length), 0)
+  // Overlap = the longest redaction string in BYTES (not UTF-16 chars — the read
+  // window is byte-oriented, and a multibyte secret's byte length exceeds its
+  // `.length`), so a secret straddling the cap is fully captured for matching
+  // before we bound the output.
+  const overlap = redactions.reduce((m, r) => Math.max(m, Buffer.byteLength(r, "utf8")), 0)
   const readLimit = maxBytes + overlap
   const reader = resp.body.getReader()
   const chunks: Uint8Array[] = []
@@ -121,10 +123,19 @@ async function readCappedBody(
   const truncated = hitLimit || captured > maxBytes
   const buf = Buffer.concat(chunks.map((c) => Buffer.from(c)))
   // Redact the FULL window (incl. the overlap) FIRST, so a boundary-straddling
-  // secret becomes `***`, THEN bound the redacted text to the cap.
+  // secret becomes `***`, THEN bound the redacted text to the cap by BYTES (the
+  // cap is a byte cap; slicing by chars could leave the body several× over it for
+  // multibyte content). Cutting already-redacted text can only drop trailing bytes
+  // — a `***` is ASCII and every secret in the window is already replaced — so a
+  // partial secret can never reappear (a cut multibyte tail is at worst a cosmetic
+  // replacement char).
   const redacted = applyRedactions(buf.toString("utf8"), redactions)
-  const text = truncated ? redacted.slice(0, maxBytes) : redacted
-  return { text, bytes: Math.min(captured, maxBytes), truncated }
+  const redactedBuf = Buffer.from(redacted, "utf8")
+  const text =
+    redactedBuf.byteLength > maxBytes
+      ? redactedBuf.subarray(0, maxBytes).toString("utf8")
+      : redacted
+  return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }
 }
 
 /** Snapshot response headers into a plain record, redacting values. */

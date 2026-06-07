@@ -303,9 +303,21 @@ describe("credentials", () => {
     })
     const out = await tool.execute({ url: `${s.base}/p` }, CTX)
     expect(out.body_truncated).toBe(true)
-    expect(out.body.length).toBeLessThanOrEqual(maxBytes)
     expect(out.body).not.toContain("sk_live") // not even a prefix survives
     expect(out.body).toContain("***")
+    expect(Buffer.byteLength(out.body, "utf8")).toBeLessThanOrEqual(maxBytes)
+  })
+
+  test("bounds the captured body by BYTES, not chars, for a multibyte response", async () => {
+    // The cap is a byte cap. A char-based slice would let a multibyte body run
+    // several× over it (each "é" is 2 bytes). 500 × "é" = 1000 bytes capped at 64.
+    const maxBytes = 64
+    const s = serve(() => new Response("é".repeat(500)))
+    const tool = makeHttpFetchTool({ allowedHosts: PINNED, allowHttp: true, maxBytes })
+    const out = await tool.execute({ url: `${s.base}/p` }, CTX)
+    expect(out.body_truncated).toBe(true)
+    expect(Buffer.byteLength(out.body, "utf8")).toBeLessThanOrEqual(maxBytes)
+    expect(out.body_bytes).toBeLessThanOrEqual(maxBytes)
   })
 
   test("an agent-supplied credential header cannot shadow the operator's", async () => {
