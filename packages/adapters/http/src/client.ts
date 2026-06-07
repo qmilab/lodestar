@@ -226,6 +226,17 @@ export async function performRequest(
         authenticated: cred.headers.length > 0,
       }
     }
+  } catch (err) {
+    // Redaction backstop. Some failures throw the raw offending string before
+    // any per-field redaction runs — a malformed redirect `Location`
+    // (`new URL(...)`) or an invalid credential header value (`Headers.set`),
+    // both of which Bun embeds verbatim in the error. The kernel records a
+    // thrown message in the failed-action audit, so a hostile server (or a
+    // newline-terminated secret) must not be able to smuggle the token there.
+    // `redactions` already holds the resolved credential(s) by the time any such
+    // throw can occur, so scrub the message before it escapes.
+    const message = err instanceof Error ? err.message : String(err)
+    throw new Error(applyRedactions(message, [...redactions]))
   } finally {
     clearTimeout(timer)
   }

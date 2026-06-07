@@ -330,6 +330,53 @@ describe("credentials", () => {
     expect(v).toContain("Bearer abc def") // raw
     expect(v).toContain("Bearer%20abc%20def") // percent-encoded
   })
+
+  test("redacts the credential when a malformed redirect Location throws", async () => {
+    const TOKEN = "sk_malformed_redirect_42"
+    // A Location with a space in the authority makes `new URL(...)` throw, and
+    // Bun embeds the raw (token-bearing) string in the error.
+    const start = serve(
+      (req) =>
+        new Response(null, {
+          status: 302,
+          headers: { location: `http://e e/cb?token=${req.headers.get("authorization")}` },
+        }),
+    )
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      credentials: [{ host: "127.0.0.1", header: "Authorization", value: TOKEN }],
+    })
+    let msg = "NO ERROR"
+    try {
+      await tool.execute({ url: `${start.base}/go` }, CTX)
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    expect(msg).not.toBe("NO ERROR") // it did throw
+    expect(msg).not.toContain(TOKEN) // ...with the token scrubbed from the message
+  })
+
+  test("redacts the credential when an invalid header value throws", async () => {
+    // A secret read from a file with a trailing newline → Headers.set throws,
+    // with the raw value in the message, before the network is touched.
+    const TOKEN = "sk_badheader_77\ntrailing"
+    const s = serve(() => new Response("ok"))
+    const tool = makeHttpFetchTool({
+      allowedHosts: PINNED,
+      allowHttp: true,
+      credentials: [{ host: "127.0.0.1", header: "Authorization", value: TOKEN }],
+    })
+    let msg = "NO ERROR"
+    try {
+      await tool.execute({ url: `${s.base}/p` }, CTX)
+    } catch (e) {
+      msg = e instanceof Error ? e.message : String(e)
+    }
+    expect(msg).not.toBe("NO ERROR")
+    expect(msg).not.toContain("sk_badheader_77")
+    expect(msg).not.toContain("trailing")
+  })
 })
 
 // -----------------------------------------------------------------------------
