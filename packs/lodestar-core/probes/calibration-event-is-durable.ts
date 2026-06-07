@@ -35,6 +35,11 @@
  *      is a faithful replay key: drift recorded today can be recomputed and
  *      diffed tomorrow.
  *
+ *   5. WELL-FORMED WINDOW — that replay key is only honest if the window is
+ *      valid. An inverted cursor (`to_seq < from_seq`) selects no events and is
+ *      rejected at the schema boundary; the degenerate empty window
+ *      (`from_seq === to_seq`) is the one accepted equality case.
+ *
  * What the probe deliberately does NOT assert:
  *
  *   - That any action was held or any belief downweighted. Recording a
@@ -308,6 +313,47 @@ async function run(): Promise<ProbeResult> {
     }
     details.push(
       `replayable: re-running calibrate over (${persisted.cursor.from_seq}, ${persisted.cursor.to_seq}] reproduced the verdict`,
+    )
+
+    // ── Assertion 5: an inverted cursor cannot be recorded. ──────────────
+    // The replay guarantee is only honest if the window is well-formed. A
+    // cursor with to_seq < from_seq selects no events and cannot reproduce a
+    // non-empty report, so the schema must reject it at the build boundary.
+    let rejectedInverted = false
+    try {
+      buildCalibrationComputedPayload({
+        report,
+        cursor: { from_seq: 5, to_seq: 2 },
+        computed_at: COMPUTED_AT,
+      })
+    } catch {
+      rejectedInverted = true
+    }
+    if (!rejectedInverted) {
+      return {
+        passed: false,
+        details: [
+          ...details,
+          "an inverted cursor (to_seq < from_seq) was accepted — the replay-window guarantee is unenforced.",
+        ],
+      }
+    }
+    // The degenerate empty window from_seq === to_seq is the valid boundary
+    // (the pass ran but observed nothing) and must still be accepted.
+    try {
+      buildCalibrationComputedPayload({
+        report,
+        cursor: { from_seq: 3, to_seq: 3 },
+        computed_at: COMPUTED_AT,
+      })
+    } catch {
+      return {
+        passed: false,
+        details: [...details, "a valid empty window (from_seq === to_seq) was rejected."],
+      }
+    }
+    details.push(
+      "cursor invariant held: inverted window rejected, empty window (from_seq === to_seq) accepted",
     )
 
     return { passed: true, details }

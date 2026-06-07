@@ -129,24 +129,34 @@ export type CalibrationTrigger = z.infer<typeof CalibrationTriggerSchema>
  * slice is the natural replay scope; a v0 calibration pass reads one
  * session.)
  */
-export const CalibrationCursorSchema = z.object({
-  from_seq: z
-    .number()
-    .int()
-    .min(-1)
-    .describe(
-      "Exclusive lower bound. The pass measured events with seq strictly greater than this; " +
-        "-1 means from the start of the partition.",
-    ),
-  to_seq: z
-    .number()
-    .int()
-    .min(-1)
-    .describe(
-      "Inclusive upper bound: the highest event seq included. Equal to from_seq when the " +
-        "window is empty (the pass ran but observed no events).",
-    ),
-})
+export const CalibrationCursorSchema = z
+  .object({
+    from_seq: z
+      .number()
+      .int()
+      .min(-1)
+      .describe(
+        "Exclusive lower bound. The pass measured events with seq strictly greater than this; " +
+          "-1 means from the start of the partition.",
+      ),
+    to_seq: z
+      .number()
+      .int()
+      .min(-1)
+      .describe(
+        "Inclusive upper bound: the highest event seq included. Equal to from_seq when the " +
+          "window is empty (the pass ran but observed no events).",
+      ),
+  })
+  // An inverted window `(from_seq, to_seq]` with `to_seq < from_seq` selects
+  // no events and cannot reproduce a non-empty report — it would persist a
+  // `calibration.computed@1` whose replay guarantee is a lie. Reject it at the
+  // boundary; the empty window `from_seq === to_seq` is the only equality case
+  // (the pass ran but observed nothing), and it satisfies this.
+  .refine((c) => c.to_seq >= c.from_seq, {
+    message: "to_seq must be >= from_seq (an inverted cursor selects no events)",
+    path: ["to_seq"],
+  })
 export type CalibrationCursor = z.infer<typeof CalibrationCursorSchema>
 
 /**
