@@ -1,8 +1,20 @@
+<div align="center">
+
 # Lodestar
 
-**The trust layer for AI agents.**
+### The trust layer for AI agents.
 
-Know what your agent believed, why it acted, and whether it was right.
+*Know what your agent believed, why it acted, and whether it was right.*
+
+[![npm](https://img.shields.io/npm/v/@qmilab/lodestar-core?label=npm&color=CB3837&logo=npm)](https://www.npmjs.com/package/@qmilab/lodestar-core)
+[![License](https://img.shields.io/badge/license-Apache--2.0-3b82f6)](LICENSE)
+[![Probes](https://img.shields.io/badge/probes-47%20passing-22c55e)](packs/)
+[![Runtime](https://img.shields.io/badge/runtime-Bun-000000?logo=bun&logoColor=white)](https://bun.sh)
+[![Docs](https://img.shields.io/badge/docs-qmilab.com-6366f1)](https://qmilab.com/lodestar/docs)
+
+[**Docs**](https://qmilab.com/lodestar/docs) · [**Quickstart**](#the-four-developer-entry-points) · [**Walkthrough**](https://qmilab.com/lodestar/docs/guides/walkthrough/) · [**Concepts**](https://qmilab.com/lodestar/docs/concepts/epistemic-chain/)
+
+</div>
 
 ---
 
@@ -28,7 +40,19 @@ Lodestar is a research project of [QMI Lab](https://qmilab.com).
 
 ## What it does
 
-Lodestar wraps an agent so that:
+Lodestar tracks the full **epistemic chain** — from what an agent observed to how it revised itself — and governs the two points that matter most: which beliefs become *trusted*, and which actions are *allowed to run*.
+
+```mermaid
+flowchart LR
+    O([Observation]) --> C([Claim]) --> E([Evidence]) --> B([Belief])
+    B --> D([Decision]) --> A([Action]) --> U([Outcome]) --> Rv([Revision])
+    Rv -. revises .-> B
+    FW[Memory Firewall]:::gov -. gates promotion .-> B
+    PK[Policy Kernel]:::gov -. holds L4 for approval .-> A
+    classDef gov fill:#1f6feb,stroke:#1f6feb,color:#ffffff;
+```
+
+It wraps an agent so that:
 
 1. **Tool calls are mediated.** Every action the agent attempts passes through a typed contract, a policy check, and (if needed) an approval step before it executes.
 2. **Observations become claims.** When a tool returns, its output is extracted into structured claims — propositions the agent might come to believe.
@@ -83,6 +107,20 @@ const agent = guard.wrap({
 
 Risky actions run through the Policy Kernel (`@qmilab/lodestar-policy-kernel`): an L4 egress — a `git push`, an `http.request`, a Slack post — is **held** at `pending_approval` until an approval is granted. Native governed adapters for git, http, nostr, messaging, and shell ship in the box.
 
+```mermaid
+flowchart LR
+    Agent([agent tool call]) --> K{{Policy Kernel gate}}
+    K -->|allow| Run[execute]
+    K -->|hold L4| Wait[/await signed approval/]
+    K -->|deny| Refuse[refuse]
+    Wait -->|granted| Run
+    Run --> Log[(event log)]
+    Refuse --> Log
+    Log --> Read([reports, viewer, OTel])
+    classDef hold fill:#f59e0b,stroke:#b45309,color:#000000;
+    class Wait hold
+```
+
 Or wrap any MCP-speaking agent (Claude Code, Cursor, Aider) with **no changes to the agent**, via the stdio MCP proxy:
 
 ```
@@ -121,9 +159,9 @@ lodestar harness run --pack coding-agent-safety
 
 ---
 
-## License
+## What's in the box
 
-These packages and their dependencies are licensed under **Apache 2.0**:
+All 22 packages and their dependencies are licensed under **Apache 2.0**:
 
 - `@qmilab/lodestar-core` (schemas)
 - `@qmilab/lodestar-event-log`
