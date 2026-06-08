@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-shell",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Governed shell-command tool adapter for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
