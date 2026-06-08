@@ -36,7 +36,17 @@ Specific sentinels watch for poisoning signatures:
 - Clusters of memories from one source all advocating the same brand, behaviour, or unsafe action.
 - Memories whose embedding similarity to retrieval queries is anomalously high relative to their content.
 
-Sentinel findings raise `Incident` events with structured response procedures.
+Three sentinels ship today — `low-confidence-action`, `suspicious-memory-origin`,
+and `anomalous-tool-sequence`. Their findings are recorded as structured alerts in
+the audit trail (escalating to an `Incident` for serious signatures). On their own
+they *observe* rather than block — but when a host wires the sentinel arbiter (both
+`guard.wrap()` and the MCP proxy do), an alert flows through the [Policy
+Kernel](../policy-kernel.md)'s **arbitrate hook** and **holds** the dependent
+action at `pending_approval`. So a poisoning signature can do more than flag a
+memory: it can stop the next action that leans on it. The arbitrate hook only ever
+*tightens* a verdict — a misfiring sentinel costs an extra approval prompt but can
+never open an action the policy would have held. See [sentinels and
+calibration](../sentinels-and-calibration.md).
 
 ### 4. Probes as continuous evaluation
 
