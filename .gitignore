@@ -2,6 +2,7 @@ node_modules/
 .lodestar/
 dist/
 build/
+_site/
 *.tsbuildinfo
 
 # Claude Code / agent-tool per-machine settings — keep `.claude/` tracked

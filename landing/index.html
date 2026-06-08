@@ -1,0 +1,804 @@
+<!doctype html>
+<!--
+  Lodestar landing page — served at https://qmilab.com/lodestar/
+
+  Why this lives here, hand-vendored and self-contained:
+  This repo's GitHub Pages site owns the whole /lodestar/* path on the apex
+  domain (it takes precedence over the org site qmilab.github.io for that
+  prefix). The docs build lands at /lodestar/docs/; this file lands at the
+  /lodestar/ root so that path is not a 404. The docs.yml workflow copies
+  landing/. into the Pages artifact root before upload.
+
+  CSS is INLINED on purpose. The original page (in the qmilab-site Astro repo)
+  linked the apex's hash-named stylesheet, e.g. /_assets/global.<hash>.css —
+  that hash changes on every org-site rebuild, so a vendored copy referencing
+  it would silently break. Inlining removes that cross-repo dependency. The
+  logo is vendored locally for the same reason. Favicons/manifest/og-image are
+  stable apex filenames served by the org site, so they stay apex-absolute.
+
+  Content source of truth is this file. The old src/pages/lodestar.astro in
+  qmilab-site is now shadowed/unreachable and should be removed there.
+-->
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="An open-source framework that records what an autonomous agent observed, claimed, believed, and decided — and lets you audit the chain after the fact."
+    />
+    <title>Lodestar — QMI Lab</title>
+    <link rel="canonical" href="https://qmilab.com/lodestar/" />
+
+    <!-- Fonts: EB Garamond (headings), IBM Plex Sans (body), IBM Plex Mono (labels) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=EB+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=IBM+Plex+Sans:ital,wght@0,300;0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content="Lodestar — QMI Lab" />
+    <meta
+      property="og:description"
+      content="An open-source framework that records what an autonomous agent observed, claimed, believed, and decided — and lets you audit the chain after the fact."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://qmilab.com/lodestar/" />
+    <meta property="og:image" content="https://qmilab.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="QMI Lab — Quantum & Machine Intelligence Laboratory" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Lodestar — QMI Lab" />
+    <meta
+      name="twitter:description"
+      content="An open-source framework that records what an autonomous agent observed, claimed, believed, and decided — and lets you audit the chain after the fact."
+    />
+    <meta name="twitter:image" content="https://qmilab.com/og-image.png" />
+
+    <!-- Favicon & Icons (stable apex filenames, served by the org site) -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#1B2A4A" />
+
+    <style>
+      /* ---- Design tokens + base (mirrors qmilab-site global.css) ---- */
+      :root {
+        --deep-navy: #1b2a4a;
+        --accent-blue: #2e75b6;
+        --dark-gray: #2a2a2a;
+        --med-gray: #5a5a5a;
+        --light-gray: #f7f7f7;
+        --border-gray: #d8d8d8;
+        --white: #ffffff;
+        --font-heading: "EB Garamond", "Georgia", "Times New Roman", serif;
+        --font-body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        --font-mono: "IBM Plex Mono", "JetBrains Mono", "Fira Code", "Consolas", monospace;
+        --space-xs: 0.25rem;
+        --space-sm: 0.5rem;
+        --space-md: 1rem;
+        --space-lg: 2rem;
+        --space-xl: 3rem;
+        --space-2xl: 5rem;
+        --max-width: 720px;
+        --max-width-wide: 960px;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        font-size: 16px;
+        scroll-behavior: smooth;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+
+      body {
+        font-family: var(--font-body);
+        color: var(--dark-gray);
+        background: var(--white);
+        line-height: 1.75;
+        font-weight: 400;
+      }
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
+        font-family: var(--font-heading);
+        color: var(--deep-navy);
+        line-height: 1.25;
+        font-weight: 500;
+      }
+
+      h1 {
+        font-size: 2.75rem;
+        margin-bottom: var(--space-lg);
+        letter-spacing: -0.01em;
+      }
+
+      h2 {
+        font-size: 1.75rem;
+        margin-bottom: var(--space-md);
+        margin-top: var(--space-2xl);
+      }
+
+      p {
+        margin-bottom: var(--space-md);
+        max-width: 65ch;
+      }
+
+      a {
+        color: var(--accent-blue);
+        text-decoration: none;
+        transition: color 0.15s ease;
+      }
+
+      a:hover {
+        color: var(--deep-navy);
+        text-decoration: underline;
+      }
+
+      strong {
+        font-weight: 600;
+      }
+
+      blockquote {
+        border-left: 2px solid var(--deep-navy);
+        padding-left: var(--space-lg);
+        margin: var(--space-xl) 0;
+        color: var(--med-gray);
+        font-style: italic;
+      }
+
+      .container {
+        max-width: var(--max-width);
+        margin: 0 auto;
+        padding: 0 var(--space-lg);
+      }
+
+      .container--wide {
+        max-width: var(--max-width-wide);
+        margin: 0 auto;
+        padding: 0 var(--space-lg);
+      }
+
+      .divider {
+        border: none;
+        border-top: 1px solid var(--border-gray);
+        width: 100%;
+        margin: var(--space-xl) 0;
+      }
+
+      @media (max-width: 768px) {
+        :root {
+          --max-width: 100%;
+          --space-2xl: 3rem;
+        }
+        h1 {
+          font-size: 2rem;
+        }
+        h2 {
+          font-size: 1.4rem;
+        }
+        .container,
+        .container--wide {
+          padding: 0 var(--space-md);
+        }
+      }
+
+      /* ---- Nav + footer (mirrors qmilab-site Base.astro) ---- */
+      .nav {
+        position: sticky;
+        top: 0;
+        background: var(--white);
+        border-bottom: 1px solid var(--border-gray);
+        z-index: 100;
+        padding: var(--space-md) 0;
+      }
+
+      .nav__inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+
+      .nav__logo {
+        display: flex;
+        align-items: center;
+        text-decoration: none;
+      }
+
+      .nav__logo-img {
+        height: 32px;
+        width: auto;
+      }
+
+      .nav__logo:hover {
+        text-decoration: none;
+      }
+
+      .nav__links {
+        display: flex;
+        gap: var(--space-lg);
+      }
+
+      .nav__links a {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        font-weight: 400;
+        color: var(--med-gray);
+        text-decoration: none;
+        letter-spacing: 0.03em;
+        text-transform: lowercase;
+      }
+
+      .nav__links a:hover {
+        color: var(--deep-navy);
+        text-decoration: none;
+      }
+
+      .footer {
+        margin-top: var(--space-2xl);
+        padding: var(--space-xl) 0;
+        border-top: 1px solid var(--border-gray);
+      }
+
+      .footer__inner {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-md);
+      }
+
+      .footer__brand {
+        font-family: var(--font-heading);
+        font-size: 0.95rem;
+        color: var(--deep-navy);
+      }
+
+      .footer__sep {
+        color: var(--border-gray);
+        margin: 0 0.25em;
+      }
+
+      .footer__links {
+        display: flex;
+        gap: var(--space-lg);
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+      }
+
+      .footer__copy {
+        font-family: var(--font-mono);
+        font-size: 0.75rem;
+        color: var(--med-gray);
+      }
+
+      @media (max-width: 768px) {
+        .nav__links {
+          gap: var(--space-md);
+        }
+        .nav__links a {
+          font-size: 0.72rem;
+        }
+      }
+
+      @media (max-width: 600px) {
+        .nav {
+          padding: var(--space-sm) 0;
+        }
+        .nav__inner {
+          flex-direction: column;
+          align-items: center;
+          gap: var(--space-sm);
+        }
+        .nav__links {
+          flex-wrap: wrap;
+          justify-content: center;
+          gap: var(--space-sm) var(--space-md);
+        }
+      }
+
+      /* ---- Lodestar page (mirrors qmilab-site lodestar.astro) ---- */
+      .lodestar {
+        padding-bottom: var(--space-2xl);
+      }
+
+      .lodestar__back {
+        display: inline-block;
+        font-family: var(--font-mono);
+        font-size: 0.8rem;
+        color: var(--accent-blue);
+        margin-top: var(--space-xl);
+        margin-bottom: var(--space-xl);
+      }
+
+      .lodestar__header {
+        padding: var(--space-xl) 0 var(--space-lg);
+      }
+
+      .lodestar__kicker {
+        font-family: var(--font-mono);
+        font-size: 0.78rem;
+        color: var(--accent-blue);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        margin-bottom: var(--space-sm);
+        max-width: none;
+      }
+
+      .lodestar__header h1 {
+        font-size: clamp(2.5rem, 5vw, 3.5rem);
+        font-weight: 500;
+        margin-bottom: var(--space-xs);
+      }
+
+      .lodestar__tagline {
+        font-family: var(--font-heading);
+        font-style: italic;
+        font-size: 1.25rem;
+        color: var(--med-gray);
+        margin-bottom: var(--space-xl);
+        max-width: none;
+      }
+
+      .lodestar__meta {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: var(--space-sm) var(--space-lg);
+        font-family: var(--font-mono);
+        font-size: 0.82rem;
+        max-width: none;
+        margin: 0;
+      }
+
+      .lodestar__meta dt {
+        color: var(--med-gray);
+        letter-spacing: 0.04em;
+      }
+
+      .lodestar__meta dd {
+        color: var(--dark-gray);
+        margin: 0;
+      }
+
+      .lodestar__section {
+        padding: var(--space-xl) 0;
+      }
+
+      .lodestar__section h2 {
+        margin-top: 0;
+      }
+
+      .lodestar__section p {
+        max-width: 65ch;
+        font-size: 1.0125rem;
+        line-height: 1.85;
+      }
+
+      .lodestar__section code {
+        font-family: var(--font-mono);
+        font-size: 0.92em;
+        color: var(--deep-navy);
+        background: var(--light-gray);
+        padding: 0.1em 0.35em;
+        border-radius: 2px;
+      }
+
+      .lodestar__chain {
+        margin: var(--space-lg) 0;
+        padding: var(--space-md) var(--space-lg);
+        border-left: 2px solid var(--accent-blue);
+      }
+
+      .lodestar__chain p {
+        font-family: var(--font-mono);
+        font-size: 0.95rem;
+        color: var(--deep-navy);
+        max-width: none;
+        margin: 0;
+        line-height: 1.6;
+      }
+
+      .lodestar__list {
+        list-style: none;
+        padding: 0;
+        margin: var(--space-md) 0 var(--space-lg) 0;
+      }
+
+      .lodestar__list li {
+        padding-left: 1.5em;
+        position: relative;
+        margin-bottom: var(--space-md);
+        line-height: 1.85;
+        max-width: 65ch;
+        font-size: 1.0125rem;
+      }
+
+      .lodestar__list li::before {
+        content: "—";
+        position: absolute;
+        left: 0;
+        color: var(--accent-blue);
+      }
+
+      .lodestar__list strong {
+        color: var(--deep-navy);
+      }
+
+      .lodestar__list--plain li::before {
+        content: "·";
+        font-weight: 700;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="nav__inner container--wide">
+        <a href="/" class="nav__logo"><img src="logo.png" alt="QMI Lab" class="nav__logo-img" /></a>
+        <div class="nav__links">
+          <a href="/#research">Research</a>
+          <a href="/#publications">Publications</a>
+          <a href="/#collaborate">Collaborate</a>
+          <a href="/manifesto">Manifesto</a>
+          <a href="/lodestar/docs/">Docs</a>
+        </div>
+      </div>
+    </nav>
+
+    <main>
+      <article class="lodestar">
+        <div class="container">
+          <a href="/" class="lodestar__back">← Back to main site</a>
+
+          <header class="lodestar__header">
+            <p class="lodestar__kicker">Applied project</p>
+            <h1>Lodestar</h1>
+            <p class="lodestar__tagline">A trust layer for AI agents.</p>
+            <dl class="lodestar__meta">
+              <dt>Status</dt>
+              <dd>v0.2.0 — 22 packages on npm; v0.2 architecture locked</dd>
+              <dt>License</dt>
+              <dd>Apache 2.0</dd>
+              <dt>Repository</dt>
+              <dd>
+                <a href="https://github.com/qmilab/lodestar" target="_blank" rel="noopener"
+                  >github.com/qmilab/lodestar</a
+                >
+              </dd>
+              <dt>Documentation</dt>
+              <dd><a href="/lodestar/docs/">qmilab.com/lodestar/docs</a></dd>
+            </dl>
+          </header>
+
+          <hr class="divider" />
+
+          <!-- OPENING -->
+          <section class="lodestar__section">
+            <p>
+              Most agent stacks today are built from three layers: a runtime that picks tools and
+              calls them, a memory store that holds recalled material, and an observability platform
+              that captures traces. Each of these layers is excellent at its own job. But the stack
+              still rarely records the question that matters most when something goes wrong:
+            </p>
+
+            <blockquote>
+              <p>
+                <em
+                  >What did the agent believe, why did it believe it, and what evidence supported
+                  that belief at the moment it acted?</em
+                >
+              </p>
+            </blockquote>
+
+            <p>
+              Lodestar is built for that missing record. It sits alongside the runtime, memory, and
+              observability stack, and its job is to capture and audit the agent's
+              <strong>epistemic state</strong>: the structured record of what the agent took to be
+              true, why, and how confidently.
+            </p>
+
+            <p>
+              The project is the first applied output from QMI Lab. It operationalizes one specific
+              lever of the lab's broader thesis — that the central problem in machine intelligence is
+              the conversion of information into knowledge — and brings that thesis into contact with
+              a class of working systems, autonomous agents, where the conversion is currently too
+              often invisible.
+            </p>
+          </section>
+
+          <hr class="divider" />
+
+          <!-- THE PROBLEM -->
+          <section class="lodestar__section">
+            <h2>The problem</h2>
+
+            <p>
+              When an agent does something unexpected, the post-mortem question is usually some
+              version of "what was it thinking?" Standard agent infrastructure can answer adjacent
+              questions — <em>what did it do, what was in its context, what did it retrieve</em> — but
+              not the central one.
+            </p>
+
+            <p>
+              The reason is structural. A tool-call trace records actions. A memory dump records
+              retrievable material. A prompt log records what was sent to the model. The transition
+              from <em>the model said this</em> to <em>the agent now acts as if this is true</em>
+              often happens implicitly, somewhere in the overlap between context and weights, and is
+              not written down as a structured artifact. It exists only as the consequence of
+              subsequent actions.
+            </p>
+
+            <p>This creates three concrete problems for anyone running agents in production:</p>
+
+            <ul class="lodestar__list">
+              <li>
+                <strong>Post-mortems are unreliable.</strong> When an agent makes a costly mistake,
+                the trail of evidence often does not include the belief that drove the mistake.
+                Reviewers reconstruct the belief by inference, often poorly.
+              </li>
+              <li>
+                <strong>Memory poisoning lacks a clear audit boundary.</strong> A class of attacks
+                plants attacker-controlled text in external documents the agent reads. The text
+                contains claims that the agent may later extract and treat as factual. Without a
+                record distinguishing observations the agent <em>witnessed</em> from documents it
+                <em>read</em>, the attack may leave no trace apart from its downstream effects.
+              </li>
+              <li>
+                <strong>Trust does not transfer cleanly.</strong> An agent that performs well on a
+                benchmark may still be deciding for opaque reasons. The reviewer who would extend
+                trust to its decisions cannot, because the basis for those decisions is not legible.
+              </li>
+            </ul>
+
+            <p>
+              These are not simply gaps in observability dashboards. They are gaps in what the agent
+              stack records at all.
+            </p>
+          </section>
+
+          <hr class="divider" />
+
+          <!-- WHAT LODESTAR DOES -->
+          <section class="lodestar__section">
+            <h2>What Lodestar does</h2>
+
+            <p>Lodestar treats agent cognition as a chain of typed steps:</p>
+
+            <blockquote class="lodestar__chain">
+              <p>Observation → Claim → Evidence → Belief → Decision → Action → Outcome → Revision</p>
+            </blockquote>
+
+            <p>
+              Each step is a first-class data structure with its own schema. When an agent invokes a
+              tool, the result is captured as an Observation. From Observations the agent extracts
+              Claims, each of which is supported by an Evidence Set of varying quality: a
+              deterministic tool result is stronger than a model judgment, which is stronger than a
+              snippet quoted from a third-party document.
+            </p>
+
+            <p>
+              Claims become Beliefs only when the evidence is sufficient and the governance layer
+              permits the promotion. Beliefs inform Decisions. Decisions yield Actions. Actions
+              produce Outcomes. When Outcomes contradict prior Claims, Revisions flow back through the
+              chain.
+            </p>
+
+            <p>
+              This is not just a logging schema. It is a runtime invariant: an agent running under
+              Lodestar cannot promote a model-generated claim directly to a settled belief without
+              passing through an explicit gate. The gate enforces, among other things, that evidence
+              sourced from external documents — the agent's reading material — cannot silently become
+              ground truth.
+            </p>
+
+            <p>The framework exposes its capabilities through four developer entry points:</p>
+
+            <ul class="lodestar__list">
+              <li>
+                <strong>Guard</strong> — wraps an existing agent loop and routes every tool call
+                through the Action Kernel, every observation through the Cognitive Core, and every
+                belief transition through the Memory Firewall.
+              </li>
+              <li>
+                <strong>Trace</strong> — consumes the resulting event log and produces a trust
+                report. The package is <code>@qmilab/lodestar-trace</code>; the user-facing CLI
+                command is <code>lodestar report</code>. The output is a human-readable account of
+                what the agent observed, claimed, believed, decided, and did, with every transition
+                justified by its supporting evidence.
+              </li>
+              <li>
+                <strong>Memory Firewall</strong> — provides governance over four orthogonal lifecycle
+                axes — truth, retrieval, security, and freshness — for any piece of remembered
+                information, with adapter contracts for existing memory stores such as mem0, Letta,
+                and Zep.
+              </li>
+              <li>
+                <strong>Harness</strong> — the test side: probes, sentinels, and calibrators. Probes
+                exercise the governance invariants under adversarial conditions; sentinels watch the
+                live event stream and can gate dependent actions; the calibrator measures how well
+                the agent's prior claims about outcomes matched the outcomes that actually occurred.
+              </li>
+            </ul>
+
+            <p>
+              The reference implementation is in TypeScript, runs on Bun, and persists the event log
+              as append-only NDJSON with monotonic sequence numbers and payload hashes. Integration
+              with non-TypeScript runtimes — Python agents, Claude Code, Cursor, Aider, and others —
+              happens through a Model Context Protocol proxy mode that wraps the underlying tool
+              surface.
+            </p>
+          </section>
+
+          <hr class="divider" />
+
+          <!-- STATUS -->
+          <section class="lodestar__section">
+            <h2>Status</h2>
+
+            <p>
+              The project is at <strong>v0.2.0, published to npm as twenty-two packages</strong>, with
+              the v0.2 architecture locked. The architectural spine went through five rounds of
+              structured adversarial review before implementation began; the implementation has since
+              caught up to it:
+            </p>
+
+            <ul class="lodestar__list lodestar__list--plain">
+              <li>The full schema layer for the epistemic chain is present.</li>
+              <li>The append-only event log and two-phase action execution are present.</li>
+              <li>
+                The Memory Firewall with its four lifecycle axes is present, over both in-memory and
+                Postgres backends.
+              </li>
+              <li>
+                The Cognitive Core primitives are present: claim extraction, belief adoption, and
+                world-model update.
+              </li>
+              <li>
+                The Policy Kernel enforces the trust ladder, a three-valued allow / deny / hold gate,
+                and a signed-approval lifecycle — with sentinels that watch the live event stream and
+                a calibrator that scores how well prior claims matched outcomes.
+              </li>
+              <li>
+                Forty-seven governance invariants are encoded as automated probes that all pass under
+                strict TypeScript — memory-poisoning resistance, epistemic-chain integrity,
+                external-document retrieval gating, quarantine isolation, sensitivity-ceiling
+                enforcement, the auto-observation evidence-quality gate, and forty-one more spanning
+                the Policy Kernel, the MCP proxy, and the native egress adapters.
+              </li>
+            </ul>
+
+            <p>
+              Lodestar wraps an existing agent two ways: <code>guard.wrap()</code> for a TypeScript
+              loop it can see inside, and a Model Context Protocol proxy for runtimes it cannot —
+              Claude Code, Cursor, Aider, Python agents. The first end-to-end demonstration, a coding
+              agent governed from tool call to trust report, ships in the repository as
+              <code>examples/telenotes-governed-dev/</code>, including a hostile-document variant that
+              the firewall holds without ever promoting the poison into trusted context.
+            </p>
+
+            <p>
+              The full roadmap, including the post-v1 harness infrastructure and the trust
+              marketplace, lives in the project repository and the
+              <a href="/lodestar/docs/">documentation site</a>.
+            </p>
+          </section>
+
+          <hr class="divider" />
+
+          <!-- RESEARCH ARC -->
+          <section class="lodestar__section">
+            <h2>Research arc</h2>
+
+            <p>
+              Lodestar is both a shipping software project and an active research program. The project
+              is the substrate for several lines of inquiry the lab is pursuing:
+            </p>
+
+            <ul class="lodestar__list">
+              <li>
+                <strong>Epistemic governance as infrastructure.</strong> A position paper drafting the
+                case that the agent stack is missing a fourth layer, and arguing for its structural
+                separation from runtime, memory, and observability. Target: 2026.
+              </li>
+              <li>
+                <strong>A threat taxonomy for memory poisoning.</strong> A structured analysis of the
+                attack class where adversarial text plants itself in agent-readable documents and
+                propagates into agent beliefs. The taxonomy distinguishes the attack surface, the
+                propagation mechanism, and the defense locus for each variant. Target: 2026.
+              </li>
+              <li>
+                <strong>Calibration in governed agents.</strong> Empirical work measuring how well an
+                agent's prior claims about outcomes match the outcomes that actually occurred, across a
+                corpus of governed sessions. Target: 2027 and beyond, once a sufficient corpus has
+                accumulated.
+              </li>
+            </ul>
+
+            <p>
+              The research outputs and the software outputs feed each other. The probes that ship in
+              the harness are operationalizations of invariants the threat model identified; the
+              events the calibrator measures are the data the empirical work depends on.
+            </p>
+          </section>
+
+          <hr class="divider" />
+
+          <!-- ENGAGING -->
+          <section class="lodestar__section">
+            <h2>Engaging with the project</h2>
+
+            <p>
+              The repository is open:
+              <a href="https://github.com/qmilab/lodestar" target="_blank" rel="noopener"
+                >github.com/qmilab/lodestar</a
+              >. Apache 2.0. The framework can be cloned, installed with Bun, and run against the
+              included examples — <code>examples/telenotes-governed-dev/</code> demonstrates the full
+              pipeline end-to-end, and <code>examples/doc-insight/</code> focuses on the
+              auto-observation gate in isolation.
+            </p>
+
+            <p>
+              The <a href="/lodestar/docs/">documentation</a> covers getting started, the core
+              concepts, and a reader's
+              <a href="/lodestar/docs/guides/walkthrough/">walkthrough</a> of a full governed session
+              from tool call to trust report.
+            </p>
+
+            <p>
+              A series of writing on the design and the adversarial review process behind it is being
+              published at
+              <a href="https://nandan.me/writing" target="_blank" rel="noopener"
+                >nandan.me/writing</a
+              >.
+            </p>
+
+            <p>
+              Issues, design questions, and threat-model contributions are welcome through the
+              repository. Substantial architectural changes should come with concrete failure cases,
+              threat-model evidence, or implementation experience.
+            </p>
+
+            <p>
+              For research collaborations, lab affiliations, or commercial inquiries related to hosted
+              and enterprise versions of the framework, contact the lab through
+              <a href="/">qmilab.com</a>.
+            </p>
+          </section>
+        </div>
+      </article>
+    </main>
+
+    <footer class="footer">
+      <div class="container">
+        <div class="footer__inner">
+          <div class="footer__brand">
+            <strong>QMI Lab</strong>
+            <span class="footer__sep">&mdash;</span>
+            Quantum &amp; Machine Intelligence Laboratory
+          </div>
+          <div class="footer__links">
+            <a href="mailto:hello@qmilab.com">hello@qmilab.com</a>
+            <a href="https://github.com/qmilab" target="_blank" rel="noopener">GitHub</a>
+          </div>
+          <div class="footer__copy">&copy; 2026 QMI Lab</div>
+        </div>
+      </div>
+    </footer>
+  </body>
+</html>
