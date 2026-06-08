@@ -1,6 +1,6 @@
 ---
 title: "The trust ladder"
-description: "How Lodestar rates an action's risk on a six-rung ladder, gates it through a typed contract and two-phase execution, and what enforces that today versus what the Policy Kernel will add."
+description: "How Lodestar rates an action's risk on a six-rung ladder, gates it through a typed contract and two-phase execution, and how the Policy Kernel's three-valued gate enforces that today."
 ---
 
 # The trust ladder
@@ -95,22 +95,25 @@ gate an action. It has landed, with both hold-resolution paths wired:
 
 Two honest caveats for anyone running the **proxy** today:
 
-- **No reference resolver ships yet, and a separate-process writer isn't
-  seq-safe.** With `approval_timeout_ms` left at its default of 0 the proxy
-  doesn't wait at all — it surfaces the hold as `approval_required` immediately.
-  Set a positive timeout to enable waiting, but note: an *in-process* resolver
-  is safe today, whereas a *separate* process appending the resolution to the
-  same log can collide on event sequence numbers (the event-log writer's
-  cross-process locking is the prerequisite the `lodestar approve` CLI will
-  bring). Until then, resolve holds in-process.
-- **The `sandbox` declaration is intent, not enforcement.** The contract declares a
-  sandbox profile, but in v0 no namespace/cgroup/container layer enforces it. Run
-  downstream tools inside your own OS-level sandbox until the sandbox runtime
-  lands (it graduates with the shell adapter).
+- **A separate-process resolution writes a signed side-channel, not the log.**
+  With `approval_timeout_ms` left at its default of 0 the proxy doesn't wait at
+  all — it surfaces the hold as `approval_required` immediately. Set a positive
+  timeout to enable waiting. The [`lodestar approve`](../reference/cli.md#approve-resolve-a-held-approval-out-of-band)
+  CLI then resolves a hold out of band by writing a **signed** side-channel
+  resolution that the proxy verifies (against operator-pinned Ed25519 approver
+  keys) and promotes — so the proxy stays the sole event-log writer and there is
+  no cross-process sequence collision. A forged, unsigned, or tampered grant
+  cannot un-park the hold.
+- **The `sandbox` declaration is a TS-level boundary, not OS enforcement.** The
+  native adapters (shell, git, http, nostr, messaging) enforce their invariants in
+  TypeScript — argv-only exec, allowlists, scoped env, destination pinning,
+  bounded capture — but no namespace/cgroup/container layer backs them in v0. Run
+  downstream tools inside your own OS-level sandbox where you need hard isolation.
 
-The ladder, the contract schema, the gate, the approval lifecycle, and both
-hold-resolution paths exist now; what remains is the `lodestar approve` reference
-resolver, the team approval surface, and OS-level sandbox enforcement.
+The ladder, the contract schema, the gate, the approval lifecycle, signed approval
+resolutions, both hold-resolution paths, and the `lodestar approve` side-channel
+resolver all exist now; what remains is the team approval surface and OS-level
+sandbox enforcement.
 
 ## Related
 

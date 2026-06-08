@@ -61,7 +61,12 @@ Use Claude Code or OpenClaw to run the agent. Use Lodestar to make its actions a
 
 ## The four developer entry points
 
-Lodestar is one architecture, exposed through four developer-facing packages:
+Lodestar is one architecture, exposed through four developer-facing packages. Everything is published to npm under the `@qmilab/lodestar-*` scope (Apache-2.0); the CLI is Bun-native, so install with Bun:
+
+```sh
+bun add @qmilab/lodestar-guard       # the write side, in code
+bun add -g @qmilab/lodestar-cli      # the `lodestar` CLI (report, view, guard, harness, …)
+```
 
 ### `@qmilab/lodestar-guard`
 The **write side**. Wraps agent tool calls, captures observations, gates risky actions, records the epistemic chain. This is the first thing most developers adopt.
@@ -76,11 +81,12 @@ const agent = guard.wrap({
 })
 ```
 
-Or as a CLI wrapping any coding agent:
+Risky actions run through the Policy Kernel (`@qmilab/lodestar-policy-kernel`): an L4 egress — a `git push`, an `http.request`, a Slack post — is **held** at `pending_approval` until an approval is granted. Native governed adapters for git, http, nostr, messaging, and shell ship in the box.
+
+Or wrap any MCP-speaking agent (Claude Code, Cursor, Aider) with **no changes to the agent**, via the stdio MCP proxy:
 
 ```
-lodestar init
-lodestar guard run -- claude code "fix the failing test"
+lodestar guard mcp-proxy --config lodestar.proxy.json
 ```
 
 ### `@qmilab/lodestar-trace`
@@ -89,6 +95,8 @@ The **read side**. Consumes the event log and produces "why did the agent do thi
 ```
 lodestar report <session-id>
 ```
+
+For a live view, `@qmilab/lodestar-viewer` serves the same chain as a local, strictly read-only web UI (`lodestar view`), and `@qmilab/lodestar-otel-exporter` projects a session into OpenTelemetry GenAI spans (`lodestar otel export`) for LangSmith / Langfuse / Phoenix.
 
 ### `@qmilab/lodestar-memory-firewall`
 The **memory governance entry point**. Works alongside [mem0](https://github.com/mem0ai/mem0), [Letta](https://github.com/letta-ai/letta), [Zep](https://github.com/getzep/zep), or custom memory layers. Decides what beliefs to adopt, retrieve, quarantine, or block — with audited transitions on four lifecycle axes (truth, retrieval, security, freshness).
@@ -108,24 +116,26 @@ await adapter.importMemories(mem0Export, importOptions)
 **Probes, sentinels, and calibrators.** Safety tests, runtime monitors, and confidence-vs-outcome measurement. The natural surface for community-shared trust packs.
 
 ```
-lodestar harness run --pack memory-poisoning
+lodestar harness run --pack coding-agent-safety
 ```
 
 ---
 
 ## License
 
-The four packages above and their dependencies are licensed under **Apache 2.0**:
+These packages and their dependencies are licensed under **Apache 2.0**:
 
 - `@qmilab/lodestar-core` (schemas)
 - `@qmilab/lodestar-event-log`
 - `@qmilab/lodestar-action-kernel`
-- `@qmilab/lodestar-memory-firewall`
+- `@qmilab/lodestar-policy-kernel`
+- `@qmilab/lodestar-memory-firewall` (plus the mem0 / Letta / Zep import adapters)
 - `@qmilab/lodestar-cognitive-core`
-- `@qmilab/lodestar-guard`
-- `@qmilab/lodestar-trace`
+- `@qmilab/lodestar-guard` and `@qmilab/lodestar-guard-mcp` (the MCP proxy)
+- `@qmilab/lodestar-trace`, `@qmilab/lodestar-viewer` (the read-side Governing UI), and `@qmilab/lodestar-otel-exporter`
 - `@qmilab/lodestar-harness`
-- All built-in adapters (Git, GitHub, filesystem, shell, Langfuse, Phoenix, OTel)
+- `@qmilab/lodestar-cli`
+- The native governed adapters: `filesystem`, `git` transport, `shell`, `nostr`, `http`, `messaging`
 - Example probe packs and research benchmarks
 - Policy language and replay
 
@@ -135,7 +145,7 @@ Everything runs locally — free, Apache-2.0, no hosted service and no account r
 
 ## Status
 
-**v0.1.5 implementation, v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch. Batches 1 through 5 complete.**
+**v0.2.0 — published to npm (22 packages via CI trusted publishing), v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch.** Batches 1–5 are complete, and the post-v1 build track has landed: sentinel→action wiring, the Policy Kernel, five native egress adapters, the read-side Governing UI, the OpenTelemetry exporter, signed approval resolutions, and a durable calibration event.
 
 What ships today:
 
@@ -148,9 +158,16 @@ What ships today:
 - ✅ `@qmilab/lodestar-guard-mcp` — **stdio MCP proxy** that wraps any MCP-speaking agent (Claude Code, Cursor, Aider) without code changes to the agent. Every `tools/call` runs through the Action Kernel; every result through the Cognitive Core. (Batch 3.)
 - ✅ `@qmilab/lodestar-trace` — `lodestar report <session-id>` renders a markdown trust report from any event log
 - ✅ Stub adapters for mem0, Letta, and Zep under `packages/memory-firewall/adapters/` — design contracts plus one working `importMemories` method each
-- ✅ Reorganised CLI: `lodestar report`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`, `lodestar harness run --pack <name>`
+- ✅ **The Policy Kernel** (`@qmilab/lodestar-policy-kernel`) — a three-valued gate (allow / deny / **hold**) compiled from a signed policy document, with a trust-ladder floor, the approval lifecycle, and an arbitrate hook that lets sentinel alerts and calibration flags strengthen (never weaken) a decision. An L4 action stays at `pending_approval` until an approval is granted, and a granted approval still revalidates preconditions before it runs.
+- ✅ **Signed approval resolutions** — out-of-band approvals carry an Ed25519 signature verified against operator-pinned approver keys, so a forged, unsigned, or tampered grant cannot un-park a held L4 across a process boundary.
+- ✅ **Sentinel → action wiring** — a real sentinel alert (e.g. `suspicious-memory-origin`) flows through the gate's arbitrate hook to actually **hold** the dependent action, in both `guard.wrap()` (agent-declared decisions) and the MCP proxy (synthesized decisions for an opaque agent).
+- ✅ **Five native, governed egress adapters**, each a TS-level governance boundary holding its invariants through the kernel — an L4 egress stays held until approved, the credential never surfaces in inputs/observation, and destinations are operator-pinned: `git` transport (`commit`/`push`/`clone`), `nostr` (`publish`/`fetch`), `http` (`request`/`fetch`, with per-hop redirect re-validation against SSRF), `messaging` (`slack.post`/`email.send`), and `shell`.
+- ✅ **The read-side Governing UI** (`@qmilab/lodestar-viewer`, `lodestar view`) — a local, **strictly read-only** web viewer over the event log (Elysia + a no-build SPA): surfaces the chain and pending approvals, exposes no mutation route, and never writes the log.
+- ✅ **OpenTelemetry export** (`@qmilab/lodestar-otel-exporter`, `lodestar otel export`) — projects a session into OTLP/HTTP-JSON GenAI spans (action-centric), with a sensitivity-ceiling export gate (content above the ceiling ships as metadata + a payload hash only).
+- ✅ **Durable calibration** — a calibration pass is recorded as a governed `calibration.computed@1` event (audit + replay via a cursor window), with the Calibrator staying strictly measure-only.
+- ✅ Reorganised CLI: `lodestar report`, `lodestar view`, `lodestar otel export`, `lodestar guard wrap`, `lodestar guard mcp-proxy --config <path>`, `lodestar approve list/grant/deny`, `lodestar action list/describe`, `lodestar trace inspect`, `lodestar probe <name>`, `lodestar harness run/list/calibrate`, `lodestar reflect`
 - ✅ `@qmilab/lodestar-harness` (Batch 4) — probe-pack format + loader, the `Probe` base class + pack runner driven by `lodestar harness run`, the `Sentinel` base class and three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), and the `Calibrator` (per-class ECE / Brier / calibration-gap tables). The three sentinels are folded into the `coding-agent-safety` pack — the manifest declares them by id under a `sentinels` field and the loader resolves each against the first-party registry. Reflection has landed in the cognitive core.
-- ✅ **Twenty-two** passing probes under strict TypeScript across two packs. Eighteen in the first-party pack `packs/lodestar-core/`: nine firewall/guard probes from earlier batches, three pre-Batch-3 invariants (`context-policy-contradiction-routing`, `kernel-context-propagation`, `event-log-single-writer`), two MCP probes (`mcp-proxy-roundtrip`, `mcp-proxy-injection-defense` — the centerpiece of Batch 3), three Batch 4 probes (`reflection-cannot-promote-to-normal-alone`, `contradicted-belief-flags-dependent-decisions`, `event-log-canonical-hash`), and one Batch 5 probe (`documentation-evidence-provenance`). The other four live in the first non-core pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`, `tool-poisoning-cross-session`, `confidence-drift` (the one that drives the Calibrator), and `poisoned-file-cannot-hijack-feature-work` (the Batch 5 governed-dev no-hijack invariant).
+- ✅ **Forty-seven** passing probes under strict TypeScript across two packs. Forty-three live in the first-party pack `packs/lodestar-core/`: the firewall/guard/contract probes and pre-Batch-3 invariants from earlier batches, the two MCP-proxy probes, the Batch 4/5 probes, fourteen Policy Kernel probes (the three-valued gate, the trust-ladder floor, the approval lifecycle, signature verification, and the signed-approval forgery boundary), the host-side sentinel→action wiring probes, the read-side viewer's read-only probe, the two OTel-exporter probes, one probe per native adapter (shell, git, nostr, http, messaging — each driving the real adapter through the real kernel), and the durable-calibration probe. The other four live in the non-core pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`, `tool-poisoning-cross-session`, `confidence-drift` (the one that drives the Calibrator), and `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack invariant). Probes are spec, not test scaffolding.
 - ✅ End-to-end examples:
   - `examples/telenotes-governed-dev/` — the headline governed-dev pipeline: a coding agent adds a feature through the MCP proxy (observe → decide → edit → test → commit → blocked-L4-push), plus a self-verifying poison run and a captured real-Claude-Code run
   - `examples/documentation-agent/` — claim/evidence provenance over documentation content via the `DocAwareEvidenceLinker` cognitive seam
@@ -174,10 +191,10 @@ Read the docs at **[qmilab.com/lodestar/docs](https://qmilab.com/lodestar/docs)*
 bun install
 bun run example:telenotes:scripted   # governed-dev: wrap a coding agent → trust report
 bun run example:telenotes:poison     # the same run + a poisoned file → firewall HELD
-bun run probes:ci                     # all 22 probes (both packs)
+bun run probes:ci                     # all 47 probes (both packs)
 ```
 
-All twenty-two probes pass. (One — `tool-poisoning-cross-session` — needs a Postgres test database: it reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when that is unset; CI runs it against a `postgres:16` service.) The governed-dev runs render a full epistemic-chain trust report (committed under `examples/telenotes-governed-dev/reports/`); the poison run additionally self-verifies the firewall and prints `firewall verdict: HELD`.
+All forty-seven probes pass. (One — `tool-poisoning-cross-session` — needs a Postgres test database: it reads `LODESTAR_TEST_DATABASE_URL` and skips with a loud banner when that is unset; CI runs it against a `postgres:16` service.) The governed-dev runs render a full epistemic-chain trust report (committed under `examples/telenotes-governed-dev/reports/`); the poison run additionally self-verifies the firewall and prints `firewall verdict: HELD`.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 title: "CLI reference"
-description: "Every lodestar command — report, guard, action, trace, probe, harness, reflect — with its arguments, flags, and exit codes."
+description: "Every lodestar command — report, view, otel export, guard, approve, action, trace, probe, harness, reflect — with its arguments, flags, and exit codes."
 ---
 
 # CLI reference
@@ -17,14 +17,20 @@ Run `lodestar help` (or `--help` / `-h`) for the built-in usage summary.
 
 ```
 lodestar report <session-id> [--project <id>] [--log-root <path>] [--out <file>]
+lodestar view [session-id] [--log-root <path>] [--port <n>] [--open]
+lodestar otel export <session-id> [--endpoint <url>] [--sensitivity-ceiling <level>]
 lodestar guard wrap --target <module> [--project <id>] [--actor <id>]
 lodestar guard mcp-proxy --config <path>
+lodestar approve list --project <id> [--log-root <path>]
+lodestar approve grant <request-id> --approver <id> --project <id>
+lodestar approve deny  <request-id> --approver <id> --project <id>
 lodestar action list
 lodestar action describe <action-id>
 lodestar trace inspect <event-id> [--project <id>] [--session <id>]
 lodestar probe <name>
 lodestar harness run [--pack <name|path>] [--log-root <path>] [--no-record]
 lodestar harness list [--pack <name|path>]
+lodestar harness calibrate <session-id> [--project <id>] [--no-emit] [--out <file>]
 lodestar reflect <session-id> [--since-seq <n>] [--trigger <name>] [--json]
 lodestar help
 ```
@@ -46,6 +52,46 @@ meant to be pasted into a GitHub issue or a Slack message.
 
 ```sh
 lodestar report session-1779551238212
+```
+
+## `view` — the read-side Governing UI
+
+Serve a local, **strictly read-only** web viewer over the event log: the session
+list, the interactive chain drill-down, the markdown report, an event-type filter,
+a live tail over Server-Sent Events, and a read-only view of pending approvals. It
+binds to loopback by default (the log can carry `secret`-sensitivity beliefs) and
+exposes **no** mutation route. The live, interactive sibling of `report`.
+
+| Flag | Alias | Meaning |
+| --- | --- | --- |
+| `--log-root <path>` | `-l` | Event-log root directory |
+| `--port <n>` | | Port to bind (default 4319; `0` for an ephemeral port) |
+| `--open` | | Open the viewer in your browser |
+
+```sh
+lodestar view
+```
+
+## `otel export` — OpenTelemetry GenAI spans
+
+Project a session into OpenTelemetry GenAI spans and emit them as **OTLP/HTTP
+JSON** — POST to a collector, or `--out` / `--stdout` for a collector-free dry run.
+Action-centric: the session is the root `invoke_agent` span, each governed Action an
+`execute_tool` child carrying the policy verdict, trust level, and outcome. Honours
+the export **sensitivity ceiling** — content above it ships as structural metadata +
+a payload hash only.
+
+| Flag | Alias | Meaning |
+| --- | --- | --- |
+| `--endpoint <url>` | | OTLP/HTTP collector endpoint to POST spans to |
+| `--sensitivity-ceiling <level>` | | Withhold content above this level (default `internal`) |
+| `--out <file>` | `-o` | Write the OTLP payload to a file |
+| `--stdout` | | Print the OTLP payload to stdout (collector-free dry run) |
+| `--project <id>` | `-p` | Project partition |
+| `--log-root <path>` | `-l` | Event-log root directory |
+
+```sh
+lodestar otel export session-1779551238212 --stdout
 ```
 
 ## `guard` — wrap an agent run
@@ -73,6 +119,28 @@ Cursor, Aider) without code changes; see
 
 ```sh
 lodestar guard mcp-proxy --config ./lodestar-mcp-proxy.config.json
+```
+
+## `approve` — resolve a held approval out of band
+
+When an L4 action is **held** at `pending_approval`, a separate-process approver
+resolves it. `approve list` shows the pending queue; `approve grant` / `approve deny`
+write a **signed** resolution that the proxy verifies against operator-pinned
+approver keys before promoting — a forged, unsigned, or tampered grant cannot
+un-park the hold. The proxy stays the sole event-log writer.
+
+| Subcommand | Flags | Meaning |
+| --- | --- | --- |
+| `approve list` | `--project <id>`, `--log-root <path>` | List requests awaiting approval |
+| `approve grant <request-id>` | `--approver <id>`, `--project <id>`, `--key <path>` | Grant, signed with the approver's key |
+| `approve deny <request-id>` | `--approver <id>`, `--project <id>`, `--key <path>` | Deny the request |
+| `approve keygen` | `--approver <id>`, `--out <path>` | Generate an Ed25519 approver keypair |
+
+The signing key is read from `--key` or `LODESTAR_APPROVER_KEY` — never from argv.
+
+```sh
+lodestar approve list --project my-project
+lodestar approve grant req-abc123 --approver alice --project my-project
 ```
 
 ## `action` — introspect the tool catalogue
@@ -125,7 +193,9 @@ lodestar probe chain
 
 `harness run` runs every probe in a [pack](probe-packs.md), recording each run as a
 synthetic observation so the run is itself auditable. `harness list` inspects a
-pack's manifest without executing anything.
+pack's manifest without executing anything. `harness calibrate <session-id>` scores
+the session's confidence-vs-outcome and records a durable `calibration.computed@1`
+event (`--no-emit` previews without writing; `--out <file>` writes the report).
 
 | Flag | Meaning |
 | --- | --- |
@@ -137,6 +207,7 @@ pack's manifest without executing anything.
 ```sh
 lodestar harness run --pack lodestar-core
 lodestar harness list --pack coding-agent-safety
+lodestar harness calibrate session-1779551238212
 ```
 
 ## `reflect` — dry-run a reflection pass

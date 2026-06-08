@@ -1,6 +1,6 @@
 # Lodestar — Roadmap
 
-This roadmap defines the sequence from the current pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report").
+This roadmap defined the sequence from the original pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). That sequence — Batches 1–5 plus the post-v1 build track — is complete and published as **v0.2.0 on npm**; what remains is the publish/research track tracked under "Post-v1" below.
 
 Last updated: post-strategy review with ChatGPT.
 
@@ -8,7 +8,7 @@ Last updated: post-strategy review with ChatGPT.
 
 ## Where we are
 
-The current scaffold passes a typecheck under strict TypeScript and runs twenty-two probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. v0.1.5 of the 13 pre-Batch-3 packages is on npm via CI trusted publishing; `@qmilab/lodestar-guard-mcp` ships with Batch 3 in this repository and will be published in a separate mini-marathon after the code stabilises. The architecture is settled — what follows is implementation work, not redesign.
+The implementation passes a typecheck under strict TypeScript and runs forty-seven probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. **v0.2.0 — all 22 packages — is on npm via CI trusted publishing** (the integrated release: the eight net-new post-v0.1.5 packages — `policy-kernel`, `harness`, `viewer`, `otel-exporter`, and the shell/nostr/http/messaging adapters — plus the updated `guard`/`cli` that wire them in). Batches 1–5 and the post-v1 build track (sentinel→action wiring, the Policy Kernel, five native egress adapters, the read-side viewer, the OTel exporter, signed approval resolutions, and a durable calibration event) have all landed. The architecture is settled — what follows is the publish/research track.
 
 Concrete state:
 - Schema layer for the full epistemic chain
@@ -18,7 +18,7 @@ Concrete state:
 - Cognitive core: extractors, evidence linker, world model, ingestion orchestrator, Round 5 auto-observation gate
 - **MCP proxy (Batch 3): `lodestar guard mcp-proxy --config <path>`** — wraps any MCP-speaking agent (Claude Code, Cursor, Aider) so its tool calls flow through the Action Kernel and its tool results through the Cognitive Core, with `mcp.tool_result@1` observations carrying separate `tool_result`-quality envelope claims and `external_document`-quality content claims
 - **Harness (Batch 4, done): `lodestar harness run --pack <name>`** — probe-pack format + loader, the `Probe` base class + pack runner, the `Sentinel` base class + three sentinels (`low-confidence-action`, `suspicious-memory-origin`, `anomalous-tool-sequence`), reflection in the cognitive core, the Postgres-backed belief/claim/evidence stores, `tool-poisoning-cross-session` (with the proxy/`guard.wrap()` Postgres wiring it rides on), the `Calibrator` plus the `confidence-drift` probe it gates, and the three sentinels folded into the `coding-agent-safety` pack (declared by id under the manifest's `sentinels` field, resolved against the first-party registry) have all landed.
-- Twenty-two passing probes — eighteen in the first-party pack `packs/lodestar-core/`:
+- Forty-seven passing probes — forty-three in the first-party pack `packs/lodestar-core/` (full list in [`reference/probe-packs.md`](reference/probe-packs.md); the foundational set:)
   - memory poisoning resistance
   - epistemic chain smoke test
   - external document not normal-retrievable
@@ -349,6 +349,44 @@ Work past the v1 line, tracked here as it lands:
   containment**; SMTP is intentionally not implemented (email rides an HTTP API,
   the common production path). Locked by the
   `messaging-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0009.
+
+- **The Policy Kernel** — ✅ landed (`packages/policy-kernel/`,
+  `@qmilab/lodestar-policy-kernel`). The three-valued gate (allow / deny /
+  **hold**) compiled from a signed policy document, with the trust-ladder floor,
+  the approval lifecycle, and the arbitrate hook the sentinel/calibration wiring
+  below plugs into. The L4 hold every native egress above relies on is its work.
+  Fourteen probes lock the gate, the floor, the lifecycle, and signature
+  verification.
+
+- **Sentinel → action wiring (P1)** — ✅ landed. The host-side bridge that runs
+  the harness sentinels over the live event stream and feeds their alerts (and
+  calibration flags) through the Policy Kernel's arbitrate hook, so a real alert
+  actually **holds** the dependent action — in both `guard.wrap()` (agent-declared
+  decisions) and the MCP proxy (synthesized decisions for an opaque agent that
+  can't declare its own). Locked by `guard-arbiter-gates-dependent-action` and
+  `mcp-proxy-arbiter-gates-dependent-action`. Design lock: ADR-0001 / 0002 / 0003.
+
+- **Security hardening (P3) — signed approval resolutions** — ✅ landed.
+  Out-of-band approvals carry an **Ed25519** signature verified against
+  operator-pinned approver keys, so a forged, unsigned, or tampered grant cannot
+  un-park a held L4 across a process boundary — the first real crypto forgery
+  boundary (the earlier policy-signature path was an injected placeholder). The
+  same gate covers both the side-channel and the sibling event log. Locked by
+  `forged-approval-cannot-execute`. Design lock: ADR-0010.
+
+- **Security hardening (P3) — durable calibration event** — ✅ landed. A
+  calibration pass is recorded as a governed `calibration.computed@1` event
+  (audit + replay via a cursor window), with the Calibrator staying strictly
+  measure-only — the same measure→record split as the sentinels. Deliberately
+  unsigned in v0 (audit/replay, not a forgery boundary). Locked by
+  `calibration-event-is-durable`. Design lock: ADR-0011.
+
+- **First npm publish — v0.2.0** — ✅ done. All 22 packages are on npm via CI
+  trusted publishing — the integrated release that wires the eight net-new
+  post-v0.1.5 packages (`policy-kernel`, `harness`, `viewer`, `otel-exporter`,
+  and the shell/nostr/http/messaging adapters) into the updated `guard`/`cli`.
+  A net-new package name needs a one-time manual bootstrap publish before
+  trusted publishing can attach, then CI drives every subsequent release.
 
 ## What this roadmap explicitly does not include
 
