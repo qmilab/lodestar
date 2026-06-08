@@ -48,6 +48,8 @@ nav:
       - Reading isn't believing: concepts/reading-isnt-believing.md
       - The memory firewall: concepts/memory-firewall.md
       - The trust ladder: concepts/trust-ladder.md
+      - "The Policy Kernel & approvals": concepts/policy-kernel.md
+      - "Governed egress & native adapters": concepts/governed-egress.md
       - Sentinels and calibration: concepts/sentinels-and-calibration.md
       - Memory poisoning: concepts/threat-model/memory-poisoning.md
   - Reference:

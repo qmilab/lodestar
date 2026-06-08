@@ -1,0 +1,16 @@
+<svg width="280" height="72" viewBox="0 0 280 72" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Lodestar">
+  <title>Lodestar</title>
+  <defs>
+    <linearGradient id="ls-g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5aa2ff"/>
+      <stop offset="1" stop-color="#1f6feb"/>
+    </linearGradient>
+  </defs>
+  <!-- lodestar: a four-point compass / north star with a bright focal center -->
+  <g transform="translate(34,36)" fill="url(#ls-g)">
+    <path d="M0,-30 L6.5,-6.5 L30,0 L6.5,6.5 L0,30 L-6.5,6.5 L-30,0 L-6.5,-6.5 Z"/>
+    <circle cx="0" cy="0" r="3.4" fill="#ffffff" opacity="0.92"/>
+  </g>
+  <text x="74" y="49" font-family="'Segoe UI', system-ui, Helvetica, Arial, sans-serif"
+        font-size="40" font-weight="600" letter-spacing="0.3" fill="url(#ls-g)">Lodestar</text>
+</svg>

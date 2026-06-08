@@ -1,6 +1,6 @@
 ---
 title: "Probe packs"
-description: "The lodestar.probe-pack.json manifest format, the loader, and the full list of 22 probes and 3 sentinels across the two first-party packs."
+description: "The lodestar.probe-pack.json manifest format, the loader, and the full list of 47 probes and 3 sentinels across the two first-party packs."
 ---
 
 # Probe packs
@@ -13,8 +13,9 @@ satisfying them.
 
 The two first-party packs live in `packs/`:
 
-- **`lodestar-core`** — the core epistemic-chain, memory-firewall, guard, and
-  event-log invariants (18 probes).
+- **`lodestar-core`** — the core epistemic-chain, memory-firewall, guard,
+  event-log, Policy Kernel, sentinel-wiring, adapter, and read-side invariants
+  (43 probes).
 - **`coding-agent-safety`** — the "wrap a coding agent" story: prompt injection,
   tool poisoning, confidence drift, plus the three first-party sentinels (4 probes
   + 3 sentinels).
@@ -64,7 +65,9 @@ against the built-in `FIRST_PARTY_SENTINELS` registry. v0 does not support
 third-party sentinels or `npm`-sourced packs — both are reserved for the post-v1
 registry.
 
-## The 18 probes in `lodestar-core`
+## The 43 probes in `lodestar-core`
+
+**Firewall, epistemic-chain, guard, and event-log invariants** (Batches 1–5):
 
 | Probe | Pins |
 | --- | --- |
@@ -87,6 +90,56 @@ registry.
 | `event-log-canonical-hash` | canonical payload hashing is stable |
 | `documentation-evidence-provenance` | doc claims carry their evidence provenance |
 
+**Policy Kernel, the trust ladder, and the approval lifecycle:**
+
+| Probe | Pins |
+| --- | --- |
+| `l4-action-requires-approval` | an L4 action is held at `pending_approval`, never executed outright |
+| `l4-floor-preserves-stricter-rule` | the trust-ladder floor keeps the stricter of rule vs. ladder |
+| `pending-approval-cannot-execute` | a held action can't run until it's granted |
+| `ladder-floor-overrides-allow-rule` | the ladder floor overrides a too-permissive allow rule |
+| `unmatched-action-defaults-to-deny` | an action no rule matches defaults to deny |
+| `policy-version-signature-required` | a policy document must carry a valid signature |
+| `granted-approval-still-revalidates-preconditions` | a granted approval still re-checks preconditions before running |
+| `guard-hold-resolves-via-resolver` | a held action resolves through the in-process approval-resolver seam |
+| `approval-timeout-denies` | a hold with no approval times out to a denial |
+| `approval-via-side-channel` | a separate-process `lodestar approve` resolution un-parks the hold |
+| `forged-approval-cannot-execute` | a forged / unsigned / tampered approval can't un-park a held L4 (Ed25519) |
+| `proxy-hold-carries-rule-authority` | a held action carries its matched rule's required authority |
+
+**Sentinel→action and calibration→action wiring:**
+
+| Probe | Pins |
+| --- | --- |
+| `sentinel-alert-gates-dependent-action` | a sentinel alert holds the dependent action at the gate |
+| `calibration-flag-escalates-action` | a calibration flag strengthens the gate decision |
+| `guard-arbiter-gates-dependent-action` | a real sentinel → `guard.wrap()` host → the dependent action is held |
+| `mcp-proxy-arbiter-gates-dependent-action` | the MCP-proxy analogue — a synthesized decision holds the poisoned dependent call |
+
+**Read side — the viewer and OTel export:**
+
+| Probe | Pins |
+| --- | --- |
+| `viewer-is-read-only` | the viewer surfaces the chain + pending approvals but never writes the log |
+| `otel-export-respects-sensitivity-ceiling` | content above the ceiling exports as metadata + payload hash only |
+| `otel-export-projects-action-spans` | a session projects to the action-centric span tree |
+
+**Native governed adapters** (each drives the real adapter through the real kernel):
+
+| Probe | Pins |
+| --- | --- |
+| `shell-adapter-enforces-sandbox-invariants` | the shell adapter's TS-level sandbox (no host env, argv-only, timeout, bounded capture) |
+| `git-adapter-enforces-egress-invariants` | git transport — L4 push held, remote pinning beats a poisoned `.git/config`, no credential leak |
+| `nostr-adapter-enforces-egress-invariants` | nostr — relay pinning, in-process BIP-340 signing, the key never on the wire |
+| `http-adapter-enforces-egress-invariants` | http — hostname pinning + per-hop redirect re-validation against SSRF, host-bound credential |
+| `messaging-adapter-enforces-egress-invariants` | messaging — destination pinning, operator-fixed sender, no redirect following |
+
+**Durable calibration:**
+
+| Probe | Pins |
+| --- | --- |
+| `calibration-event-is-durable` | a calibration pass records a durable, replayable `calibration.computed@1` event |
+
 ## The 4 probes + 3 sentinels in `coding-agent-safety`
 
 | Probe | Pins |
@@ -104,7 +157,7 @@ registry.
 
 ## The Postgres-backed probe
 
-All 22 probes pass under strict TypeScript. One —
+All 47 probes pass under strict TypeScript. One —
 **`tool-poisoning-cross-session`** — exercises the Postgres-backed belief store
 across two sessions, so it reads `LODESTAR_TEST_DATABASE_URL` and **skips with a
 loud banner** (exit 0) when that variable is unset. CI runs it for real against a

@@ -112,15 +112,17 @@ Being precise about current state:
 
 | Status | Packages |
 | --- | --- |
-| **Built** | `core`, `event-log`, `action-kernel`, `cognitive-core`, `memory-firewall` (+ `mem0`/`letta`/`zep` adapters), `guard`, `guard-mcp`, `trace`, `harness`, `cli`, adapters `git` + `filesystem` |
-| **Placeholder (empty dirs)** | `policy-kernel`, `otel-exporter`, adapters `github` / `shell` / `nostr` |
+| **Built & published (v0.2.0)** | `core`, `event-log`, `action-kernel`, `policy-kernel`, `cognitive-core`, `memory-firewall` (+ `mem0`/`letta`/`zep` adapters), `guard`, `guard-mcp`, `trace`, `viewer`, `otel-exporter`, `harness`, `cli`, native adapters `filesystem` / `git` / `shell` / `nostr` / `http` / `messaging` |
+| **Reserved (not yet built)** | adapter `github` — the forge *API* surface (PRs / issues / releases) behind a `ForgeProvider` seam; git *transport* already ships in `adapter-git` (ADR-0006) |
 
-The **Policy Kernel** is the most significant gap: real policy enforcement is still
-stubbed in the Action Kernel as a single
-[auto-approve ceiling](../concepts/trust-ladder.md#what-enforces-the-ladder-today).
-The full trust ladder, the L4 approval workflow, and OS-level sandbox enforcement
-land with it (post-v1). The `otel-exporter` is the planned "pair with
-Langfuse/Phoenix" bridge.
+The **Policy Kernel** has landed: real three-valued enforcement (allow / deny /
+**hold**), the trust-ladder floor, the L4 approval workflow, signed approval
+resolutions, and the arbitrate hook the sentinels and calibrator plug into. The
+TS-level adapter sandboxes are governance boundaries, **not** OS-level
+containment — namespace / cgroup / network enforcement stays a later concern. The
+`otel-exporter` ships the "pair with Langfuse/Phoenix" bridge (`lodestar otel
+export`), and the read-side `viewer` (`lodestar view`) is the live, strictly
+read-only Governing UI over the log.
 
 ## Stack invariants
 

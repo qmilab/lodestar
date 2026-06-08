@@ -20,6 +20,10 @@ become "fact."
   auto-observation gate.
 - [The memory firewall](concepts/memory-firewall.md) — the four lifecycle axes.
 - [The trust ladder](concepts/trust-ladder.md) — how actions are gated.
+- [The Policy Kernel & approvals](concepts/policy-kernel.md) — the three-valued
+  gate and the signed-approval lifecycle.
+- [Governed egress & native adapters](concepts/governed-egress.md) — git, http,
+  nostr, messaging, and shell, held at L4 until approved.
 - [Sentinels and calibration](concepts/sentinels-and-calibration.md) — runtime
   monitoring and confidence measurement.
 - [Memory poisoning](concepts/threat-model/memory-poisoning.md) — the threat model.

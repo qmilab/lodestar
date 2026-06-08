@@ -2,8 +2,9 @@
 
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
-**Status**: v0.1.5 published to npm (13 packages via CI trusted
-publishing), v0.2 architecture locked. Forty-seven probes pass under
+**Status**: v0.2.0 published to npm (all 22 packages via CI trusted
+publishing — the integrated release: the 8 net-new packages plus the
+updated guard/cli that wire them in), v0.2 architecture locked. Forty-seven probes pass under
 strict TypeScript (one needs a Postgres test database — see
 below). Forty-three live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
