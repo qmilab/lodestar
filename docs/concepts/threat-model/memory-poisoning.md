@@ -63,7 +63,7 @@ A quarantined or suspicious belief cannot influence the planner regardless of ho
 
 - **Compromised tool implementations** producing valid-looking observations. The schema registry validates *shape*, not *intent*. A tool that lies about world state will produce a poisoned observation that becomes a poisoned claim. v0 mitigation: tools are audited, signed where appropriate (week 8+), and run in sandboxes.
 - **Compromised LLM API**. If the LLM provider is compromised, every claim extracted is suspect. Out of scope for v0.
-- **Side-channel signals** in the event log. The log includes payload hashes but does not yet encrypt at rest. v0.2 adds encryption.
+- **Side-channel signals** in the event log. The log carries payload hashes for tamper-evidence but is not encrypted at rest (encryption-at-rest did not ship in v0.2; it remains a future hardening item). Treat the log directory as sensitive.
 
 ## Open questions
 

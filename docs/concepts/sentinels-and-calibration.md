@@ -9,12 +9,17 @@ Probes are Lodestar's *offline* spec — they run adversarial scenarios and pin
 invariants in CI. Sentinels and the calibrator are the *online* half: they watch a
 real run as it happens and measure whether the agent's confidence is earned.
 
-A note on scope, up front: **sentinels observe and the calibrator measures.**
-Neither blocks an action today. A sentinel raises a finding; it does not stop the
-run. Making a sentinel *escalate or gate* through the
-[trust ladder](trust-ladder.md) depends on the Policy Kernel, which is on the
-post-v1 roadmap. So a finding in this page means "this was flagged for review,"
-never "this was prevented."
+A note on scope, up front: **sentinels observe and the calibrator measures** —
+neither blocks an action on its own. A sentinel raises a finding; the calibrator
+scores confidence against outcome. What gives a finding teeth is the Policy
+Kernel's **arbitrate hook**: when a host wires the sentinel arbiter — both
+`guard.wrap()` and the MCP proxy do — a sentinel alert flows through the
+[trust ladder](trust-ladder.md) and **holds** the dependent action at
+`pending_approval`. That sentinel→action wiring has landed (locked by the
+`guard-arbiter-gates-dependent-action` and
+`mcp-proxy-arbiter-gates-dependent-action` probes). So a finding here can mean
+either "flagged for review" *or* "the dependent action was held," depending on
+whether the host wired the arbiter.
 
 ## Sentinels
 
@@ -67,17 +72,17 @@ vague unease.
 
 ## Where this is heading
 
-The honest current state: sentinels watch and report; the calibrator measures.
-The next step on the roadmap is **sentinel-to-action wiring** — letting a
-sentinel finding escalate through the Policy Kernel to gate or require approval
-for a risky action, rather than only recording it. Until that lands, treat both as
-instrumentation: they make problems *visible and gradable*, which is the
-prerequisite for acting on them.
+The honest current state: sentinels watch and report, the calibrator measures —
+and **sentinel-to-action wiring has landed.** A sentinel finding now escalates
+through the Policy Kernel's arbitrate hook to **hold** a risky dependent action
+(in both `guard.wrap()` and the MCP proxy), and a calibration flag escalates a
+gate decision the same way. What's still ahead is the team-approval surface and a
+richer sentinel library — the instrumentation that makes problems *visible and
+gradable* is the foundation all of that builds on.
 
 ## Related
 
-- [The trust ladder](trust-ladder.md) — the gate sentinels will eventually
-  escalate through.
+- [The trust ladder](trust-ladder.md) — the gate sentinel alerts escalate through.
 - [Probe-pack reference](../reference/probe-packs.md) — how probes and sentinels
   are packaged and run.
 - [The epistemic chain](epistemic-chain.md) — the events sentinels watch and the
