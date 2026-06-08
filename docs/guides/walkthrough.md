@@ -459,7 +459,7 @@ against.)
 
 <div data-asciinema="../assets/telenotes-poison.cast" data-rows="30" data-cols="98"></div>
 
-*(The poison run as an [asciinema cast](../assets/telenotes-poison.cast) — it plays
+*(The poison run as an [asciinema cast](assets/telenotes-poison.cast) — it plays
 inline on the [docs site](https://qmilab.com/lodestar/docs/guides/walkthrough/); the
 raw cast lives in the repo.)*
 
