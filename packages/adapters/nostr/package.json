@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-nostr",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Governed Nostr transport tool adapter (publish/fetch) for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

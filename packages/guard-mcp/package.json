@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-guard-mcp",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "MCP proxy mode for Lodestar Guard — wrap any MCP-speaking agent (Claude Code, Cursor, Aider) so every tool call passes through the Action Kernel and every result through the Cognitive Core. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
