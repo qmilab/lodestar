@@ -102,7 +102,12 @@ jobs:
               const ver = process.env.VERSION;
               const p = JSON.parse(fs.readFileSync(path, "utf8"));
               let touched = false;
-              for (const block of ["dependencies", "peerDependencies", "optionalDependencies"]) {
+              // devDependencies included too: a published package.json must have
+              // NO workspace: strings anywhere (the verify step below greps the
+              // whole file), and dev-only internal deps do exist — e.g. guard-mcp
+              // devDepends on @qmilab/lodestar-harness for its tests. Rewriting
+              // them to exact pins is harmless (consumers never install devDeps).
+              for (const block of ["dependencies", "peerDependencies", "optionalDependencies", "devDependencies"]) {
                 if (!p[block]) continue;
                 for (const k of Object.keys(p[block])) {
                   if (p[block][k] === "workspace:*" && k.startsWith("@qmilab/lodestar-")) {
