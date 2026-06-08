@@ -1,6 +1,6 @@
 <div align="center">
 
-# Lodestar
+<img src=".github/assets/lodestar-wordmark.svg" alt="Lodestar" width="230">
 
 ### The trust layer for AI agents.
 
@@ -185,7 +185,17 @@ Everything runs locally — free, Apache-2.0, no hosted service and no account r
 
 **v0.2.0 — published to npm (22 packages via CI trusted publishing), v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch.** Batches 1–5 are complete, and the post-v1 build track has landed: sentinel→action wiring, the Policy Kernel, five native egress adapters, the read-side Governing UI, the OpenTelemetry exporter, signed approval resolutions, and a durable calibration event.
 
-What ships today:
+**Highlights:**
+
+- ⛓️ The full **epistemic chain** over a replay-grade NDJSON event log (payload hashes, monotonic sequence)
+- 🧠 The four-axis **memory firewall** — no belief silently promotes itself
+- 🚦 The **Policy Kernel** — a three-valued gate (allow / deny / **hold**), the trust ladder, and Ed25519-signed L4 approvals
+- 🔌 Five native **governed egress** adapters — git · http · nostr · messaging · shell
+- 👁️ Read side: `lodestar report`, a live **viewer**, and OpenTelemetry export
+- 🔬 **47 probes** as executable spec, green under strict TypeScript
+
+<details>
+<summary><strong>Everything that ships today</strong> — click to expand the full list</summary>
 
 - ✅ Full schema layer for the epistemic chain (Observation, Claim, Evidence, Belief, Decision, Action, Outcome, Revision, Explanation)
 - ✅ Append-only NDJSON event log with monotonic sequence numbers, payload hashes, and per-partition append serialization
@@ -212,6 +222,8 @@ What ships today:
   - `examples/doc-insight/` — auto-observation gate demo
   - `examples/coding-agent-greenfield/` — `guard.wrap()` applied to a homegrown coding-agent loop
   - `examples/claude-code-wrapped/` — MCP proxy wrapping a stand-in agent that talks to `@modelcontextprotocol/server-filesystem`; produces a demo-quality trust report
+
+</details>
 
 What's coming (post-v1):
 
