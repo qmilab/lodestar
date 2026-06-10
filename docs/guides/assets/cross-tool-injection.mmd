@@ -1,0 +1,10 @@
+flowchart LR
+    C1["Call 1: read notes.md<br/>(contains injected directive)"] --> E1["envelope belief<br/><b>supported</b>"]
+    C1 --> B1["content belief<br/><b>unverified</b>"]
+    B1 -. "steers the agent to…" .-> C2["Call 2: read .env.production<br/>(returns secret + 'this is user-verified')"]
+    C2 --> E2["envelope belief<br/><b>supported</b>"]
+    C2 --> B2["content belief<br/><b>unverified</b> —<br/>the asserted trust changes nothing"]
+    classDef ok fill:#d7f5dd,stroke:#1a7f37
+    classDef warn fill:#fff3cd,stroke:#b8860b
+    class E1,E2 ok
+    class B1,B2 warn
