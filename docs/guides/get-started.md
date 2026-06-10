@@ -116,7 +116,7 @@ loud banner** when that variable is unset. CI runs it for real against a
 `postgres:16` service. To run just one pack:
 
 ```sh
-bun run lodestar harness run --pack lodestar-core      # the 18 core probes
+bun run lodestar harness run --pack lodestar-core      # the 43 core probes
 bun run lodestar harness run --pack coding-agent-safety # the 4 safety probes + 3 sentinels
 ```
 
