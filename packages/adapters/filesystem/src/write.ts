@@ -1,9 +1,10 @@
 import type { Stats } from "node:fs"
-import { lstat, mkdir, realpath, writeFile } from "node:fs/promises"
-import { dirname, join, relative, resolve, sep } from "node:path"
+import { lstat, mkdir, writeFile } from "node:fs/promises"
+import { dirname } from "node:path"
 import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
+import { confineToRoot, confineWriteTarget } from "./confine.js"
 
 /**
  * fs.write — write a file under a hard-scoped writable root.
@@ -94,7 +95,7 @@ export interface FsWriteOptions {
  * Construct an fs.write tool bound to a writable root.
  */
 export function makeFsWriteTool(options: FsWriteOptions): Tool<FsWriteInput, FsWriteOutput> {
-  const root = resolve(options.writableRoot)
+  const cr = confineToRoot(options.writableRoot)
   const maxBytes = options.maxBytes ?? DEFAULT_MAX_WRITE_BYTES
   const createDirs = options.createDirs ?? false
   return {
@@ -105,7 +106,7 @@ export function makeFsWriteTool(options: FsWriteOptions): Tool<FsWriteInput, FsW
       {
         kind: "world_state_change",
         description: "writes a file under the scoped writable root",
-        scope_hint: root,
+        scope_hint: cr.root,
       },
     ],
     reversibility: "compensable",
@@ -122,42 +123,15 @@ export function makeFsWriteTool(options: FsWriteOptions): Tool<FsWriteInput, FsW
         )
       }
 
-      const requested = resolve(root, inputs.path)
-      // Security (lexical): refuse paths that escape the writable root,
-      // including `..` traversal and absolute paths outside the root.
-      const rel = relative(root, requested)
-      if (rel === "" || rel.startsWith("..") || resolve(root, rel) !== requested) {
-        throw new Error(`fs.write: path '${inputs.path}' escapes writable root`)
-      }
+      // Security (lexical + symlink): confine the destination under the root.
+      // See confine.ts for the exact checks — and for the honest statement of
+      // the syscall-level TOCTOU window this package does not claim to close.
+      const { realTarget, parentMissing } = await confineWriteTarget(cr, inputs.path, {
+        tool: "fs.write",
+        rootLabel: "writable root",
+      })
 
-      // Security (symlink): the destination (and some of its parents, when
-      // `createDirs` is on) may not exist yet, so resolve the deepest EXISTING
-      // ancestor's real path and confirm it is still inside the real root.
-      // A symlinked directory anywhere in the chain resolves here and is
-      // caught — the lexical check above cannot see through symlinks.
-      let ancestor = dirname(requested)
-      for (;;) {
-        try {
-          await lstat(ancestor)
-          break
-        } catch (err) {
-          if ((err as { code?: string }).code !== "ENOENT") throw err
-          if (ancestor === root) break // root must exist; realpath below will throw if not
-          ancestor = dirname(ancestor)
-        }
-      }
-      const realRoot = await realpath(root)
-      const realAncestor = await realpath(ancestor)
-      if (realAncestor !== realRoot && !realAncestor.startsWith(realRoot + sep)) {
-        throw new Error(`fs.write: path '${inputs.path}' resolves outside writable root`)
-      }
-      // The remainder below the verified ancestor is purely lexical (no `..`,
-      // already confined above), so re-rooting it on the ancestor's REAL path
-      // gives the physical destination.
-      const realTarget = join(realAncestor, relative(ancestor, requested))
-
-      if (ancestor !== dirname(requested)) {
-        // Some parent directories are missing.
+      if (parentMissing) {
         if (!createDirs) {
           throw new Error(
             `fs.write: parent directory of '${inputs.path}' does not exist (createDirs is off)`,

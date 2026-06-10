@@ -1,8 +1,8 @@
-import { realpath, stat } from "node:fs/promises"
-import { relative, resolve, sep } from "node:path"
+import { stat } from "node:fs/promises"
 import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
+import { confineReadTarget, confineToRoot } from "./confine.js"
 import { readBoundedUtf8 } from "./read-bounded.js"
 
 /**
@@ -43,7 +43,7 @@ const DEFAULT_MAX_BYTES = 1024 * 1024
 export function makeFsReadTool(
   projectRoot: string,
 ): Tool<z.infer<typeof FsReadInputSchema>, z.infer<typeof FsReadOutputSchema>> {
-  const root = resolve(projectRoot)
+  const cr = confineToRoot(projectRoot)
   return {
     name: "fs.read",
     inputs: FsReadInputSchema,
@@ -55,22 +55,12 @@ export function makeFsReadTool(
     sandbox: "read",
     preconditions: () => [],
     execute: async (inputs) => {
-      const requested = resolve(root, inputs.path)
-      // Security (lexical): refuse paths that escape the project root.
-      const rel = relative(root, requested)
-      if (rel.startsWith("..") || resolve(root, rel) !== requested) {
-        throw new Error(`fs.read: path '${inputs.path}' escapes project root`)
-      }
-      // Security (symlink): resolve symlinks and confirm the real target is
-      // still inside the real root. A symlink under the root must not be able
-      // to redirect the read outside it — the lexical check cannot see through
-      // symlinks. Both sides are realpath'd so platform symlinks (e.g. macOS
-      // /tmp → /private/tmp) resolve consistently.
-      const realRoot = await realpath(root)
-      const realTarget = await realpath(requested)
-      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
-        throw new Error(`fs.read: path '${inputs.path}' resolves outside project root`)
-      }
+      // Security (lexical + symlink): confine the read under the project
+      // root — the shared core in confine.ts, used by every tool here.
+      const realTarget = await confineReadTarget(cr, inputs.path, {
+        tool: "fs.read",
+        rootLabel: "project root",
+      })
 
       const st = await stat(realTarget)
       if (!st.isFile()) {

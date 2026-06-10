@@ -1,8 +1,9 @@
-import { realpath, stat } from "node:fs/promises"
-import { basename, extname, relative, resolve, sep } from "node:path"
+import { stat } from "node:fs/promises"
+import { basename, extname } from "node:path"
 import { type Tool, registerTool } from "@qmilab/lodestar-action-kernel"
 import { registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
+import { confineReadTarget, confineToRoot } from "./confine.js"
 import { readBoundedUtf8 } from "./read-bounded.js"
 
 /**
@@ -59,7 +60,7 @@ function classifyKind(path: string): "package_json" | "markdown" | "source" {
 export function makeDocReadTool(
   projectRoot: string,
 ): Tool<z.infer<typeof DocReadInputSchema>, z.infer<typeof DocumentationSourceOutputSchema>> {
-  const root = resolve(projectRoot)
+  const cr = confineToRoot(projectRoot)
   return {
     name: "doc.read",
     inputs: DocReadInputSchema,
@@ -71,21 +72,12 @@ export function makeDocReadTool(
     sandbox: "read",
     preconditions: () => [],
     execute: async (inputs) => {
-      const requested = resolve(root, inputs.path)
-      // Security (lexical): refuse paths that escape the project root.
-      const rel = relative(root, requested)
-      if (rel.startsWith("..") || resolve(root, rel) !== requested) {
-        throw new Error(`doc.read: path '${inputs.path}' escapes project root`)
-      }
-      // Security (symlink): resolve symlinks and confirm the real target is
-      // still inside the real root. A symlink under the root must not be
-      // able to redirect the read outside it — the lexical check above
-      // cannot see through symlinks.
-      const realRoot = await realpath(root)
-      const realTarget = await realpath(requested)
-      if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) {
-        throw new Error(`doc.read: path '${inputs.path}' resolves outside project root`)
-      }
+      // Security (lexical + symlink): confine the read under the project
+      // root — the shared core in confine.ts, used by every tool here.
+      const realTarget = await confineReadTarget(cr, inputs.path, {
+        tool: "doc.read",
+        rootLabel: "project root",
+      })
 
       const st = await stat(realTarget)
       if (!st.isFile()) {

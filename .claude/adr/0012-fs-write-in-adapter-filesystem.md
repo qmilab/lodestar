@@ -77,6 +77,14 @@ The example-local `doc.write` in `examples/documentation-agent/` stays as-is
 - Zero publish bookkeeping: no PUBLISH_ORDER, root-devDeps, or workflow
   changes — the package already ships. The package gains its (previously
   missing) `CLAUDE.md`.
+- The confinement logic is extracted into a shared `src/confine.ts`
+  (lexical check + read-side realpath check + write-side ancestor walk) used
+  by `fs.read`, `doc.read`, and `fs.write` — one copy of the
+  security-critical escape checks instead of a per-tool copy, with
+  `realpath(root)` memoized per tool instance (the root is fixed at
+  construction). `confine.ts` also states the honest TOCTOU caveat: a
+  component racing into existence as a symlink between the check and the
+  write is the syscall-level window this TS-level boundary does not claim.
 - `lodestar-core` grows to 44 probes (48 across both packs).
 - `fs.read` (L0) and `fs.write` (L3) live in one package with different trust
   floors — fine, because the kernel enforces `required_trust_level` per tool,

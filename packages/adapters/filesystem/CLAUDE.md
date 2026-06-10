@@ -7,6 +7,12 @@ enforcing a distinct trust floor per tool.
 
 ## What lives here
 
+- `src/confine.ts` — the **shared path-confinement core** every tool here uses:
+  the lexical escape check (`confineLexically`), the read-side realpath check
+  (`confineReadTarget`), the write-side deepest-existing-ancestor walk
+  (`confineWriteTarget`), and `confineToRoot` (memoizes `realpath(root)` once
+  per tool instance — the root is fixed at construction; a failed resolution is
+  not cached). Security-critical: fix escape logic HERE, never per-tool.
 - `src/read.ts` — `fs.read` (L0, `sandbox: read`): bounded UTF-8 read with
   lexical + symlink path confinement under a project root.
 - `src/doc-read.ts` — `doc.read` (L0): the same confined read, emitting a
@@ -52,7 +58,11 @@ too). Enforced in-process:
 
 **What it does NOT claim:** OS-level enforcement of the `read` / `write-local`
 profiles (read-only bind mounts, namespaces) and syscall-level TOCTOU race
-containment. Keep that honest in docs and tool framing.
+containment — concretely, for writes: a path component racing into existence
+as a symlink *between* the ancestor check and the mkdir/write can still
+redirect the operation (closing that needs O_NOFOLLOW/openat-style syscalls,
+deferred with the OS-sandbox work; pre-existing symlinks anywhere in the
+chain ARE caught). Keep that honest in docs and tool framing.
 
 ## When you touch this package
 
