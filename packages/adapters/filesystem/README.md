@@ -1,12 +1,20 @@
 # @qmilab/lodestar-adapter-filesystem
 
-Filesystem read tool adapter for the
-[Lodestar](https://qmilab.com/lodestar) Action Kernel. Part of
-Lodestar — the trust layer for AI agents.
+Filesystem adapter for the
+[Lodestar](https://qmilab.com/lodestar) Action Kernel: governed reads
+and writes confined to an operator-fixed root. Part of Lodestar — the
+trust layer for AI agents.
 
 Registers the `fs.read@1` tool: a sandbox-respecting file read with a
 declared input schema, a Zod-validated output schema, and an
 observation emitter for the epistemic chain.
+
+It also registers `fs.write@1`: a governed write (trust L3,
+`write-local`, compensable) hard-confined under a `writableRoot` — no
+`..`/absolute/symlink escape, no host-env expansion (`~`/`$VAR` are
+literal), oversized contents rejected rather than truncated, missing
+parents created only via explicit `createDirs`, and an output that
+records `created`/`previous_bytes` for the audit trail.
 
 It also registers `doc.read`: the same sandbox-respecting read, but it
 emits a `documentation.source@1` observation tagged with a `kind`
@@ -57,14 +65,22 @@ if (arbitrated.phase === "approved") {
 - `makeDocReadTool(projectRoot)` / `registerDocReadTool(projectRoot)` —
   the `doc.read` tool, plus `DocumentationSourceOutputSchema` registered
   against `documentation.source@1`.
+- `makeFsWriteTool(options)` / `registerFsWriteTool(options)` — the
+  `fs.write` tool (`{ writableRoot, maxBytes?, createDirs? }`), plus
+  `FsWriteOutputSchema` registered against `fs.write@1`.
 
 ## Invariants
 
-- **Read-only.** No writes. No execution. No directory traversal
-  beyond the sandbox profile.
-- **Declared permissions.** `fs.read` is the only permission the tool
-  claims. A policy gate can refuse the contract before execution
-  based on the requested path.
+- **Path confinement.** Every path resolves against a root fixed at
+  construction; `..`, absolute-path, and symlink escapes are refused
+  (a write destination that is itself a symlink is refused, not
+  followed). No host-env expansion — `~`/`$VAR` are literal.
+- **Reads are read-only; writes are explicit.** `fs.read`/`doc.read`
+  claim only `fs.read` at L0. `fs.write` claims `fs.write` at L3 with
+  a declared `world_state_change` effect, rejects contents over its
+  byte cap (never truncates), and creates missing parents only when
+  the operator opted in via `createDirs`. A policy gate can refuse
+  the contract before execution based on the requested path.
 - **Honest observations.** The Observation emitted carries the
   resolved path, file size, and a content hash — enough for downstream
   cognition to extract claims from.

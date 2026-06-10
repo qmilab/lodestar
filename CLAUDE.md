@@ -4,9 +4,9 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.2.0 published to npm (all 22 packages via CI trusted
 publishing — the integrated release: the 8 net-new packages plus the
-updated guard/cli that wire them in), v0.2 architecture locked. Forty-seven probes pass under
+updated guard/cli that wire them in), v0.2 architecture locked. Forty-eight probes pass under
 strict TypeScript (one needs a Postgres test database — see
-below). Forty-three live in the first-party pack
+below). Forty-four live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -85,7 +85,18 @@ the provider untouched while an allowlisted-by-domain recipient lands carrying t
 surfaces in inputs/observation even when echoed back, a Slack `ok:false` ends
 `failed` rather than a silent completed, and an oversized provider response is
 captured to the cap; the fourth native egress and the purest human-approval demo —
-egress-only this slice; ADR-0009), and one durable-calibration probe
+egress-only this slice; ADR-0009), and one filesystem-write probe
+(`filesystem-adapter-enforces-write-invariants` — `fs.write` graduates the
+documentation-agent's example-local `doc.write` into the existing
+`@qmilab/lodestar-adapter-filesystem` (one package per domain, so no new
+publish bookkeeping) and holds its invariants through the kernel: a held L3
+write parks at `pending_approval` and touches no disk until resolved, a
+revalidated precondition rejects a stale-world write (TOCTOU), a contract
+below the L3 floor is refused at propose, `..` / absolute-path /
+symlinked-directory / symlink-destination / `createDirs`-ancestor escapes all
+fail with nothing written outside the **operator-fixed** root, `~`/`$HOME`
+stay literal (no host-env expansion, no `process.env` reads), and oversized
+contents are rejected — never truncated; ADR-0012), and one durable-calibration probe
 (`calibration-event-is-durable` — the **P3 forgery-track second slice**: a
 calibration pass is recorded as a governed `calibration.computed@1` event without
 the Calibrator ever growing a write path. Over a real NDJSON log it pins four
@@ -123,8 +134,8 @@ sentinels folded into the `coding-agent-safety` pack — the manifest
 declares them under a `sentinels` field and the loader resolves each id
 against the first-party `FIRST_PARTY_SENTINELS` registry — have all
 landed). `@qmilab/lodestar-guard-mcp` and the post-v1 read-side
-`@qmilab/lodestar-viewer` (the Governing UI, `lodestar view`) live in this
-repo and will publish to npm in a follow-up mini-marathon.
+`@qmilab/lodestar-viewer` (the Governing UI, `lodestar view`) shipped to npm
+in the v0.2.0 integrated release along with the rest of the 22 packages.
 Batch 5 (week-8 thesis demo) has landed — all of Batches 1–5 are complete. The secondary
 documentation-agent proving ground has landed
 (`examples/documentation-agent/`) — it exercises the claim/evidence chain
@@ -208,7 +219,7 @@ packages/
   otel-exporter/       # (exists, post-v1) OTel GenAI semantic conventions bridge — `lodestar otel export`; read-side batch projection of a session into OTLP/HTTP-JSON spans (action-centric: invoke_agent root + execute_tool spans), hand-rolled wire format (no OTel SDK dep), with the sensitivity-ceiling export gate (content above the ceiling ships as metadata + payload hash only)
   adapters/
     git/               # (exists, P2) read-only git.status + forge-agnostic transport (git.commit/push/clone); push is the first native egress (L4); remote pinning + scoped credentials (askpass, no argv); TS-level boundary, not an OS sandbox; ADR-0006
-    filesystem/        # (exists)
+    filesystem/        # (exists) governed filesystem domain: fs.read + doc.read (L0) and fs.write (L3, graduated doc.write — issue #79); root-confined paths (lexical + symlink realpath checks), no host-env expansion, bounded write rejected-not-truncated, opt-in createDirs; TS-level boundary, not an OS sandbox; ADR-0012
     shell/             # (exists, P2) governed shell commands; config-driven tool factory (defineShellTool), TS-level sandbox (argv-only, allowlist, scoped env, timeout) — not an OS sandbox; ADR-0004
     github/            # (later) forge-API ONLY (PRs/issues/releases) behind a ForgeProvider seam — git transport lives in adapters/git/ (ADR-0006)
     nostr/             # (exists, P2) governed Nostr transport: nostr.publish (L4, second native egress — signing key IS the credential, in-process BIP-340) + nostr.fetch (L1, untrusted inbound); relay pinning, kind allowlist, NIP-42 AUTH, fetch SSRF guard; controlled-network sandbox; TS-level boundary, not network containment; ADR-0007
@@ -302,7 +313,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Forty-seven probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Forty-eight probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
 
 ## Quick references
 

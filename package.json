@@ -53,6 +53,7 @@
     "probe:nostr": "bun run packs/lodestar-core/probes/nostr-adapter-enforces-egress-invariants.ts",
     "probe:http": "bun run packs/lodestar-core/probes/http-adapter-enforces-egress-invariants.ts",
     "probe:messaging": "bun run packs/lodestar-core/probes/messaging-adapter-enforces-egress-invariants.ts",
+    "probe:fswrite": "bun run packs/lodestar-core/probes/filesystem-adapter-enforces-write-invariants.ts",
     "probes:all": "bun run lodestar harness run --pack lodestar-core --no-record",
     "probes:safety": "bun run lodestar harness run --pack coding-agent-safety --no-record",
     "probes:ci": "bun run probes:all && bun run probes:safety",
