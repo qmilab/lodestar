@@ -389,7 +389,7 @@ sees a normal tool error, not a hung session.
 Everything above gives you governance at runtime. The last step is making
 your guarantee **survive your own refactors**: write a probe — an adversarial
 script that fails loudly if the invariant ever regresses — and run it in CI.
-In Lodestar's own development, probes are treated as spec: 47 of them gate
+In Lodestar's own development, probes are treated as spec: 48 of them gate
 every change, and the rule is you fix the code, never the probe.
 
 A probe is a small class with a name, a description, and a `run()` that
