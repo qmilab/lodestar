@@ -178,6 +178,10 @@
       "file": "probes/messaging-adapter-enforces-egress-invariants.ts"
     },
     {
+      "name": "filesystem-adapter-enforces-write-invariants",
+      "file": "probes/filesystem-adapter-enforces-write-invariants.ts"
+    },
+    {
       "name": "calibration-event-is-durable",
       "file": "probes/calibration-event-is-durable.ts"
     }
