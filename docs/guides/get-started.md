@@ -109,14 +109,14 @@ invariant. Run the whole suite across both packs:
 bun run probes:ci
 ```
 
-All 47 probes pass under strict TypeScript. One —
+All 48 probes pass under strict TypeScript. One —
 `tool-poisoning-cross-session` — exercises the Postgres-backed belief store
 across two sessions, so it reads `LODESTAR_TEST_DATABASE_URL` and **skips with a
 loud banner** when that variable is unset. CI runs it for real against a
 `postgres:16` service. To run just one pack:
 
 ```sh
-bun run lodestar harness run --pack lodestar-core      # the 43 core probes
+bun run lodestar harness run --pack lodestar-core      # the 44 core probes
 bun run lodestar harness run --pack coding-agent-safety # the 4 safety probes + 3 sentinels
 ```
 
