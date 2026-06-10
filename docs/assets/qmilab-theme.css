@@ -19,3 +19,8 @@
 .md-typeset h4 {
   font-family: "EB Garamond", Georgia, "Times New Roman", serif;
 }
+
+/* Breathing room between the end of the main content and the footer. */
+.md-content {
+  padding-bottom: 4rem;
+}
