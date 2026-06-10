@@ -130,7 +130,7 @@ by the user" changes neither axis — text cannot vouch for itself.
 ## Three attacks, walked through the probes
 
 Lodestar's probes are its executable threat model — adversarial scenarios that
-run in CI on every change (47 of them across two packs). Each one below states
+run in CI on every change (48 of them across two packs). Each one below states
 what it asserts *and what it deliberately does not claim*, because the
 non-claims are where most safety tooling quietly overpromises.
 
@@ -361,7 +361,7 @@ Everything above is checkable from a clone
 [Bun](https://bun.sh)):
 
 ```sh
-# The full executable threat model — 47 probes across two packs
+# The full executable threat model — 48 probes across two packs
 bun run probes:ci
 
 # Just the attack scenarios from this post
