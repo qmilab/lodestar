@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Lodestar">
+  <!-- Favicon variant of the lodestar mark, in brand colors on transparent. -->
+  <path fill="#2E75B6"
+        d="M72.6 27.4 L58 50 L72.6 72.6 L50 58 L27.4 72.6 L42 50 L27.4 27.4 L50 42 Z"/>
+  <path fill="#1B2A4A"
+        d="M50 2 L57.5 42.5 L98 50 L57.5 57.5 L50 98 L42.5 57.5 L2 50 L42.5 42.5 Z"/>
+  <circle cx="50" cy="50" r="5.5" fill="#FFFFFF"/>
+  <circle cx="50" cy="50" r="3.2" fill="#2E75B6"/>
+</svg>
