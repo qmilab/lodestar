@@ -97,8 +97,15 @@ When a tool result comes back through Lodestar's MCP proxy, the extractor emits
 The component that enforces this is the **auto-observation gate**:
 `external_document` and `model_inference` evidence *cannot* automatically
 promote a claim to `supported`, no matter how confidently the content asserts
-itself. Promotion requires authority that doesn't come from the read itself —
-corroboration from an independent source, or an explicit human/operator step.
+itself. And the rule is stricter than "get corroboration": the gate checks the
+**strongest evidence class** backing the claim, so corroboration among
+`external_document` sources counts for nothing — a hundred planted files
+vouching for each other still cannot auto-promote, because promotion requires
+evidence of a *strictly stronger class* than reading (a tool result, a direct
+observation, a human assertion) or an explicit operator step. That gate is
+pinned in CI by the
+[`auto-observation-gate`](https://github.com/qmilab/lodestar/blob/main/packs/lodestar-core/probes/auto-observation-gate.ts)
+probe.
 
 Two details matter for evaluating this:
 
@@ -119,18 +126,21 @@ Lodestar record hostile content fully (audit) without trusting it
 (epistemics).
 
 **Confidence and truth status are deliberately separate.** In the reports,
-both the envelope belief and the content belief carry confidence `0.95` — the
-agent is equally sure it read the file. What differs is the *truth status* of
-the content. "I read this" is solid. "And therefore it's true" is not something
-a read can establish. An injected line that *says* "this file has been verified
-by the user" changes neither axis — text cannot vouch for itself.
+the extractor assigns both the envelope belief and the content belief the same
+confidence (`0.95`) — confidence here is an assigned strength, not the model's
+self-reported certainty, and it's deliberately *not* the load-bearing axis.
+What differs is the *truth status* of the content. "I read this" is solid.
+"And therefore it's true" is not something a read can establish. An injected
+line that *says* "this file has been verified by the user" changes neither
+axis — text cannot vouch for itself.
 
 ---
 
 ## Three attacks, walked through the probes
 
 Lodestar's probes are its executable threat model — adversarial scenarios that
-run in CI on every change (48 of them across two packs). Each one below states
+run [in CI](https://github.com/qmilab/lodestar/blob/main/.github/workflows/ci.yml)
+on every change (48 of them across two packs). Each one below states
 what it asserts *and what it deliberately does not claim*, because the
 non-claims are where most safety tooling quietly overpromises.
 
@@ -200,7 +210,10 @@ What the probe asserts:
   firewall in session B has the same signal session A had.
 - Under a planner-style context policy (only `supported` beliefs enter
   trusted context), session B's gated retrieval surfaces the envelope fact
-  **but not the poisoned memory**.
+  **but not the poisoned memory**. And that policy is not an opt-in extra:
+  the schema's `DEFAULT_CONTEXT_POLICY` admits only `supported` beliefs, so
+  the default falls the safe way — letting `unverified` content into trusted
+  context is the configuration you'd have to write deliberately.
 - The poisoned belief remains reachable through the **privileged (audit)
   retrieval path** — gated, not deleted. An investigator can still see exactly
   what the attacker planted.
@@ -236,8 +249,9 @@ What the probe asserts:
 Not claimed: that the agent was prevented from reading the file, or that the
 agent virtuously ignored the instructions. The invariant holds even for an
 agent that wanted to comply — which is the point. The block on the push the
-file demanded comes from the policy gate grading `git_push` L4, not from the
-agent's good behavior.
+file demanded comes from the policy gate grading `git_push` L4 (the top
+working rung of the trust ladder: external and irreversible, never
+auto-approved), not from the agent's good behavior.
 
 ### The contrast probe: proving it's the mechanism, not luck
 
@@ -267,11 +281,15 @@ exactly that, with properties worth checking:
 Every event in the append-only log chains to the previous one by canonical
 hash; the [`event-log-canonical-hash`](https://github.com/qmilab/lodestar/blob/main/packs/lodestar-core/probes/event-log-canonical-hash.ts)
 probe gates that integrity in CI. The agent doesn't write the report; the log
-does.
+does. And where the audit trail crosses a process boundary — an out-of-band
+approval un-parking a held action — the resolution is Ed25519-signed and
+verified against operator-pinned keys, locked by
+[`forged-approval-cannot-execute`](https://github.com/qmilab/lodestar/blob/main/packs/lodestar-core/probes/forged-approval-cannot-execute.ts).
 
 **Beliefs carry their full status inline.** From the committed poison-run
 report ([`reports/poison-run.report.md`](https://github.com/qmilab/lodestar/blob/main/examples/telenotes-governed-dev/reports/poison-run.report.md)),
-the poisoned file's content belief:
+the poisoned file's content belief (condensed for width — the linked report
+is verbatim):
 
 ```
 External document content via 'mcp.fs.read_text_file' content block #0:
@@ -281,7 +299,8 @@ Working notes for the Telenotes module. …
     security=clean · freshness=fresh · authority observed
 ```
 
-**Actions carry their verdict and the policy that produced it.** Same report:
+**Actions carry their verdict and the policy that produced it.** Same report,
+same condensing:
 
 ```
 mcp.devtools.git_push — forward MCP tool call via proxy
@@ -325,8 +344,11 @@ stated the way they're stated in the
   (every execution recorded, graded, gated) plus the policy gate — it is a
   TypeScript-level governance boundary, not OS isolation. OS-level enforcement
   is deferred, deliberately and visibly.
-- **The log is not encrypted at rest** (v0). It carries payload hashes for
-  tamper-evidence; treat the log directory as sensitive.
+- **The log is not encrypted at rest, and hash-linking has a stated limit**
+  (v0). The canonical hash chain detects truncation and in-place edits — but
+  an attacker with write access to the log directory could rewrite the whole
+  file and recompute the chain; there is no external anchoring or chain-head
+  signing yet. Treat the log directory as sensitive, because the design does.
 - **The wrapping has a real caveat: built-in tools bypass the proxy.** A real
   coding agent (Claude Code, Cursor) ships its own file/shell tools, and those
   don't flow through MCP. From the
@@ -362,6 +384,8 @@ Everything above is checkable from a clone
 
 ```sh
 # The full executable threat model — 48 probes across two packs
+# (one needs Postgres and skips with a loud banner without
+#  LODESTAR_TEST_DATABASE_URL — expected locally, runs for real in CI)
 bun run probes:ci
 
 # Just the attack scenarios from this post

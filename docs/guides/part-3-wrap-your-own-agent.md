@@ -33,7 +33,12 @@ bun install
 ```
 
 (The packages are also on npm as `@qmilab/lodestar-*` at v0.2.0 — the clone
-path is used here because it gives you the examples and probes to crib from.)
+path is used here because it gives you the examples and probes to crib from,
+and every `bun run lodestar …` command below resolves through the clone
+root's `lodestar` script. In your own project instead:
+`bun add @qmilab/lodestar-guard @qmilab/lodestar-harness
+@qmilab/lodestar-adapter-filesystem` covers the library-path imports, and
+`bun add @qmilab/lodestar-cli` gives you the same CLI as `bunx lodestar …`.)
 
 > **TL;DR** — Two ways in. Own the loop? `guard.wrap()` is a function call
 > around your agent code. Don't own the agent (Claude Code, Cursor, Aider)?
@@ -78,10 +83,16 @@ import {
   alwaysHoldsChecker,
   type GuardContext,
 } from "@qmilab/lodestar-guard"
+import { registerFsReadTool } from "@qmilab/lodestar-adapter-filesystem"
+
+// Tools are registered with the Action Kernel up front — the adapters ship
+// graded contracts (fs.read arrives as an L0, read-only contract).
+registerFsReadTool(process.cwd())
 
 // Your agent loop, unchanged except that tool calls go through ctx.
 const agentLoop = async (ctx: GuardContext) => {
-  // ctx.callTool(...)         — every tool call, routed through the Action Kernel
+  // Every tool call routes through the kernel: propose → gate → execute.
+  await ctx.callTool("fs.read", { path: "README.md" }, { intent: "read the README" })
   // ctx.ingestObservation(...) — feed an observation through the Cognitive Core
   // ctx.recordDecision(...)   — declare a decision + the beliefs it depends on
   // ctx.emit(...)             — debug events (recorded, but never trusted for gating)
@@ -96,7 +107,9 @@ const { result, session_id, log_root } = await run({
   default_scope: { level: "project", identifier: "my-agent" },
   default_sensitivity: "internal",
   policy_gate: autoApprovePolicy({
-    auto_approve_up_to: 2, // L0–L2 sail through; L4 always holds, L5 always denies
+    // L0–L2 sail through; L3 falls to the structural deny default;
+    // L4 always holds, L5 always denies.
+    auto_approve_up_to: 2,
     approver_id: "policy-decider",
   }),
   precondition_checker: alwaysHoldsChecker,
@@ -111,10 +124,14 @@ Things to notice, because they're deliberate:
   sensitivity, the policy gate, the precondition checker — all explicit. If
   your policy can *hold* an action, you must also supply an
   `approval_resolver`; a hold with no resolver is a hard error at
-  `callTool` time, not a silent auto-deny.
+  `callTool` time, not a silent auto-deny. (The snippet above registers only
+  `fs.read` — an L0 tool — so nothing in it can hold; the moment you register
+  an L4 tool, supply a resolver. The approvals section below shows how.)
 - **`ctx.emit()` is honest about its own trust level.** Raw agent emits are
-  recorded for debugging but are *not* trusted to drive sentinel arbitration —
-  an agent cannot talk its way past a belief-scoped alert by emitting noise.
+  recorded for debugging but are *not* trusted to drive sentinel arbitration
+  (the runtime monitors from part 2 that can flag a suspicious belief and hold
+  actions depending on it) — an agent cannot talk its way past a
+  belief-scoped alert by emitting noise.
   The trusted way to declare "this plan rests on these beliefs" is
   `ctx.recordDecision()`.
 - **The result hands you the session.** `session_id` is exactly what
@@ -128,6 +145,8 @@ example (part 1's warm-up demo) adds exactly one thing to the config above — a
 custom evidence linker, through the `cognitive` seam:
 
 ```ts
+import { DocAwareEvidenceLinker } from "@qmilab/lodestar-cognitive-core"
+
 const { result, session_id } = await run({
   // ... same required fields as above ...
   policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "doc-agent-policy" }),
@@ -148,7 +167,8 @@ seam takes an MCP-aware linker, or your own: anything that decides what
 
 If you want durable, cross-session state, the sibling `stores` seam injects
 Postgres-backed claim/belief/evidence stores — that's the seam the
-cross-session poisoning probe rides.
+[`tool-poisoning-cross-session`](https://github.com/qmilab/lodestar/blob/main/packs/coding-agent-safety/probes/tool-poisoning-cross-session.ts)
+probe rides, and its source doubles as the wiring example.
 
 ---
 
@@ -205,6 +225,10 @@ trimmed):
   }
 }
 ```
+
+(The placeholder paths: in the clone, the dev-tools server lives at
+`examples/telenotes-governed-dev/dev-tools-mcp/bin.ts`; the `fs` server needs
+no clone at all — `bunx` fetches it.)
 
 Read it top to bottom and you've read the governance story:
 
@@ -327,7 +351,8 @@ wins, over the deny default:
 }
 ```
 
-Wire it into the proxy with the `policy` block instead of the bare ceiling:
+Wire it into the proxy by replacing the top-level `auto_approve_ceiling` key
+in `proxy.config.json` with a `policy` block:
 
 ```json
 "policy": { "file": "./my-team-policy.json", "allow_unsigned": true }
@@ -337,18 +362,26 @@ Wire it into the proxy with the `policy` block instead of the bare ceiling:
 document is **signed** (Ed25519 over the canonical hash of
 `{id, version, rules}`), the proxy verifies it at load, and a
 `require_approval` rule's `required_authority` travels with the held action —
-so the eventual approver must actually clear the bar the rule set.
+so the eventual approver must actually clear the bar the rule set. (Honest
+gap: there is no `lodestar policy sign` command yet — the signature is
+produced programmatically; the verification side is what's pinned in CI, by
+`policy-version-signature-required`.)
+
+For the library path, the same document works without the proxy: compile it
+with `compile(policy)` from `@qmilab/lodestar-policy-kernel` and pass the
+result as `policy_gate` — `wrap()` accepts a `CompiledPolicy` directly.
 
 ### Resolving a held action from a second terminal
 
 With approvals configured, an L4 action doesn't just bounce — it parks at
-`pending_approval` while the proxy polls for an out-of-band resolution:
+`pending_approval` while the proxy polls for an out-of-band resolution. Add
+these two top-level keys to the same `proxy.config.json`:
 
 ```json
 "approval_timeout_ms": 120000,
 "approvals": {
   "authorized_keys": [
-    { "actor_id": "nandan", "public_key": "-----BEGIN PUBLIC KEY----- …" }
+    { "actor_id": "alice", "public_key": "-----BEGIN PUBLIC KEY----- …" }
   ]
 }
 ```
@@ -356,15 +389,16 @@ With approvals configured, an L4 action doesn't just bounce — it parks at
 Mint your approver key once, then resolve holds from any other terminal:
 
 ```sh
-# one-time: mint an Ed25519 keypair; prints the authorized_keys pin to paste above
-bun run lodestar approve keygen --approver nandan --out ~/.lodestar/nandan
+# one-time: mint an Ed25519 keypair — writes alice.key (private, 0600) and
+# alice.pub, and prints the authorized_keys pin to paste above
+bun run lodestar approve keygen --approver alice --out ~/.lodestar/alice
 
 # see what's parked
 bun run lodestar approve list --project my-project
 
 # let it through (or: approve deny <request-id> ... --reason "not today")
-bun run lodestar approve grant <request-id> --approver nandan \
-  --key ~/.lodestar/nandan.key --project my-project
+bun run lodestar approve grant <request-id> --approver alice \
+  --key ~/.lodestar/alice.key --project my-project
 ```
 
 The mechanics are worth one sentence each, because they're load-bearing: the
@@ -435,8 +469,10 @@ which is all CI needs. Group probes into a **pack** with a manifest:
 }
 ```
 
-…and run the pack (the `--pack` flag takes a first-party pack name, a pack
-directory, or a manifest path):
+(`coverage_areas` and `invariants` are free-form tags — name what you cover;
+nothing validates them against a fixed list.) Then run the pack — the
+`--pack` flag takes a first-party pack name, a pack directory, or a manifest
+path:
 
 ```sh
 bun run lodestar harness run --pack ./my-agent-safety
