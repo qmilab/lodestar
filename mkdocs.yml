@@ -27,21 +27,21 @@ extra_javascript:
   - https://cdn.jsdelivr.net/npm/asciinema-player@3/dist/bundle/asciinema-player.min.js
   - assets/asciinema-init.js
 
-# Public docs site = reader-facing only. Planning/reference and the not-yet-written
-# series placeholders stay out of the build (flip these as parts ship / if you want
-# architecture+roadmap public).
+# Public docs site = reader-facing only. Planning/reference stays out of the
+# build (flip these if you want architecture+roadmap public).
 exclude_docs: |
   internal/
   strategy/
   architecture/
   roadmap.md
-  guides/part-2-the-threat-model.md
-  guides/part-3-wrap-your-own-agent.md
 
 nav:
   - Home: index.md
   - Get started: guides/get-started.md
-  - Walkthrough: guides/walkthrough.md
+  - Walkthrough:
+      - "Part 1 — wrap your coding agent": guides/walkthrough.md
+      - "Part 2 — the threat model": guides/part-2-the-threat-model.md
+      - "Part 3 — wrap your own agent": guides/part-3-wrap-your-own-agent.md
   - Use cases: use-cases.md
   - Concepts:
       - The epistemic chain: concepts/epistemic-chain.md
