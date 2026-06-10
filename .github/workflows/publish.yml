@@ -181,6 +181,10 @@ jobs:
             // action-kernel (no extra runtime deps; uses global fetch), both
             // published above. Same first-publish trusted-publisher bootstrap.
             "packages/adapters/messaging",
+            // sql adapter (P2 follow-on, ADR-0013): depends only on core +
+            // action-kernel (uses Bun's native Bun.SQL — no runtime deps). Same
+            // first-publish trusted-publisher bootstrap as the others.
+            "packages/adapters/sql",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -282,6 +286,9 @@ jobs:
             # messaging adapter (new, P2 slice 5): depends only on core +
             # action-kernel. Same first-publish bootstrap as the others.
             packages/adapters/messaging
+            # sql adapter (P2 follow-on, ADR-0013): depends only on core +
+            # action-kernel (Bun.SQL, no runtime deps). Same first-publish bootstrap.
+            packages/adapters/sql
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep

@@ -98,3 +98,24 @@ The options we rejected, each with a one-line reason.
   Require-signed by default with an explicit `allow_unsigned` opt-out (schema +
   constructor guard). `lodestar approve --key` signs; `approve keygen` mints keys.
   In-process `guard.wrap()` unaffected. Probe `forged-approval-cannot-execute`.
+- [ADR-0011](0011-durable-calibration-computed-event.md) — Durable calibration
+  event (P3 slice 2): a calibration pass is recorded as a governed
+  `calibration.computed@1` event (audit + replay over a cursor window) while the
+  Calibrator stays strictly measure-only — the same measure→record split as the
+  sentinels. Deliberately unsigned in v0 (audit/replay, not a forgery boundary).
+  Probe `calibration-event-is-durable`.
+- [ADR-0012](0012-fs-write-in-adapter-filesystem.md) — `fs.write` graduates into
+  the existing `@qmilab/lodestar-adapter-filesystem` (one package per domain) rather
+  than a new package: L3 governed write, root confinement (lexical + deepest-existing
+  -ancestor realpath walk), no host-env expansion, bounded-rejected-not-truncated,
+  opt-in `createDirs`. Confinement extracted to a shared `src/confine.ts`. Probe
+  `filesystem-adapter-enforces-write-invariants`.
+- [ADR-0013](0013-governed-sql-database-adapter.md) — Governed SQL/database adapter
+  (`@qmilab/lodestar-adapter-sql`, a new domain so its own package): `sql.query`
+  (L1 read, untrusted rows, `READ ONLY` transaction) + `sql.execute` (L3→L4
+  mutation, held). The first native adapter whose headline teeth is an **injection
+  boundary** — parameterized-only (values always bound, no string SQL), the
+  read/mutation split enforced by a database-level read-only transaction (catches a
+  data-modifying CTE), scoped connection credential redacted from errors, result-row
+  cap + statement timeout. Targets Postgres via Bun's native `Bun.SQL` (no runtime
+  dep). TS-level boundary, not DB containment. Probe `sql-adapter-enforces-invariants`.

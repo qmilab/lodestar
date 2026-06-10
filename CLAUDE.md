@@ -4,9 +4,12 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.2.0 published to npm (all 22 packages via CI trusted
 publishing — the integrated release: the 8 net-new packages plus the
-updated guard/cli that wire them in), v0.2 architecture locked. Forty-eight probes pass under
-strict TypeScript (one needs a Postgres test database — see
-below). Forty-four live in the first-party pack
+updated guard/cli that wire them in), v0.2 architecture locked. A 23rd
+package, `@qmilab/lodestar-adapter-sql` (the governed SQL/database
+adapter, ADR-0013), has since landed in the repo and publishes in the
+next release. Forty-nine probes pass under
+strict TypeScript (two need a Postgres test database — see
+below). Forty-five live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -107,8 +110,21 @@ round-trip), and replayable (re-running `calibrate` over the recorded `cursor`
 window reproduces the verdict). The report wire format graduated to
 `@qmilab/lodestar-core`; the event is audit/replay, not a forgery boundary — not
 signed in v0 because the gate reads an in-process snapshot and a flag only
-escalates; `lodestar harness calibrate` is the CLI publish step; ADR-0011).
-The other four live in the first non-core
+escalates; `lodestar harness calibrate` is the CLI publish step; ADR-0011),
+and one SQL-adapter probe (`sql-adapter-enforces-invariants` — the native
+`@qmilab/lodestar-adapter-sql` holds its invariants through the kernel against a
+real Postgres: the **parameterized-only injection boundary** (a `'); DROP TABLE
+…;--` parameter is bound and stored as a literal, never executed), the
+read/mutation trust split (a `sql.query` at L1 returns rows but a write — both an
+obvious `DELETE` and a data-modifying CTE the lexical guard waves through — is
+refused, the latter by a `READ ONLY` transaction the database itself enforces), the
+L3 mutation two-phase hold (a held `sql.execute` parks at `pending_approval` and
+touches no row until approved), statement-stacking rejection, a result-row cap, and
+the connection password never surfacing in inputs/observations and being redacted
+from a bad-connection error; the first adapter whose headline teeth is an injection
+boundary rather than egress; DB-gated like `tool-poisoning-cross-session` —
+`LODESTAR_TEST_DATABASE_URL`, skips loudly when unset, runs against `postgres:16` in
+CI; ADR-0013). The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
 `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack
@@ -225,6 +241,7 @@ packages/
     nostr/             # (exists, P2) governed Nostr transport: nostr.publish (L4, second native egress — signing key IS the credential, in-process BIP-340) + nostr.fetch (L1, untrusted inbound); relay pinning, kind allowlist, NIP-42 AUTH, fetch SSRF guard; controlled-network sandbox; TS-level boundary, not network containment; ADR-0007
     http/              # (exists, P2) governed HTTP transport: http.request (L4, third native egress — host-bound auth header credential) + http.fetch (L1, untrusted inbound, the injection vector); hostname pinning + scheme allowlist + per-hop redirect re-validation (the SSRF escape) + bounded capture; reuses controlled-network; TS-level boundary, not network containment; ADR-0008
     messaging/         # (exists, P2) governed messaging transport: slack.post + email.send (both L4, fourth native egress — the purest human-approval demo); destination pinning (channel allowlist / recipient address+domain allowlist — the exfil guard), operator-fixed endpoint+sender (no agent host → no SSRF; no From spoofing), scoped header credential, no redirect following, send delivery semantics (non-2xx / Slack ok:false → failed); egress-only this slice; reuses controlled-network; TS-level boundary, not network containment; ADR-0009
+    sql/               # (exists) governed SQL/database adapter (Bun.SQL/Postgres): sql.query (L1, untrusted rows, READ ONLY transaction) + sql.execute (L3→L4 mutation, held); the parameterized-only injection boundary (values always bound, never concatenated — no string SQL); lexical single-statement + read-only guards; scoped connection credential redacted from errors; result-row cap + statement_timeout; TS-level boundary, not DB containment; ADR-0013
 
 examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline
@@ -313,7 +330,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Forty-eight probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (One, `tool-poisoning-cross-session`, needs a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; it skips cleanly — exit 0 with a loud banner — when that is unset, and runs for real in CI.)
+- **Forty-nine probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
 
 ## Quick references
 

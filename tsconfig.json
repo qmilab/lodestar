@@ -13,6 +13,7 @@
     { "path": "./packages/adapters/nostr" },
     { "path": "./packages/adapters/http" },
     { "path": "./packages/adapters/messaging" },
+    { "path": "./packages/adapters/sql" },
     { "path": "./packages/guard" },
     { "path": "./packages/guard-mcp" },
     { "path": "./packages/trace" },

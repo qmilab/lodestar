@@ -14,6 +14,7 @@
         "@qmilab/lodestar-adapter-messaging": "workspace:*",
         "@qmilab/lodestar-adapter-nostr": "workspace:*",
         "@qmilab/lodestar-adapter-shell": "workspace:*",
+        "@qmilab/lodestar-adapter-sql": "workspace:*",
         "@qmilab/lodestar-cognitive-core": "workspace:*",
         "@qmilab/lodestar-core": "workspace:*",
         "@qmilab/lodestar-event-log": "workspace:*",
@@ -189,6 +190,18 @@
     },
     "packages/adapters/shell": {
       "name": "@qmilab/lodestar-adapter-shell",
+      "version": "0.2.0",
+      "dependencies": {
+        "@qmilab/lodestar-action-kernel": "workspace:*",
+        "@qmilab/lodestar-core": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
+    "packages/adapters/sql": {
+      "name": "@qmilab/lodestar-adapter-sql",
       "version": "0.2.0",
       "dependencies": {
         "@qmilab/lodestar-action-kernel": "workspace:*",
@@ -466,6 +479,8 @@
     "@qmilab/lodestar-adapter-nostr": ["@qmilab/lodestar-adapter-nostr@workspace:packages/adapters/nostr"],
 
     "@qmilab/lodestar-adapter-shell": ["@qmilab/lodestar-adapter-shell@workspace:packages/adapters/shell"],
+
+    "@qmilab/lodestar-adapter-sql": ["@qmilab/lodestar-adapter-sql@workspace:packages/adapters/sql"],
 
     "@qmilab/lodestar-cli": ["@qmilab/lodestar-cli@workspace:packages/cli"],
 
