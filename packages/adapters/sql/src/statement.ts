@@ -1,19 +1,26 @@
 /**
- * Statement guards for the SQL adapter — the *lexical* layer of the
- * injection boundary.
+ * Statement guards for the SQL adapter — the lexical layer of the boundary.
  *
- * The load-bearing injection defence is structural, in `tools.ts`: values are
- * ALWAYS passed as bound parameters (`sql.unsafe(statement, params)` → the
- * extended/prepared protocol), never string-concatenated into the SQL text, and
- * `sql.query` runs inside a `READ ONLY` transaction so even a data-modifying CTE
- * is rejected by the database itself. These guards are the fast-fail layer on top:
- * they reject obvious multi-statement stacking and (for the read tool) obvious
- * writes with a clear error BEFORE the statement reaches the driver, and they make
- * the read/mutation split legible.
+ * The *value*-injection defence is structural, in `tools.ts`: agent-supplied values
+ * are ALWAYS bound (`sql.unsafe(statement, params)`), never concatenated, so a value
+ * cannot become SQL. But the SINGLE-STATEMENT defence is layered, and this scanner
+ * is part of the load-bearing layer:
  *
- * Honest scope: this is a lightweight scanner, not a full SQL parser. It exists to
- * give clear errors and a second line of defence; correctness of the boundary does
- * not rest on it.
+ *   - When the statement carries bound parameters, the extended/prepared protocol
+ *     itself rejects multiple commands ("cannot insert multiple commands into a
+ *     prepared statement").
+ *   - When it carries NO parameters, `sql.unsafe(stmt, [])` falls back to Postgres's
+ *     SIMPLE protocol, which DOES permit `;`-separated commands. There, this
+ *     `isMultiStatement` scanner is the authoritative guard that stacking never
+ *     reaches the driver — backed for `sql.query` by the `READ ONLY` transaction
+ *     (extra statements cannot write) and for `sql.execute` by the human-approval
+ *     gate (the approver sees the full statement text).
+ *
+ * So the scanner is NOT merely cosmetic: it must correctly model every Postgres
+ * lexical context a `;` can hide in (single-quoted strings with `''`, double-quoted
+ * identifiers, dollar-quoted blocks with letter/underscore-leading tags, and line /
+ * nestable block comments). It deliberately errs toward over-rejection: a construct
+ * it cannot confidently parse as single-statement is rejected, not waved through.
  */
 
 /**
@@ -121,9 +128,12 @@ export function isMultiStatement(sql: string): boolean {
       }
       continue
     }
-    // dollar-quoted block: $tag$ … $tag$ (tag may be empty: $$ … $$)
+    // dollar-quoted block: $tag$ … $tag$ (tag may be empty: $$ … $$). A Postgres
+    // dollar-quote tag must start with a letter/underscore — `$1`, `$2` are
+    // POSITIONAL PARAMETERS, not quote openers, so a digit-leading `$1$…$1$` must
+    // NOT be treated as a quoted span (else a `;` inside it would be skipped).
     if (c === "$") {
-      const tagMatch = /^\$[A-Za-z_0-9]*\$/.exec(sql.slice(i))
+      const tagMatch = /^\$([A-Za-z_][A-Za-z_0-9]*)?\$/.exec(sql.slice(i))
       if (tagMatch) {
         const tag = tagMatch[0]
         const end = sql.indexOf(tag, i + tag.length)

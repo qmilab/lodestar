@@ -22,9 +22,10 @@ import { assertReadOnly, assertSingleStatement } from "./statement.js"
  * The teeth (mirroring the egress slices, ADR-0006/0007/0008/0009):
  *
  *   - **Parameterized-only.** No string-SQL path is exposed; values bind as
- *     `$1..$N`. Passing the params array forces the extended protocol, which also
- *     forbids multiple statements; a lexical single-statement guard rejects obvious
- *     stacking early.
+ *     `$1..$N`. With bound parameters the extended protocol also forbids multiple
+ *     statements; for a PARAMETERLESS statement (which falls back to the simple
+ *     protocol) the lexical single-statement guard in `statement.ts` is the
+ *     authoritative defence that stacking never reaches the driver.
  *   - **Read / mutation split.** `sql.query` is L1 and runs inside a `READ ONLY`
  *     transaction, so even a data-modifying CTE is refused by the database — its
  *     rows are UNTRUSTED inbound content. A mutation must go through `sql.execute`,
@@ -97,11 +98,17 @@ function deriveColumns(rows: unknown[]): string[] {
   return first !== null && typeof first === "object" ? Object.keys(first as object) : []
 }
 
+/** Postgres `statement_timeout` is an integer-millisecond GUC capped at INT_MAX. */
+const PG_MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647
+
 /** A validated, positive statement timeout in whole milliseconds, or `null` to
  * leave the server default in place. Interpolated into `SET LOCAL` (which takes no
- * bound parameters), so it MUST be a trusted integer — never caller input. */
+ * bound parameters), so it MUST be a trusted integer — never caller input. Clamped
+ * to the GUC ceiling so an absurd operator value cannot render in exponential
+ * notation (`1e+21`) and produce malformed SQL that fails every query. */
 function timeoutLiteral(timeoutMs: number): number | null {
-  return Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.floor(timeoutMs) : null
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return null
+  return Math.min(Math.floor(timeoutMs), PG_MAX_STATEMENT_TIMEOUT_MS)
 }
 
 const SqlStatementInput = z.object({

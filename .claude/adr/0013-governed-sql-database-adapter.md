@@ -51,12 +51,17 @@ database so every write is held. Returns `rows_affected` and any `RETURNING` row
 
 **The injection boundary (the headline).** No string-SQL path is exposed. The
 agent supplies `{ statement, params }`; every value is bound via
-`sql.unsafe(statement, params)` — Postgres's extended/prepared protocol — never
-string-concatenated. So `Robert'); DROP TABLE students;--` passed as a parameter is
-stored as a literal string, never interpreted as SQL. Passing the params array also
-forces the extended protocol (which forbids multiple commands); a lexical
-single-statement guard (quote-, dollar-quote-, and comment-aware) rejects obvious
-stacking early with a clear error.
+`sql.unsafe(statement, params)` — Postgres's extended/prepared protocol when
+parameters are present — never string-concatenated. So `Robert'); DROP TABLE
+students;--` passed as a parameter is stored as a literal string, never interpreted
+as SQL. Single-statement enforcement is layered: with bound parameters the extended
+protocol rejects multiple commands; for a PARAMETERLESS statement —
+`sql.unsafe(stmt, [])` falls back to the *simple* protocol, which permits
+`;`-separated commands — the lexical single-statement guard (quote-, dollar-quote-,
+and comment-aware, and erring toward over-rejection) is the authoritative defence
+that stacking never reaches the driver, backed for `sql.query` by the READ ONLY
+transaction and for `sql.execute` by the human-approval gate (the approver sees the
+full statement text).
 
 **Credentials.** The connection is operator config — a connection string (resolved
 once; the adapter owns and pools the handle and `close()`s it) or a pre-opened

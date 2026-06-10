@@ -29,6 +29,11 @@ export type SqlConnectionConfig =
       /** A connection string, or a resolver that returns one. The adapter opens
        * and owns the pool. */
       url: SecretValue
+      /** Extra literal secrets to redact from caught errors — use when the
+       * connection string is a non-URL DSN whose password the adapter cannot parse
+       * out (e.g. a libpq `host=… password=…` string). Merged with the password
+       * the adapter does manage to recover. */
+      redactions?: string[]
     }
   | {
       /** A pre-opened `Bun.SQL` handle the operator owns and closes. */
@@ -45,13 +50,21 @@ export class SqlConnection {
 
   constructor(private readonly config: SqlConnectionConfig) {
     this.owned = "url" in config
-    this.redactions =
-      "sql" in config ? (config.redactions ?? []).flatMap((s) => redactionVariants(s)) : []
+    // Seed from any operator-supplied redactions (both config variants); the
+    // `url` variant augments this with the parsed password in `open()`.
+    this.redactions = (config.redactions ?? []).flatMap((s) => redactionVariants(s))
   }
 
-  /** Resolve (once) and return the pooled handle. */
+  /** Resolve (once) and return the pooled handle. A FAILED open is not memoised —
+   * a transient resolver/connection error clears the slot so the next call retries
+   * instead of bricking the connection for the process lifetime. */
   handle(): Promise<SQL> {
-    if (!this.opening) this.opening = this.open()
+    if (!this.opening) {
+      this.opening = this.open().catch((err) => {
+        this.opening = undefined
+        throw err
+      })
+    }
     return this.opening
   }
 
@@ -65,9 +78,11 @@ export class SqlConnection {
       // obtained (so cannot add to the redaction set). Do NOT propagate it.
       throw new Error("sql: connection resolution failed")
     }
-    // Derive the redaction set BEFORE opening, so it is in place for any error
-    // the first query surfaces.
-    this.redactions = connectionRedactions(url)
+    // Augment (not replace) the operator-supplied redactions with the password
+    // parsed from the connection string, BEFORE opening, so the set is in place
+    // for any error the first query surfaces. A non-URL DSN yields none here, so
+    // the operator's explicit `redactions` are the fallback.
+    this.redactions = [...new Set([...this.redactions, ...connectionRedactions(url)])]
     return new SQL(url)
   }
 
@@ -76,10 +91,12 @@ export class SqlConnection {
     return applyRedactions(text, this.redactions)
   }
 
-  /** Close the pool, but only if the adapter opened it. */
+  /** Close the pool, but only if the adapter opened it. A rejected open leaves
+   * nothing to close, and `close()` must never re-throw the connection error from
+   * a caller's `finally`. */
   async close(): Promise<void> {
     if (!this.owned || !this.opening) return
-    const sql = await this.opening
-    await sql.end()
+    const sql = await this.opening.catch(() => undefined)
+    if (sql) await sql.end()
   }
 }

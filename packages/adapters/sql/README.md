@@ -72,9 +72,10 @@ the shell / git / Nostr / HTTP / messaging adapters, ADR-0004/0006–0009). It
 enforces, in-process:
 
 1. **Parameterized-only (the injection boundary).** Values are always bound as
-   `$1..$N`, never concatenated. Passing the params array forces Postgres's
-   extended protocol (one statement only); a quote-/comment-/dollar-quote-aware
-   guard rejects obvious stacking early.
+   `$1..$N`, never concatenated. Single-statement is enforced by the extended
+   protocol when parameters are present and by a quote-/comment-/dollar-quote-aware
+   lexical guard when they are not (a parameterless statement falls back to the
+   simple protocol) — so stacking never reaches the driver either way.
 2. **Read / mutation split.** `sql.query` (L1) runs inside a `READ ONLY`
    transaction, so even a data-modifying CTE is refused by the database itself — its
    rows are untrusted inbound content. A mutation must go through `sql.execute`,

@@ -38,6 +38,15 @@ describe("statement: single-statement guard", () => {
     expect(isMultiStatement("select $tag$ x; y $tag$ from t")).toBe(false)
   })
 
+  test("a digit-leading $1$ is a parameter, NOT a dollar-quote, so an inner ; separates", () => {
+    // Postgres lexes `$1` as a positional parameter, not a dollar-quote opener, so
+    // the ; between the two $1$ tokens is a real statement separator. The scanner
+    // must agree with Postgres here or it would skip a real ;.
+    expect(isMultiStatement("select $1$ ; drop table t $1$")).toBe(true)
+    // a genuine (letter-led) dollar-quote still hides its inner ;
+    expect(isMultiStatement("select $tag$ a; b $tag$ from t")).toBe(false)
+  })
+
   test("a semicolon inside a comment is not a separator", () => {
     expect(isMultiStatement("select 1 -- ; drop table t\n")).toBe(false)
     expect(isMultiStatement("select 1 /* ; drop */ from t")).toBe(false)
@@ -94,8 +103,25 @@ describe("redact: connection password", () => {
     expect(applyRedactions("saw p%40ss%2fword in a log", reds)).not.toContain("p%40ss%2fword")
   })
 
-  test("a non-URL DSN yields no redactions (operator passes explicit ones)", () => {
-    expect(connectionRedactions("host=localhost dbname=app user=app password=secret")).toEqual([])
+  test("extracts the password from a libpq key=value DSN", () => {
+    expect(connectionRedactions("host=localhost dbname=app user=app password=hunter2")).toContain(
+      "hunter2",
+    )
+    // a single-quoted value (may contain spaces / escaped quotes)
+    expect(connectionRedactions("host=h password='se cret' dbname=d")).toContain("se cret")
+    expect(connectionRedactions("host=h password='a\\'b' dbname=d")).toContain("a'b")
+  })
+
+  test("extracts a password carried in a URL query string", () => {
+    // libpq accepts `?password=…` in a URI; URL.password (userinfo) is empty here.
+    expect(connectionRedactions("postgres://app@db.example.com/appdb?password=qs3cret")).toContain(
+      "qs3cret",
+    )
+  })
+
+  test("a connection string with no recoverable password yields no redactions", () => {
+    expect(connectionRedactions("host=localhost dbname=app user=app")).toEqual([])
+    expect(connectionRedactions("postgres://app@db.example.com/appdb")).toEqual([])
   })
 
   test("applyRedactions is longest-first so a shorter secret cannot leave a remainder", () => {

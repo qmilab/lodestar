@@ -27,9 +27,13 @@
  *      whose parameter value is `Robert'); DROP TABLE …;--` stores that string
  *      LITERALLY — the table still exists and the value round-trips verbatim. The
  *      value was bound, never interpreted as SQL.
- *   6. **No statement stacking.** A `sql.execute` carrying two statements
- *      (`INSERT …; DROP TABLE …`) fails before touching the database — the table
- *      survives and the insert did not happen.
+ *   6. **No statement stacking — both protocol paths.** A `sql.execute` carrying
+ *      two statements (`INSERT …; DROP TABLE …`) fails before touching the database
+ *      — the table survives and the insert did not happen — tested BOTH with bound
+ *      params (the extended protocol rejects it) AND parameterless (where
+ *      `sql.unsafe(stmt, [])` falls back to the simple protocol that WOULD permit
+ *      stacking, so the lexical single-statement guard is the sole structural
+ *      defence).
  *   7. **Credentials never leak.** The connection password never surfaces in the
  *      recorded action inputs or the emitted observations (the agent never
  *      supplies it), and a connection error from a bad-credential connection is
@@ -200,6 +204,16 @@ async function run(): Promise<ProbeResult> {
         ],
       }
     }
+    // The at-cap result (2 rows, cap 2) must NOT be flagged truncated — pins the
+    // cap boundary as `>` not `>=`, so case 2's `truncated === true` is meaningful.
+    if (readOut?.truncated !== false) {
+      return {
+        passed: false,
+        details: [
+          `L1 read FAILED: an at-cap (2 of 2) result was wrongly flagged truncated=${JSON.stringify(readOut?.truncated)} — off-by-one in the row cap.`,
+        ],
+      }
+    }
     details.push("L1 read: sql.query auto-approved and returned the two seeded rows")
 
     // ---- 2. Result-row cap ------------------------------------------------
@@ -302,8 +316,18 @@ async function run(): Promise<ProbeResult> {
         ],
       }
     }
+    // Pin the reported rows_affected (the driver's `.count`) — a regression that
+    // lost the count would report 0 affected for a successful single-row insert.
+    if (outputOf(insertDone.id)?.rows_affected !== 1) {
+      return {
+        passed: false,
+        details: [
+          `L3 mutation FAILED: rows_affected was ${JSON.stringify(outputOf(insertDone.id)?.rows_affected)}, expected 1 — the driver row count was lost.`,
+        ],
+      }
+    }
     details.push(
-      "L3 mutation: the insert parked at pending_approval, touched nothing, then landed only after approval",
+      "L3 mutation: the insert parked at pending_approval, touched nothing, then landed (rows_affected=1) only after approval",
     )
 
     // ---- 5. Parameterized-only beats injection (Bobby Tables) -------------
@@ -355,18 +379,57 @@ async function run(): Promise<ProbeResult> {
       ),
     )
     const stackDone = await kernel.execute(kernel.resolve(stack, grant(stack, "req-stk")))
-    if (stackDone.phase !== "failed" || (await countRows(30)) !== 0) {
+    // countRows throws if the table was dropped, so guard it: row30 stays -1 (≠ 0)
+    // if either the DROP ran (table gone) or the INSERT landed — both are failures.
+    let row30 = -1
+    try {
+      row30 = await countRows(30)
+    } catch {
+      /* table dropped — handled by the row30 !== 0 check below */
+    }
+    if (stackDone.phase !== "failed" || row30 !== 0) {
       return {
         passed: false,
         details: [
-          `stacking FAILED: a stacked 'INSERT …; DROP TABLE …' did not end 'failed' or partially executed (phase=${stackDone.phase}, row30Present=${await countRows(30)}).`,
+          `stacking FAILED: a stacked 'INSERT …; DROP TABLE …' (bound params) did not end 'failed' or partially executed (phase=${stackDone.phase}, row30=${row30} — -1 means the table was dropped).`,
         ],
       }
     }
-    // The table must still exist (the DROP must not have run): a count succeeds.
-    await countRows(1)
     details.push(
-      "no stacking: a stacked 'INSERT …; DROP TABLE …' failed; the table survived and the insert did not happen",
+      "no stacking (bound params): a stacked 'INSERT …; DROP TABLE …' failed; the table survived and the insert did not happen",
+    )
+
+    // ---- 6b. No statement stacking — the PARAMETERLESS path ---------------
+    // With NO bound parameters, `sql.unsafe(stmt, [])` falls back to Postgres's
+    // SIMPLE protocol, which DOES permit `;`-separated commands — so the extended-
+    // protocol backstop does NOT apply and the lexical single-statement guard is
+    // the SOLE structural defence. Sub-case 6 used bound params (where the protocol
+    // also rejects), so it never exercised this path; this one does.
+    const stackNp = await kernel.arbitrate(
+      propose(
+        "sql.execute",
+        { statement: `insert into ${table} (id, name) values (41, 'np'); drop table ${table}` },
+        WRITE(),
+      ),
+    )
+    const stackNpDone = await kernel.execute(kernel.resolve(stackNp, grant(stackNp, "req-stk-np")))
+    let row41 = -1
+    try {
+      row41 = await countRows(41)
+    } catch {
+      /* table dropped — handled by the row41 !== 0 check below */
+    }
+    if (stackNpDone.phase !== "failed" || row41 !== 0) {
+      return {
+        passed: false,
+        details: [
+          ...details,
+          `stacking (parameterless) FAILED: a stacked statement with NO bound params — where the simple protocol WOULD permit it — was not rejected (phase=${stackNpDone.phase}, row41=${row41} — -1 means the table was dropped). The lexical single-statement guard is the sole defence here and it must hold.`,
+        ],
+      }
+    }
+    details.push(
+      "no stacking (parameterless): a stacked statement with NO bound params — the simple-protocol path the extended protocol does NOT guard — was rejected by the lexical guard; the table survived",
     )
 
     // ---- 7a. Credentials never leak (valid connection) -------------------
@@ -397,6 +460,9 @@ async function run(): Promise<ProbeResult> {
     // Reset tools and register a query tool over a connection that cannot be
     // reached, carrying a DISTINCTIVE password. The connection error must be
     // scrubbed of that password before it reaches the failed-action audit.
+    // NOTE: this is a real-error-path smoke test; whether the driver echoes the
+    // connection string is outside our control, so the redaction MECHANISM itself
+    // is the unit test's job (sql.test.ts, "extracts and redacts the password").
     _resetToolsForTests()
     const DISTINCTIVE_PW = "PROBE_DB_SECRET_deadbeefcafef00d"
     const badAdapter = registerSqlTools({
@@ -409,6 +475,17 @@ async function run(): Promise<ProbeResult> {
       const badDone = await kernel.execute(
         await kernel.arbitrate(propose("sql.query", { statement: "select 1 as one" }, READ())),
       )
+      // Positive control: the unreachable connection MUST end the action 'failed'
+      // (otherwise the redaction check below is over an empty/irrelevant audit).
+      if (badDone.phase !== "failed") {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `credential redaction setup FAILED: a query over an unreachable connection did not end 'failed' (phase=${badDone.phase}) — the redaction check would be vacuous.`,
+          ],
+        }
+      }
       const badHaystack = JSON.stringify({
         audit: badDone.audit,
         observations: observations.filter((o) => o.source.invocation_id === badDone.id),
@@ -423,7 +500,7 @@ async function run(): Promise<ProbeResult> {
         }
       }
       details.push(
-        "credentials: the password never surfaced in inputs/observations, and a bad-connection error was redacted of its distinctive password",
+        "credentials: the password never surfaced in inputs/observations, and a failed bad-connection action was redacted of its distinctive password",
       )
     } finally {
       await badAdapter.close()

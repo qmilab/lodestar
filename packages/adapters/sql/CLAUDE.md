@@ -51,10 +51,14 @@ A **TS-level governance boundary, not database containment** (same framing as
 ADR-0004/0006/0007/0008/0009). It enforces, in-process:
 
 1. **Parameterized-only (the injection boundary).** No string-SQL path is exposed.
-   Values are always bound via `sql.unsafe(statement, params)` (the
-   extended/prepared protocol), never concatenated, so a hostile value cannot become
-   SQL. Passing the params array also forces one-statement-only at the protocol; the
-   lexical guard rejects obvious stacking early.
+   Values are always bound via `sql.unsafe(statement, params)`, never concatenated,
+   so a hostile value cannot become SQL. Single-statement enforcement is layered:
+   with bound parameters the extended/prepared protocol rejects multiple commands;
+   for a PARAMETERLESS statement (`sql.unsafe(stmt, [])` falls back to the simple
+   protocol, which permits `;`-separated commands) the lexical `isMultiStatement`
+   guard is the authoritative defence — backed for `sql.query` by the READ ONLY
+   transaction and for `sql.execute` by the human-approval gate (the approver sees
+   the full statement text).
 2. **Read / mutation split with teeth.** `sql.query` is L1 and runs in a `READ ONLY`
    transaction — the DEFINITIVE read-only enforcement: a data-modifying CTE (`WITH d
    AS (DELETE … RETURNING …) SELECT …`) leads with `WITH` and slips the lexical

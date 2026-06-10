@@ -68,11 +68,22 @@ export function applyRedactions(text: string, redactions: string[]): string {
   return out
 }
 
+/** Extract the password from a libpq key=value DSN (`host=… password=… …`).
+ * Handles a single-quoted value (with `\'`/`\\` escapes) and an unquoted token.
+ * Returns null when there is no `password=` key. */
+function libpqPassword(dsn: string): string | null {
+  const quoted = /(?:^|\s)password\s*=\s*'((?:[^'\\]|\\.)*)'/i.exec(dsn)
+  if (quoted?.[1] !== undefined) return quoted[1].replace(/\\(.)/g, "$1")
+  const bare = /(?:^|\s)password\s*=\s*(\S+)/i.exec(dsn)
+  return bare?.[1] ?? null
+}
+
 /**
  * Extract the redaction set for a connection string: the password component and
- * its encoded variants. Parses with the WHATWG `URL`; a DSN that does not parse
- * as a URL (e.g. a libpq key=value string) yields no redactions — the operator
- * can pass explicit `redactions` for that shape instead.
+ * its encoded variants. Handles both URL connection strings (`postgres://user:pw@…`)
+ * and libpq key=value DSNs (`host=… password=pw …`). A shape it cannot parse a
+ * password out of yields no redactions — the operator can pass explicit
+ * `redactions` for that case.
  */
 export function connectionRedactions(connectionString: string): string[] {
   let password = ""
@@ -81,9 +92,23 @@ export function connectionRedactions(connectionString: string): string[] {
     // special, but it still parses the userinfo, so `.password` is populated.
     password = new URL(connectionString).password
   } catch {
-    return []
+    // Not a URL — try a libpq key=value DSN before giving up.
+    const pw = libpqPassword(connectionString)
+    return pw ? redactionVariants(pw) : []
   }
-  if (password === "") return []
+  if (password === "") {
+    // A URL with no userinfo password — but the password could ride in the query
+    // string (libpq accepts `postgres://h/db?password=pw`). Read it from the parsed
+    // query params, NOT the whitespace-anchored libpq scanner (a `?`/`&` precedes
+    // `password=` in a URL, so that scanner would never match here).
+    let qp: string | null = null
+    try {
+      qp = new URL(connectionString).searchParams.get("password")
+    } catch {
+      /* unreachable: connectionString already parsed as a URL above */
+    }
+    return qp ? redactionVariants(qp) : []
+  }
   // The connection string stores the password percent-encoded; redact both the
   // decoded value (what the driver actually authenticates with) and the raw
   // encoded form as it appears in the string.
