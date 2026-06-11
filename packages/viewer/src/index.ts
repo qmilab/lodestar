@@ -10,8 +10,8 @@
  *
  * Read-only by construction: no route mutates the event log, and pending
  * approvals are surfaced for visibility only. Resolving them is the
- * separate write-side surface (the `lodestar approve` CLI, or the
- * commercial Governing UI write side).
+ * separate write-side surface (the `lodestar approve` CLI, or a
+ * separate write-side product).
  *
  * The CLI entry point is `lodestar view [session-id]`.
  */

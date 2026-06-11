@@ -117,7 +117,7 @@ export async function readAllEvents(logRoot: string): Promise<EventEnvelope[]> {
  *
  * Read-only by construction — this surfaces *what is waiting*, never
  * resolves it. Resolution is the separate write-side surface (the
- * `lodestar approve` CLI, or the commercial Governing UI write side).
+ * `lodestar approve` CLI, or a separate write-side product).
  */
 export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
   const resolved = new Set<string>()

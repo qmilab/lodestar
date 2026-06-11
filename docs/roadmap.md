@@ -229,7 +229,7 @@ Work past the v1 line, tracked here as it lands:
   approvals. It is the interactive sibling of `lodestar report`. No mutation
   route, never writes the log — locked by the `viewer-is-read-only` probe.
   The framework-rich **write-side** Governing UI (resolving approvals, team
-  workflows, RBAC, dashboards) is the separate commercial surface and is not
+  workflows, RBAC, dashboards) is a separate write-side surface and is not
   in this repo.
 
 - **otel-exporter — the OpenTelemetry bridge** — ✅ landed
