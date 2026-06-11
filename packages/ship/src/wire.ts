@@ -102,8 +102,8 @@ export interface BuildShipBatchInput {
  * The shipper receives RAW envelopes (`payload` is `unknown`) and sends the raw
  * payload VERBATIM, so it must not trust a `sensitivity`-looking field on an
  * arbitrary blob. The field is trusted ONLY when the payload is EXACTLY a known
- * content record — it validates against the schema AND carries nothing beyond
- * it:
+ * content record — it validates against the schema AND carries no key beyond it
+ * (see {@link isExactShape}):
  *
  *   1. an exact Claim / Belief / Observation → its own `sensitivity`;
  *   2. an exact Action → `contract.data_sensitivity`, mapped onto the content
@@ -111,13 +111,18 @@ export interface BuildShipBatchInput {
  *      otel-exporter gates action intent/inputs by);
  *   3. otherwise FAIL CLOSED to `secret`.
  *
- * The exactness check matters because Zod strips unknown keys on parse: a
- * *superset* — every required Claim field, `sensitivity:"public"`, PLUS an extra
- * secret field — would validate as `public`, but the shipper would still send
- * the raw superset and leak the extra field. So we compare `canonicalHash` of
- * the stripped parse against a freshly hashed raw payload (not the stored
- * `payload_hash`, which a tampered log could spoof); any extra or nested field
- * makes them differ and we fall through to fail-closed `secret`.
+ * Classification is by SHAPE, not by `envelope.type`: content events are emitted
+ * under inconsistent type strings, so dispatching on the type would over-redact
+ * legitimate records. The exactness check rejects a *superset* — a valid record
+ * PLUS an extra top-level/nested-known key — by comparing `canonicalHash` of the
+ * stripped parse against a freshly hashed raw payload.
+ *
+ * It does NOT, and cannot, inspect content inside a schema's own `unknown`-typed
+ * fields (an Observation's `payload`, an Action's `inputs`): that is the record's
+ * OWN declared content, gated by the record's own `sensitivity` label exactly as
+ * the otel-exporter gates it — the shipper does not re-classify a labeled
+ * record's own content. A mislabeled/poisoned record is the Memory Firewall's
+ * concern upstream, not the shipper's.
  *
  * (3) is the load-bearing posture. A decision, an outcome, an approval record, a
  * forged/custom event, a schema superset, a future type — all withheld at every
@@ -129,26 +134,32 @@ export interface BuildShipBatchInput {
  */
 export function payloadContentSensitivity(envelope: EventEnvelope): Sensitivity {
   const payload = envelope.payload
-  // Hash the payload AS IT WILL SHIP (raw, verbatim) — computed fresh, never the
-  // stored `payload_hash`. A declared sensitivity is trusted only when a schema
-  // parse reproduces this exactly (i.e. stripped nothing).
-  const rawHash = canonicalHash(payload)
 
   const claim = ClaimSchema.safeParse(payload)
-  if (claim.success && canonicalHash(claim.data) === rawHash) return claim.data.sensitivity
+  if (claim.success && isExactShape(claim.data, payload)) return claim.data.sensitivity
   const belief = BeliefSchema.safeParse(payload)
-  if (belief.success && canonicalHash(belief.data) === rawHash) return belief.data.sensitivity
+  if (belief.success && isExactShape(belief.data, payload)) return belief.data.sensitivity
   const observation = ObservationSchema.safeParse(payload)
-  if (observation.success && canonicalHash(observation.data) === rawHash) {
+  if (observation.success && isExactShape(observation.data, payload)) {
     return observation.data.sensitivity
   }
   const action = ActionSchema.safeParse(payload)
-  if (action.success && canonicalHash(action.data) === rawHash) {
+  if (action.success && isExactShape(action.data, payload)) {
     return contentSensitivityForAction(action.data.contract.data_sensitivity)
   }
 
   // Fail closed: anything not EXACTLY a known content record is treated as `secret`.
   return "secret"
+}
+
+/**
+ * True iff the schema-parsed record carries nothing BEYOND the schema — i.e. Zod
+ * stripped no key. The raw-payload hash is computed HERE, lazily on a parse hit
+ * (so the fail-closed majority pays no hashing), and over the RAW payload —
+ * never the stored `payload_hash`, which a tampered log could spoof.
+ */
+function isExactShape(parsed: unknown, rawPayload: unknown): boolean {
+  return canonicalHash(parsed) === canonicalHash(rawPayload)
 }
 
 /**

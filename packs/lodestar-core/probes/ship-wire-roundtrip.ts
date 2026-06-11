@@ -204,6 +204,8 @@ async function run(): Promise<ProbeResult> {
       logRoot: rootDir,
       sensitivityCeiling: "internal",
     })
+    // A dry-run (no endpoint/out) must return the body for inspection.
+    if (internal.ndjson === undefined) return fail(details, "dry-run ship returned no NDJSON body")
     const { manifest, records } = parseWire(internal.ndjson)
 
     // 1 — structural contract.
@@ -285,6 +287,8 @@ async function run(): Promise<ProbeResult> {
       logRoot: rootDir,
       sensitivityCeiling: "secret",
     })
+    if (open.ndjson === undefined)
+      return fail(details, "dry-run ship (secret) returned no NDJSON body")
     const openWire = parseWire(open.ndjson)
     if (open.redacted_count !== 0 || openWire.records.some((r) => r.redacted)) {
       return fail(details, `at ceiling=secret, ${open.redacted_count} records still redacted`)

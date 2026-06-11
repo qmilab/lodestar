@@ -236,16 +236,19 @@ async function run(): Promise<ProbeResult> {
       projectId: PROJECT,
       logRoot: rootDir,
       endpoint: server.url,
-      headers: { authorization: `Bearer ${TOKEN_MARKER}` },
+      // The content-type override here must be IGNORED — the mandated wire type
+      // wins (review C4); asserted in T below.
+      headers: { authorization: `Bearer ${TOKEN_MARKER}`, "content-type": "text/plain" },
       sensitivityCeiling: "internal",
     })
     const req = server.requests[server.requests.length - 1]
     if (!req) return fail(details, "capture server received no POST")
     const body = req.body
 
-    // The summary's body must be exactly what crossed the wire.
-    if (internal.ndjson !== body) {
-      return fail(details, "shipped body differs from what the server received")
+    // On endpoint delivery the body is NOT retained in the summary (it has
+    // already been sent); the bytes that crossed the wire are captured as `body`.
+    if (internal.ndjson !== undefined) {
+      return fail(details, "summary retained the NDJSON body after endpoint delivery")
     }
 
     // A — the secret marker is nowhere in the POSTed bytes.
@@ -274,7 +277,9 @@ async function run(): Promise<ProbeResult> {
     if (!(req.contentType ?? "").includes("application/x-ndjson")) {
       return fail(details, `content-type was ${req.contentType}, expected application/x-ndjson`)
     }
-    details.push("T: token in header only (not in body); POST /v1/events as application/x-ndjson")
+    details.push(
+      "T: token in header only (not in body); POST /v1/events as application/x-ndjson (override ignored)",
+    )
 
     // C — the secret belief survives structurally with a redaction wrapper.
     const { manifest, records } = parseWire(body)

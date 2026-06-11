@@ -74,18 +74,27 @@ later under higher clearance.
    records, forged/custom events, and future event types are likewise withheld at
    every ceiling below `secret`, yet the whole session is still portable at
    `--sensitivity-ceiling secret`. The default ceiling is `internal`. An invalid
-   ceiling **throws** (never fails open).
+   ceiling **throws** (never fails open). Classification is by **shape**, not
+   `envelope.type` (content events use inconsistent type strings, so dispatching
+   on the type would over-redact). Exactness rejects keys *beyond* the schema; it
+   does **not** inspect content inside a schema's own `unknown`-typed fields (an
+   Observation's `payload`, an Action's `inputs`) — that is the record's own
+   declared content, gated by its own `sensitivity` label exactly as the
+   otel-exporter gates it. A mislabeled/poisoned record is the Memory Firewall's
+   concern upstream, not the shipper's.
 5. **The credential never leaks.** The bearer token is read from a named env
    var by the CLI (never argv), is never in the manifest, never in the NDJSON
    body, and is scrubbed from every error message — even a long token echoed in a
    non-2xx body (redaction runs before truncation), and a server that echoes it
-   back gets `«redacted»`. Only the actual credential values (the token + each
-   `--secret-header`) and the `Authorization` header are scrubbed — a benign
-   `--header` value can't over-redact the message. `--header` is non-secret only:
-   it **refuses
-   credential-looking names** (`authorization`, `cookie`, `*token*`, `*api-key*`,
-   `*secret*`, …) so there is no argv backdoor. Custom credential headers go
-   through `--secret-header NAME=ENV`, the env-backed channel.
+   back gets `«redacted»`. The scrubbed values are the explicit secrets (the token
+   + each `--secret-header`) **plus the value of any header whose name looks like a
+   credential** (`Authorization` and its bare token, `X-API-Key`, …) — a
+   benign-named `--header` value (e.g. `x-trace`) is never scrubbed, so it can't
+   over-redact the message. `--header` is non-secret only: the CLI **refuses
+   credential-looking names** (`looksLikeCredentialHeader` — `auth`/`cookie`/
+   `token`/`api-key`/`secret`/`signature`/…, shared with the library's redactor)
+   so there is no argv backdoor. Custom credential headers go through
+   `--secret-header NAME=ENV`, the env-backed channel.
 
 ## What does not live here
 

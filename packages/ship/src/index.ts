@@ -12,7 +12,13 @@
  * spans.
  */
 
-export { DEFAULT_MAX_BODY_BYTES, SessionNotFoundError, shipSession } from "./ship.js"
+export {
+  CREDENTIAL_HEADER_HINTS,
+  DEFAULT_MAX_BODY_BYTES,
+  looksLikeCredentialHeader,
+  SessionNotFoundError,
+  shipSession,
+} from "./ship.js"
 export type { ShipSessionOptions, ShipSummary } from "./ship.js"
 
 export {

@@ -15,6 +15,39 @@ import { buildShipBatch, serializeBatch } from "./wire.js"
 /** v0 ships one bounded POST per session — no silent chunking (ADR-0014). */
 export const DEFAULT_MAX_BODY_BYTES = 64 * 1024 * 1024
 
+/**
+ * Substrings that mark a header NAME as carrying a credential — RFC auth/cookie
+ * plus the common API-key / token / signature families (`X-API-Key`,
+ * `X-Auth-Key`, `Authorization`, `Ocp-Apim-Subscription-Key`, `x-functions-key`,
+ * AWS `…-Signature`, …). Used two ways: the CLI refuses these on `--header` (so a
+ * credential never reaches argv), and {@link shipSession} redacts the VALUE of
+ * any header so named from error text (a server may echo it back). Substring-
+ * based and deliberately broad — over-matching only routes a header to the
+ * env-backed `--secret-header`, while under-matching leaks.
+ */
+export const CREDENTIAL_HEADER_HINTS = [
+  "auth",
+  "cookie",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "credential",
+  "api-key",
+  "apikey",
+  "api_key",
+  "access-key",
+  "subscription-key",
+  "functions-key",
+  "signature",
+] as const
+
+/** True when a header NAME looks like it carries a credential (see {@link CREDENTIAL_HEADER_HINTS}). */
+export function looksLikeCredentialHeader(name: string): boolean {
+  const n = name.toLowerCase()
+  return CREDENTIAL_HEADER_HINTS.some((hint) => n.includes(hint))
+}
+
 export interface ShipSessionOptions {
   sessionId: string
   /** Skips the project scan when known. */
@@ -26,11 +59,12 @@ export interface ShipSessionOptions {
   /** Collector base URL; the body is POSTed to `{endpoint}/v1/events`. */
   endpoint?: string
   /**
-   * Extra headers for the POST (e.g. `authorization`). Only the value of an
-   * `Authorization` header is treated as a secret and scrubbed from errors (its
-   * bare token too); other header values are NOT redacted, so a benign value
-   * like `"1"` can't over-redact the message. Pass any further secret values
-   * (custom API-key headers) explicitly via {@link secretsToRedact}.
+   * Extra headers for the POST. The VALUE of any header whose NAME looks like a
+   * credential ({@link looksLikeCredentialHeader}) is scrubbed from errors —
+   * including an `Authorization` header's bare token. Benign-named header values
+   * (e.g. `x-trace`) are NOT redacted, so they can't over-redact the message.
+   * For a credential whose header name does NOT look credential-y, also list its
+   * value in {@link secretsToRedact}.
    */
   headers?: Record<string, string>
   /**
@@ -57,8 +91,13 @@ export interface ShipSummary {
   /** How the body was delivered. `none` ⇒ caller prints `ndjson`. */
   delivered: "endpoint" | "file" | "none"
   byte_count: number
-  /** The serialised NDJSON body, for inspection or stdout printing. */
-  ndjson: string
+  /**
+   * The serialised NDJSON body — present only when `delivered === "none"` (the
+   * dry-run/stdout path that needs it). On endpoint/file delivery it has already
+   * been sent/written, so it is omitted rather than retained (a body can be up to
+   * {@link DEFAULT_MAX_BODY_BYTES}).
+   */
+  ndjson?: string
 }
 
 /** Thrown when the session has no events in the log (CLI maps this to exit 3). */
@@ -128,7 +167,10 @@ export async function shipSession(opts: ShipSessionOptions): Promise<ShipSummary
     ceiling: batch.manifest.ceiling,
     delivered,
     byte_count,
-    ndjson,
+    // Retain the body only when the caller needs it (dry-run/stdout); on
+    // endpoint/file delivery it has been sent/written, so don't pin a ≤64MB
+    // string in the returned summary.
+    ...(delivered === "none" ? { ndjson } : {}),
   }
 }
 
@@ -141,7 +183,9 @@ async function postEvents(
   const url = `${endpoint.replace(/\/+$/, "")}/v1/events`
   const res = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/x-ndjson", ...headers },
+    // content-type LAST so a caller-supplied header can't override the mandated
+    // wire type (the receiver contract requires application/x-ndjson).
+    headers: { ...headers, "content-type": "application/x-ndjson" },
     body,
   }).catch((err: unknown) => {
     throw new Error(redactSecrets(`POST ${url} failed: ${errMessage(err)}`, secrets))
@@ -168,11 +212,12 @@ async function postEvents(
 
 /**
  * The exact secret values to scrub from error text: the caller's explicit
- * `secretsToRedact`, plus the value (and bare token) of an `Authorization`
- * header — the only header assumed to be a credential. Other header values are
- * deliberately NOT redacted (a benign `"1"` would otherwise over-redact the
- * message). Sorted longest-first so an overlapping/substring secret can't
- * corrupt the `«redacted»` placeholder.
+ * `secretsToRedact`, plus the VALUE of any header whose NAME looks like a
+ * credential ({@link looksLikeCredentialHeader}) — and, for an `Authorization`
+ * header, the bare token after the scheme. Benign-named header values (e.g.
+ * `x-trace`) are deliberately NOT redacted, so they can't over-redact the
+ * message. Sorted longest-first so an overlapping/substring secret can't corrupt
+ * the `«redacted»` placeholder.
  */
 function collectSecrets(
   explicit: string[] | undefined,
@@ -181,10 +226,12 @@ function collectSecrets(
   const set = new Set<string>()
   for (const s of explicit ?? []) if (s) set.add(s)
   for (const [name, value] of Object.entries(headers ?? {})) {
-    if (!value || name.toLowerCase() !== "authorization") continue
+    if (!value || !looksLikeCredentialHeader(name)) continue
     set.add(value)
-    const m = value.match(/^\S+\s+(.+)$/)
-    if (m?.[1]) set.add(m[1])
+    if (name.toLowerCase() === "authorization") {
+      const m = value.match(/^\S+\s+(.+)$/)
+      if (m?.[1]) set.add(m[1])
+    }
   }
   return [...set].sort((a, b) => b.length - a.length)
 }

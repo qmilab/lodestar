@@ -1,34 +1,6 @@
 import { SENSITIVITY_ORDER, type Sensitivity } from "@qmilab/lodestar-core"
-import { SessionNotFoundError, shipSession } from "@qmilab/lodestar-ship"
+import { SessionNotFoundError, looksLikeCredentialHeader, shipSession } from "@qmilab/lodestar-ship"
 import { defaultLogRoot } from "@qmilab/lodestar-trace"
-
-/**
- * Substrings that mark a header name as carrying a credential — RFC auth/cookie
- * plus the common API-key / token families (`X-API-Key`, `X-Auth-Token`,
- * `Private-Token`, AWS `…-Security-Token`, etc.). A credential value must never
- * be read from argv (shell history, process listings expose it): `--header`
- * refuses these names and points the operator at the env-backed paths
- * (`--token-env` for a bearer token, `--secret-header NAME=ENV` for anything
- * else). Deliberately substring-based and a bit broad — the safe fallback always
- * exists, so over-matching costs nothing while under-matching leaks.
- */
-const CREDENTIAL_HEADER_HINTS = [
-  "authorization",
-  "cookie",
-  "token",
-  "secret",
-  "password",
-  "passwd",
-  "credential",
-  "api-key",
-  "apikey",
-  "api_key",
-]
-
-function looksLikeCredentialHeader(name: string): boolean {
-  const n = name.toLowerCase()
-  return CREDENTIAL_HEADER_HINTS.some((hint) => n.includes(hint))
-}
 
 /**
  * `lodestar ship <session-id> [--project <id>] [--log-root <path>]
@@ -66,26 +38,36 @@ export async function shipCommand(argv: string[]): Promise<number> {
       process.stdout.write(USAGE)
       return 0
     }
+    // Every value-taking flag must get a non-empty value. A missing/empty value
+    // (flag last, or `--endpoint "$UNSET"`) is an error — never a silent default,
+    // which for --endpoint/--out would dump the whole session to stdout.
     if (arg === "--project" || arg === "-p") {
-      project_id = argv[++i]
+      const next = argv[++i]
+      if (!next) return usageError("--project requires a value")
+      project_id = next
     } else if (arg === "--log-root" || arg === "-l") {
       const next = argv[++i]
-      if (next) log_root = next
+      if (!next) return usageError("--log-root requires a value")
+      log_root = next
     } else if (arg === "--endpoint" || arg === "-e") {
-      endpoint = argv[++i]
+      const next = argv[++i]
+      if (!next) return usageError("--endpoint requires a non-empty value")
+      endpoint = next
     } else if (arg === "--out" || arg === "-o") {
-      out = argv[++i]
+      const next = argv[++i]
+      if (!next) return usageError("--out requires a non-empty value")
+      out = next
     } else if (arg === "--stdout") {
       to_stdout = true
     } else if (arg === "--sensitivity-ceiling" || arg === "-s") {
       const next = argv[++i]
-      if (next) ceiling = next
+      if (!next) return usageError("--sensitivity-ceiling requires a value")
+      ceiling = next
     } else if (arg === "--token-env") {
       const next = argv[++i]
-      if (next) {
-        token_env = next
-        token_env_explicit = true
-      }
+      if (!next) return usageError("--token-env requires a value")
+      token_env = next
+      token_env_explicit = true
     } else if (arg === "--header" || arg === "-H") {
       const next = argv[++i]
       const eq = next ? next.indexOf("=") : -1
@@ -189,9 +171,14 @@ export async function shipCommand(argv: string[]): Promise<number> {
         `${summary.byte_count} bytes, ceiling ${summary.ceiling}) — ` +
         `session ${summary.session_id}${tail}\n`,
     )
+    if (summary.redacted_count > 0 && summary.ceiling !== "secret") {
+      process.stderr.write(
+        `  note: ${summary.redacted_count} event(s) withheld at ceiling '${summary.ceiling}' — raise --sensitivity-ceiling (e.g. -s secret) to include them\n`,
+      )
+    }
 
     if (summary.delivered === "none") {
-      process.stdout.write(summary.ndjson)
+      process.stdout.write(summary.ndjson ?? "")
     }
     return 0
   } catch (err) {
@@ -202,6 +189,11 @@ export async function shipCommand(argv: string[]): Promise<number> {
     process.stderr.write(`ship failed: ${err instanceof Error ? err.message : String(err)}\n`)
     return 1
   }
+}
+
+function usageError(message: string): number {
+  process.stderr.write(`${message}\n`)
+  return 2
 }
 
 const USAGE = `usage: lodestar ship <session-id> [options]
