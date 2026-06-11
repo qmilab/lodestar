@@ -62,6 +62,8 @@ lodestar ship <session-id> --sensitivity-ceiling secret --out session.ndjson
 The bearer token is read from `--token-env` (default `LODESTAR_SHIP_TOKEN`),
 never from argv; it becomes `Authorization: Bearer <value>` on the POST and is
 never logged, never in the manifest, and scrubbed from error messages.
+Credential headers (`authorization`, `cookie`, `proxy-authorization`) are refused
+on `--header`, so a secret can't slip in through argv — use `--token-env`.
 
 Programmatically:
 

@@ -3,6 +3,14 @@ import { SessionNotFoundError, shipSession } from "@qmilab/lodestar-ship"
 import { defaultLogRoot } from "@qmilab/lodestar-trace"
 
 /**
+ * Request headers whose value IS a credential (RFC 7235 auth, RFC 6265 cookie).
+ * These must never be read from argv — shell history and process listings would
+ * expose the secret. The bearer token has a dedicated env-backed path
+ * (`--token-env`); `--header` refuses these names so there is no argv backdoor.
+ */
+const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie"])
+
+/**
  * `lodestar ship <session-id> [--project <id>] [--log-root <path>]
  *    [--endpoint <url>] [--header k=v ...] [--token-env <NAME>]
  *    [--sensitivity-ceiling <level>] [--out <file>] [--stdout]`
@@ -62,7 +70,16 @@ export async function shipCommand(argv: string[]): Promise<number> {
         process.stderr.write(`invalid --header (expected k=v): ${next ?? "(missing)"}\n`)
         return 2
       }
-      headers[next.slice(0, eq).trim()] = next.slice(eq + 1)
+      const name = next.slice(0, eq).trim()
+      // A credential must not come from argv (shell history / process listings).
+      // The bearer token has the env-backed --token-env path; refuse it here.
+      if (CREDENTIAL_HEADERS.has(name.toLowerCase())) {
+        process.stderr.write(
+          `refusing --header ${name}: pass credentials via --token-env (env-backed), never argv\n`,
+        )
+        return 2
+      }
+      headers[name] = next.slice(eq + 1)
     } else if (arg && !arg.startsWith("-") && !session_id) {
       session_id = arg
     }
@@ -155,7 +172,9 @@ payload hash intact.
   --token-env <NAME>        env var holding the bearer token (default
                             LODESTAR_SHIP_TOKEN); sent as Authorization: Bearer,
                             never read from argv and never logged
-  --header, -H k=v          extra HTTP header for the POST (repeatable)
+  --header, -H k=v          extra HTTP header for the POST (repeatable); credential
+                            headers (authorization, cookie, proxy-authorization) are
+                            refused here — use --token-env so the secret stays out of argv
   --sensitivity-ceiling, -s <level>
                             withhold content above this level
                             (public|internal|confidential|secret; default internal)
