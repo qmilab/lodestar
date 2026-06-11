@@ -82,8 +82,11 @@ jobs:
 
           # Accounts that never need to sign: bots, and the maintainer —
           # as the licensor/copyright holder, Nandan does not sign a CLA
-          # granting rights to himself.
-          allowlist: 'nandanito,dependabot[bot],github-actions[bot]'
+          # granting rights to himself. `claude` is the AI co-author that
+          # rides commits via the `Co-Authored-By` trailer; like the other
+          # bots it is a tool, not a rights-granting contributor, so it is
+          # allowlisted rather than required to sign.
+          allowlist: 'nandanito,claude,dependabot[bot],github-actions[bot]'
 
           # To store signatures in a SEPARATE repo instead of a branch of
           # this one, uncomment and point at it (the PAT needs write there):
