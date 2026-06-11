@@ -14,6 +14,9 @@
 // Common
 export * from "./schemas/common.js"
 
+// Sensitivity gate — content-scale ordering + the export/egress ceiling helpers
+export * from "./schemas/sensitivity.js"
+
 // Identity
 export * from "./schemas/actor.js"
 

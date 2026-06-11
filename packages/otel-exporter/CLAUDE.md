@@ -19,10 +19,13 @@ log ──(trace.loadSessionEvents)──▶ ChainProjection ──(buildTrace)�
 - `src/ids.ts` — deterministic ids (sha-256 over project/session/local ids; 16-byte
   trace id, 8-byte span id) and `isoToUnixNano`. No randomness, no wall clock —
   re-exporting the same log yields the same trace (idempotent).
-- `src/sensitivity.ts` — `SENSITIVITY_ORDER` + `redact()`: the sensitivity gate.
-  Content whose source sensitivity outranks the ceiling is replaced by a
-  `{ "lodestar.redacted": true, "lodestar.payload_hash": … }` marker. Structural
-  fields never pass through it.
+- `src/sensitivity.ts` — re-export of the sensitivity gate, which graduated to
+  `@qmilab/lodestar-core` (`SENSITIVITY_ORDER`, `sensitivityRank`,
+  `isAboveCeiling`, `isSensitivity`, `contentSensitivityForAction`) so the
+  session shipper and any future egress path share one implementation. The
+  redaction itself — content whose source sensitivity outranks the ceiling is
+  replaced by a `{ "lodestar.redacted": true, "lodestar.payload_hash": … }`
+  marker, structural fields never pass through it — lives in `src/project-spans.ts`.
 - `src/project-spans.ts` — **pure, no deps**. `buildTrace(projection, opts)` →
   the neutral `LodestarTrace` IR. Action-centric mapping (see README). This is
   where the chain→span shape lives; it carries no OTel dependency so it stays
