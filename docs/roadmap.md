@@ -2,7 +2,7 @@
 
 This roadmap defined the sequence from the original pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). That sequence — Batches 1–5 plus the post-v1 build track — is complete and published as **v0.2.0 on npm**; what remains is the publish/research track tracked under "Post-v1" below.
 
-Last updated: 2026-06-11 — added the interop & contributor-hygiene track (ADR-0014 / ADR-0015).
+Last updated: 2026-06-11 — sensitivity-gate graduation to core landed (interop & hygiene track, item 2).
 
 ---
 
@@ -425,13 +425,15 @@ PR; ADRs record the design decisions):
    Standard OSS hygiene; it lands *first* because a CLA cannot be retrofitted
    onto already-merged third-party contributions.
 
-2. **Sensitivity-gate graduation to core** — `SENSITIVITY_ORDER`,
-   `sensitivityRank`, `isAboveCeiling`, the fail-closed unknown handling, and
-   the action `data_sensitivity` mapping move from
-   `@qmilab/lodestar-otel-exporter` into `@qmilab/lodestar-core` (they derive
-   from core's `SensitivitySchema` already); the otel-exporter keeps
-   re-exports, so the move is non-breaking. Prerequisite for items 3 and 5,
-   which apply the same gate to new egress paths.
+2. **Sensitivity-gate graduation to core** — ✅ done. `SENSITIVITY_ORDER`,
+   `sensitivityRank`, `isAboveCeiling`, the fail-closed unknown handling
+   (`isSensitivity`), and the action `data_sensitivity` mapping
+   (`contentSensitivityForAction`) moved from `@qmilab/lodestar-otel-exporter`
+   into `@qmilab/lodestar-core` (`src/schemas/sensitivity.ts`; they derive from
+   core's `SensitivitySchema` already); the otel-exporter keeps re-exports, so
+   the move is non-breaking and the two OTel gate probes stay green.
+   Prerequisite for items 3 and 5, which apply the same gate to new egress
+   paths.
 
 3. **Session shipper (ADR-0014)** — `lodestar ship <session-id> --endpoint
    <url>`: a read-side batch exporter (new package `@qmilab/lodestar-ship`,
