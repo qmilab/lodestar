@@ -22,6 +22,7 @@
     "nostr_adapter",
     "http_adapter",
     "messaging_adapter",
+    "sql_adapter",
     "calibration"
   ],
   "invariants": [
@@ -54,6 +55,7 @@
     "nostr_transport_governance",
     "http_transport_governance",
     "messaging_egress_governance",
+    "sql_injection_boundary",
     "durable_calibration_event"
   ],
   "probes": [
@@ -184,6 +186,10 @@
     {
       "name": "calibration-event-is-durable",
       "file": "probes/calibration-event-is-durable.ts"
+    },
+    {
+      "name": "sql-adapter-enforces-invariants",
+      "file": "probes/sql-adapter-enforces-invariants.ts"
     }
   ]
 }

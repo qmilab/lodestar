@@ -350,6 +350,28 @@ Work past the v1 line, tracked here as it lands:
   the common production path). Locked by the
   `messaging-adapter-enforces-egress-invariants` probe. Design/scope lock: ADR-0009.
 
+- **Native adapters (backlog) — SQL/database** — ✅ landed
+  (`packages/adapters/sql/`, `@qmilab/lodestar-adapter-sql`). The first pull from
+  the governance-rich backlog after the ordered P2 sequence, and the first native
+  adapter whose headline governance surface is an **injection boundary** rather than
+  (only) egress. Two tools over one operator connection (Postgres via Bun's native
+  `Bun.SQL`, no runtime dep): `sql.query` (**L1** read, untrusted rows) and
+  `sql.execute` (**L3**, operator-raisable to **L4** — a held mutation). The teeth:
+  **parameterized-only** (values are always bound as `$1..$N`, never concatenated —
+  so a `'); DROP TABLE …;--` parameter is stored as a literal, never executed; no
+  string-SQL path exists), the **read/mutation split with teeth** (`sql.query` runs
+  inside a `READ ONLY` transaction, so even a data-modifying CTE — which the lexical
+  guard waves through — is refused by the database itself), **scoped credentials**
+  (the connection is operator config, never the agent's, the password redacted from
+  any caught error), and **bounded capture** (a result-row cap + per-statement
+  `statement_timeout`). A **TS-level governance boundary, not database
+  containment** — the query reaches the real database by design; DB-side privileges
+  (a least-privileged role) are the operator's defence in depth. Locked by the
+  `sql-adapter-enforces-invariants` probe (DB-gated like
+  `tool-poisoning-cross-session`: `LODESTAR_TEST_DATABASE_URL`, skips loudly when
+  unset, runs against `postgres:16` in CI). lodestar-core 44→45 probes, **49 across
+  both packs**. Design/scope lock: ADR-0013.
+
 - **The Policy Kernel** — ✅ landed (`packages/policy-kernel/`,
   `@qmilab/lodestar-policy-kernel`). The three-valued gate (allow / deny /
   **hold**) compiled from a signed policy document, with the trust-ladder floor,
