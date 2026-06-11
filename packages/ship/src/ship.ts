@@ -26,12 +26,19 @@ export interface ShipSessionOptions {
   /** Collector base URL; the body is POSTed to `{endpoint}/v1/events`. */
   endpoint?: string
   /**
-   * Extra headers for the POST (e.g. `authorization`). Header values — and the
-   * bare token from an `Authorization: <scheme> <token>` header — are scrubbed
-   * from any error message this module throws, so a credential a server echoes
-   * back can never surface in logs.
+   * Extra headers for the POST (e.g. `authorization`). Only the value of an
+   * `Authorization` header is treated as a secret and scrubbed from errors (its
+   * bare token too); other header values are NOT redacted, so a benign value
+   * like `"1"` can't over-redact the message. Pass any further secret values
+   * (custom API-key headers) explicitly via {@link secretsToRedact}.
    */
   headers?: Record<string, string>
+  /**
+   * Exact secret values to scrub from any error message this module throws (a
+   * server may echo a credential back). The CLI populates this with the
+   * `--token-env` token and every `--secret-header` value.
+   */
+  secretsToRedact?: string[]
   /** Write the NDJSON body to this path instead of POSTing. */
   out?: string
   /**
@@ -101,7 +108,12 @@ export async function shipSession(opts: ShipSessionOptions): Promise<ShipSummary
         `session "${opts.sessionId}" serialises to ${byte_count} bytes, over the ${cap}-byte single-POST ceiling — v0 ships one bounded POST per session (no chunking). Raise maxBodyBytes or narrow the session.`,
       )
     }
-    await postEvents(opts.endpoint, ndjson, opts.headers)
+    await postEvents(
+      opts.endpoint,
+      ndjson,
+      opts.headers,
+      collectSecrets(opts.secretsToRedact, opts.headers),
+    )
     delivered = "endpoint"
   } else if (opts.out) {
     await writeFile(opts.out, ndjson, "utf8")
@@ -123,7 +135,8 @@ export async function shipSession(opts: ShipSessionOptions): Promise<ShipSummary
 async function postEvents(
   endpoint: string,
   body: string,
-  headers?: Record<string, string>,
+  headers: Record<string, string> | undefined,
+  secrets: string[],
 ): Promise<void> {
   const url = `${endpoint.replace(/\/+$/, "")}/v1/events`
   const res = await fetch(url, {
@@ -131,47 +144,54 @@ async function postEvents(
     headers: { "content-type": "application/x-ndjson", ...headers },
     body,
   }).catch((err: unknown) => {
-    throw new Error(redactSecrets(`POST ${url} failed: ${errMessage(err)}`, headers))
+    throw new Error(redactSecrets(`POST ${url} failed: ${errMessage(err)}`, secrets))
   })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    // A server may echo the bearer token back in an error body. Redact the FULL
-    // body BEFORE truncating — slicing first could cut a long echoed credential
+    // A server may echo a credential back in an error body. Redact the FULL body
+    // BEFORE truncating — slicing first could cut a long echoed credential
     // mid-token, leaving an unmatched prefix that survives redaction. The outer
     // redactSecrets then defends the rest of the message (the SQL adapter's
     // DSN-redaction discipline).
-    const detail = text ? `: ${redactSecrets(text, headers).slice(0, 200)}` : ""
+    const detail = text ? `: ${redactSecrets(text, secrets).slice(0, 200)}` : ""
     throw new Error(
       redactSecrets(
         `session-ship endpoint ${url} returned ${res.status} ${res.statusText}${detail}`,
-        headers,
+        secrets,
       ),
     )
   }
+  // Drain the success body so the underlying socket is released promptly — for
+  // programmatic callers (the CLI also `process.exit()`s).
+  await res.body?.cancel().catch(() => {})
 }
 
 /**
- * Values worth scrubbing from error text: every header value, plus the bare
- * token from an `Authorization: <scheme> <token>` header (a server might echo
- * just the token, not the whole header value).
+ * The exact secret values to scrub from error text: the caller's explicit
+ * `secretsToRedact`, plus the value (and bare token) of an `Authorization`
+ * header — the only header assumed to be a credential. Other header values are
+ * deliberately NOT redacted (a benign `"1"` would otherwise over-redact the
+ * message). Sorted longest-first so an overlapping/substring secret can't
+ * corrupt the `«redacted»` placeholder.
  */
-function secretsFromHeaders(headers?: Record<string, string>): string[] {
-  if (!headers) return []
-  const secrets: string[] = []
-  for (const [name, value] of Object.entries(headers)) {
-    if (!value) continue
-    secrets.push(value)
-    if (name.toLowerCase() === "authorization") {
-      const m = value.match(/^\S+\s+(.+)$/)
-      if (m?.[1]) secrets.push(m[1])
-    }
+function collectSecrets(
+  explicit: string[] | undefined,
+  headers: Record<string, string> | undefined,
+): string[] {
+  const set = new Set<string>()
+  for (const s of explicit ?? []) if (s) set.add(s)
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (!value || name.toLowerCase() !== "authorization") continue
+    set.add(value)
+    const m = value.match(/^\S+\s+(.+)$/)
+    if (m?.[1]) set.add(m[1])
   }
-  return secrets
+  return [...set].sort((a, b) => b.length - a.length)
 }
 
-function redactSecrets(text: string, headers?: Record<string, string>): string {
+function redactSecrets(text: string, secrets: string[]): string {
   let out = text
-  for (const secret of secretsFromHeaders(headers)) {
+  for (const secret of secrets) {
     if (secret.length === 0) continue
     out = out.split(secret).join("«redacted»")
   }

@@ -56,6 +56,9 @@ export async function shipCommand(argv: string[]): Promise<number> {
   let token_env = "LODESTAR_SHIP_TOKEN"
   let token_env_explicit = false
   const headers: Record<string, string> = {}
+  // Exact secret values (token + every --secret-header value) to scrub from any
+  // error the shipper throws — never the benign --header values.
+  const secrets: string[] = []
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]
@@ -116,6 +119,7 @@ export async function shipCommand(argv: string[]): Promise<number> {
       const value = envName ? process.env[envName] : undefined
       if (value) {
         headers[hname] = value
+        secrets.push(value)
       } else {
         process.stderr.write(
           `warning: --secret-header ${hname}: env var ${envName || "(missing)"} is empty/unset; header not sent\n`,
@@ -155,6 +159,7 @@ export async function shipCommand(argv: string[]): Promise<number> {
   const token = process.env[token_env]
   if (token) {
     headers.authorization = `Bearer ${token}`
+    secrets.push(token)
   } else if (token_env_explicit) {
     process.stderr.write(
       `warning: --token-env ${token_env} is empty/unset; sending no Authorization header\n`,
@@ -170,6 +175,7 @@ export async function shipCommand(argv: string[]): Promise<number> {
       ...(endpoint !== undefined ? { endpoint } : {}),
       ...(out !== undefined ? { out } : {}),
       ...(Object.keys(headers).length > 0 ? { headers } : {}),
+      ...(secrets.length > 0 ? { secretsToRedact: secrets } : {}),
     })
 
     const tail =

@@ -79,7 +79,10 @@ later under higher clearance.
    var by the CLI (never argv), is never in the manifest, never in the NDJSON
    body, and is scrubbed from every error message — even a long token echoed in a
    non-2xx body (redaction runs before truncation), and a server that echoes it
-   back gets `«redacted»`. `--header` is non-secret only: it **refuses
+   back gets `«redacted»`. Only the actual credential values (the token + each
+   `--secret-header`) and the `Authorization` header are scrubbed — a benign
+   `--header` value can't over-redact the message. `--header` is non-secret only:
+   it **refuses
    credential-looking names** (`authorization`, `cookie`, `*token*`, `*api-key*`,
    `*secret*`, …) so there is no argv backdoor. Custom credential headers go
    through `--secret-header NAME=ENV`, the env-backed channel.

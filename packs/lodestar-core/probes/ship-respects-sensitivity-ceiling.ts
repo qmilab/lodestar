@@ -383,13 +383,14 @@ async function run(): Promise<ProbeResult> {
     details.push("E: invalid ceilings (typo, empty string, null) all throw (the gate fails closed)")
 
     // H — a collector that ECHOES a long credential in a non-2xx body must not
-    // leak any prefix of it into the thrown error: redaction runs BEFORE the
-    // 200-char truncation, so a token longer than the slice window can't survive
-    // as an unmatched prefix (Codex P2).
+    // leak any prefix of it into the thrown error (redaction runs BEFORE the
+    // 200-char truncation; Codex P2). AND a benign header value (`trace=1`) must
+    // survive — only the Authorization credential is redacted, not every header
+    // value, so the error stays readable (Gemini HIGH).
     const LONG_TOKEN = `longtok-${"x".repeat(240)}-end`
     const echo = Bun.serve({
       port: 0,
-      fetch: () => new Response(`401 invalid token: ${LONG_TOKEN}`, { status: 401 }),
+      fetch: () => new Response(`401 trace=1 invalid token: ${LONG_TOKEN}`, { status: 401 }),
     })
     try {
       let message = ""
@@ -399,7 +400,7 @@ async function run(): Promise<ProbeResult> {
           projectId: PROJECT,
           logRoot: rootDir,
           endpoint: `http://localhost:${echo.port}`,
-          headers: { authorization: `Bearer ${LONG_TOKEN}` },
+          headers: { authorization: `Bearer ${LONG_TOKEN}`, "x-trace": "1" },
         })
       } catch (err) {
         message = err instanceof Error ? err.message : String(err)
@@ -411,8 +412,11 @@ async function run(): Promise<ProbeResult> {
           "a non-2xx body echoing the token leaked (a prefix of) it into the error",
         )
       }
+      if (!message.includes("trace=1")) {
+        return fail(details, "a benign header value was over-redacted from the error message")
+      }
       details.push(
-        "H: a non-2xx body echoing a long token leaks no prefix (redact before truncate)",
+        "H: echoed long token leaks no prefix (redact before truncate); benign header value not over-redacted",
       )
     } finally {
       echo.stop(true)
