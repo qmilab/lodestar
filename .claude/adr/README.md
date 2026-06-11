@@ -119,3 +119,24 @@ The options we rejected, each with a one-line reason.
   data-modifying CTE), scoped connection credential redacted from errors, result-row
   cap + statement timeout. Targets Postgres via Bun's native `Bun.SQL` (no runtime
   dep). TS-level boundary, not DB containment. Probe `sql-adapter-enforces-invariants`.
+- [ADR-0014](0014-session-shipper-wire-format.md) — Session shipper
+  (`lodestar ship`, new package `@qmilab/lodestar-ship`): batch-exports a
+  session's raw envelopes as the versioned NDJSON wire format
+  `lodestar.session_ship@1` to any compatible collector, with the locked
+  sensitivity-ceiling redaction applied client-side. Redaction never mutates
+  the envelope schema: a wrapper record carries the `redacted` flag and the
+  original `payload_hash` is preserved, so tamper evidence survives
+  redaction. Prerequisite: the sensitivity-gate primitives graduate from the
+  otel-exporter into core (re-exports kept). Probes
+  `ship-respects-sensitivity-ceiling`, `ship-wire-roundtrip`.
+- [ADR-0015](0015-pluggable-approval-channel.md) — Pluggable approval channel:
+  the separate-process approval side-channel goes behind an `ApprovalChannel`
+  interface (`announce?`/`fetch`/`consume?`); file stays the default
+  (byte-for-byte today's behavior), HTTP (operator-pinned endpoint, env-var
+  bearer token) lets a resolution arrive from a remote approvals surface. The
+  ADR-0010 forgery boundary does not move — every fetched resolution is
+  Ed25519-verified against operator-pinned keys before promotion, so a channel
+  can only transport a signed decision, never mint one; `kind: "http"` requires
+  pinned keys and rejects `allow_unsigned`. Deliberately distinct from guard's
+  trusted in-process `ApprovalResolver`. Probe `approval-via-http-channel` +
+  an HTTP case in `forged-approval-cannot-execute`.

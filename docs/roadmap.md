@@ -2,7 +2,7 @@
 
 This roadmap defined the sequence from the original pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). That sequence — Batches 1–5 plus the post-v1 build track — is complete and published as **v0.2.0 on npm**; what remains is the publish/research track tracked under "Post-v1" below.
 
-Last updated: post-strategy review with ChatGPT.
+Last updated: 2026-06-11 — added the interop & contributor-hygiene track (ADR-0014 / ADR-0015).
 
 ---
 
@@ -409,6 +409,69 @@ Work past the v1 line, tracked here as it lands:
   and the shell/nostr/http/messaging adapters) into the updated `guard`/`cli`.
   A net-new package name needs a one-time manual bootstrap publish before
   trusted publishing can attach, then CI drives every subsequent release.
+
+## Next — interop & contributor-hygiene track
+
+External integrators are starting to build on the read side and the approval
+surfaces, so the next tranche makes session transfer and remote approvals
+first-class, and locks down contributor/licensing hygiene before
+contributions widen. The execution order is fixed (each item lands as its own
+PR; ADRs record the design decisions):
+
+1. **Contributor & license hygiene** — a CLA (individual + entity, enforced
+   on first PR via the cla-assistant app), a root `NOTICE` file, and a CI
+   license-audit job (allowlist of permissive licenses — MIT / Apache-2.0 /
+   ISC / BSD / 0BSD / CC0 / Unlicense — failing on anything copyleft).
+   Standard OSS hygiene; it lands *first* because a CLA cannot be retrofitted
+   onto already-merged third-party contributions.
+
+2. **Sensitivity-gate graduation to core** — `SENSITIVITY_ORDER`,
+   `sensitivityRank`, `isAboveCeiling`, the fail-closed unknown handling, and
+   the action `data_sensitivity` mapping move from
+   `@qmilab/lodestar-otel-exporter` into `@qmilab/lodestar-core` (they derive
+   from core's `SensitivitySchema` already); the otel-exporter keeps
+   re-exports, so the move is non-breaking. Prerequisite for items 3 and 5,
+   which apply the same gate to new egress paths.
+
+3. **Session shipper (ADR-0014)** — `lodestar ship <session-id> --endpoint
+   <url>`: a read-side batch exporter (new package `@qmilab/lodestar-ship`,
+   shaped like the otel-exporter) that delivers a session's raw envelopes to
+   any compatible collector or viewer as the versioned NDJSON wire format
+   `lodestar.session_ship@1`, with the locked sensitivity-ceiling redaction
+   applied **client-side, before anything leaves the machine**. Redaction
+   preserves the original `payload_hash`, so tamper evidence survives it; the
+   envelope schema itself is never touched. Endpoint-agnostic, mirroring
+   `lodestar otel export` (`--endpoint` / `--header` / `--out` / `--stdout`;
+   bearer token via env, never logged). Probes:
+   `ship-respects-sensitivity-ceiling`, `ship-wire-roundtrip`.
+
+4. **`pendingApprovals` graduation to trace** — the pure pending-approvals
+   projection moves from `@qmilab/lodestar-viewer` into
+   `@qmilab/lodestar-trace` (projection belongs in trace per the viewer's own
+   charter); the viewer keeps a re-export, so the move is non-breaking. A
+   caller that only wants the approval queue no longer drags in the viewer's
+   HTTP server dependency.
+
+5. **Pluggable approval channel (ADR-0015)** — the separate-process approval
+   side-channel goes behind an `ApprovalChannel` interface
+   (`announce?` / `fetch` / `consume?`). The file channel stays the default
+   and reproduces today's behavior byte-for-byte; an HTTP channel
+   (operator-pinned endpoint, env-var bearer token) lets a signed resolution
+   arrive from a remote approvals surface. The ADR-0010 forgery boundary does
+   not move: every fetched resolution is still Ed25519-verified against the
+   operator-pinned approver keys before promotion, so any channel can only
+   *transport* a signed decision — it cannot mint one. `kind: "http"`
+   requires pinned keys and rejects `allow_unsigned` outright. Probes:
+   `approval-via-http-channel`, an HTTP case in
+   `forged-approval-cannot-execute`, and a credential-never-in-log assertion.
+
+6. **Public-API stability ledger** — [`reference/public-api.md`](reference/public-api.md)
+   declares which exported surfaces are stable versus experimental (the
+   envelope, the log reader, the chain projection, approval-signature
+   verification, the OTLP IR, and the two new wire contracts above), states
+   the pre-1.0 semver rule, and is pinned by a `public-api-surface` probe
+   that type-asserts the declared-stable exports so a breaking drift fails
+   CI.
 
 ## What this roadmap explicitly does not include
 

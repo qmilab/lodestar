@@ -58,6 +58,7 @@ nav:
       - Architecture: reference/architecture.md
       - CLI: reference/cli.md
       - Probe packs: reference/probe-packs.md
+      - Public API stability: reference/public-api.md
 
 markdown_extensions:
   - admonition
