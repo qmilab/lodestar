@@ -145,7 +145,17 @@ async function seedLog(rootDir: string): Promise<Map<string, unknown>> {
     {
       id: "ev-observation",
       type: "observation.recorded",
-      payload: { id: "obs-1", sensitivity: "public", note: OBS_MARKER },
+      // A real, schema-valid Observation, so its `public` sensitivity is trusted
+      // and it ships verbatim (a bare `{ sensitivity }` blob would fail closed).
+      payload: {
+        id: "obs-1",
+        schema: "test.note@1",
+        payload: { note: OBS_MARKER },
+        source: { tool: "test", invocation_id: "inv-1", captured_at: NOW },
+        context: { session_id: SESSION, project_id: PROJECT, actor_id: ACTOR },
+        trust: "validated",
+        sensitivity: "public",
+      },
     },
     {
       // No `sensitivity`, no action contract → payloadContentSensitivity fails

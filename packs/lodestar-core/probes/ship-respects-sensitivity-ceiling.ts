@@ -72,6 +72,9 @@ const NOW = "2026-06-11T12:00:00.000Z"
 const SECRET_MARKER = "hunter2-SECRET-CREDENTIAL-MARKER-9f3a7c"
 const PUBLIC_MARKER = "build-target-es2022-PUBLIC-MARKER"
 const TOKEN_MARKER = "ship-bearer-TOKEN-MARKER-4e1b9a"
+// A forged custom event labels itself `public` but is not a valid content
+// record — it must NOT be trusted (fail closed).
+const FORGED_MARKER = "forged-custom-event-SECRET-MARKER-b82d"
 
 const SCOPE = { level: "project" as const, identifier: PROJECT }
 
@@ -142,6 +145,15 @@ async function seedLog(rootDir: string): Promise<void> {
     id: "ev-belief-public",
     type: "belief.adopted",
     payload: belief("belief-public", "claim-public", "public"),
+  })
+  // A forged/custom event (the agent `ctx.emit` vector): a bare blob with a
+  // trusted-LOOKING `sensitivity:"public"` field but NOT a valid content
+  // record. The shipper must verify the shape and fail closed (Codex P1).
+  await writer.append({
+    ...common,
+    id: "ev-forged",
+    type: "agent.custom",
+    payload: { sensitivity: "public", note: FORGED_MARKER },
   })
 }
 
@@ -273,6 +285,19 @@ async function run(): Promise<ProbeResult> {
     details.push(
       `C: secret belief redacted:true (payload_sensitivity=secret, hash ${secretRec.envelope.payload_hash.slice(0, 12)}… preserved); public belief redacted:false`,
     )
+
+    // F — a forged custom event labeled `sensitivity:"public"` must FAIL CLOSED:
+    // it is not a valid content record, so its bytes must not cross the wire and
+    // it must ship redacted. Without shape verification this leaks (Codex P1).
+    if (body.includes(FORGED_MARKER)) {
+      return fail(details, "forged custom event (fake sensitivity:public) leaked onto the wire")
+    }
+    const forgedRec = records.find((r) => r.envelope.id === "ev-forged")
+    if (!forgedRec) return fail(details, "forged event's record vanished from the wire")
+    if (!forgedRec.redacted || forgedRec.payload_sensitivity !== "secret") {
+      return fail(details, "forged custom event was trusted at face value — it did not fail closed")
+    }
+    details.push("F: forged custom event with a fake sensitivity field fails closed (redacted)")
 
     // D — raising the ceiling to `secret` surfaces the marker; nothing redacted.
     const open = await shipSession({

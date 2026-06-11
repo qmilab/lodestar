@@ -1,6 +1,10 @@
 import {
+  ActionSchema,
+  BeliefSchema,
+  ClaimSchema,
   type EventEnvelope,
   EventEnvelopeSchema,
+  ObservationSchema,
   SENSITIVITY_ORDER,
   type Sensitivity,
   SensitivitySchema,
@@ -94,18 +98,22 @@ export interface BuildShipBatchInput {
 /**
  * The content sensitivity used to gate a single envelope's payload.
  *
- * Source order, most-specific first:
- *   1. the payload's own `sensitivity` (observations / claims / beliefs /
- *      memories carry it directly);
- *   2. an Action contract's `data_sensitivity`, mapped onto the content scale
- *      via {@link contentSensitivityForAction} — the same mapping the
- *      otel-exporter gates action intent/inputs by;
+ * The shipper receives RAW envelopes (`payload` is `unknown`), so it must not
+ * trust a `sensitivity`-looking field on an arbitrary blob — a custom or
+ * agent-emitted event (`ctx.emit("x", { sensitivity: "public", secret: … })`)
+ * would otherwise exfiltrate content at the default ceiling. The field is
+ * trusted ONLY when the payload VALIDATES against a known content schema:
+ *
+ *   1. a valid Claim / Belief / Observation → its own `sensitivity`;
+ *   2. a valid Action → `contract.data_sensitivity`, mapped onto the content
+ *      scale via {@link contentSensitivityForAction} (the same mapping the
+ *      otel-exporter gates action intent/inputs by);
  *   3. otherwise FAIL CLOSED to `secret`.
  *
- * (3) is the load-bearing posture. An event type we cannot positively place on
- * the scale — a decision, an outcome, an approval record, a future event type —
- * is treated as maximally sensitive, so it is withheld at every ceiling below
- * `secret`. This mirrors {@link isAboveCeiling}/`sensitivityRank`, which rank
+ * (3) is the load-bearing posture. Anything that does not validate as a known
+ * content record — a decision, an outcome, an approval record, a forged/custom
+ * event, a future event type — is treated as maximally sensitive and withheld
+ * at every ceiling below `secret`. This mirrors `sensitivityRank`, which ranks
  * unknown *source* values above every real level (fail closed).
  *
  * It defaults to `secret` rather than an above-`secret` sentinel deliberately:
@@ -116,14 +124,21 @@ export interface BuildShipBatchInput {
  */
 export function payloadContentSensitivity(envelope: EventEnvelope): Sensitivity {
   const payload = envelope.payload
-  if (payload !== null && typeof payload === "object") {
-    const direct = (payload as { sensitivity?: unknown }).sensitivity
-    if (isSensitivity(direct)) return direct
-    const ds = (payload as { contract?: { data_sensitivity?: unknown } }).contract?.data_sensitivity
-    if (ds === "public" || ds === "private" || ds === "secret") {
-      return contentSensitivityForAction(ds)
-    }
-  }
+
+  // Trust a `sensitivity` field only on a payload that VALIDATES as one of the
+  // content records whose schema defines it — never on a bare lookalike blob.
+  const claim = ClaimSchema.safeParse(payload)
+  if (claim.success) return claim.data.sensitivity
+  const belief = BeliefSchema.safeParse(payload)
+  if (belief.success) return belief.data.sensitivity
+  const observation = ObservationSchema.safeParse(payload)
+  if (observation.success) return observation.data.sensitivity
+
+  // A validated Action's coarse `data_sensitivity`, mapped onto the content scale.
+  const action = ActionSchema.safeParse(payload)
+  if (action.success) return contentSensitivityForAction(action.data.contract.data_sensitivity)
+
+  // Fail closed: anything we cannot positively validate is treated as `secret`.
   return "secret"
 }
 

@@ -62,13 +62,16 @@ later under higher clearance.
    the withheld content later, and to distinguish sender-redaction from
    in-transit tampering.
 4. **Sensitivity gate is load-bearing and fails closed.** Per-event source
-   sensitivity comes from the payload's own `sensitivity`
-   (observations/claims/beliefs), the action mapping
-   (`contentSensitivityForAction`), or — for anything we cannot positively place
-   on the scale — `secret`. So decisions, outcomes, approval records, and future
-   event types are withheld at every ceiling below `secret`, yet the whole
-   session is still portable at `--sensitivity-ceiling secret`. The default
-   ceiling is `internal`. An invalid ceiling **throws** (never fails open).
+   sensitivity is trusted only when the raw payload **validates** against a known
+   content schema — a Claim/Belief/Observation's own `sensitivity`, or a validated
+   Action's `contract.data_sensitivity` via `contentSensitivityForAction`. A bare
+   blob with a `sensitivity`-looking field (a custom or agent-emitted event) does
+   NOT validate and is treated as `secret` — the shipper handles raw envelopes, so
+   it must verify the shape before trusting the label. Decisions, outcomes,
+   approval records, forged/custom events, and future event types are therefore
+   withheld at every ceiling below `secret`, yet the whole session is still
+   portable at `--sensitivity-ceiling secret`. The default ceiling is `internal`.
+   An invalid ceiling **throws** (never fails open).
 5. **The credential never leaks.** The bearer token is read from a named env
    var by the CLI (never argv), is never in the manifest, never in the NDJSON
    body, and is scrubbed from every error message (a server that echoes it back
