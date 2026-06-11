@@ -77,10 +77,12 @@ later under higher clearance.
    ceiling **throws** (never fails open).
 5. **The credential never leaks.** The bearer token is read from a named env
    var by the CLI (never argv), is never in the manifest, never in the NDJSON
-   body, and is scrubbed from every error message (a server that echoes it back
-   gets `«redacted»`). The CLI also **refuses a credential header**
-   (`authorization` / `cookie` / `proxy-authorization`) supplied via `--header`,
-   so there is no argv backdoor around `--token-env`.
+   body, and is scrubbed from every error message — even a long token echoed in a
+   non-2xx body (redaction runs before truncation), and a server that echoes it
+   back gets `«redacted»`. `--header` is non-secret only: it **refuses
+   credential-looking names** (`authorization`, `cookie`, `*token*`, `*api-key*`,
+   `*secret*`, …) so there is no argv backdoor. Custom credential headers go
+   through `--secret-header NAME=ENV`, the env-backed channel.
 
 ## What does not live here
 

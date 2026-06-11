@@ -3,12 +3,32 @@ import { SessionNotFoundError, shipSession } from "@qmilab/lodestar-ship"
 import { defaultLogRoot } from "@qmilab/lodestar-trace"
 
 /**
- * Request headers whose value IS a credential (RFC 7235 auth, RFC 6265 cookie).
- * These must never be read from argv — shell history and process listings would
- * expose the secret. The bearer token has a dedicated env-backed path
- * (`--token-env`); `--header` refuses these names so there is no argv backdoor.
+ * Substrings that mark a header name as carrying a credential — RFC auth/cookie
+ * plus the common API-key / token families (`X-API-Key`, `X-Auth-Token`,
+ * `Private-Token`, AWS `…-Security-Token`, etc.). A credential value must never
+ * be read from argv (shell history, process listings expose it): `--header`
+ * refuses these names and points the operator at the env-backed paths
+ * (`--token-env` for a bearer token, `--secret-header NAME=ENV` for anything
+ * else). Deliberately substring-based and a bit broad — the safe fallback always
+ * exists, so over-matching costs nothing while under-matching leaks.
  */
-const CREDENTIAL_HEADERS = new Set(["authorization", "proxy-authorization", "cookie"])
+const CREDENTIAL_HEADER_HINTS = [
+  "authorization",
+  "cookie",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "credential",
+  "api-key",
+  "apikey",
+  "api_key",
+]
+
+function looksLikeCredentialHeader(name: string): boolean {
+  const n = name.toLowerCase()
+  return CREDENTIAL_HEADER_HINTS.some((hint) => n.includes(hint))
+}
 
 /**
  * `lodestar ship <session-id> [--project <id>] [--log-root <path>]
@@ -72,14 +92,35 @@ export async function shipCommand(argv: string[]): Promise<number> {
       }
       const name = next.slice(0, eq).trim()
       // A credential must not come from argv (shell history / process listings).
-      // The bearer token has the env-backed --token-env path; refuse it here.
-      if (CREDENTIAL_HEADERS.has(name.toLowerCase())) {
+      // Refuse credential-looking names and point at the env-backed channels.
+      if (looksLikeCredentialHeader(name)) {
         process.stderr.write(
-          `refusing --header ${name}: pass credentials via --token-env (env-backed), never argv\n`,
+          `refusing --header ${name}: it looks like a credential. Use --secret-header ${name}=ENV_VAR (or --token-env for a bearer token) so the value stays out of argv\n`,
         )
         return 2
       }
       headers[name] = next.slice(eq + 1)
+    } else if (arg === "--secret-header") {
+      // The env-backed channel for ANY custom credential header: the VALUE is
+      // read from the named env var, never argv.
+      const next = argv[++i]
+      const eq = next ? next.indexOf("=") : -1
+      if (!next || eq <= 0) {
+        process.stderr.write(
+          `invalid --secret-header (expected NAME=ENV_VAR): ${next ?? "(missing)"}\n`,
+        )
+        return 2
+      }
+      const hname = next.slice(0, eq).trim()
+      const envName = next.slice(eq + 1).trim()
+      const value = envName ? process.env[envName] : undefined
+      if (value) {
+        headers[hname] = value
+      } else {
+        process.stderr.write(
+          `warning: --secret-header ${hname}: env var ${envName || "(missing)"} is empty/unset; header not sent\n`,
+        )
+      }
     } else if (arg && !arg.startsWith("-") && !session_id) {
       session_id = arg
     }
@@ -172,9 +213,11 @@ payload hash intact.
   --token-env <NAME>        env var holding the bearer token (default
                             LODESTAR_SHIP_TOKEN); sent as Authorization: Bearer,
                             never read from argv and never logged
-  --header, -H k=v          extra HTTP header for the POST (repeatable); credential
-                            headers (authorization, cookie, proxy-authorization) are
-                            refused here — use --token-env so the secret stays out of argv
+  --header, -H k=v          extra NON-secret HTTP header for the POST (repeatable);
+                            credential-looking names (authorization, cookie, *token*,
+                            *api-key*, *secret*, …) are refused here — argv leaks
+  --secret-header N=ENV      add header N with its value read from env var ENV (never
+                            argv); the env-backed channel for custom credential headers
   --sensitivity-ceiling, -s <level>
                             withhold content above this level
                             (public|internal|confidential|secret; default internal)
