@@ -5,5 +5,5 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../core" }, { "path": "../trace" }]
+  "references": [{ "path": "../core" }, { "path": "../event-log" }, { "path": "../trace" }]
 }

@@ -62,16 +62,19 @@ later under higher clearance.
    the withheld content later, and to distinguish sender-redaction from
    in-transit tampering.
 4. **Sensitivity gate is load-bearing and fails closed.** Per-event source
-   sensitivity is trusted only when the raw payload **validates** against a known
-   content schema — a Claim/Belief/Observation's own `sensitivity`, or a validated
-   Action's `contract.data_sensitivity` via `contentSensitivityForAction`. A bare
-   blob with a `sensitivity`-looking field (a custom or agent-emitted event) does
-   NOT validate and is treated as `secret` — the shipper handles raw envelopes, so
-   it must verify the shape before trusting the label. Decisions, outcomes,
-   approval records, forged/custom events, and future event types are therefore
-   withheld at every ceiling below `secret`, yet the whole session is still
-   portable at `--sensitivity-ceiling secret`. The default ceiling is `internal`.
-   An invalid ceiling **throws** (never fails open).
+   sensitivity is trusted only when the raw payload is **exactly** a known content
+   record — it validates against the schema AND carries nothing beyond it: a
+   Claim/Belief/Observation's own `sensitivity`, or a validated Action's
+   `contract.data_sensitivity` via `contentSensitivityForAction`. The shipper sends
+   the raw payload verbatim and Zod strips unknown keys, so a bare lookalike blob
+   *and* a schema superset (a valid Claim plus an extra secret field) both fail
+   closed to `secret` — exactness is enforced by comparing `canonicalHash` of the
+   stripped parse against a freshly hashed raw payload (never the stored
+   `payload_hash`, which a tampered log could spoof). Decisions, outcomes, approval
+   records, forged/custom events, and future event types are likewise withheld at
+   every ceiling below `secret`, yet the whole session is still portable at
+   `--sensitivity-ceiling secret`. The default ceiling is `internal`. An invalid
+   ceiling **throws** (never fails open).
 5. **The credential never leaks.** The bearer token is read from a named env
    var by the CLI (never argv), is never in the manifest, never in the NDJSON
    body, and is scrubbed from every error message (a server that echoes it back

@@ -75,6 +75,9 @@ const TOKEN_MARKER = "ship-bearer-TOKEN-MARKER-4e1b9a"
 // A forged custom event labels itself `public` but is not a valid content
 // record — it must NOT be trusted (fail closed).
 const FORGED_MARKER = "forged-custom-event-SECRET-MARKER-b82d"
+// A schema superset: a valid Claim labeled `public` PLUS an extra secret field
+// that Zod strips on parse but the shipper would send verbatim.
+const SUPERSET_MARKER = "superset-extra-field-SECRET-MARKER-3c5e"
 
 const SCOPE = { level: "project" as const, identifier: PROJECT }
 
@@ -154,6 +157,18 @@ async function seedLog(rootDir: string): Promise<void> {
     id: "ev-forged",
     type: "agent.custom",
     payload: { sensitivity: "public", note: FORGED_MARKER },
+  })
+  // A schema SUPERSET: a fully valid public Claim plus an extra secret field.
+  // Zod strips `leaked` on parse, so a naive "validates → trust" would declassify
+  // it and the raw payload (with `leaked`) would ship at the internal ceiling.
+  await writer.append({
+    ...common,
+    id: "ev-superset",
+    type: "claim.extracted",
+    payload: {
+      ...claim("claim-superset", "an innocuous public statement", "public"),
+      leaked: SUPERSET_MARKER,
+    },
   })
 }
 
@@ -298,6 +313,19 @@ async function run(): Promise<ProbeResult> {
       return fail(details, "forged custom event was trusted at face value — it did not fail closed")
     }
     details.push("F: forged custom event with a fake sensitivity field fails closed (redacted)")
+
+    // G — a schema SUPERSET (valid Claim + an extra secret field) must also fail
+    // closed. Zod strips the extra key on parse, but the raw payload ships
+    // verbatim, so trusting the parsed-subset's `public` would leak it (Codex P1).
+    if (body.includes(SUPERSET_MARKER)) {
+      return fail(details, "schema-superset payload leaked its extra secret field onto the wire")
+    }
+    const supersetRec = records.find((r) => r.envelope.id === "ev-superset")
+    if (!supersetRec) return fail(details, "superset event's record vanished from the wire")
+    if (!supersetRec.redacted || supersetRec.payload_sensitivity !== "secret") {
+      return fail(details, "schema-superset payload was declassified — it did not fail closed")
+    }
+    details.push("G: schema-superset payload (valid Claim + extra field) fails closed (redacted)")
 
     // D — raising the ceiling to `secret` surfaces the marker; nothing redacted.
     const open = await shipSession({

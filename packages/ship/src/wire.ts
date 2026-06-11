@@ -12,6 +12,7 @@ import {
   isAboveCeiling,
   isSensitivity,
 } from "@qmilab/lodestar-core"
+import { canonicalHash } from "@qmilab/lodestar-event-log"
 import { z } from "zod"
 
 /**
@@ -98,47 +99,55 @@ export interface BuildShipBatchInput {
 /**
  * The content sensitivity used to gate a single envelope's payload.
  *
- * The shipper receives RAW envelopes (`payload` is `unknown`), so it must not
- * trust a `sensitivity`-looking field on an arbitrary blob — a custom or
- * agent-emitted event (`ctx.emit("x", { sensitivity: "public", secret: … })`)
- * would otherwise exfiltrate content at the default ceiling. The field is
- * trusted ONLY when the payload VALIDATES against a known content schema:
+ * The shipper receives RAW envelopes (`payload` is `unknown`) and sends the raw
+ * payload VERBATIM, so it must not trust a `sensitivity`-looking field on an
+ * arbitrary blob. The field is trusted ONLY when the payload is EXACTLY a known
+ * content record — it validates against the schema AND carries nothing beyond
+ * it:
  *
- *   1. a valid Claim / Belief / Observation → its own `sensitivity`;
- *   2. a valid Action → `contract.data_sensitivity`, mapped onto the content
+ *   1. an exact Claim / Belief / Observation → its own `sensitivity`;
+ *   2. an exact Action → `contract.data_sensitivity`, mapped onto the content
  *      scale via {@link contentSensitivityForAction} (the same mapping the
  *      otel-exporter gates action intent/inputs by);
  *   3. otherwise FAIL CLOSED to `secret`.
  *
- * (3) is the load-bearing posture. Anything that does not validate as a known
- * content record — a decision, an outcome, an approval record, a forged/custom
- * event, a future event type — is treated as maximally sensitive and withheld
- * at every ceiling below `secret`. This mirrors `sensitivityRank`, which ranks
- * unknown *source* values above every real level (fail closed).
+ * The exactness check matters because Zod strips unknown keys on parse: a
+ * *superset* — every required Claim field, `sensitivity:"public"`, PLUS an extra
+ * secret field — would validate as `public`, but the shipper would still send
+ * the raw superset and leak the extra field. So we compare `canonicalHash` of
+ * the stripped parse against a freshly hashed raw payload (not the stored
+ * `payload_hash`, which a tampered log could spoof); any extra or nested field
+ * makes them differ and we fall through to fail-closed `secret`.
  *
- * It defaults to `secret` rather than an above-`secret` sentinel deliberately:
- * the whole session still becomes portable at `--sensitivity-ceiling secret`
- * (ADR-0014's headline consequence). An operator who explicitly clears `secret`
- * is cleared for the events we could not prove safe — not blocked from them
- * forever — and every shipped payload's hash still re-verifies on receipt.
+ * (3) is the load-bearing posture. A decision, an outcome, an approval record, a
+ * forged/custom event, a schema superset, a future type — all withheld at every
+ * ceiling below `secret` (mirroring `sensitivityRank`, which ranks unknown
+ * *source* values above every real level). It defaults to `secret` rather than
+ * an above-`secret` sentinel deliberately: the whole session still becomes
+ * portable at `--sensitivity-ceiling secret` (ADR-0014's headline consequence),
+ * and every shipped payload's hash still re-verifies on receipt.
  */
 export function payloadContentSensitivity(envelope: EventEnvelope): Sensitivity {
   const payload = envelope.payload
+  // Hash the payload AS IT WILL SHIP (raw, verbatim) — computed fresh, never the
+  // stored `payload_hash`. A declared sensitivity is trusted only when a schema
+  // parse reproduces this exactly (i.e. stripped nothing).
+  const rawHash = canonicalHash(payload)
 
-  // Trust a `sensitivity` field only on a payload that VALIDATES as one of the
-  // content records whose schema defines it — never on a bare lookalike blob.
   const claim = ClaimSchema.safeParse(payload)
-  if (claim.success) return claim.data.sensitivity
+  if (claim.success && canonicalHash(claim.data) === rawHash) return claim.data.sensitivity
   const belief = BeliefSchema.safeParse(payload)
-  if (belief.success) return belief.data.sensitivity
+  if (belief.success && canonicalHash(belief.data) === rawHash) return belief.data.sensitivity
   const observation = ObservationSchema.safeParse(payload)
-  if (observation.success) return observation.data.sensitivity
-
-  // A validated Action's coarse `data_sensitivity`, mapped onto the content scale.
+  if (observation.success && canonicalHash(observation.data) === rawHash) {
+    return observation.data.sensitivity
+  }
   const action = ActionSchema.safeParse(payload)
-  if (action.success) return contentSensitivityForAction(action.data.contract.data_sensitivity)
+  if (action.success && canonicalHash(action.data) === rawHash) {
+    return contentSensitivityForAction(action.data.contract.data_sensitivity)
+  }
 
-  // Fail closed: anything we cannot positively validate is treated as `secret`.
+  // Fail closed: anything not EXACTLY a known content record is treated as `secret`.
   return "secret"
 }
 
