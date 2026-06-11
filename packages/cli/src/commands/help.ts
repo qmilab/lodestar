@@ -4,6 +4,7 @@ Usage:
   lodestar report <session-id> [--project <id>] [--log-root <path>] [--out <file>]
   lodestar view [session-id] [--log-root <path>] [--port <n>] [--open]
   lodestar otel export <session-id> [--endpoint <url>] [--sensitivity-ceiling <level>]
+  lodestar ship <session-id> [--endpoint <url>] [--token-env <NAME>] [--sensitivity-ceiling <level>]
   lodestar guard wrap --target <module> [--project <id>] [--actor <id>]
   lodestar guard mcp-proxy --config <path>
   lodestar approve list --project <id> [--log-root <path>]
@@ -27,6 +28,11 @@ Commands:
              as OTLP/HTTP JSON (export). Pair the epistemic chain with Langfuse,
              Phoenix, Jaeger, or Tempo. Content above the sensitivity ceiling is
              withheld (metadata + payload hash only).
+  ship       Transfer a session's raw event-log envelopes to a remote collector
+             as the lodestar.session_ship@1 NDJSON wire format — move a whole
+             governed session to a shared collector, remote viewer, or archive,
+             losslessly. Content above the sensitivity ceiling ships redacted
+             (structure + the original payload hash only).
   guard      Wrap an agent run. Two modes:
                wrap       — programmatic; loads a JS/TS loop module.
                mcp-proxy  — stdio MCP proxy; wrap any MCP-speaking agent
@@ -56,6 +62,7 @@ Examples:
   lodestar report session-1779551238212
   lodestar view session-1779551238212 --open
   lodestar otel export session-1779551238212 --endpoint http://localhost:4318
+  lodestar ship session-1779551238212 --endpoint https://collector.example.com
   lodestar guard mcp-proxy --config ./lodestar-mcp-proxy.config.json
   lodestar approve list --project my-project
   lodestar approve grant 7f3c… --approver me --project my-project
