@@ -181,11 +181,19 @@ async function postEvents(
   secrets: string[],
 ): Promise<void> {
   const url = `${endpoint.replace(/\/+$/, "")}/v1/events`
+  // Strip any caller-supplied content-type (ANY casing) before setting the
+  // mandated wire type. A plain spread leaving both `Content-Type` and
+  // `content-type` makes fetch COMBINE the duplicate case-insensitive names
+  // ("text/plain, application/x-ndjson"), which a strict collector rejects. The
+  // receiver contract requires exactly application/x-ndjson.
+  const outHeaders: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (name.toLowerCase() !== "content-type") outHeaders[name] = value
+  }
+  outHeaders["content-type"] = "application/x-ndjson"
   const res = await fetch(url, {
     method: "POST",
-    // content-type LAST so a caller-supplied header can't override the mandated
-    // wire type (the receiver contract requires application/x-ndjson).
-    headers: { ...headers, "content-type": "application/x-ndjson" },
+    headers: outHeaders,
     body,
   }).catch((err: unknown) => {
     throw new Error(redactSecrets(`POST ${url} failed: ${errMessage(err)}`, secrets))

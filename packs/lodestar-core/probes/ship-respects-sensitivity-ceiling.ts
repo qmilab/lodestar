@@ -236,9 +236,10 @@ async function run(): Promise<ProbeResult> {
       projectId: PROJECT,
       logRoot: rootDir,
       endpoint: server.url,
-      // The content-type override here must be IGNORED — the mandated wire type
-      // wins (review C4); asserted in T below.
-      headers: { authorization: `Bearer ${TOKEN_MARKER}`, "content-type": "text/plain" },
+      // A caller content-type override — using DIFFERENT casing — must be IGNORED:
+      // the mandated wire type wins and is the only content-type sent, not a
+      // combined "text/plain, application/x-ndjson" (review C4 / Codex P2); T below.
+      headers: { authorization: `Bearer ${TOKEN_MARKER}`, "Content-Type": "text/plain" },
       sensitivityCeiling: "internal",
     })
     const req = server.requests[server.requests.length - 1]
@@ -277,8 +278,11 @@ async function run(): Promise<ProbeResult> {
     if (!(req.contentType ?? "").includes("application/x-ndjson")) {
       return fail(details, `content-type was ${req.contentType}, expected application/x-ndjson`)
     }
+    if ((req.contentType ?? "").includes("text/plain")) {
+      return fail(details, `caller content-type leaked into the request: ${req.contentType}`)
+    }
     details.push(
-      "T: token in header only (not in body); POST /v1/events as application/x-ndjson (override ignored)",
+      "T: token in header only (not in body); POST /v1/events as application/x-ndjson (cased override ignored)",
     )
 
     // C — the secret belief survives structurally with a redaction wrapper.

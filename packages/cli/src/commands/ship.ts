@@ -109,6 +109,11 @@ export async function shipCommand(argv: string[]): Promise<number> {
       }
     } else if (arg && !arg.startsWith("-") && !session_id) {
       session_id = arg
+    } else {
+      // Unknown flag or extra positional — never silently ignore it. A misspelled
+      // --endpoint (e.g. --endpint) would otherwise fall through to the stdout
+      // dry-run, disclosing the session instead of POSTing it.
+      return usageError(`unexpected argument: ${arg ?? ""} (run \`lodestar ship --help\`)`)
     }
   }
 
