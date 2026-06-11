@@ -135,10 +135,12 @@ async function postEvents(
   })
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    const detail = text ? `: ${text.slice(0, 200)}` : ""
-    // A server may echo the bearer token back in an error body. Never let a
-    // credential surface in our error text (the SQL adapter's DSN-redaction
-    // discipline).
+    // A server may echo the bearer token back in an error body. Redact the FULL
+    // body BEFORE truncating — slicing first could cut a long echoed credential
+    // mid-token, leaving an unmatched prefix that survives redaction. The outer
+    // redactSecrets then defends the rest of the message (the SQL adapter's
+    // DSN-redaction discipline).
+    const detail = text ? `: ${redactSecrets(text, headers).slice(0, 200)}` : ""
     throw new Error(
       redactSecrets(
         `session-ship endpoint ${url} returned ${res.status} ${res.statusText}${detail}`,

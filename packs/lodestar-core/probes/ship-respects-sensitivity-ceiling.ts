@@ -36,11 +36,19 @@
  *        `redacted_count` to 0 (the ceiling is the gate; the whole session is
  *        portable at the top clearance);
  *   E  — invalid ceilings supplied programmatically (a typo, "", null) all THROW
- *        rather than silently failing open.
+ *        rather than silently failing open;
+ *   F  — a forged custom event labeled `sensitivity:"public"` (not a valid content
+ *        record) FAILS CLOSED — its bytes never cross the wire, it ships redacted;
+ *   G  — a schema SUPERSET (a valid public Claim plus an extra secret field Zod
+ *        strips on parse) likewise FAILS CLOSED — exactness is enforced;
+ *   H  — a non-2xx collector that echoes a long bearer token leaks no prefix of it
+ *        into the thrown error (redaction runs before truncation).
  *
  * If a future change routes payload content onto the wire without gating it, A
  * (or T) trips. If the gate over-redacts, B trips. If structural metadata is
  * dropped with the content, C trips. If an invalid ceiling fails open, E trips.
+ * If shape verification regresses, F or G trips; if a credential leaks through an
+ * echoed error body, H trips.
  */
 
 import { mkdtempSync, rmSync } from "node:fs"
@@ -373,6 +381,42 @@ async function run(): Promise<ProbeResult> {
       }
     }
     details.push("E: invalid ceilings (typo, empty string, null) all throw (the gate fails closed)")
+
+    // H — a collector that ECHOES a long credential in a non-2xx body must not
+    // leak any prefix of it into the thrown error: redaction runs BEFORE the
+    // 200-char truncation, so a token longer than the slice window can't survive
+    // as an unmatched prefix (Codex P2).
+    const LONG_TOKEN = `longtok-${"x".repeat(240)}-end`
+    const echo = Bun.serve({
+      port: 0,
+      fetch: () => new Response(`401 invalid token: ${LONG_TOKEN}`, { status: 401 }),
+    })
+    try {
+      let message = ""
+      try {
+        await shipSession({
+          sessionId: SESSION,
+          projectId: PROJECT,
+          logRoot: rootDir,
+          endpoint: `http://localhost:${echo.port}`,
+          headers: { authorization: `Bearer ${LONG_TOKEN}` },
+        })
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err)
+      }
+      if (message === "") return fail(details, "ship to a 401 collector did not throw")
+      if (message.includes(LONG_TOKEN) || message.includes(LONG_TOKEN.slice(0, 60))) {
+        return fail(
+          details,
+          "a non-2xx body echoing the token leaked (a prefix of) it into the error",
+        )
+      }
+      details.push(
+        "H: a non-2xx body echoing a long token leaks no prefix (redact before truncate)",
+      )
+    } finally {
+      echo.stop(true)
+    }
 
     return {
       passed: true,
