@@ -1,0 +1,50 @@
+Lodestar
+Copyright 2026 QMI Lab
+
+This product includes software developed at QMI Lab.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this software except in compliance with the License. A copy of
+the License is in the LICENSE file at the root of this repository, and
+at http://www.apache.org/licenses/LICENSE-2.0.
+
+------------------------------------------------------------------------
+Third-party runtime dependencies
+------------------------------------------------------------------------
+
+Lodestar's published packages depend on the following third-party
+software at runtime. Each is distributed under its own license; the
+copyright and license of each remains with its respective authors. This
+notice is informational and does not modify those licenses.
+
+  zod
+    License: MIT
+    https://github.com/colinhacks/zod
+
+  @modelcontextprotocol/sdk
+    License: MIT
+    https://github.com/modelcontextprotocol/typescript-sdk
+
+  elysia
+    License: MIT
+    https://github.com/elysiajs/elysia
+
+  @noble/curves
+    License: MIT
+    https://github.com/paulmillr/noble-curves
+
+  @noble/hashes
+    License: MIT
+    https://github.com/paulmillr/noble-hashes
+
+  @scure/base
+    License: MIT
+    https://github.com/paulmillr/scure-base
+
+A complete, machine-checked inventory of the full dependency tree —
+including transitive and development-only dependencies — is enforced in
+continuous integration by the license-audit job (see
+.github/workflows/ci.yml), which fails the build on any non-permissive
+license. Run it locally with:
+
+  bunx license-checker-rseidelsohn --summary --excludePrivatePackages

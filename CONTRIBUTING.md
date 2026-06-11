@@ -92,7 +92,22 @@ the maintainer (see the contact info in the project's GitHub profile)
 before opening a public issue. Lodestar's whole point is to be the
 layer that catches these, so finding one is genuinely useful.
 
+## Contributor License Agreement
+
+The first time you open a pull request, a bot will ask you to sign the
+Lodestar Contributor License Agreement. This is a one-click, one-time
+step: you reply to the bot's comment with the agreement phrase it gives
+you, and you never have to do it again. The CLA confirms you have the
+right to contribute the code and lets the project keep its licensing
+options open. The full texts are
+[`legal/CLA-individual.md`](./legal/CLA-individual.md) (for individuals)
+and [`legal/CLA-entity.md`](./legal/CLA-entity.md) (for organizations
+contributing on behalf of their employees).
+
 ## License
 
 Lodestar is licensed under [Apache 2.0](./LICENSE). By contributing,
-you agree your contributions are licensed under the same terms.
+you agree your contributions are licensed under the same terms (the CLA
+above formalizes this and adds the patent grant). New runtime
+dependencies must carry a permissive license — the CI license-audit job
+rejects copyleft; see [`NOTICE`](./NOTICE).

@@ -40,7 +40,7 @@ The CLI entry point is `lodestar view [session-id]` (in
    log, resolves an approval, or mutates anything. Pending approvals are
    *surfaced* (so an operator can see what is waiting), never resolved —
    resolution is the separate write-side surface (`lodestar approve`, or
-   the commercial Governing UI write side). The `viewer-is-read-only`
+   a separate write-side product). The `viewer-is-read-only`
    probe (`packs/lodestar-core/`) locks this: it asserts no mutation route
    exists and that the on-disk log is byte-for-byte unchanged after
    serving. If you add a write route, that probe trips — that is the point.
@@ -71,8 +71,8 @@ The CLI entry point is `lodestar view [session-id]` (in
   out of scope by design.
 - The chain projection / report rendering themselves — see
   `@qmilab/lodestar-trace`.
-- A bundler / framework toolchain. The open read-side stays no-build; the
-  framework-rich UX (TanStack Start) is the commercial write-side's.
+- A bundler / framework toolchain. The open read-side stays no-build; a
+  framework-rich UX is an external write-side surface's concern.
 - Indexed / time-range log queries. v0 lists by reading each project's log
   in full (the same whole-log scan `findProjectForSession` already does).
   Fine for local logs; an index is a later concern.

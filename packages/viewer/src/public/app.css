@@ -1,7 +1,7 @@
 /*
  * Lodestar Governing UI — read-side viewer styles.
- * No build step; plain CSS with custom properties as brand tokens so the
- * future commercial write-side can re-skin without forking the markup.
+ * No build step; plain CSS with custom properties as brand tokens so an
+ * external write-side surface can re-skin without forking the markup.
  */
 :root {
   --bg: #0d1117;

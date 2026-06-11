@@ -95,7 +95,7 @@ approval prompt but can never *open* an action the policy would have held.
 The gate, the trust-ladder floor, the approval lifecycle, signed out-of-band
 approvals, and the arbitrate hook all ship today, with both resolution paths
 wired. What's still ahead is the **team-approval surface** (multi-approver
-workflows, roles, an approvals dashboard — the commercial write-side) and
+workflows, roles, an approvals dashboard — a separate write-side surface) and
 **OS-level sandbox enforcement** (the adapter sandboxes are governance boundaries,
 not containment — see [governed egress](governed-egress.md)).
 
