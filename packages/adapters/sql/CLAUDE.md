@@ -69,8 +69,10 @@ ADR-0004/0006/0007/0008/0009). It enforces, in-process:
    caught driver error before it reaches an observation or the log.
 4. **Bounded capture.** A row cap on what enters the observation and a per-statement
    `statement_timeout`. The cap bounds what enters the *observation*, not what the
-   database computes — set a conservative `statement_timeout` and point the adapter
-   at a least-privileged role for the rest.
+   database computes — the full result is materialized before the cap trims it — so
+   set a conservative `statement_timeout` and point the adapter at a least-privileged
+   role for the rest. Bounding the *fetch* itself (a server-side cursor) is tracked
+   in #101.
 
 **What it does NOT claim:** no OS/network sandbox of the database, no table/column/
 row authorization (that is the DB role's job), and Postgres only in v0 (the `READ

@@ -85,7 +85,9 @@ enforces, in-process:
    caught error before it can reach an observation or the log.
 4. **Bounded capture.** A row cap on what enters the observation and a per-statement
    `statement_timeout`, so a huge or slow result cannot inflate or hang an
-   observation.
+   observation. The cap trims the captured rows *after* the driver materializes the
+   full result, so set a conservative `statement_timeout` for very large reads;
+   bounding the fetch itself (a server-side cursor) is tracked in #101.
 
 **What it does NOT claim:** it does not OS- or network-sandbox the database, and it
 does not enforce table/column/row-level authorization. The query reaches the real
