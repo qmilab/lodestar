@@ -80,8 +80,10 @@ jobs:
           # The document contributors are agreeing to.
           path-to-document: 'https://github.com/qmilab/lodestar/blob/main/legal/CLA-individual.md'
 
-          # Accounts that never need to sign (bots, the maintainer).
-          allowlist: 'dependabot[bot],github-actions[bot]'
+          # Accounts that never need to sign: bots, and the maintainer —
+          # as the licensor/copyright holder, Nandan does not sign a CLA
+          # granting rights to himself.
+          allowlist: 'nandanito,dependabot[bot],github-actions[bot]'
 
           # To store signatures in a SEPARATE repo instead of a branch of
           # this one, uncomment and point at it (the PAT needs write there):
