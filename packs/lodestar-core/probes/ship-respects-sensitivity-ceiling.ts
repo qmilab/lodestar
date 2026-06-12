@@ -43,7 +43,9 @@
  *        strips on parse) likewise FAILS CLOSED — exactness is enforced;
  *   H  — a non-2xx collector that echoes the request (shipped payloads + a bearer
  *        token) in its response body has NONE of it reach the thrown error — the
- *        error reports the HTTP status only.
+ *        error reports the HTTP status only;
+ *   I  — a collector that responds with a redirect (307) is REFUSED, not followed:
+ *        the session is never re-POSTed to the redirect target host.
  *
  * If a future change routes payload content onto the wire without gating it, A
  * (or T) trips. If the gate over-redacts, B trips. If structural metadata is
@@ -431,6 +433,49 @@ async function run(): Promise<ProbeResult> {
       )
     } finally {
       echo.stop(true)
+    }
+
+    // I — a collector that REDIRECTS (307) must NOT be followed: auto-following
+    // would re-POST the session payloads to the Location host (egress to an
+    // unconfigured host). shipSession throws and the decoy receives nothing
+    // (Codex P2). decoy hits tracked via an array length to dodge the
+    // closure-mutated-counter literal-narrowing under strict tsc.
+    const decoyRequests: string[] = []
+    const decoy = Bun.serve({
+      port: 0,
+      fetch: async (r) => {
+        decoyRequests.push(await r.text())
+        return new Response("ok")
+      },
+    })
+    const redirector = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: `http://localhost:${decoy.port}/v1/events` },
+        }),
+    })
+    try {
+      let threw = false
+      try {
+        await shipSession({
+          sessionId: SESSION,
+          projectId: PROJECT,
+          logRoot: rootDir,
+          endpoint: `http://localhost:${redirector.port}`,
+        })
+      } catch {
+        threw = true
+      }
+      if (!threw) return fail(details, "ship followed a redirect instead of refusing it")
+      if (decoyRequests.length !== 0) {
+        return fail(details, "ship re-POSTed the session to the redirect target host")
+      }
+      details.push("I: a redirecting collector is refused; the redirect target receives nothing")
+    } finally {
+      redirector.stop(true)
+      decoy.stop(true)
     }
 
     return {

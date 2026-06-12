@@ -195,9 +195,23 @@ async function postEvents(
     method: "POST",
     headers: outHeaders,
     body,
+    // Never auto-follow a redirect: the operator pins ONE collector. Following a
+    // 3xx would re-POST the session payloads to the Location host — egress to an
+    // unconfigured host. Detected and rejected below.
+    redirect: "manual",
   }).catch((err: unknown) => {
     throw new Error(redactSecrets(`POST ${url} failed: ${errMessage(err)}`, secrets))
   })
+  if (res.type === "opaqueredirect" || (res.status >= 300 && res.status < 400)) {
+    // Drain (best effort) and refuse — do not re-POST the body elsewhere.
+    await res.text().catch(() => "")
+    throw new Error(
+      redactSecrets(
+        `session-ship endpoint ${url} returned a redirect (${res.status}) — refusing to follow it to another host; pin the final collector URL`,
+        secrets,
+      ),
+    )
+  }
   if (!res.ok) {
     // Drain and DISCARD the response body. An untrusted collector can echo the
     // submitted NDJSON — shipped session payloads — back in a non-2xx body, so it
