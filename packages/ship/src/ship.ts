@@ -220,11 +220,10 @@ async function postEvents(
     // (Reading the body here also drains the socket.) redactSecrets still defends
     // the url/statusText against a credential embedded in the endpoint.
     await res.text().catch(() => "")
+    // Report the NUMERIC status only — `statusText` (the HTTP reason phrase) is
+    // collector-controlled too and could echo payload bytes.
     throw new Error(
-      redactSecrets(
-        `session-ship endpoint ${url} returned ${res.status} ${res.statusText}`,
-        secrets,
-      ),
+      redactSecrets(`session-ship endpoint ${url} returned HTTP ${res.status}`, secrets),
     )
   }
   // Drain the success body so the underlying socket is released promptly — for

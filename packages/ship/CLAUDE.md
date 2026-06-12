@@ -85,10 +85,13 @@ later under higher clearance.
 5. **The credential never leaks.** The bearer token is read from a named env
    var by the CLI (never argv), is never in the manifest, and never in the NDJSON
    body. A non-2xx error reports the HTTP **status only** — the collector's
-   response body is drained and **discarded**, never logged, because an untrusted
-   collector can echo the submitted NDJSON (shipped payloads) or a credential back
-   in it. The remaining error text (url, statusText, network errors) is still
-   scrubbed: the scrubbed values are the explicit secrets (the token
+   response body is drained and **discarded**, never logged, and only the NUMERIC
+   status is reported (`statusText` is collector-controlled too), because an
+   untrusted collector can echo the submitted NDJSON (shipped payloads) or a
+   credential back in it. Redirects are refused, not followed (`redirect:
+   "manual"`), so the session is never re-POSTed to a `Location` host. The
+   remaining error text (url, network errors) is still scrubbed: the scrubbed
+   values are the explicit secrets (the token
    + each `--secret-header`) **plus the value of any header whose name looks like a
    credential** (`Authorization` and its bare token, `X-API-Key`, …) — a
    benign-named `--header` value (e.g. `x-trace`) is never scrubbed, so it can't
