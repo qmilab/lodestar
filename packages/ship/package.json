@@ -1,25 +1,31 @@
 {
-  "name": "@qmilab/lodestar-cli",
+  "name": "@qmilab/lodestar-ship",
   "version": "0.2.0",
-  "description": "The `lodestar` command-line interface — `lodestar report`, `lodestar guard wrap`, `lodestar action`, `lodestar trace`, `lodestar probe`. Part of Lodestar, the trust layer for AI agents.",
+  "description": "Ship a session's raw event log to a remote collector as the versioned `lodestar.session_ship@1` NDJSON wire format, with the locked sensitivity ceiling applied client-side before egress. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
   "homepage": "https://qmilab.com/lodestar",
   "repository": {
     "type": "git",
     "url": "https://github.com/qmilab/lodestar.git",
-    "directory": "packages/cli"
+    "directory": "packages/ship"
   },
   "bugs": {
     "url": "https://github.com/qmilab/lodestar/issues"
   },
-  "keywords": ["ai-agents", "trust", "lodestar", "cli", "audit", "agent-governance"],
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "ndjson",
+    "egress",
+    "audit",
+    "epistemic-chain",
+    "session-transfer"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "lodestar": "./dist/index.js"
-  },
   "exports": {
     ".": {
       "bun": "./src/index.ts",
@@ -40,18 +46,7 @@
   "dependencies": {
     "@qmilab/lodestar-core": "workspace:*",
     "@qmilab/lodestar-event-log": "workspace:*",
-    "@qmilab/lodestar-action-kernel": "workspace:*",
-    "@qmilab/lodestar-memory-firewall": "workspace:*",
-    "@qmilab/lodestar-guard": "workspace:*",
-    "@qmilab/lodestar-guard-mcp": "workspace:*",
-    "@qmilab/lodestar-harness": "workspace:*",
     "@qmilab/lodestar-trace": "workspace:*",
-    "@qmilab/lodestar-viewer": "workspace:*",
-    "@qmilab/lodestar-otel-exporter": "workspace:*",
-    "@qmilab/lodestar-ship": "workspace:*",
-    "@qmilab/lodestar-cognitive-core": "workspace:*",
-    "@qmilab/lodestar-adapter-filesystem": "workspace:*",
-    "@qmilab/lodestar-adapter-git": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

@@ -215,6 +215,11 @@ jobs:
             // viewer, its first publish needs the manual trusted-publisher
             // mini-marathon before CI can stage-publish it through this path.
             "packages/otel-exporter",
+            // ship depends on core + trace; the CLI depends on it
+            // (`lodestar ship`), so it publishes before `cli`. Like
+            // otel-exporter, its first publish needs the manual trusted-publisher
+            // mini-marathon before CI can stage-publish it through this path.
+            "packages/ship",
             "packages/cli",
           ];
 
@@ -309,6 +314,9 @@ jobs:
             # otel-exporter is a CLI dependency (`lodestar otel export`);
             # publishes before `cli`. First publish needs the manual bootstrap.
             packages/otel-exporter
+            # ship is a CLI dependency (`lodestar ship`); publishes before
+            # `cli`. First publish needs the manual bootstrap.
+            packages/ship
             packages/cli
           )
 

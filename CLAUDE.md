@@ -4,12 +4,14 @@ Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
 **Status**: v0.2.0 published to npm (all 22 packages via CI trusted
 publishing — the integrated release: the 8 net-new packages plus the
-updated guard/cli that wire them in), v0.2 architecture locked. A 23rd
-package, `@qmilab/lodestar-adapter-sql` (the governed SQL/database
-adapter, ADR-0013), has since landed in the repo and publishes in the
-next release. Forty-nine probes pass under
+updated guard/cli that wire them in), v0.2 architecture locked. Two more
+packages have since landed in the repo and publish in the next release:
+a 23rd, `@qmilab/lodestar-adapter-sql` (the governed SQL/database
+adapter, ADR-0013), and a 24th, `@qmilab/lodestar-ship` (the read-side
+session shipper — `lodestar ship`, the `lodestar.session_ship@1` NDJSON
+wire format, ADR-0014). Fifty-one probes pass under
 strict TypeScript (two need a Postgres test database — see
-below). Forty-five live in the first-party pack
+below). Forty-seven live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -124,7 +126,19 @@ the connection password never surfacing in inputs/observations and being redacte
 from a bad-connection error; the first adapter whose headline teeth is an injection
 boundary rather than egress; DB-gated like `tool-poisoning-cross-session` —
 `LODESTAR_TEST_DATABASE_URL`, skips loudly when unset, runs against `postgres:16` in
-CI; ADR-0013). The other four live in the first non-core
+CI; ADR-0013), and two session-shipper probes — `ship-respects-sensitivity-ceiling`
+(a local capture server asserts an above-ceiling `secret` belief's bytes never cross
+the wire while the redaction marker + the **original** `payload_hash` do, the bearer
+token reaches the collector as a header but never enters the NDJSON body, the POST
+lands at `/v1/events` as `application/x-ndjson`, and an invalid ceiling throws) and
+`ship-wire-roundtrip` (the receiver re-verifies `payload_hash == canonicalHash(payload)`
+for every unredacted record; redacted records are **flagged, not hash-mismatched** —
+the preserved original hash ≠ the marker's hash; a decision event with no sensitivity
+**fails closed** to redacted at the default `internal` ceiling; and the whole session
+is lossless + portable at `--sensitivity-ceiling secret`). The shipper is the first
+read-side **egress** path with the locked sensitivity ceiling applied client-side
+before transfer; the gate primitives graduated to `@qmilab/lodestar-core` (#104) so the
+shipper and the otel-exporter share one implementation; ADR-0014. The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
 `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack
@@ -233,6 +247,7 @@ packages/
   harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier)
   policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). host wiring landed for all three paths: the in-process (guard.wrap() resolver seam), MCP-proxy (deadline/timeout out-of-band hold path), and the separate-process `lodestar approve` CLI (writes a side-channel the proxy promotes; proxy stays sole event-log writer)
   otel-exporter/       # (exists, post-v1) OTel GenAI semantic conventions bridge — `lodestar otel export`; read-side batch projection of a session into OTLP/HTTP-JSON spans (action-centric: invoke_agent root + execute_tool spans), hand-rolled wire format (no OTel SDK dep), with the sensitivity-ceiling export gate (content above the ceiling ships as metadata + payload hash only)
+  ship/                # (exists) session shipper — `lodestar ship`; read-side batch transfer of a session's raw envelopes to a remote collector as the versioned NDJSON wire format `lodestar.session_ship@1` (POST {base}/v1/events), with the locked sensitivity ceiling applied client-side before egress (above-ceiling records ship redacted: payload replaced by a marker, original payload_hash kept so tamper evidence survives); bearer token from a named env var, never argv/logged; ADR-0014
   adapters/
     git/               # (exists, P2) read-only git.status + forge-agnostic transport (git.commit/push/clone); push is the first native egress (L4); remote pinning + scoped credentials (askpass, no argv); TS-level boundary, not an OS sandbox; ADR-0006
     filesystem/        # (exists) governed filesystem domain: fs.read + doc.read (L0) and fs.write (L3, graduated doc.write — issue #79); root-confined paths (lexical + symlink realpath checks), no host-env expansion, bounded write rejected-not-truncated, opt-in createDirs; TS-level boundary, not an OS sandbox; ADR-0012
@@ -330,7 +345,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Forty-nine probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
+- **Fifty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
 
 ## Quick references
 

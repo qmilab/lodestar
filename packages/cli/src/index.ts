@@ -29,6 +29,7 @@ import { otelCommand } from "./commands/otel.js"
 import { probeCommand } from "./commands/probe.js"
 import { reflectCommand } from "./commands/reflect.js"
 import { reportCommand } from "./commands/report.js"
+import { shipCommand } from "./commands/ship.js"
 import { traceInspectCommand } from "./commands/trace.js"
 import { viewCommand } from "./commands/view.js"
 
@@ -70,6 +71,9 @@ async function dispatch(): Promise<number> {
 
     case "otel":
       return otelCommand(sub === undefined ? [] : [sub, ...rest])
+
+    case "ship":
+      return shipCommand(sub === undefined ? [] : [sub, ...rest])
 
     case "guard":
       if (sub === "wrap") return guardWrapCommand(rest)

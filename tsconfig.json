@@ -19,6 +19,7 @@
     { "path": "./packages/trace" },
     { "path": "./packages/viewer" },
     { "path": "./packages/otel-exporter" },
+    { "path": "./packages/ship" },
     { "path": "./packages/harness" },
     { "path": "./packages/cli" },
     { "path": "./packages/memory-firewall/adapters/mem0" },

@@ -27,6 +27,7 @@
         "@qmilab/lodestar-memory-firewall-zep": "workspace:*",
         "@qmilab/lodestar-otel-exporter": "workspace:*",
         "@qmilab/lodestar-policy-kernel": "workspace:*",
+        "@qmilab/lodestar-ship": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "@qmilab/lodestar-viewer": "workspace:*",
         "@types/bun": "latest",
@@ -230,6 +231,7 @@
         "@qmilab/lodestar-harness": "workspace:*",
         "@qmilab/lodestar-memory-firewall": "workspace:*",
         "@qmilab/lodestar-otel-exporter": "workspace:*",
+        "@qmilab/lodestar-ship": "workspace:*",
         "@qmilab/lodestar-trace": "workspace:*",
         "@qmilab/lodestar-viewer": "workspace:*",
         "zod": "^3.23.8",
@@ -391,6 +393,19 @@
         "typescript": "5.6.3",
       },
     },
+    "packages/ship": {
+      "name": "@qmilab/lodestar-ship",
+      "version": "0.2.0",
+      "dependencies": {
+        "@qmilab/lodestar-core": "workspace:*",
+        "@qmilab/lodestar-event-log": "workspace:*",
+        "@qmilab/lodestar-trace": "workspace:*",
+        "zod": "^3.23.8",
+      },
+      "devDependencies": {
+        "typescript": "5.6.3",
+      },
+    },
     "packages/trace": {
       "name": "@qmilab/lodestar-trace",
       "version": "0.2.0",
@@ -507,6 +522,8 @@
     "@qmilab/lodestar-otel-exporter": ["@qmilab/lodestar-otel-exporter@workspace:packages/otel-exporter"],
 
     "@qmilab/lodestar-policy-kernel": ["@qmilab/lodestar-policy-kernel@workspace:packages/policy-kernel"],
+
+    "@qmilab/lodestar-ship": ["@qmilab/lodestar-ship@workspace:packages/ship"],
 
     "@qmilab/lodestar-trace": ["@qmilab/lodestar-trace@workspace:packages/trace"],
 

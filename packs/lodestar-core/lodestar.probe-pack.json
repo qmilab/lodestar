@@ -23,7 +23,8 @@
     "http_adapter",
     "messaging_adapter",
     "sql_adapter",
-    "calibration"
+    "calibration",
+    "session_shipper"
   ],
   "invariants": [
     "no_self_promotion",
@@ -56,7 +57,9 @@
     "http_transport_governance",
     "messaging_egress_governance",
     "sql_injection_boundary",
-    "durable_calibration_event"
+    "durable_calibration_event",
+    "ship_sensitivity_ceiling",
+    "ship_wire_roundtrip"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -190,6 +193,14 @@
     {
       "name": "sql-adapter-enforces-invariants",
       "file": "probes/sql-adapter-enforces-invariants.ts"
+    },
+    {
+      "name": "ship-respects-sensitivity-ceiling",
+      "file": "probes/ship-respects-sensitivity-ceiling.ts"
+    },
+    {
+      "name": "ship-wire-roundtrip",
+      "file": "probes/ship-wire-roundtrip.ts"
     }
   ]
 }
