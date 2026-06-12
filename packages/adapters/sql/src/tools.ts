@@ -16,8 +16,8 @@ import { assertReadOnly, assertSingleStatement } from "./statement.js"
  * The headline is the **injection boundary**: the agent never builds SQL by
  * concatenating values. Every value is supplied separately in `params` and bound
  * by the driver (`sql.unsafe(statement, params)` → Postgres's extended/prepared
- * protocol), so a hostile value like `Robert'); DROP TABLE students;--` is stored
- * as a literal string, never interpreted as SQL.
+ * protocol), so a value supplied by an untrusted caller is stored as a literal
+ * string, never interpreted as SQL.
  *
  * The teeth (mirroring the egress slices, ADR-0006/0007/0008/0009):
  *

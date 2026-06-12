@@ -12,9 +12,9 @@ Two tools over one operator connection:
 
 The headline is the **injection boundary**: the agent never builds SQL by
 concatenating values. It supplies a statement with `$1..$N` placeholders and a
-separate `params` array, and every value is *bound* by the driver — so a hostile
-value like `Robert'); DROP TABLE students;--` is stored as a literal string, never
-interpreted as SQL. Targets Postgres via Bun's native `Bun.SQL` (no runtime
+separate `params` array, and every value is *bound* by the driver — so a value
+supplied by an untrusted caller is stored as a literal string, never interpreted
+as SQL. Targets Postgres via Bun's native `Bun.SQL` (no runtime
 dependency).
 
 ## Install
