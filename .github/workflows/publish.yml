@@ -322,6 +322,17 @@ jobs:
 
           for pkg in "${PUBLISH_ORDER[@]}"; do
             name=$(node -p "require('./$pkg/package.json').name")
+            ver=$(node -p "require('./$pkg/package.json').version")
+            # Idempotent: skip a version already LIVE on npm so a re-run after a
+            # partial failure — or a package finished out-of-band (e.g.
+            # adapter-sql@0.3.0, published via a local token after a Cloudflare-WAF
+            # block forced a manual fix) — does not error on "cannot publish over
+            # existing version". `npm view` does NOT surface merely-staged
+            # versions, so this only skips truly-live ones, never a pending stage.
+            if npm view "$name@$ver" version >/dev/null 2>&1; then
+              echo "== $name@$ver already on npm — skipping =="
+              continue
+            fi
             echo "::group::stage-publish $name"
             # `npm stage publish` (npm 11+) uploads to npm's staging area
             # under the configured trusted-publisher rule. Each stage upload
