@@ -4,8 +4,8 @@
  * to a database credential.
  *
  * The credential here is the password embedded in the operator's connection
- * string (e.g. the `secret` in `postgres://user:secret@host/db`). The agent never
- * supplies, sees, or names it. But a connection or driver error can echo the
+ * string. The agent never supplies, sees, or names it. But a connection or
+ * driver error can echo the
  * connection string — and therefore the password — into its message, and that
  * message would otherwise reach the kernel's failed-action audit and the event
  * log. So before any caught error text leaves the adapter it is scrubbed of every
@@ -80,8 +80,8 @@ function libpqPassword(dsn: string): string | null {
 
 /**
  * Extract the redaction set for a connection string: the password component and
- * its encoded variants. Handles both URL connection strings (`postgres://user:pw@…`)
- * and libpq key=value DSNs (`host=… password=pw …`). A shape it cannot parse a
+ * its encoded variants. Handles both URL connection strings and libpq key/value
+ * DSNs. A shape it cannot parse a
  * password out of yields no redactions — the operator can pass explicit
  * `redactions` for that case.
  */
@@ -98,8 +98,8 @@ export function connectionRedactions(connectionString: string): string[] {
   }
   if (password === "") {
     // A URL with no userinfo password — but the password could ride in the query
-    // string (libpq accepts `postgres://h/db?password=pw`). Read it from the parsed
-    // query params, NOT the whitespace-anchored libpq scanner (a `?`/`&` precedes
+    // string. Read it from the parsed query params, NOT the whitespace-anchored
+    // libpq scanner (a `?`/`&` precedes
     // `password=` in a URL, so that scanner would never match here).
     let qp: string | null = null
     try {
