@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-otel-exporter",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Project the Lodestar event log into OpenTelemetry GenAI spans and export them over OTLP/HTTP — pair the epistemic chain with Langfuse, Phoenix, Jaeger, or Tempo. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
