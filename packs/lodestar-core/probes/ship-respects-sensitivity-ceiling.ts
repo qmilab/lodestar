@@ -41,14 +41,15 @@
  *        record) FAILS CLOSED — its bytes never cross the wire, it ships redacted;
  *   G  — a schema SUPERSET (a valid public Claim plus an extra secret field Zod
  *        strips on parse) likewise FAILS CLOSED — exactness is enforced;
- *   H  — a non-2xx collector that echoes a long bearer token leaks no prefix of it
- *        into the thrown error (redaction runs before truncation).
+ *   H  — a non-2xx collector that echoes the request (shipped payloads + a bearer
+ *        token) in its response body has NONE of it reach the thrown error — the
+ *        error reports the HTTP status only.
  *
  * If a future change routes payload content onto the wire without gating it, A
  * (or T) trips. If the gate over-redacts, B trips. If structural metadata is
  * dropped with the content, C trips. If an invalid ceiling fails open, E trips.
- * If shape verification regresses, F or G trips; if a credential leaks through an
- * echoed error body, H trips.
+ * If shape verification regresses, F or G trips; if the collector's response body
+ * (echoed payloads or a credential) reaches the error, H trips.
  */
 
 import { mkdtempSync, rmSync } from "node:fs"
@@ -391,15 +392,15 @@ async function run(): Promise<ProbeResult> {
     }
     details.push("E: invalid ceilings (typo, empty string, null) all throw (the gate fails closed)")
 
-    // H — a collector that ECHOES a long credential in a non-2xx body must not
-    // leak any prefix of it into the thrown error (redaction runs BEFORE the
-    // 200-char truncation; Codex P2). AND a benign header value (`trace=1`) must
-    // survive — only the Authorization credential is redacted, not every header
-    // value, so the error stays readable (Gemini HIGH).
+    // H — the collector's response BODY must never reach the error/logs. An
+    // untrusted collector can echo the submitted NDJSON (shipped payloads) AND a
+    // bearer token back in a non-2xx body; the error reports the HTTP status
+    // ONLY, so neither the echoed content nor the token can land in logs (Codex P2).
+    const ECHO_MARKER = "echoed-response-body-MARKER-7f2c"
     const LONG_TOKEN = `longtok-${"x".repeat(240)}-end`
     const echo = Bun.serve({
       port: 0,
-      fetch: () => new Response(`401 trace=1 invalid token: ${LONG_TOKEN}`, { status: 401 }),
+      fetch: () => new Response(`teapot ${ECHO_MARKER} token=${LONG_TOKEN}`, { status: 418 }),
     })
     try {
       let message = ""
@@ -409,23 +410,24 @@ async function run(): Promise<ProbeResult> {
           projectId: PROJECT,
           logRoot: rootDir,
           endpoint: `http://localhost:${echo.port}`,
-          headers: { authorization: `Bearer ${LONG_TOKEN}`, "x-trace": "1" },
+          headers: { authorization: `Bearer ${LONG_TOKEN}` },
         })
       } catch (err) {
         message = err instanceof Error ? err.message : String(err)
       }
-      if (message === "") return fail(details, "ship to a 401 collector did not throw")
-      if (message.includes(LONG_TOKEN) || message.includes(LONG_TOKEN.slice(0, 60))) {
-        return fail(
-          details,
-          "a non-2xx body echoing the token leaked (a prefix of) it into the error",
-        )
+      if (message === "") return fail(details, "ship to a non-2xx collector did not throw")
+      if (
+        message.includes(ECHO_MARKER) ||
+        message.includes(LONG_TOKEN) ||
+        message.includes(LONG_TOKEN.slice(0, 60))
+      ) {
+        return fail(details, "the collector's echoed response body leaked into the error/logs")
       }
-      if (!message.includes("trace=1")) {
-        return fail(details, "a benign header value was over-redacted from the error message")
+      if (!message.includes("418")) {
+        return fail(details, `error did not report the HTTP status (got: ${message})`)
       }
       details.push(
-        "H: echoed long token leaks no prefix (redact before truncate); benign header value not over-redacted",
+        "H: a non-2xx collector's echoed response body never reaches the error (status only)",
       )
     } finally {
       echo.stop(true)

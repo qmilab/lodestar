@@ -199,16 +199,16 @@ async function postEvents(
     throw new Error(redactSecrets(`POST ${url} failed: ${errMessage(err)}`, secrets))
   })
   if (!res.ok) {
-    const text = await res.text().catch(() => "")
-    // A server may echo a credential back in an error body. Redact the FULL body
-    // BEFORE truncating — slicing first could cut a long echoed credential
-    // mid-token, leaving an unmatched prefix that survives redaction. The outer
-    // redactSecrets then defends the rest of the message (the SQL adapter's
-    // DSN-redaction discipline).
-    const detail = text ? `: ${redactSecrets(text, secrets).slice(0, 200)}` : ""
+    // Drain and DISCARD the response body. An untrusted collector can echo the
+    // submitted NDJSON — shipped session payloads — back in a non-2xx body, so it
+    // must never reach our error text or the operator's logs. Report the HTTP
+    // status only; the operator inspects the collector's own logs for detail.
+    // (Reading the body here also drains the socket.) redactSecrets still defends
+    // the url/statusText against a credential embedded in the endpoint.
+    await res.text().catch(() => "")
     throw new Error(
       redactSecrets(
-        `session-ship endpoint ${url} returned ${res.status} ${res.statusText}${detail}`,
+        `session-ship endpoint ${url} returned ${res.status} ${res.statusText}`,
         secrets,
       ),
     )

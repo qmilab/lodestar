@@ -83,10 +83,12 @@ later under higher clearance.
    otel-exporter gates it. A mislabeled/poisoned record is the Memory Firewall's
    concern upstream, not the shipper's.
 5. **The credential never leaks.** The bearer token is read from a named env
-   var by the CLI (never argv), is never in the manifest, never in the NDJSON
-   body, and is scrubbed from every error message — even a long token echoed in a
-   non-2xx body (redaction runs before truncation), and a server that echoes it
-   back gets `«redacted»`. The scrubbed values are the explicit secrets (the token
+   var by the CLI (never argv), is never in the manifest, and never in the NDJSON
+   body. A non-2xx error reports the HTTP **status only** — the collector's
+   response body is drained and **discarded**, never logged, because an untrusted
+   collector can echo the submitted NDJSON (shipped payloads) or a credential back
+   in it. The remaining error text (url, statusText, network errors) is still
+   scrubbed: the scrubbed values are the explicit secrets (the token
    + each `--secret-header`) **plus the value of any header whose name looks like a
    credential** (`Authorization` and its bare token, `X-API-Key`, …) — a
    benign-named `--header` value (e.g. `x-trace`) is never scrubbed, so it can't
