@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-ship",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Ship a session's raw event log to a remote collector as the versioned `lodestar.session_ship@1` NDJSON wire format, with the locked sensitivity ceiling applied client-side before egress. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
