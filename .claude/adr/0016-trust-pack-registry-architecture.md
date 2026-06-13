@@ -6,7 +6,9 @@
 - **Related:** Epic #76 (children #86–#91), ADR-0010 (Ed25519 signing primitive),
   ADR-0015 (transport carries a signed decision, never mints one),
   `docs/strategy/positioning.md` §5, `docs/roadmap.md`,
-  `packages/core/src/schemas/probe-pack.ts`, `packages/harness/src/pack/loader.ts`
+  `docs/concepts/threat-model/registry-supply-chain.md` (the supply-chain threat
+  model, #91), `packages/core/src/schemas/probe-pack.ts`,
+  `packages/harness/src/pack/loader.ts`
 
 ## Context
 
