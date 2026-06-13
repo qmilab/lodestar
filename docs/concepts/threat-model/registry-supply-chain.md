@@ -37,8 +37,15 @@ The distinction is the whole design, so it's worth being precise about it:
 - A **trust artifact** is something you *verify*. A signed manifest with a content
   digest. Installing it is fetching bytes, checking a signature against a key you
   pinned, and checking the bytes against the digest the signature covers. Nothing the
-  pack author wrote runs until all of that passes — and even then, a probe runs only
-  inside the harness's sandboxed runner.
+  pack author wrote runs at install time.
+
+Note the boundary line carefully: registry verification governs *which bytes you
+trust*, not *what those bytes may do once a probe runs*. A pack's probes are still
+executable code, and **running** an untrusted pack's probes is governed by the
+harness runner, not by anything on this page — and the runner's sandbox is not yet
+built (see ["what we don't defend against"](#what-we-dont-defend-against-yet)). So
+this page's guarantees end at "the bytes are authentic"; do not run a third-party
+pack's probes today on the assumption that execution is contained.
 
 Everything below is in service of keeping packs on the trust-artifact side of that line.
 
@@ -53,7 +60,7 @@ Everything below is in service of keeping packs on the trust-artifact side of th
 | **Pre-verification code execution** | Get code to run via `preinstall` / `postinstall` lifecycle scripts or git hooks during resolution, *before* anything is verified | Resolution is a **non-executing fetch**: tarball download + integrity check + extraction with scripts ignored (npm), `archive`/checkout at the pinned SHA with hooks disabled (git). No pack code runs until after the signature and digest verify (`resolution-runs-no-pack-code`). |
 | **MITM on fetch** | Tamper with bytes in transit | Transport integrity (npm integrity hash, git SHA) plus the signed content digest — the trust is in the signature/digest, never in the transport. A tampered stream fails the digest check. |
 | **Typosquatting** | Register `lodestar-prboes` and hope for a fat-fingered `pack add` | Not solved by signing alone — a squatted name carries its *own* valid author signature. Mitigated by the operator pinning author keys (a squat is a *different* key) and by reading the declared manifest before install; full namespace/name-reputation defence is a registry-curation concern (commercial). |
-| **Malicious probe at run time** | A pack whose probe, when *run*, reads host secrets out of `process.env` or escapes | The harness runner is the boundary here, not the registry. The Batch-4 carve-out stands: a probe subprocess should run with a **scoped environment**, not the host's, before any third-party pack becomes a real execution surface. Registry verification gets *trusted bytes* to the runner; the runner sandbox governs what those bytes may do. |
+| **Malicious probe at run time** | A pack whose probe, when *run*, reads host secrets out of `process.env` or escapes | **Not yet held — this is a registry-out-of-scope, runner-side gap.** Registry verification only gets *trusted bytes* to the runner; what those bytes do when executed is the runner's job, and today's runner spawns `bun run <probe>` inheriting the **full host environment** (`packages/harness/src/runner.ts`; the Batch-4 carve-out names scoped-env execution as a prerequisite that has **not** landed). Until it does, do not run an untrusted pack's probes. See ["what we don't defend against"](#what-we-dont-defend-against-yet). |
 
 ## Architectural responses
 
@@ -136,19 +143,27 @@ keys it pinned.
   "signature ≠ truth" honesty Lodestar applies to fetched Nostr/HTTP content. A pack
   you've chosen to trust, signed by a key you've pinned, can still ship a probe that
   does something you didn't want. The defences against this are *outside* the
-  signing boundary: the harness runner's sandbox, probe/scan badges as advisory
-  signal, and reading the manifest's declarations before install.
+  signing boundary: probe/scan badges as advisory signal, reading the manifest's
+  declarations before install, and — once it exists — runner-side execution
+  containment (see the next bullet). It is *not* defended by anything on this page.
 - **A compromised author private key.** If an attacker holds a pinned author's
   private key, they can sign malicious packs as that author. v0 has no revocation
   list or key-rotation protocol; the blast radius is bounded to that author's packs,
   and recovery is the operator un-pinning the key by hand. Key rotation/revocation is
   an open question below.
-- **A full OS sandbox for probe execution.** The runner boundary is TS-level and
-  environment-scoped (the Batch-4 carve-out), consistent with the native adapters'
-  "TS-level governance boundary, not an OS sandbox" honesty. It keeps a probe from
-  trivially reading host `process.env` secrets; it is not namespace/cgroup/network
-  containment. A determined malicious probe given CPU time is not fully contained in
-  v0.
+- **Probe execution containment — not built yet.** Be precise about the current
+  state: the harness runner spawns each probe as `bun run <probe>` and **does not set
+  a scoped environment**, so a probe **inherits the full host environment**, host
+  `process.env` secrets included (`packages/harness/src/runner.ts`; the roadmap's
+  Batch-4 carve-out names scoped-env execution as a prerequisite for third-party
+  packs that has **not** landed). Today's runner is appropriate for the first-party
+  `lodestar-core` pack you wrote; it is **not** a safe execution surface for an
+  untrusted third-party pack. The planned hardening is, first, a scoped environment
+  (deny host `process.env`, mirroring the Action Kernel's "no host env to sandboxes"
+  rule), and later a real OS sandbox — and even *that* would be a TS/process-level
+  boundary, not namespace/cgroup/network containment, consistent with the native
+  adapters' "TS-level governance boundary, not an OS sandbox" honesty. **Until scoped
+  execution lands, do not run probes from a pack you do not trust the author of.**
 - **Registry availability and censorship.** A decentralized index is resilient to a
   single bad actor but offers no availability guarantee — an index host can simply go
   away, and there is no built-in mirroring/quorum in v0.
@@ -185,6 +200,8 @@ keys it pinned.
   format. Extending the same trust plumbing to policy-pack and adapter-pack kinds —
   a `kind` discriminant behind the spec version (ADR-0016 §5) — is where adapter
   packs, the riskiest category, will need this threat model revisited.
-- **Probe-runner containment.** Hardening the runner from environment-scoped to a
-  real OS sandbox is the natural next step once third-party packs become a routine
-  execution surface.
+- **Probe-runner containment.** Today's runner inherits the host environment; the
+  near-term step is scoped-env execution (deny host `process.env`), and the longer
+  step is a real OS sandbox. This is the prerequisite that turns "verified third-party
+  pack" into "safe-to-run third-party pack", and it gates treating external packs as a
+  routine execution surface.
