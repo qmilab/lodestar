@@ -93,10 +93,18 @@ observation in the event log so the run is itself auditable via
 lodestar harness run                       # the first-party lodestar-core pack
 lodestar harness run --pack ./packs/mine   # a local pack directory
 lodestar harness run --no-record           # skip event-log recording (CI)
+lodestar harness run --pack ./packs/mine --allow-unsigned   # load an unsigned local pack
 lodestar harness list
 ```
 
 `run` exits non-zero if any probe fails, so it works as a CI gate.
+
+A pack manifest is verified on load (ADR-0017): a bare-name first-party pack
+(e.g. `lodestar-core`) ships unsigned and loads automatically, but a `--pack
+<path>` pack must either carry a valid Ed25519 author signature or be loaded with
+`--allow-unsigned` (the explicit opt-out — no silent default). A signed pack is
+always verified, and a content-digest mismatch (swapped probe bytes under a valid
+signature) is rejected.
 
 ### `lodestar harness calibrate <session-id>`
 

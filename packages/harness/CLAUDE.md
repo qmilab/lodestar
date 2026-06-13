@@ -6,13 +6,28 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
 
 ## What lives here
 
-- `src/pack/loader.ts` — `loadProbePack()`. Reads a
+- `src/pack/loader.ts` — `loadProbePack(target, options?)`. Reads a
   `lodestar.probe-pack.json` manifest (schema in
   `@qmilab/lodestar-core`), validates it, resolves probe files to
   absolute paths, and resolves each declared sentinel id against the
   first-party registry (`LoadedSentinel { id, create }`). Returns a
   `LoadedProbePack`. Raises `ProbePackError` on any failure. Filesystem
   I/O lives here, not in core.
+  **Verify-on-load (#88, ADR-0017):** the loader verifies the manifest's
+  Ed25519 signature (core's `verifyProbePackManifestSignature`) against
+  `options.authorizedAuthorKeys` (operator-pinned author keys), and — for a
+  signed pack — recomputes the `content_digest` over the resolved probe files
+  and rejects a mismatch, so a swapped probe byte is caught even under a valid
+  signature (the re-pointed-ref / re-published-artifact hole). An *unsigned* pack
+  is rejected unless `options.allowUnsigned: true` (no silent default — the
+  first-party in-repo packs and the `lodestar harness` CLI's bare-name shortcuts
+  pass it explicitly; signing the first-party packs is deferred to the publish
+  CLI, #90). A *signed* pack is always fully verified regardless of the flag. The
+  content-digest computation (fs) lives here; the canonical hash + signature
+  check (pure) live in core — the same core-owns-format / harness-owns-resolution
+  split. Reject set: signature absent (unless `allowUnsigned`), tampered manifest
+  (`payload_hash` mismatch), signer ≠ declared `author_id`, signer not pinned,
+  non-ed25519, bad signature bytes, on-disk content-digest mismatch.
 - `src/probe.ts` — the `Probe` authoring surface (`Probe` base class,
   `ProbeSpec`, `ProbeResult`, `runProbeAsScript`, `formatProbeReport`).
   The contract *new* probes declare themselves against. The 17

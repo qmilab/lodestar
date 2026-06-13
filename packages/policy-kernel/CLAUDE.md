@@ -38,12 +38,19 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   **Its ceiling caps at L3** — auto-approving L4 is not expressible, by design
   (the ladder floor always holds L4).
 - `src/hash.ts` — the canonical hash used for the policy signature's
-  `payload_hash` (deterministic JSON over `{ id, version, rules }`). Exports
-  `stableStringify` (reused by the approval-signature canonical hash).
+  `payload_hash` (deterministic JSON over `{ id, version, rules }`).
+  `stableStringify` graduated to `@qmilab/lodestar-core` (ADR-0017, byte-identical)
+  so the policy, approval, and pack-manifest signatures share one
+  canonicalisation; `hash.ts` re-exports it and keeps the policy-specific
+  `canonicalPolicyDocument` / `canonicalPolicyHash`.
 - `src/approval-signature.ts` — signed approval **resolutions** (P3, ADR-0010).
   `canonicalApprovalResolutionHash` + **real Ed25519** `signApprovalResolution` /
   `verifyApprovalSignature` / `generateApproverKeyPair`, over the canonical
   resolution document `{ request_id, action_id, kind, approver_id, reason?, at }`.
+  Since ADR-0017 these are thin wrappers over the shared core primitive
+  (`signPayloadHash` / `verifyPayloadHashSignature`), keeping the same signatures,
+  the same `ApprovalSignatureError`, and the same reject set — behaviour unchanged,
+  the crypto is no longer copied.
   Unlike the policy signature (a host-injected `verifySignature` seam, placeholder
   crypto in-repo), this is **real** `node:crypto` Ed25519 — the approval
   side-channel is a genuine cross-process forgery surface, so the verification must

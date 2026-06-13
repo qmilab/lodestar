@@ -9,7 +9,7 @@ const PACK_DIR = join(import.meta.dir, "../../../../packs/lodestar-core")
 
 describe("packs/lodestar-core (first-party pack)", () => {
   test("loads cleanly through the v0 loader", async () => {
-    const pack = await loadProbePack(PACK_DIR)
+    const pack = await loadProbePack(PACK_DIR, { allowUnsigned: true })
 
     expect(pack.manifest.name).toBe("lodestar-core")
     expect(pack.manifest.source_type).toBe("local")
@@ -21,7 +21,7 @@ describe("packs/lodestar-core (first-party pack)", () => {
   // If someone adds a probe file but forgets the manifest entry (or removes
   // one), this fails — the manifest is the spec, not a stale snapshot.
   test("declares exactly the .ts files present in probes/", async () => {
-    const pack = await loadProbePack(PACK_DIR)
+    const pack = await loadProbePack(PACK_DIR, { allowUnsigned: true })
 
     const onDisk = (await readdir(join(PACK_DIR, "probes"))).filter((f) => f.endsWith(".ts")).sort()
     const declared = pack.probes.map((p) => p.file.replace(/^probes\//, "")).sort()

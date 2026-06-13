@@ -49,5 +49,11 @@ export * from "./schemas/policy.js"
 // Approval workflow (Policy Kernel) — ApprovalRequest + approval.* event payloads
 export * from "./schemas/approval.js"
 
+// Shared Ed25519 signing primitive + canonicalisation (ADR-0017) — pure compute
+// over the Signature type, shared by the approval, pack-manifest, and badge paths
+export * from "./crypto/canonical.js"
+export * from "./crypto/signing.js"
+export * from "./crypto/probe-pack-signing.js"
+
 // Schema registry
 export * as registry from "./registry.js"

@@ -39,6 +39,17 @@ const RULE = "─".repeat(72)
  * A bare name (no separator) is treated as a first-party pack and looked
  * up under `packs/<name>/`; anything else is a filesystem path.
  */
+/**
+ * A bare `--pack` name (no path separator) is a first-party in-repo pack looked
+ * up under `packs/<name>/`. Those ship unsigned in v0 (signing them is the
+ * publish CLI's job, #90), so the harness loads them with an explicit
+ * `allowUnsigned: true`. A path-based `--pack` is potentially external and gets
+ * no such default — it must be signed, or the operator must pass `--allow-unsigned`.
+ */
+function isBareFirstPartyName(packArg: string): boolean {
+  return !packArg.includes("/") && !packArg.includes("\\") && !packArg.startsWith(".")
+}
+
 function resolvePackTarget(packArg: string): string {
   const looksLikePath = packArg.includes("/") || packArg.includes("\\") || packArg.startsWith(".")
   if (looksLikePath) return resolve(process.cwd(), packArg)
@@ -60,7 +71,8 @@ function resolvePackTarget(packArg: string): string {
 
 const USAGE =
   "usage: lodestar harness run      [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
-  "       lodestar harness list     [--pack <name|path>]\n" +
+  "                                  [--allow-unsigned]\n" +
+  "       lodestar harness list     [--pack <name|path>] [--allow-unsigned]\n" +
   "       lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
   "                                  [--actor <id>] [--no-emit] [--out <file>]\n"
 
@@ -95,6 +107,7 @@ interface ParsedFlags {
   session: string
   actor: string
   record: boolean
+  allowUnsigned: boolean
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -105,6 +118,7 @@ function parseFlags(argv: string[]): ParsedFlags {
     session: `harness-${randomUUID()}`,
     actor: "lodestar-harness",
     record: true,
+    allowUnsigned: false,
   }
   const takeValue = (i: number, flag: string): string => takeFlagValue(argv, i, flag)
   for (let i = 0; i < argv.length; i++) {
@@ -133,6 +147,9 @@ function parseFlags(argv: string[]): ParsedFlags {
       case "--no-record":
         flags.record = false
         break
+      case "--allow-unsigned":
+        flags.allowUnsigned = true
+        break
       default:
         throw new UsageError(`unknown argument: ${arg}`)
     }
@@ -155,7 +172,9 @@ async function harnessRun(argv: string[]): Promise<number> {
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
   try {
-    pack = await loadProbePack(target)
+    pack = await loadProbePack(target, {
+      allowUnsigned: flags.allowUnsigned || isBareFirstPartyName(flags.pack),
+    })
   } catch (err) {
     if (err instanceof ProbePackError) {
       process.stderr.write(`${err.message}\n`)
@@ -233,7 +252,9 @@ async function harnessList(argv: string[]): Promise<number> {
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
   try {
-    pack = await loadProbePack(target)
+    pack = await loadProbePack(target, {
+      allowUnsigned: flags.allowUnsigned || isBareFirstPartyName(flags.pack),
+    })
   } catch (err) {
     if (err instanceof ProbePackError) {
       process.stderr.write(`${err.message}\n`)

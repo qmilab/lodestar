@@ -1,38 +1,15 @@
-import { createHash } from "node:crypto"
+import { canonicalHashHex, stableStringify } from "@qmilab/lodestar-core"
 import type { Policy } from "@qmilab/lodestar-core"
 
 /**
  * Deterministic JSON serialization with object keys sorted recursively.
  *
- * A policy signature is computed over the *canonical document* — the same
- * bytes the signer signed must be reproduced byte-for-byte at verify time, so
- * key order cannot be allowed to drift. Arrays preserve order (rule order is
- * semantic — first-decisive evaluation); only object keys are sorted.
- *
- * Kept local rather than importing the event-log writer's `canonicalHash`:
- * this package is otherwise pure logic with no NDJSON/fs dependency, and the
- * policy hash only needs to be *internally* consistent (sign-time === verify-
- * time), not identical to the event-log's per-event hash.
+ * Graduated to `@qmilab/lodestar-core` (ADR-0017) so the policy signature, the
+ * approval-resolution signature, and the pack-manifest signature share one
+ * canonicalisation. Re-exported here (byte-identical to the original) so existing
+ * importers keep working and existing signed policies / approvals still verify.
  */
-export function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value) ?? "null"
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(stableStringify).join(",")}]`
-  }
-  const obj = value as Record<string, unknown>
-  // Skip keys whose value is `undefined`, matching JSON.stringify: a policy
-  // built with an explicit `approval: undefined` (e.g. a config merge) must
-  // hash identically to one that omits the key, or a JSON round-trip during
-  // persistence would change the hash and the signed policy would be wrongly
-  // rejected as tampered at reload.
-  const entries = Object.keys(obj)
-    .filter((key) => obj[key] !== undefined)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`)
-  return `{${entries.join(",")}}`
-}
+export { stableStringify }
 
 /**
  * The signable content of a policy: everything *except* the detached
@@ -50,7 +27,5 @@ export function canonicalPolicyDocument(policy: Policy): {
 
 /** sha-256 hex of the canonical policy document `{ id, version, rules }`. */
 export function canonicalPolicyHash(policy: Policy): string {
-  return createHash("sha256")
-    .update(stableStringify(canonicalPolicyDocument(policy)))
-    .digest("hex")
+  return canonicalHashHex(canonicalPolicyDocument(policy))
 }

@@ -11,9 +11,9 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Fifty-one probes pass under
+resolved for future versions.) Fifty-four probes pass under
 strict TypeScript (two need a Postgres test database — see
-below). Forty-seven live in the first-party pack
+below). Fifty live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -140,7 +140,17 @@ the preserved original hash ≠ the marker's hash; a decision event with no sens
 is lossless + portable at `--sensitivity-ceiling secret`). The shipper is the first
 read-side **egress** path with the locked sensitivity ceiling applied client-side
 before transfer; the gate primitives graduated to `@qmilab/lodestar-core` (#104) so the
-shipper and the otel-exporter share one implementation; ADR-0014. The other four live in the first non-core
+shipper and the otel-exporter share one implementation; ADR-0014, and three
+registry trust-root probes — `pack-manifest-signature-required` (the consumer
+pins author keys and the harness loader verifies a probe-pack manifest's Ed25519
+signature on load; unsigned/un-pinned is rejected, `allow_unsigned` is the
+explicit opt-out), `forged-pack-cannot-load` (every local forgery — wrong key,
+un-pinned signer, lifted signer_id, edited-after-signing manifest — is refused),
+and `tampered-pack-content-cannot-load` (the **content-binding** half: the signed
+manifest carries a per-file `content_digest`, so a probe byte swapped under a
+still-valid signature is caught — the re-pointed-ref / re-published-artifact hole;
+the shared Ed25519 primitive graduated to `@qmilab/lodestar-core` `src/crypto/` and
+the approval path now reuses it; #88, ADR-0016 §2, ADR-0017). The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
 `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack
@@ -347,7 +357,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Fifty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
+- **Fifty-four probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
 
 ## Quick references
 

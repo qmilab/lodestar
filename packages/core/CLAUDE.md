@@ -7,10 +7,25 @@ This package defines the epistemic chain primitives. Everything else in the mono
 - **Types** (`src/types/`) — TypeScript type definitions, organised by domain.
 - **Schemas** (`src/schemas/`) — Zod runtime schemas matching the types.
 - **Schema registry** (`src/registry.ts`) — runtime registration and lookup of observation schemas.
+- **Crypto** (`src/crypto/`) — the shared Ed25519 signing primitive (ADR-0017).
+  `canonical.ts` (`stableStringify` + `canonicalHashHex`); `signing.ts`
+  (`signPayloadHash` / `verifyPayloadHashSignature` / `generateEd25519KeyPair` /
+  `assertValidPublicKeys`, parameterised by a `makeError` factory + `subject`
+  label); `probe-pack-signing.ts` (the `lodestar.probe-pack.json` canonical hash
+  + sign/verify). Pure `node:crypto` compute over the `Signature` type — the one
+  audited implementation the approval-resolution path (`policy-kernel`), the pack
+  manifest (`harness` loader), and the badge path (#89) all share, so no consumer
+  copies crypto or grows an awkward cross-kernel dependency to verify a signature.
 
 ## Invariants
 
-1. **No runtime behavior.** This package is types and schemas only. No I/O, no database, no HTTP.
+1. **No runtime behavior, with one narrow carve-out.** This package is types and
+   schemas only — no I/O, no database, no HTTP, no mutable state — *except* the
+   schema registry (`registry.ts`) and the pure cryptographic / canonicalisation
+   primitives in `src/crypto/` (ADR-0017). Those use only `node:crypto` over
+   core's own wire types and perform no I/O; they live here so every consumer
+   shares one audited implementation. Do not add anything that reads a file, a
+   socket, a database, or a clock.
 2. **Zod and TypeScript types stay in sync.** When you add a type, add the Zod schema, and use `z.infer<typeof schema>` to derive the type from the schema. Never define them separately.
 3. **No package-local imports.** This is the dependency root. Nothing in `@qmilab/lodestar-core` imports from `@qmilab/lodestar-*`.
 4. **Backwards-compatible additions only after v0.2.** Until then, schema changes are free. Once we declare v0.2 stable, every schema change ships with a `schema_version` bump and a migration note.

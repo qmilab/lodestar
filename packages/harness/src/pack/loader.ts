@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto"
 import { readFile, realpath, stat } from "node:fs/promises"
 import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import {
   PROBE_PACK_MANIFEST_FILENAME,
+  type PackContentDigest,
+  type PinnedPublicKeys,
   type ProbePackManifest,
   ProbePackManifestSchema,
+  verifyProbePackManifestSignature,
 } from "@qmilab/lodestar-core"
 import { FIRST_PARTY_SENTINELS, type SentinelFactory } from "../sentinels/registry.js"
 
@@ -88,6 +92,80 @@ function escapesRoot(rel: string): boolean {
 }
 
 /**
+ * Options for {@link loadProbePack} — the verify-on-load trust controls (#88,
+ * ADR-0017). Both default to the secure stance: with neither supplied, a signed
+ * pack cannot be verified (no pinned author) and an unsigned pack is rejected, so
+ * a caller must consciously declare how it trusts the pack.
+ */
+export interface LoadProbePackOptions {
+  /**
+   * Operator-pinned author public keys (`author_id → SPKI PEM`). A signed pack
+   * whose author is not in this set is rejected — the trust root. An external
+   * pack must be loaded with its author pinned here.
+   */
+  authorizedAuthorKeys?: PinnedPublicKeys
+  /**
+   * Explicit opt-out: load a pack that carries no signature (a trusted first-party
+   * in-repo pack, or local dev). No silent default — an external pack does not get
+   * this. A *signed* pack is always fully verified regardless of this flag.
+   */
+  allowUnsigned?: boolean
+}
+
+/**
+ * Recompute the content digest over the resolved probe files: a sorted per-file
+ * sha-256 list keyed by the path as declared in the manifest (relative, so the
+ * digest is portable across machines). Compared against the manifest's signed
+ * `content_digest` so a swapped probe byte is caught even under a valid signature.
+ */
+async function computePackContentDigest(probes: LoadedProbe[]): Promise<PackContentDigest> {
+  const files = await Promise.all(
+    probes.map(async (p) => ({
+      path: p.file,
+      sha256: createHash("sha256")
+        .update(await readFile(p.path))
+        .digest("hex"),
+    })),
+  )
+  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  return { algorithm: "sha256", files }
+}
+
+/**
+ * Compare the on-disk content digest to the manifest's signed one, throwing a
+ * {@link ProbePackError} that names the first offending file on any mismatch
+ * (changed bytes, an added file, or a removed file).
+ */
+function assertContentDigestMatches(
+  packName: string,
+  declared: PackContentDigest,
+  recomputed: PackContentDigest,
+): void {
+  const declaredMap = new Map(declared.files.map((f) => [f.path, f.sha256]))
+  const recomputedMap = new Map(recomputed.files.map((f) => [f.path, f.sha256]))
+  for (const [path, sha256] of recomputedMap) {
+    const expected = declaredMap.get(path)
+    if (expected === undefined) {
+      throw new ProbePackError(
+        `Pack '${packName}' content digest mismatch: file '${path}' is present on disk but not in the signed content_digest.`,
+      )
+    }
+    if (expected !== sha256) {
+      throw new ProbePackError(
+        `Pack '${packName}' content digest mismatch: file '${path}' has been modified since it was signed (on-disk sha256 ${sha256.slice(0, 12)}… ≠ signed ${expected.slice(0, 12)}…).`,
+      )
+    }
+  }
+  for (const path of declaredMap.keys()) {
+    if (!recomputedMap.has(path)) {
+      throw new ProbePackError(
+        `Pack '${packName}' content digest mismatch: signed file '${path}' is missing from the resolved pack.`,
+      )
+    }
+  }
+}
+
+/**
  * Load and validate a probe pack.
  *
  * `target` may be either the pack directory (the manifest is looked up
@@ -104,9 +182,26 @@ function escapesRoot(rel: string): boolean {
  * `source_type: "npm"` are rejected: the v0 loader resolves `local`
  * packs only.
  *
+ * ## Verify-on-load (#88, ADR-0017)
+ *
+ * The manifest signature is the registry trust root. After schema validation the
+ * loader verifies the manifest's Ed25519 signature against the operator-pinned
+ * author keys in `options.authorizedAuthorKeys`, and — for a signed pack —
+ * recomputes the `content_digest` over the resolved probe files and rejects a
+ * mismatch, so a swapped probe byte is caught even under a valid signature. An
+ * *unsigned* pack is rejected unless the caller passes an explicit
+ * `options.allowUnsigned: true` (first-party in-repo packs / local dev); a
+ * *signed* pack is always fully verified regardless. The reject set is: signature
+ * absent (unless `allowUnsigned`), tampered manifest (`payload_hash` mismatch),
+ * signer ≠ declared `author_id`, signer not pinned, non-ed25519, bad signature
+ * bytes, and on-disk content-digest mismatch.
+ *
  * Throws {@link ProbePackError} on any failure.
  */
-export async function loadProbePack(target: string): Promise<LoadedProbePack> {
+export async function loadProbePack(
+  target: string,
+  options: LoadProbePackOptions = {},
+): Promise<LoadedProbePack> {
   const absTarget = resolve(target)
   const kind = await pathKind(absTarget)
 
@@ -155,6 +250,16 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
       `Pack '${manifest.name}' declares source_type "npm", which the v0 harness loader does not resolve. Use source_type "local" until npm pack resolution ships.`,
     )
   }
+
+  // Verify-on-load trust root (#88): the manifest signature, against the
+  // operator-pinned author keys. Pure (signature half only); the content-digest
+  // half follows once the probe files are resolved. Fail fast — before any fs
+  // work on a forged or unsigned pack.
+  verifyProbePackManifestSignature(manifest, {
+    authorizedAuthorKeys: options.authorizedAuthorKeys ?? [],
+    allowUnsigned: options.allowUnsigned,
+    makeError: (m) => new ProbePackError(m),
+  })
 
   const root = dirname(manifestPath)
   // Canonical pack root, used for the post-symlink containment check.
@@ -243,6 +348,22 @@ export async function loadProbePack(target: string): Promise<LoadedProbePack> {
       )
     }
     sentinels.push({ id: entry.id, create })
+  }
+
+  // Content-binding half of verify-on-load: a signed pack must carry a
+  // content_digest, and the bytes on disk must match it. The signature above
+  // bound the *declared* digest; this proves the resolved files ARE those bytes,
+  // closing the re-pointed-ref / re-published-artifact hole (ADR-0016 §2). An
+  // unsigned (allow_unsigned) pack skips this — nothing signed it, so a declared
+  // digest would carry no trust anyway.
+  if (manifest.signature !== undefined) {
+    if (manifest.content_digest === undefined) {
+      throw new ProbePackError(
+        `Pack '${manifest.name}' is signed but carries no content_digest; the signature would bind only the probe names, not their bytes. Re-publish with a content digest.`,
+      )
+    }
+    const recomputed = await computePackContentDigest(probes)
+    assertContentDigestMatches(manifest.name, manifest.content_digest, recomputed)
   }
 
   return { manifest, root, manifestPath, probes, sentinels }
