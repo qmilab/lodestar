@@ -53,7 +53,8 @@ nav:
       - "The Policy Kernel & approvals": concepts/policy-kernel.md
       - "Governed egress & native adapters": concepts/governed-egress.md
       - Sentinels and calibration: concepts/sentinels-and-calibration.md
-      - Memory poisoning: concepts/threat-model/memory-poisoning.md
+      - "Threat model — memory poisoning": concepts/threat-model/memory-poisoning.md
+      - "Threat model — registry supply chain": concepts/threat-model/registry-supply-chain.md
   - Reference:
       - Architecture: reference/architecture.md
       - CLI: reference/cli.md
