@@ -147,7 +147,9 @@ The options we rejected, each with a one-line reason.
   the **signed manifest** (Ed25519, ADR-0010 lineage, author key pinned by the
   consumer) that **binds a content digest over the pack's files** (verified after
   resolution, immutable refs only) so a re-pointed ref can't swap bytes under a
-  valid signature; badges = **locally-verifiable signed attestations** (the format is
+  valid signature; resolution is a **non-executing fetch** (no install/lifecycle
+  hooks run before verification); badges = **locally-verifiable signed
+  attestations** (the format is
   open, being a trusted attester at scale is commercial). Scope cut: probe-pack
   (+sentinels) first, the unified `lodestar.pack.json { kind }` deferred behind the
   spec version. Reuse core + policy-kernel + harness before a new package. Ordered

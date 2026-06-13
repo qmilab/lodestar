@@ -42,7 +42,14 @@ resolve to immutable bytes**: a git ref is a full commit SHA (a branch/tag is
 rejected unless pinned with a content digest, because a tag can be force-moved),
 and an npm source pins an exact version *and* its registry integrity hash. Source
 resolution is otherwise an unauthenticated step that could deliver different
-contents under a still-valid manifest signature (see §2).
+contents under a still-valid manifest signature (see §2). **Resolution is a
+non-executing fetch.** `pack add` must *never* run package-manager install
+semantics or any lifecycle hook — npm resolution is tarball download + integrity
+check + archive extraction with scripts ignored; git resolution is
+`archive`/checkout at the pinned SHA with hooks disabled. No pack code runs until
+*after* the signature and content digest verify. Otherwise a `preinstall` /
+`postinstall` script (or a git hook) executes before verification, and the pack is
+capability — not a trust artifact — exactly the line this registry exists to hold.
 
 **2. The trust root is the signed manifest, and the manifest binds the pack
 contents.** Ed25519 over the canonical pack manifest, reusing the ADR-0010 lineage:
@@ -166,6 +173,10 @@ ADR-0012).
   *declaration* but not the *bytes*, so a re-pointed git tag or a re-published npm
   artifact delivers different files under a still-valid signature. The manifest must
   carry a content digest verified after resolution (§2).
+- **Resolve via `npm install` / package-manager semantics.** Rejected — lifecycle
+  scripts (`preinstall`/`postinstall`) and git hooks would execute *before* the
+  signature and digest verify, making the pack capability-before-trust. Resolution
+  must be a non-executing fetch + extract (§1).
 - **Server-issued badges (trust the registry's word).** Rejected — that is the
   centralized model the anti-ClawHub stance exists to avoid; badges must verify
   locally against pinned attester keys.
