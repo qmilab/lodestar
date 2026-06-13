@@ -2,14 +2,16 @@
 
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
-**Status**: v0.2.0 published to npm (all 22 packages via CI trusted
-publishing — the integrated release: the 8 net-new packages plus the
-updated guard/cli that wire them in), v0.2 architecture locked. Two more
-packages have since landed in the repo and publish in the next release:
-a 23rd, `@qmilab/lodestar-adapter-sql` (the governed SQL/database
-adapter, ADR-0013), and a 24th, `@qmilab/lodestar-ship` (the read-side
-session shipper — `lodestar ship`, the `lodestar.session_ship@1` NDJSON
-wire format, ADR-0014). Fifty-one probes pass under
+**Status**: v0.3.0 published to npm (all 24 packages via CI trusted
+publishing — staged publishing, maintainer-approved), v0.2 architecture
+locked. The 0.3.0 release published the two packages that had landed
+after v0.2.0: the 23rd, `@qmilab/lodestar-adapter-sql` (the governed
+SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
+(the read-side session shipper — `lodestar ship`, the
+`lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
+shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
+a `DROP TABLE` doc literal forced a one-off manual token publish;
+resolved for future versions.) Fifty-one probes pass under
 strict TypeScript (two need a Postgres test database — see
 below). Forty-seven live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract

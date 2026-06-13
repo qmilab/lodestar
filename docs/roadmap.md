@@ -1,14 +1,14 @@
 # Lodestar — Roadmap
 
-This roadmap defined the sequence from the original pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). That sequence — Batches 1–5 plus the post-v1 build track — is complete and published as **v0.2.0 on npm**; what remains is the publish/research track tracked under "Post-v1" below.
+This roadmap defined the sequence from the original pre-v0.1 scaffold to a v1 release that supports the headline use case ("wrap a coding agent and get a trust report"). That sequence — Batches 1–5 plus the post-v1 build track — is complete and published as **v0.3.0 on npm (24 packages)**. What remains is the publish/research track tracked under "Post-v1" below, plus the **v1.5 build track** — native adapters (#74), non-MCP runtime adapters (#75), and the public marketplace registry (#76) — tracked under the open `roadmap:v1.5` issues.
 
-Last updated: 2026-06-11 — sensitivity-gate graduation to core landed (interop & hygiene track, item 2).
+Last updated: 2026-06-13 — **v0.3.0 published to npm (all 24 packages)**: added `@qmilab/lodestar-adapter-sql` (ADR-0013) and `@qmilab/lodestar-ship` (ADR-0014).
 
 ---
 
 ## Where we are
 
-The implementation passes a typecheck under strict TypeScript and runs forty-seven probes end-to-end across two packs (`probes:ci`). One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. **v0.2.0 — all 22 packages — is on npm via CI trusted publishing** (the integrated release: the eight net-new post-v0.1.5 packages — `policy-kernel`, `harness`, `viewer`, `otel-exporter`, and the shell/nostr/http/messaging adapters — plus the updated `guard`/`cli` that wire them in). Batches 1–5 and the post-v1 build track (sentinel→action wiring, the Policy Kernel, five native egress adapters, the read-side viewer, the OTel exporter, signed approval resolutions, and a durable calibration event) have all landed. The architecture is settled — what follows is the publish/research track.
+The implementation passes a typecheck under strict TypeScript and runs fifty-one probes end-to-end across two packs (`probes:ci`) — 47 in `lodestar-core`, 4 in `coding-agent-safety`. One, `tool-poisoning-cross-session`, needs a Postgres test database (`LODESTAR_TEST_DATABASE_URL`) and skips with a loud banner when it is unset; CI runs it against a `postgres:16` service. **v0.3.0 — all 24 packages — is on npm via CI trusted publishing** (staged publishing, maintainer-approved). v0.2.0 shipped the eight net-new post-v0.1.5 packages — `policy-kernel`, `harness`, `viewer`, `otel-exporter`, and the shell/nostr/http/messaging adapters — plus the updated `guard`/`cli` that wire them in; v0.3.0 added the governed SQL/database adapter `adapter-sql` (ADR-0013) and the read-side session shipper `ship` (ADR-0014). Batches 1–5 and the post-v1 build track (sentinel→action wiring, the Policy Kernel, five native egress adapters, the read-side viewer, the OTel exporter, signed approval resolutions, and a durable calibration event) have all landed. The architecture is settled — what follows is the publish/research track.
 
 Concrete state:
 - Schema layer for the full epistemic chain
