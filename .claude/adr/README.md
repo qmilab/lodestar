@@ -140,3 +140,18 @@ The options we rejected, each with a one-line reason.
   pinned keys and rejects `allow_unsigned`. Deliberately distinct from guard's
   trusted in-process `ApprovalResolver`. Probe `approval-via-http-channel` +
   an HTTP case in `forged-approval-cannot-execute`.
+- [ADR-0016](0016-trust-pack-registry-architecture.md) — Trust-pack registry
+  (epic #76) architecture, open/commercial line, and v1.5 sequencing. The open
+  registry is a **protocol, not a service**: a pack is addressed by npm name / git
+  URL, discovery is a static signed index, and verification is local. Trust root =
+  the **signed manifest** (Ed25519, ADR-0010 lineage, author key pinned by the
+  consumer) that **binds a content digest over the pack's files** (verified after
+  resolution, immutable refs only) so a re-pointed ref can't swap bytes under a
+  valid signature; resolution is a **non-executing fetch** (no install/lifecycle
+  hooks run before verification); badges = **locally-verifiable signed
+  attestations** (the format is
+  open, being a trusted attester at scale is commercial). Scope cut: probe-pack
+  (+sentinels) first, the unified `lodestar.pack.json { kind }` deferred behind the
+  spec version. Reuse core + policy-kernel + harness before a new package. Ordered
+  children: #91 threat-model → #88 signed manifests → #86 npm/git resolution →
+  #90 publish/add CLI → #89 badges → #87 discovery index.
