@@ -145,7 +145,9 @@ The options we rejected, each with a one-line reason.
   registry is a **protocol, not a service**: a pack is addressed by npm name / git
   URL, discovery is a static signed index, and verification is local. Trust root =
   the **signed manifest** (Ed25519, ADR-0010 lineage, author key pinned by the
-  consumer); badges = **locally-verifiable signed attestations** (the format is
+  consumer) that **binds a content digest over the pack's files** (verified after
+  resolution, immutable refs only) so a re-pointed ref can't swap bytes under a
+  valid signature; badges = **locally-verifiable signed attestations** (the format is
   open, being a trusted attester at scale is commercial). Scope cut: probe-pack
   (+sentinels) first, the unified `lodestar.pack.json { kind }` deferred behind the
   spec version. Reuse core + policy-kernel + harness before a new package. Ordered

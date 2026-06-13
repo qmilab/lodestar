@@ -37,14 +37,29 @@ where it already lives — an npm package name or a git URL — not by a
 Lodestar-hosted catalog. "Discovery" in the open layer is a fetchable **static
 index** (a plain signed JSON list an author or community can host anywhere), not a
 hosted search backend. This keeps the open layer decentralized, dependency-free,
-and non-gating, and avoids standing up a service prematurely.
+and non-gating, and avoids standing up a service prematurely. **A source must
+resolve to immutable bytes**: a git ref is a full commit SHA (a branch/tag is
+rejected unless pinned with a content digest, because a tag can be force-moved),
+and an npm source pins an exact version *and* its registry integrity hash. Source
+resolution is otherwise an unauthenticated step that could deliver different
+contents under a still-valid manifest signature (see §2).
 
-**2. The trust root is the signed manifest.** Ed25519 over the canonical pack
-manifest, reusing the ADR-0010 lineage: the signer is the **pack author key**; the
-consumer (operator) pins the set of trusted author keys and verifies **on load**.
-The reject set mirrors the approval path — absent (unless `allow_unsigned`),
-`payload_hash` mismatch, signer ≠ declared author, **signer not in the pinned
-set**, non-ed25519, bad signature bytes. The canonical-hash + ed25519 sign/verify
+**2. The trust root is the signed manifest, and the manifest binds the pack
+contents.** Ed25519 over the canonical pack manifest, reusing the ADR-0010 lineage:
+the signer is the **pack author key**; the consumer (operator) pins the set of
+trusted author keys and verifies **on load**. Crucially, the signature must cover
+the *bytes*, not just the declaration: the canonical manifest **includes a content
+digest over the pack's resolved files** (a sorted `path → sha256` file-hash list,
+or a single Merkle/tree digest over it), so signing the manifest transitively
+authenticates every probe/sentinel file it ships. After source resolution (§1,
+#86) the loader **recomputes the digest over the fetched files and rejects any
+mismatch** — this is what makes "a compromised index can mis-advertise but never
+launder a malicious pack" actually true, because a swapped artifact under a
+re-pointed ref fails the content check even though the old signature still
+verifies. The reject set mirrors the approval path — absent (unless
+`allow_unsigned`), `payload_hash` mismatch, **content-digest mismatch after
+resolution**, signer ≠ declared author, **signer not in the pinned set**,
+non-ed25519, bad signature bytes. The canonical-hash + ed25519 sign/verify
 primitive should be **factored to a reusable helper** (core/policy-kernel) rather
 than copied from the approval-specific functions, so manifest, badge, and approval
 signing share one audited implementation.
@@ -117,8 +132,16 @@ ADR-0012).
   boundary is a clean protocol-vs-service line.
 - Verification is the consumer's, against pinned keys, so a compromised or hostile
   index cannot launder a malicious pack — it can only mis-advertise, never vouch.
+  This holds *only because the manifest binds the content digest* (§2): without it,
+  the signature would authenticate the declaration while source resolution silently
+  swapped the bytes — the supply-chain hole Codex flagged in the first scoping pass.
+- The signed manifest must be produced *over the final pack contents* — `pack
+  publish` (#90) computes the file-hash digest and signs the manifest **after** the
+  pack's files are frozen, and resolution (#86) is constrained to immutable refs so
+  the digest is checkable. Author tooling cannot sign a manifest, then mutate files.
 - Each child remains its own feature branch → PR → merge with a locking probe
   (e.g. `pack-manifest-signature-required`, `forged-pack-cannot-load`,
+  `tampered-pack-content-cannot-load`, `mutable-git-ref-rejected`,
   `pack-resolves-from-npm`, `unverified-badge-not-trusted`).
 - More crypto surface in `@qmilab/lodestar-core` (manifest + badge signatures);
   mitigated by factoring one shared sign/verify helper rather than copying the
@@ -139,6 +162,10 @@ ADR-0012).
 - **Stand up a `@qmilab/lodestar-registry` package now.** Deferred — premature;
   reuse core schema + policy-kernel signing + the harness loader until the surface
   demands its own package.
+- **Sign the manifest only, not the contents.** Rejected — it authenticates the
+  *declaration* but not the *bytes*, so a re-pointed git tag or a re-published npm
+  artifact delivers different files under a still-valid signature. The manifest must
+  carry a content digest verified after resolution (§2).
 - **Server-issued badges (trust the registry's word).** Rejected — that is the
   centralized model the anti-ClawHub stance exists to avoid; badges must verify
   locally against pinned attester keys.
