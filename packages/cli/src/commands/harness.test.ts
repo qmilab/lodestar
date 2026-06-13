@@ -85,9 +85,17 @@ describe("lodestar harness verify-on-load", () => {
     expect(await harnessCommand(["list", "--pack", dir, "--allow-unsigned"])).toBe(0)
   })
 
-  test("does NOT auto-trust an unsigned bare-name pack resolved via the cwd fallback", async () => {
-    // The exact Codex finding: `--pack acme` where ./packs/acme exists but is NOT
-    // bundled with the CLI must still require an explicit opt-out.
+  test("auto-loads a genuine bundled first-party pack unsigned (source mode)", async () => {
+    // lodestar-core is in the first-party allowlist and resolves via the walk-up
+    // anchored at the CLI source, so `list` succeeds without --allow-unsigned —
+    // the quickstart must keep working from the repo source tree.
+    expect(await harnessCommand(["list", "--pack", "lodestar-core"])).toBe(0)
+  })
+
+  test("does NOT auto-trust an arbitrarily-named bare pack via the cwd fallback", async () => {
+    // The Codex finding: `--pack acme` where ./packs/acme exists but is NOT a
+    // bundled first-party pack must still require an explicit opt-out — neither
+    // bare-name syntax nor a coincidental cwd resolution grants trust.
     const root = await mkdtemp(join(tmpdir(), "lodestar-cli-cwd-"))
     await makePack(join(root, "packs", "acme"))
     savedCwd = process.cwd()

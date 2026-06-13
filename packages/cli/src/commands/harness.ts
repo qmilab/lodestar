@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
 import { existsSync, readFileSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
-import { dirname, resolve } from "node:path"
+import { dirname, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   type PackRunResult,
@@ -34,41 +34,62 @@ import { defaultLogRoot, loadSessionEvents } from "@qmilab/lodestar-trace"
 
 const RULE = "─".repeat(72)
 
+const CLI_SOURCE_PATH = fileURLToPath(import.meta.url)
+
 /**
- * Resolve a `--pack` argument to a path `loadProbePack` understands.
- * A bare name (no separator) is treated as a first-party pack and looked
- * up under `packs/<name>/`; anything else is a filesystem path.
+ * First-party (auto-unsigned) detection only applies when the CLI runs from its
+ * own monorepo **source** tree — never from an installed location. Installed
+ * under a consuming project's `node_modules`, the ancestor walk-up below would
+ * traverse the *project's* directories and could match the project's own
+ * `./packs/<name>`, loading an unsigned/external pack as if it were bundled
+ * (Codex review P1). When installed there is no trustworthy bundled-packs anchor,
+ * so no bare name is first-party — it must be signed (pin with `--author-key`) or
+ * loaded with an explicit `--allow-unsigned`.
  */
+const CLI_RUNS_FROM_NODE_MODULES = CLI_SOURCE_PATH.split(sep).includes("node_modules")
+
+/**
+ * The packs this repo ships **unsigned** in v0 (signing them is the publish CLI's
+ * job, #90). Only these exact names are ever eligible to be treated as
+ * first-party, so an arbitrarily-named bare `--pack acme` can never be
+ * auto-trusted even if a `packs/acme` happens to resolve.
+ */
+const FIRST_PARTY_PACK_NAMES = new Set(["lodestar-core", "coding-agent-safety"])
+
 /**
  * Resolve a `--pack` argument to a path `loadProbePack` understands, and report
- * whether it is a **bundled first-party** pack — one found adjacent to this CLI by
- * walking up to `packs/<name>/`. Only a bundled pack loads unsigned automatically
- * (they ship unsigned in v0; signing them is the publish CLI's job, #90).
+ * whether it is a genuine **bundled first-party** pack — only those load unsigned
+ * automatically. Trust is based on the resolved location + a name allowlist +
+ * source-vs-installed, never on argument syntax:
  *
- * Trust is based on the *resolved location*, not argument syntax: a path-based
- * `--pack`, OR a bare name that only resolves via the cwd fallback (e.g. a user's
- * own `./packs/acme`), is NOT first-party and must carry a valid signature or be
- * loaded with an explicit `--allow-unsigned`. Keying the opt-out on bare-name
- * syntax alone would let an unsigned local `packs/acme` masquerade as first-party
- * and bypass secure-by-default (Codex review).
+ * - a path-based `--pack`, or a bare name that only resolves via the cwd fallback
+ *   (a user's own `./packs/<name>`), is NOT first-party;
+ * - a bare name is first-party only when the CLI runs from its source tree (not
+ *   `node_modules`), the name is in {@link FIRST_PARTY_PACK_NAMES}, and it resolves
+ *   via the walk-up anchored at the CLI source (not the cwd).
+ *
+ * Everything else must carry a valid signature (pin with `--author-key`) or be
+ * loaded with an explicit `--allow-unsigned`.
  */
 function resolvePackTarget(packArg: string): { target: string; firstParty: boolean } {
   const looksLikePath = packArg.includes("/") || packArg.includes("\\") || packArg.startsWith(".")
   if (looksLikePath) return { target: resolve(process.cwd(), packArg), firstParty: false }
 
-  // Bare name → walk up from this file looking for a pack bundled with the CLI,
-  // so the lookup works from any cwd and from an installed CLI, not just the repo
-  // root. A hit here is a genuine first-party pack.
-  let dir = dirname(fileURLToPath(import.meta.url))
+  // Bare name → walk up from the CLI SOURCE (not the cwd) looking for a bundled
+  // pack, so the lookup is anchored to this repo and works from any cwd.
+  let dir = dirname(CLI_SOURCE_PATH)
   while (true) {
     const candidate = resolve(dir, "packs", packArg)
-    if (existsSync(candidate)) return { target: candidate, firstParty: true }
+    if (existsSync(candidate)) {
+      const firstParty = !CLI_RUNS_FROM_NODE_MODULES && FIRST_PARTY_PACK_NAMES.has(packArg)
+      return { target: candidate, firstParty }
+    }
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
   }
   // cwd fallback: a bare name that is NOT bundled with the CLI. Resolve it so a
-  // clear "not found" / signature error follows, but do NOT treat it as
+  // clear "not found" / signature error follows, but never treat it as
   // first-party — an unsigned pack here still needs an explicit opt-out.
   return { target: resolve(process.cwd(), "packs", packArg), firstParty: false }
 }

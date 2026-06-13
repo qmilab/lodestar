@@ -102,9 +102,11 @@ lodestar harness list
 `run` exits non-zero if any probe fails, so it works as a CI gate.
 
 A pack manifest is verified on load (ADR-0017). A **bundled first-party** pack
-(e.g. `lodestar-core`, found adjacent to the CLI) ships unsigned and loads
-automatically. Any other pack — a `--pack <path>`, or a bare name that only
-resolves to a local `./packs/<name>` — must either:
+(`lodestar-core` / `coding-agent-safety`), when the CLI runs from its own source
+tree, ships unsigned and loads automatically. Every other case — a `--pack
+<path>`, an arbitrarily-named bare pack, or *any* bare pack when the CLI is
+installed under a project's `node_modules` (where a name could otherwise collide
+with the project's own `./packs/<name>`) — must either:
 
 - carry a valid Ed25519 author signature whose author you pin with `--author-key
   <author-id>=<spki-pem-file>` (repeatable), or
