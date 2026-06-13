@@ -334,9 +334,27 @@ jobs:
               continue
             fi
             echo "::group::stage-publish $name"
-            # `npm stage publish` (npm 11+) uploads to npm's staging area
-            # under the configured trusted-publisher rule. Each stage upload
-            # waits for manual 2FA approval in the npm UI before going live.
-            (cd "$pkg" && npm stage publish --provenance --access public)
+            # `npm stage publish` (npm 11+) uploads to npm's staging area under the
+            # trusted-publisher rule; a maintainer then approves each with 2FA on
+            # npmjs.com before it goes live.
+            #
+            # Tolerate ONE conflict: a version already STAGED by an earlier run
+            # occupies the version slot and E409s here ("Cannot stage previously
+            # published version"). `npm stage reject` needs interactive 2FA
+            # (unavailable in CI), so treat that as already-handled — leave the
+            # staged version for the approval pass — and hard-fail on anything else.
+            # With the live-skip above, a re-run after ANY partial failure converges
+            # instead of dead-locking at the first already-staged package.
+            if out=$(cd "$pkg" && npm stage publish --provenance --access public 2>&1); then
+              echo "$out"
+            else
+              echo "$out"
+              if printf '%s\n' "$out" | grep -qiE "Cannot stage previously published version|already staged|code E409"; then
+                echo "== $name@$ver already staged by an earlier run — leaving it for approval =="
+              else
+                echo "::error::stage-publish failed for $name@$ver"
+                exit 1
+              fi
+            fi
             echo "::endgroup::"
           done
