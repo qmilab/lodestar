@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -40,39 +40,44 @@ const RULE = "─".repeat(72)
  * up under `packs/<name>/`; anything else is a filesystem path.
  */
 /**
- * A bare `--pack` name (no path separator) is a first-party in-repo pack looked
- * up under `packs/<name>/`. Those ship unsigned in v0 (signing them is the
- * publish CLI's job, #90), so the harness loads them with an explicit
- * `allowUnsigned: true`. A path-based `--pack` is potentially external and gets
- * no such default — it must be signed, or the operator must pass `--allow-unsigned`.
+ * Resolve a `--pack` argument to a path `loadProbePack` understands, and report
+ * whether it is a **bundled first-party** pack — one found adjacent to this CLI by
+ * walking up to `packs/<name>/`. Only a bundled pack loads unsigned automatically
+ * (they ship unsigned in v0; signing them is the publish CLI's job, #90).
+ *
+ * Trust is based on the *resolved location*, not argument syntax: a path-based
+ * `--pack`, OR a bare name that only resolves via the cwd fallback (e.g. a user's
+ * own `./packs/acme`), is NOT first-party and must carry a valid signature or be
+ * loaded with an explicit `--allow-unsigned`. Keying the opt-out on bare-name
+ * syntax alone would let an unsigned local `packs/acme` masquerade as first-party
+ * and bypass secure-by-default (Codex review).
  */
-function isBareFirstPartyName(packArg: string): boolean {
-  return !packArg.includes("/") && !packArg.includes("\\") && !packArg.startsWith(".")
-}
-
-function resolvePackTarget(packArg: string): string {
+function resolvePackTarget(packArg: string): { target: string; firstParty: boolean } {
   const looksLikePath = packArg.includes("/") || packArg.includes("\\") || packArg.startsWith(".")
-  if (looksLikePath) return resolve(process.cwd(), packArg)
+  if (looksLikePath) return { target: resolve(process.cwd(), packArg), firstParty: false }
 
-  // Bare name → first-party pack. Walk up from this file so the lookup
-  // works from any cwd and from an installed CLI, not just the repo root.
+  // Bare name → walk up from this file looking for a pack bundled with the CLI,
+  // so the lookup works from any cwd and from an installed CLI, not just the repo
+  // root. A hit here is a genuine first-party pack.
   let dir = dirname(fileURLToPath(import.meta.url))
   while (true) {
     const candidate = resolve(dir, "packs", packArg)
-    if (existsSync(candidate)) return candidate
+    if (existsSync(candidate)) return { target: candidate, firstParty: true }
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
   }
-  // Fall back to a cwd-relative `packs/<name>` so repo-root callers work
-  // even if the bin was relocated; if it's missing, loadProbePack reports it.
-  return resolve(process.cwd(), "packs", packArg)
+  // cwd fallback: a bare name that is NOT bundled with the CLI. Resolve it so a
+  // clear "not found" / signature error follows, but do NOT treat it as
+  // first-party — an unsigned pack here still needs an explicit opt-out.
+  return { target: resolve(process.cwd(), "packs", packArg), firstParty: false }
 }
 
 const USAGE =
   "usage: lodestar harness run      [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
-  "                                  [--allow-unsigned]\n" +
+  "                                  [--allow-unsigned] [--author-key <id>=<pubkey-file>]\n" +
   "       lodestar harness list     [--pack <name|path>] [--allow-unsigned]\n" +
+  "                                  [--author-key <id>=<pubkey-file>]\n" +
   "       lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
   "                                  [--actor <id>] [--no-emit] [--out <file>]\n"
 
@@ -108,6 +113,8 @@ interface ParsedFlags {
   actor: string
   record: boolean
   allowUnsigned: boolean
+  /** Operator-pinned author public keys, from `--author-key <id>=<file>` (repeatable). */
+  authorKeys: { actor_id: string; public_key: string }[]
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -119,6 +126,7 @@ function parseFlags(argv: string[]): ParsedFlags {
     actor: "lodestar-harness",
     record: true,
     allowUnsigned: false,
+    authorKeys: [],
   }
   const takeValue = (i: number, flag: string): string => takeFlagValue(argv, i, flag)
   for (let i = 0; i < argv.length; i++) {
@@ -150,6 +158,26 @@ function parseFlags(argv: string[]): ParsedFlags {
       case "--allow-unsigned":
         flags.allowUnsigned = true
         break
+      case "--author-key": {
+        // Pin a trusted pack author's public key: `--author-key <author-id>=<spki-pem-file>`.
+        // Repeatable. Split on the FIRST '=' so a key path may itself contain '='.
+        const spec = takeValue(i, arg)
+        i++
+        const eq = spec.indexOf("=")
+        if (eq <= 0) {
+          throw new UsageError(`--author-key expects <author-id>=<public-key-file>, got '${spec}'`)
+        }
+        const actorId = spec.slice(0, eq)
+        const keyPath = spec.slice(eq + 1)
+        let publicKey: string
+        try {
+          publicKey = readFileSync(resolve(process.cwd(), keyPath), "utf8")
+        } catch {
+          throw new UsageError(`--author-key public-key file not found or unreadable: ${keyPath}`)
+        }
+        flags.authorKeys.push({ actor_id: actorId, public_key: publicKey })
+        break
+      }
       default:
         throw new UsageError(`unknown argument: ${arg}`)
     }
@@ -168,12 +196,13 @@ async function harnessRun(argv: string[]): Promise<number> {
     }
     throw err
   }
-  const target = resolvePackTarget(flags.pack)
+  const { target, firstParty } = resolvePackTarget(flags.pack)
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
   try {
     pack = await loadProbePack(target, {
-      allowUnsigned: flags.allowUnsigned || isBareFirstPartyName(flags.pack),
+      allowUnsigned: flags.allowUnsigned || firstParty,
+      authorizedAuthorKeys: flags.authorKeys,
     })
   } catch (err) {
     if (err instanceof ProbePackError) {
@@ -248,12 +277,13 @@ async function harnessList(argv: string[]): Promise<number> {
     }
     throw err
   }
-  const target = resolvePackTarget(flags.pack)
+  const { target, firstParty } = resolvePackTarget(flags.pack)
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
   try {
     pack = await loadProbePack(target, {
-      allowUnsigned: flags.allowUnsigned || isBareFirstPartyName(flags.pack),
+      allowUnsigned: flags.allowUnsigned || firstParty,
+      authorizedAuthorKeys: flags.authorKeys,
     })
   } catch (err) {
     if (err instanceof ProbePackError) {
