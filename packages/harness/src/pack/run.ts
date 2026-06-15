@@ -7,12 +7,15 @@ export interface SpawnCapture {
   stdout: string
   stderr: string
   timedOut: boolean
+  /** True if stdout hit the capture cap and was truncated — a safety scan must fail closed. */
+  stdoutTruncated: boolean
+  stderrTruncated: boolean
 }
 
 /** Wall-clock ceiling for a single resolution subprocess. */
 export const DEFAULT_RESOLUTION_TIMEOUT_MS = 120_000
 /** Output capture cap per stream — a malicious archive/remote cannot spew unbounded. */
-const MAX_CAPTURE_BYTES = 1_000_000
+export const DEFAULT_MAX_CAPTURE_BYTES = 1_000_000
 /**
  * After the deadline kills the process group the pipes close and `close` fires
  * promptly; this hard backstop guarantees the call cannot hang past the deadline
@@ -36,6 +39,8 @@ export interface SpawnCapturedOptions {
    * the captured stdout/stderr before they can reach an error message or a log.
    */
   redactions?: string[]
+  /** Per-stream capture cap; defaults to {@link DEFAULT_MAX_CAPTURE_BYTES}. */
+  maxOutputBytes?: number
 }
 
 /** Replace every occurrence of each non-empty redaction with `***`, longest-first. */
@@ -68,6 +73,7 @@ export function spawnCaptured(
   options: SpawnCapturedOptions,
 ): Promise<SpawnCapture> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS
+  const maxBytes = options.maxOutputBytes ?? DEFAULT_MAX_CAPTURE_BYTES
   return new Promise((resolve, reject) => {
     const child = spawn(command, [...args], {
       cwd: options.cwd,
@@ -80,6 +86,8 @@ export function spawnCaptured(
 
     let stdout = ""
     let stderr = ""
+    let stdoutTruncated = false
+    let stderrTruncated = false
     let settled = false
     let timedOut = false
     let graceTimer: ReturnType<typeof setTimeout> | undefined
@@ -119,6 +127,8 @@ export function spawnCaptured(
           stdout: applyRedactions(stdout, options.redactions),
           stderr: applyRedactions(stderr, options.redactions),
           timedOut: true,
+          stdoutTruncated,
+          stderrTruncated,
         })
       }, TIMEOUT_GRACE_MS)
     }, timeoutMs)
@@ -126,11 +136,14 @@ export function spawnCaptured(
     const capture = (chunk: Buffer, into: "stdout" | "stderr") => {
       const text = chunk.toString("utf8")
       if (into === "stdout") {
-        if (stdout.length < MAX_CAPTURE_BYTES)
-          stdout += text.slice(0, MAX_CAPTURE_BYTES - stdout.length)
-      } else if (stderr.length < MAX_CAPTURE_BYTES) {
-        stderr += text.slice(0, MAX_CAPTURE_BYTES - stderr.length)
-      }
+        if (stdout.length + text.length > maxBytes) {
+          stdout += text.slice(0, Math.max(0, maxBytes - stdout.length))
+          stdoutTruncated = true
+        } else stdout += text
+      } else if (stderr.length + text.length > maxBytes) {
+        stderr += text.slice(0, Math.max(0, maxBytes - stderr.length))
+        stderrTruncated = true
+      } else stderr += text
     }
 
     child.stdout?.on("data", (c: Buffer) => capture(c, "stdout"))
@@ -148,6 +161,8 @@ export function spawnCaptured(
         stdout: applyRedactions(stdout, options.redactions),
         stderr: applyRedactions(stderr, options.redactions),
         timedOut,
+        stdoutTruncated,
+        stderrTruncated,
       })
     })
   })

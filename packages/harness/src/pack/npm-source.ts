@@ -2,7 +2,7 @@ import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { NpmPackSource } from "@qmilab/lodestar-core"
+import { type NpmPackSource, NpmPackSourceSchema } from "@qmilab/lodestar-core"
 import { ProbePackError } from "./errors.js"
 import { extractTarball } from "./tar.js"
 
@@ -55,9 +55,20 @@ export interface ResolveNpmOptions {
  * verification applies to the fetched bytes.
  */
 export async function resolveNpmSource(
-  source: NpmPackSource,
+  input: NpmPackSource,
   options: ResolveNpmOptions = {},
 ): Promise<string> {
+  // Validate here too, not only via resolvePackSource: a direct caller of this
+  // exported entry must not be able to bypass the exact-version + SRI immutability
+  // guard (e.g. fetch `/pkg/latest`). Mirrors resolveGitSource's defensive check.
+  const validated = NpmPackSourceSchema.safeParse(input)
+  if (!validated.success) {
+    const issues = validated.error.issues
+      .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("\n")
+    throw new ProbePackError(`Invalid npm pack source:\n${issues}`)
+  }
+  const source = validated.data
   const fetchImpl = options.fetchImpl ?? fetch
   const registry = (source.registry ?? DEFAULT_REGISTRY).replace(/\/+$/, "")
   const algorithm = parseSriAlgorithm(source.integrity)

@@ -113,6 +113,44 @@ describe("extractTarball confinement", () => {
     expect(existsSync(join(dest, "real.ts"))).toBe(false)
     expect(existsSync(join(dest, "evil-link"))).toBe(false)
   })
+
+  test("fails closed when the entry listing is truncated (cannot scan it all)", async () => {
+    const stage = await mkdtemp(join(tmpdir(), "lodestar-tar-big-"))
+    const pkg = join(stage, "package")
+    await mkdir(pkg, { recursive: true })
+    await writeFile(join(pkg, "a.ts"), "1")
+    await writeFile(join(pkg, "b.ts"), "2")
+    const tgz = join(stage, "ok.tgz")
+    expect(Bun.spawnSync(["tar", "-czf", tgz, "-C", stage, "package"]).exitCode).toBe(0)
+
+    const dest = await mkdtemp(join(tmpdir(), "lodestar-tar-bigdest-"))
+    // A tiny cap forces the listing to truncate even for this small archive: an
+    // unscannable listing must be refused, not extracted, so an unsafe entry past
+    // the cut-off cannot slip through.
+    await expect(extractTarball(tgz, dest, { maxListingBytes: 16 })).rejects.toThrow(
+      /too large to scan safely/,
+    )
+    expect(existsSync(join(dest, "a.ts"))).toBe(false)
+  })
+})
+
+describe("direct resolver input validation", () => {
+  test("resolveNpmSource rejects a non-exact version even when called directly", async () => {
+    await expect(
+      resolveNpmSource({
+        type: "npm",
+        package: "p",
+        version: "latest",
+        integrity: "sha512-AAAA",
+      } as never),
+    ).rejects.toThrow(/Invalid npm pack source/)
+  })
+
+  test("resolveGitSource rejects a mutable ref even when called directly", async () => {
+    await expect(
+      resolveGitSource({ type: "git", url: "/repo", commit: "main" } as never),
+    ).rejects.toThrow(/40-hex commit SHA/)
+  })
 })
 
 describe("git source credential redaction", () => {

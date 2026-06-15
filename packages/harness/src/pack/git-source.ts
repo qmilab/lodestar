@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { GitPackSource } from "@qmilab/lodestar-core"
+import { type GitPackSource, GitPackSourceSchema } from "@qmilab/lodestar-core"
 import { ProbePackError } from "./errors.js"
 import { spawnCaptured } from "./run.js"
 
@@ -74,15 +74,20 @@ export interface ResolveGitOptions {
  * checkout root; the caller runs {@link loadProbePack} over it.
  */
 export async function resolveGitSource(
-  source: GitPackSource,
+  input: GitPackSource,
   options: ResolveGitOptions = {},
 ): Promise<string> {
-  if (!/^[0-9a-f]{40}$/.test(source.commit)) {
-    // Defence in depth — the schema already enforces a full 40-hex SHA.
-    throw new ProbePackError(
-      `git pack source must pin a full 40-hex commit SHA; got '${source.commit}'.`,
-    )
+  // Validate here too, not only via resolvePackSource: a direct caller of this
+  // exported entry must not be able to bypass the full-SHA immutability guard
+  // (e.g. pass a branch/tag). The schema enforces a full 40-hex commit SHA.
+  const validated = GitPackSourceSchema.safeParse(input)
+  if (!validated.success) {
+    const issues = validated.error.issues
+      .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
+      .join("\n")
+    throw new ProbePackError(`Invalid git pack source:\n${issues}`)
   }
+  const source = validated.data
 
   const cacheRoot = options.cacheRoot ?? (await mkdtemp(join(tmpdir(), "lodestar-pack-git-")))
   await mkdir(cacheRoot, { recursive: true })

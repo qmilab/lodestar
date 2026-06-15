@@ -34,8 +34,12 @@ function tarEnv(): Record<string, string> {
  * defence-in-depth. A pack ships regular probe files — it has no legitimate need
  * for a link.
  */
-export async function extractTarball(tarballPath: string, destDir: string): Promise<void> {
-  await assertSafeEntries(tarballPath)
+export async function extractTarball(
+  tarballPath: string,
+  destDir: string,
+  options: { maxListingBytes?: number } = {},
+): Promise<void> {
+  await assertSafeEntries(tarballPath, options.maxListingBytes)
 
   const result = await spawnCaptured(
     "tar",
@@ -60,11 +64,23 @@ export async function extractTarball(tarballPath: string, destDir: string): Prom
  * first character is the entry type (`l` symlink, `h` hardlink), and link entries
  * carry a ` -> ` / ` link to ` marker. We check both the type char and the marker.
  */
-async function assertSafeEntries(tarballPath: string): Promise<void> {
-  const typed = await spawnCaptured("tar", ["-tzvf", tarballPath], { env: tarEnv() })
+async function assertSafeEntries(tarballPath: string, maxListingBytes?: number): Promise<void> {
+  const typed = await spawnCaptured("tar", ["-tzvf", tarballPath], {
+    env: tarEnv(),
+    maxOutputBytes: maxListingBytes,
+  })
   if (typed.code !== 0) {
     throw new ProbePackError(
       `Could not list pack tarball (tar exited ${typed.code}): ${typed.stderr.trim().slice(0, 500)}`,
+    )
+  }
+  // Fail closed on a truncated listing: if the entry list hit the capture cap, an
+  // unsafe entry could sit past the cut-off and go unchecked, and extraction could
+  // then write through it before the on-disk re-check runs. A pack with a listing
+  // this large is not a real probe pack.
+  if (typed.stdoutTruncated) {
+    throw new ProbePackError(
+      "Pack tarball entry listing is too large to scan safely (exceeded the capture cap) — refusing to extract.",
     )
   }
   for (const line of typed.stdout.split("\n")) {
@@ -78,10 +94,18 @@ async function assertSafeEntries(tarballPath: string): Promise<void> {
   }
 
   // Names-only listing for the traversal check (clean member names, one per line).
-  const names = await spawnCaptured("tar", ["-tzf", tarballPath], { env: tarEnv() })
+  const names = await spawnCaptured("tar", ["-tzf", tarballPath], {
+    env: tarEnv(),
+    maxOutputBytes: maxListingBytes,
+  })
   if (names.code !== 0) {
     throw new ProbePackError(
       `Could not list pack tarball (tar exited ${names.code}): ${names.stderr.trim().slice(0, 500)}`,
+    )
+  }
+  if (names.stdoutTruncated) {
+    throw new ProbePackError(
+      "Pack tarball entry listing is too large to scan safely (exceeded the capture cap) — refusing to extract.",
     )
   }
   for (const raw of names.stdout.split("\n")) {
