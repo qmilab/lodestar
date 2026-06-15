@@ -4,9 +4,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type NpmPackSource, NpmPackSourceSchema } from "@qmilab/lodestar-core"
 import { ProbePackError } from "./errors.js"
+import { DEFAULT_RESOLUTION_TIMEOUT_MS } from "./run.js"
 import { extractTarball } from "./tar.js"
 
 const DEFAULT_REGISTRY = "https://registry.npmjs.org"
+/** Hard ceiling on a downloaded tarball — a probe pack is tiny; this is a generous DoS cap. */
+const DEFAULT_MAX_TARBALL_BYTES = 64 * 1024 * 1024
+/** Registry version metadata is small; bound it too against a hostile registry. */
+const MAX_METADATA_BYTES = 8 * 1024 * 1024
 
 /**
  * Encode a (possibly scoped) package name for a registry URL path: the scope
@@ -29,6 +34,77 @@ function computeSri(algorithm: "sha256" | "sha512", bytes: Buffer): string {
   return `${algorithm}-${createHash(algorithm).update(bytes).digest("base64")}`
 }
 
+interface DeadlineFetch {
+  res: Response
+  controller: AbortController
+  timer: ReturnType<typeof setTimeout>
+}
+
+/** Fetch with an abort deadline that stays armed through the body read below. */
+async function fetchWithDeadline(
+  fetchImpl: typeof fetch,
+  url: string,
+  timeoutMs: number,
+): Promise<DeadlineFetch> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetchImpl(url, { signal: controller.signal })
+    return { res, controller, timer }
+  } catch (err) {
+    clearTimeout(timer)
+    throw err
+  }
+}
+
+/**
+ * Read a response body into a Buffer with a hard byte cap, aborting the transfer
+ * (and clearing the deadline) on overflow. Without this, an untrusted registry
+ * could hang the call or exhaust memory before the integrity check ever runs —
+ * the resolution subprocess timeout only covers extraction, not the fetch.
+ */
+async function readBoundedBody(
+  fetched: DeadlineFetch,
+  maxBytes: number,
+  label: string,
+): Promise<Buffer> {
+  const { res, controller, timer } = fetched
+  try {
+    const declared = Number(res.headers.get("content-length"))
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      controller.abort()
+      throw new ProbePackError(`${label} is ${declared} bytes, over the ${maxBytes}-byte cap.`)
+    }
+    const body = res.body
+    if (body === null) {
+      const buf = Buffer.from(await res.arrayBuffer())
+      if (buf.length > maxBytes) {
+        throw new ProbePackError(`${label} exceeds the ${maxBytes}-byte cap.`)
+      }
+      return buf
+    }
+    const reader = body.getReader()
+    const chunks: Buffer[] = []
+    let total = 0
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value && value.byteLength > 0) {
+        total += value.byteLength
+        if (total > maxBytes) {
+          controller.abort()
+          await reader.cancel().catch(() => {})
+          throw new ProbePackError(`${label} exceeds the ${maxBytes}-byte cap; download aborted.`)
+        }
+        chunks.push(Buffer.from(value))
+      }
+    }
+    return Buffer.concat(chunks)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export interface ResolveNpmOptions {
   /**
    * Directory to extract into; a fresh subdirectory is created beneath it.
@@ -38,6 +114,10 @@ export interface ResolveNpmOptions {
   cacheRoot?: string
   /** Injection seam for tests — defaults to the global `fetch`. */
   fetchImpl?: typeof fetch
+  /** Hard cap on the downloaded tarball size (bytes); defaults to 64 MiB. */
+  maxTarballBytes?: number
+  /** Per-request deadline for the metadata + tarball fetch (ms); defaults to the resolution timeout. */
+  downloadTimeoutMs?: number
 }
 
 /**
@@ -73,26 +153,38 @@ export async function resolveNpmSource(
   const registry = (source.registry ?? DEFAULT_REGISTRY).replace(/\/+$/, "")
   const algorithm = parseSriAlgorithm(source.integrity)
   const coordinate = `${source.package}@${source.version}`
+  const timeoutMs = options.downloadTimeoutMs ?? DEFAULT_RESOLUTION_TIMEOUT_MS
+  const maxTarballBytes = options.maxTarballBytes ?? DEFAULT_MAX_TARBALL_BYTES
 
-  // 1. Read the version metadata: tarball URL + advertised integrity.
+  // 1. Read the version metadata: tarball URL + advertised integrity. Bounded +
+  // abortable so a hostile registry cannot hang the call or flood memory.
   const metaUrl = `${registry}/${encodePackageName(source.package)}/${encodeURIComponent(source.version)}`
-  let metaRes: Response
+  let metaFetched: DeadlineFetch
   try {
-    metaRes = await fetchImpl(metaUrl)
+    metaFetched = await fetchWithDeadline(fetchImpl, metaUrl, timeoutMs)
   } catch (cause) {
     throw new ProbePackError(`Could not reach the registry for '${coordinate}': ${String(cause)}`, {
       cause,
     })
   }
-  if (!metaRes.ok) {
+  if (!metaFetched.res.ok) {
+    clearTimeout(metaFetched.timer)
     throw new ProbePackError(
-      `Registry returned ${metaRes.status} for '${coordinate}' (${metaUrl}).`,
+      `Registry returned ${metaFetched.res.status} for '${coordinate}' (${metaUrl}).`,
     )
   }
   let meta: { dist?: { tarball?: string; integrity?: string } }
   try {
-    meta = (await metaRes.json()) as typeof meta
+    const metaText = (
+      await readBoundedBody(
+        metaFetched,
+        MAX_METADATA_BYTES,
+        `Registry metadata for '${coordinate}'`,
+      )
+    ).toString("utf8")
+    meta = JSON.parse(metaText) as typeof meta
   } catch (cause) {
+    if (cause instanceof ProbePackError) throw cause
     throw new ProbePackError(`Registry metadata for '${coordinate}' was not valid JSON.`, { cause })
   }
 
@@ -106,10 +198,10 @@ export async function resolveNpmSource(
     )
   }
 
-  // 2. Download the tarball.
-  let tarRes: Response
+  // 2. Download the tarball — bounded + abortable, same as the metadata read.
+  let tarFetched: DeadlineFetch
   try {
-    tarRes = await fetchImpl(tarballUrl)
+    tarFetched = await fetchWithDeadline(fetchImpl, tarballUrl, timeoutMs)
   } catch (cause) {
     throw new ProbePackError(
       `Could not download the tarball for '${coordinate}': ${String(cause)}`,
@@ -118,12 +210,13 @@ export async function resolveNpmSource(
       },
     )
   }
-  if (!tarRes.ok) {
+  if (!tarFetched.res.ok) {
+    clearTimeout(tarFetched.timer)
     throw new ProbePackError(
-      `Tarball download for '${coordinate}' returned ${tarRes.status} (${tarballUrl}).`,
+      `Tarball download for '${coordinate}' returned ${tarFetched.res.status} (${tarballUrl}).`,
     )
   }
-  const bytes = Buffer.from(await tarRes.arrayBuffer())
+  const bytes = await readBoundedBody(tarFetched, maxTarballBytes, `Tarball for '${coordinate}'`)
 
   // 3. The load-bearing pin: the downloaded bytes' SRI must equal the pin.
   const actual = computeSri(algorithm, bytes)

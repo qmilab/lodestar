@@ -93,6 +93,20 @@ describe("resolveNpmSource integrity gates", () => {
       ),
     ).rejects.toBeInstanceOf(ProbePackError)
   })
+
+  test("aborts and rejects a tarball that exceeds the size cap (before integrity)", async () => {
+    const big = Buffer.alloc(4096, 7)
+    const fetchImpl = fakeFetch({
+      meta: { dist: { tarball: `${REG}/-/pack.tgz`, integrity: "sha512-AAAA" } },
+      tarball: big,
+    })
+    await expect(
+      resolveNpmSource(
+        { type: "npm", package: "p", version: "1.0.0", integrity: "sha512-AAAA", registry: REG },
+        { fetchImpl, maxTarballBytes: 64 },
+      ),
+    ).rejects.toThrow(/cap/)
+  })
 })
 
 describe("extractTarball confinement", () => {
