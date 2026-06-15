@@ -20,6 +20,26 @@ import {
 /** Env var holding the author's PKCS#8 PEM private key (off argv; never logged). */
 const AUTHOR_KEY_ENV = "LODESTAR_AUTHOR_KEY"
 
+/** A malformed invocation (a value-taking flag with no value). Maps to exit 2. */
+class PackUsageError extends Error {
+  override readonly name = "PackUsageError"
+}
+
+/**
+ * Read the value for a value-taking flag, rejecting a missing value or one that
+ * looks like another flag (`--out --author`). Consuming a missing value silently is
+ * dangerous here: `pack keygen --out` with the path omitted would otherwise fall
+ * through to the no-`--out` branch and print the freshly generated PRIVATE key to
+ * stdout. Mirrors the harness CLI's `takeFlagValue`.
+ */
+function takeValue(argv: string[], i: number, flag: string): string {
+  const value = argv[i + 1]
+  if (value === undefined || value.startsWith("--")) {
+    throw new PackUsageError(`flag ${flag} requires a value`)
+  }
+  return value
+}
+
 /**
  * `lodestar pack` — the trust-pack author + consumer flow (#90, ADR-0019).
  *
@@ -73,18 +93,31 @@ export async function packCommand(argv: string[]): Promise<number> {
 async function keygenCommand(argv: string[]): Promise<number> {
   let author: string | undefined
   let outPath: string | undefined
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    if (arg === "--author" || arg === "-a") author = argv[++i]
-    else if (arg === "--out" || arg === "-o") outPath = argv[++i]
-    else if (arg === "--help" || arg === "-h") {
-      writeUsage(process.stdout)
-      return 0
-    } else {
-      process.stderr.write(`unknown flag for 'keygen': ${arg}\n`)
+  try {
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      if (arg === "--author" || arg === "-a") {
+        author = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--out" || arg === "-o") {
+        outPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--help" || arg === "-h") {
+        writeUsage(process.stdout)
+        return 0
+      } else {
+        process.stderr.write(`unknown flag for 'keygen': ${arg}\n`)
+        writeUsage(process.stderr)
+        return 2
+      }
+    }
+  } catch (err) {
+    if (err instanceof PackUsageError) {
+      process.stderr.write(`${err.message}\n`)
       writeUsage(process.stderr)
       return 2
     }
+    throw err
   }
   if (author === undefined || author === "") {
     process.stderr.write(
@@ -142,27 +175,43 @@ async function publishCommand(argv: string[]): Promise<number> {
   let author: string | undefined
   let keyPath: string | undefined
   let sourceType: ProbePackSourceType | undefined
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    if (arg === "--pack" || arg === "-p") packDir = argv[++i] ?? packDir
-    else if (arg === "--author" || arg === "-a") author = argv[++i]
-    else if (arg === "--key" || arg === "-k") keyPath = argv[++i]
-    else if (arg === "--source-type") {
-      const v = argv[++i]
-      const parsed = ProbePackSourceTypeSchema.safeParse(v)
-      if (!parsed.success) {
-        process.stderr.write(`invalid --source-type '${v ?? ""}' (expected local|npm|git)\n`)
+  try {
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      if (arg === "--pack" || arg === "-p") {
+        packDir = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--author" || arg === "-a") {
+        author = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--key" || arg === "-k") {
+        keyPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--source-type") {
+        const v = takeValue(argv, i, arg)
+        i++
+        const parsed = ProbePackSourceTypeSchema.safeParse(v)
+        if (!parsed.success) {
+          process.stderr.write(`invalid --source-type '${v}' (expected local|npm|git)\n`)
+          return 2
+        }
+        sourceType = parsed.data
+      } else if (arg === "--help" || arg === "-h") {
+        writeUsage(process.stdout)
+        return 0
+      } else {
+        process.stderr.write(`unknown flag for 'publish': ${arg}\n`)
+        writeUsage(process.stderr)
         return 2
       }
-      sourceType = parsed.data
-    } else if (arg === "--help" || arg === "-h") {
-      writeUsage(process.stdout)
-      return 0
-    } else {
-      process.stderr.write(`unknown flag for 'publish': ${arg}\n`)
+    }
+  } catch (err) {
+    if (err instanceof PackUsageError) {
+      process.stderr.write(`${err.message}\n`)
       writeUsage(process.stderr)
       return 2
     }
+    throw err
   }
   if (author === undefined || author === "") {
     process.stderr.write("missing required --author <id> for 'publish'\n")
@@ -222,52 +271,72 @@ async function addCommand(argv: string[]): Promise<number> {
   let installDir: string | undefined = ".lodestar/packs"
   let allowUnsigned = false
   const authorKeyFlags: PackAuthorKey[] = []
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i]
-    if (arg === "--integrity") integrity = argv[++i]
-    else if (arg === "--registry") registry = argv[++i]
-    else if (arg === "--trust-config") trustConfigPath = argv[++i]
-    else if (arg === "--lockfile") lockfilePath = argv[++i] ?? lockfilePath
-    else if (arg === "--install-dir") installDir = argv[++i]
-    else if (arg === "--no-install") installDir = undefined
-    else if (arg === "--allow-unsigned") allowUnsigned = true
-    else if (arg === "--author-key") {
-      // `--author-key <author-id>=<spki-pem-file>` (repeatable). Split on the FIRST
-      // '=' so a key path may itself contain '='.
-      const spec = argv[++i]
-      if (spec === undefined) {
-        process.stderr.write("--author-key expects <author-id>=<public-key-file>\n")
+  try {
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      if (arg === "--integrity") {
+        integrity = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--registry") {
+        registry = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--trust-config") {
+        trustConfigPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--lockfile") {
+        lockfilePath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--install-dir") {
+        installDir = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--no-install") {
+        installDir = undefined
+      } else if (arg === "--allow-unsigned") {
+        allowUnsigned = true
+      } else if (arg === "--author-key") {
+        // `--author-key <author-id>=<spki-pem-file>` (repeatable). Split on the
+        // FIRST '=' so a key path may itself contain '='.
+        const spec = takeValue(argv, i, arg)
+        i++
+        const eq = spec.indexOf("=")
+        if (eq <= 0) {
+          process.stderr.write(
+            `--author-key expects <author-id>=<public-key-file>, got '${spec}'\n`,
+          )
+          return 2
+        }
+        const actorId = spec.slice(0, eq)
+        const keyPath = spec.slice(eq + 1)
+        let publicKey: string
+        try {
+          publicKey = await readFile(resolve(process.cwd(), keyPath), "utf8")
+        } catch {
+          process.stderr.write(`--author-key public-key file not found or unreadable: ${keyPath}\n`)
+          return 2
+        }
+        authorKeyFlags.push({ actor_id: actorId, public_key: publicKey })
+      } else if (arg === "--help" || arg === "-h") {
+        writeUsage(process.stdout)
+        return 0
+      } else if (arg?.startsWith("-")) {
+        process.stderr.write(`unknown flag for 'add': ${arg}\n`)
+        writeUsage(process.stderr)
+        return 2
+      } else if (source === undefined) {
+        source = arg
+      } else {
+        process.stderr.write(`unexpected extra argument for 'add': ${arg}\n`)
+        writeUsage(process.stderr)
         return 2
       }
-      const eq = spec.indexOf("=")
-      if (eq <= 0) {
-        process.stderr.write(`--author-key expects <author-id>=<public-key-file>, got '${spec}'\n`)
-        return 2
-      }
-      const actorId = spec.slice(0, eq)
-      const keyPath = spec.slice(eq + 1)
-      let publicKey: string
-      try {
-        publicKey = await readFile(resolve(process.cwd(), keyPath), "utf8")
-      } catch {
-        process.stderr.write(`--author-key public-key file not found or unreadable: ${keyPath}\n`)
-        return 2
-      }
-      authorKeyFlags.push({ actor_id: actorId, public_key: publicKey })
-    } else if (arg === "--help" || arg === "-h") {
-      writeUsage(process.stdout)
-      return 0
-    } else if (arg?.startsWith("-")) {
-      process.stderr.write(`unknown flag for 'add': ${arg}\n`)
-      writeUsage(process.stderr)
-      return 2
-    } else if (source === undefined) {
-      source = arg
-    } else {
-      process.stderr.write(`unexpected extra argument for 'add': ${arg}\n`)
+    }
+  } catch (err) {
+    if (err instanceof PackUsageError) {
+      process.stderr.write(`${err.message}\n`)
       writeUsage(process.stderr)
       return 2
     }
+    throw err
   }
 
   if (source === undefined) {

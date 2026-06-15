@@ -246,6 +246,29 @@ describe("addProbePack (local source)", () => {
     // No orphan install: the install dir was never created.
     await expect(stat(installRoot)).rejects.toThrow()
   })
+
+  test("a failed install leaves no committed lock entry", async () => {
+    // The lock entry is committed only after the install succeeds, so an install
+    // that fails never leaves a lockfile claiming the pack landed.
+    const dir = await writePack()
+    await publishProbePack({ target: dir, authorId: AUTHOR, privateKeyPem, at: AT })
+    // A regular file where the install dir's parent should be → mkdir fails.
+    const blocker = join(tmpRoot, `blocker-${counter++}`)
+    await writeFile(blocker, "x", "utf8")
+    const lockfilePath = join(tmpRoot, `lock-noland-${counter++}.json`)
+
+    await expect(
+      addProbePack({
+        ref: { type: "local", path: dir },
+        authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+        at: AT,
+        installRoot: join(blocker, "sub"), // parent is a file → install throws
+        lockfilePath,
+      }),
+    ).rejects.toThrow()
+    // No stale entry: the lockfile was never written.
+    await expect(stat(lockfilePath)).rejects.toThrow()
+  })
 })
 
 describe("lockfileSafeSource", () => {

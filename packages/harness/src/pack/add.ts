@@ -8,7 +8,7 @@ import {
 } from "@qmilab/lodestar-core"
 import { ProbePackError } from "./errors.js"
 import { type LoadedProbePack, loadProbePack, loadProbePackFromSource } from "./loader.js"
-import { upsertPackLockEntry } from "./lockfile.js"
+import { readPackLockfile, upsertPackLockEntry } from "./lockfile.js"
 import type { ResolvePackSourceOptions } from "./source.js"
 
 /**
@@ -73,10 +73,25 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
     ...resolveOpts,
   })
 
-  // Record the lockfile BEFORE installing, so a malformed or unwritable lockfile
-  // fails fast — before any install bytes are written — rather than leaving an
-  // orphan install with no matching audit record. The lockfile is the durable
-  // record of the verified pin; the install is a convenience copy of it.
+  // Validate the lockfile up front — a malformed/unreadable one throws here, before
+  // any install bytes are written, so a bad lockfile never orphans an install. The
+  // entry is *committed* only after a successful install (below), so a failed
+  // install never leaves a lock entry claiming the pack landed. The two checks
+  // together keep the install and the audit record consistent on either failure.
+  if (lockfilePath !== undefined) {
+    await readPackLockfile(lockfilePath)
+  }
+
+  let installedRoot: string | undefined
+  if (installRoot !== undefined) {
+    installedRoot = await installVerifiedPack(pack, resolve(installRoot), {
+      authorizedAuthorKeys,
+      allowUnsigned,
+    })
+  }
+
+  // Commit the pin only now — verification AND (if requested) install have
+  // succeeded, so the durable record reflects reality.
   let lockEntry: PackLockEntry | undefined
   if (lockfilePath !== undefined) {
     lockEntry = {
@@ -92,14 +107,6 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
     }
     if (pack.manifest.author_id !== undefined) lockEntry.author_id = pack.manifest.author_id
     await upsertPackLockEntry(lockfilePath, lockEntry)
-  }
-
-  let installedRoot: string | undefined
-  if (installRoot !== undefined) {
-    installedRoot = await installVerifiedPack(pack, resolve(installRoot), {
-      authorizedAuthorKeys,
-      allowUnsigned,
-    })
   }
 
   return { pack, installedRoot, lockEntry }

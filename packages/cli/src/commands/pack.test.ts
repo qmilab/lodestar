@@ -1,12 +1,53 @@
 import { describe, expect, test } from "bun:test"
 import { lookupPinnedKey } from "@qmilab/lodestar-core"
-import { mergePinnedAuthorKeys, parseSourceArg } from "./pack.js"
+import { mergePinnedAuthorKeys, packCommand, parseSourceArg } from "./pack.js"
+
+/** Capture process.std{out,err}.write for the duration of `fn`. */
+async function captureStdio(fn: () => Promise<number>): Promise<{ code: number; out: string }> {
+  const out: string[] = []
+  const origOut = process.stdout.write.bind(process.stdout)
+  const origErr = process.stderr.write.bind(process.stderr)
+  const sink = ((chunk: unknown) => {
+    out.push(String(chunk))
+    return true
+  }) as typeof process.stdout.write
+  process.stdout.write = sink
+  process.stderr.write = (() => true) as typeof process.stderr.write
+  try {
+    const code = await fn()
+    return { code, out: out.join("") }
+  } finally {
+    process.stdout.write = origOut
+    process.stderr.write = origErr
+  }
+}
 
 /**
  * `lodestar pack` argument + key-merge logic. These pin the Codex review fix: a
  * `--author-key` flag must override a stale trust-config entry for the same author
  * (key rotation), and the source parser must hold the immutable-pin contract.
  */
+
+describe("pack keygen flag validation", () => {
+  test("--out with no value errors (exit 2) and never prints the private key", async () => {
+    // The footgun: a missing --out value must not fall through to the stdout path,
+    // which would print the freshly generated PRIVATE key.
+    const { code, out } = await captureStdio(() =>
+      packCommand(["keygen", "--author", "acme", "--out"]),
+    )
+    expect(code).toBe(2)
+    expect(out).not.toContain("PRIVATE KEY")
+    expect(out).not.toContain("BEGIN")
+  })
+
+  test("--out swallowing the next flag errors rather than consuming it", async () => {
+    const { code, out } = await captureStdio(() =>
+      packCommand(["keygen", "--out", "--author", "acme"]),
+    )
+    expect(code).toBe(2)
+    expect(out).not.toContain("PRIVATE KEY")
+  })
+})
 
 describe("mergePinnedAuthorKeys", () => {
   test("a flag key overrides a config entry for the same author", () => {
