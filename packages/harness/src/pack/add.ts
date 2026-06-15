@@ -73,14 +73,10 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
     ...resolveOpts,
   })
 
-  let installedRoot: string | undefined
-  if (installRoot !== undefined) {
-    installedRoot = await installVerifiedPack(pack, resolve(installRoot), {
-      authorizedAuthorKeys,
-      allowUnsigned,
-    })
-  }
-
+  // Record the lockfile BEFORE installing, so a malformed or unwritable lockfile
+  // fails fast — before any install bytes are written — rather than leaving an
+  // orphan install with no matching audit record. The lockfile is the durable
+  // record of the verified pin; the install is a convenience copy of it.
   let lockEntry: PackLockEntry | undefined
   if (lockfilePath !== undefined) {
     lockEntry = {
@@ -96,6 +92,14 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
     }
     if (pack.manifest.author_id !== undefined) lockEntry.author_id = pack.manifest.author_id
     await upsertPackLockEntry(lockfilePath, lockEntry)
+  }
+
+  let installedRoot: string | undefined
+  if (installRoot !== undefined) {
+    installedRoot = await installVerifiedPack(pack, resolve(installRoot), {
+      authorizedAuthorKeys,
+      allowUnsigned,
+    })
   }
 
   return { pack, installedRoot, lockEntry }
@@ -118,7 +122,17 @@ export function lockfileSafeSource(ref: PackSourceRef): PackSourceRef {
   return ref
 }
 
-/** Remove `user:password@` userinfo from a URL, leaving a non-URL string as-is. */
+/**
+ * Remove credential userinfo from a URL while preserving a non-secret SSH login,
+ * leaving a non-URL string (scp-like `git@host:path`, a file path) unchanged.
+ *
+ *  - A **password** (`user:secret@`) is always a credential → strip both halves.
+ *  - A **lone username** over `ssh://` (or `git+ssh://`) is the SSH login (e.g.
+ *    `git@`), not a secret, and is required to fetch the remote → keep it, so the
+ *    recorded pin stays reproducible.
+ *  - A **lone username** over `http(s)://` may be a token (`https://<token>@host`);
+ *    a standard https remote carries no userinfo, so strip it to be safe.
+ */
 function stripUrlCredentials(url: string): string {
   let parsed: URL
   try {
@@ -127,6 +141,10 @@ function stripUrlCredentials(url: string): string {
     return url
   }
   if (parsed.username === "" && parsed.password === "") return url
+  if (parsed.password === "") {
+    const scheme = parsed.protocol.toLowerCase()
+    if (scheme === "ssh:" || scheme === "git+ssh:") return url
+  }
   parsed.username = ""
   parsed.password = ""
   return parsed.toString()

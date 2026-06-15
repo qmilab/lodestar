@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
@@ -224,6 +224,28 @@ describe("addProbePack (local source)", () => {
       "export const x = 1",
     )
   })
+
+  test("a malformed lockfile fails before any install bytes are written", async () => {
+    // The lockfile is recorded before the install, so a bad lockfile fails fast
+    // and never leaves an orphan install with no matching audit record.
+    const dir = await writePack()
+    await publishProbePack({ target: dir, authorId: AUTHOR, privateKeyPem, at: AT })
+    const badLock = join(tmpRoot, `bad-lock-${counter++}.json`)
+    await writeFile(badLock, "{ not valid json", "utf8")
+    const installRoot = join(tmpRoot, `install-orphan-${counter++}`)
+
+    await expect(
+      addProbePack({
+        ref: { type: "local", path: dir },
+        authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+        at: AT,
+        installRoot,
+        lockfilePath: badLock,
+      }),
+    ).rejects.toThrow(ProbePackError)
+    // No orphan install: the install dir was never created.
+    await expect(stat(installRoot)).rejects.toThrow()
+  })
 })
 
 describe("lockfileSafeSource", () => {
@@ -256,6 +278,37 @@ describe("lockfileSafeSource", () => {
       commit: "c".repeat(40),
     }
     expect(lockfileSafeSource(scp)).toEqual(scp)
+  })
+
+  test("preserves the SSH login user (not a secret, needed to fetch the remote)", () => {
+    const ssh: PackSourceRef = {
+      type: "git",
+      url: "ssh://git@github.com/acme/packs.git",
+      commit: "d".repeat(40),
+    }
+    // The lone `git@` username over ssh:// is the SSH login, kept for reproduction.
+    expect(lockfileSafeSource(ssh)).toEqual(ssh)
+    // But an ssh URL that still carries a password has it stripped.
+    const sshPw: PackSourceRef = {
+      type: "git",
+      url: "ssh://git:s3cret@github.com/acme/packs.git",
+      commit: "e".repeat(40),
+    }
+    const safe = lockfileSafeSource(sshPw)
+    if (safe.type === "git") expect(safe.url).not.toContain("s3cret")
+  })
+
+  test("strips a lone token-as-username over https", () => {
+    const tokenUser: PackSourceRef = {
+      type: "git",
+      url: "https://ghp_tok3n@github.com/acme/packs.git",
+      commit: "f".repeat(40),
+    }
+    const safe = lockfileSafeSource(tokenUser)
+    if (safe.type === "git") {
+      expect(safe.url).not.toContain("ghp_tok3n")
+      expect(safe.url).toBe("https://github.com/acme/packs.git")
+    }
   })
 
   test("strips credentials from a credentialed npm registry URL", () => {
