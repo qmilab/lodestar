@@ -154,6 +154,25 @@ describe("addProbePack (local source)", () => {
       /not in the operator-pinned key set/,
     )
   })
+
+  test("an install target inside the source skips the self-copy and preserves the source", async () => {
+    // `pack add .` with the default `.lodestar/packs` install dir under the pack:
+    // dest is a descendant of the source, so a copy would self-recurse and the rm
+    // could delete the source. The source root is its own stable install instead.
+    const dir = await writePack()
+    await publishProbePack({ target: dir, authorId: AUTHOR, privateKeyPem, at: AT })
+    const added = await addProbePack({
+      ref: { type: "local", path: dir },
+      authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+      at: AT,
+      installRoot: join(dir, ".lodestar/packs"),
+    })
+    // The install resolved to the source itself (no copy), and the source survives.
+    expect(added.installedRoot).toBe(dir)
+    await expect(readFile(join(dir, "probes/sample.ts"), "utf8")).resolves.toContain(
+      "export const x",
+    )
+  })
 })
 
 describe("lockfile", () => {

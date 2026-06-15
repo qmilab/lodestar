@@ -283,16 +283,18 @@ async function addCommand(argv: string[]): Promise<number> {
     return 2
   }
 
-  // Merge the operator's pinned author keys: the trust-config file first, then any
-  // `--author-key` flags (which layer on top for a one-off pin). An empty set with
-  // no --allow-unsigned means a signed pack is still verifiable only if its author
-  // is pinned — and an unsigned pack is rejected (fail closed).
+  // Merge the operator's pinned author keys. A `--author-key` flag is a deliberate
+  // command-line override, so it takes precedence over a trust-config entry for the
+  // same author (key rotation / a one-off pin): `lookupPinnedKey` returns the first
+  // match for an author_id, so the flags must come FIRST. An empty set with no
+  // --allow-unsigned means a signed pack is verifiable only if its author is pinned,
+  // and an unsigned pack is rejected (fail closed).
   let pinnedKeys: PackAuthorKey[]
   try {
     const trust = await readPackTrustConfig(trustConfigPath ?? DEFAULT_PACK_TRUST_PATH, {
       required: trustConfigPath !== undefined,
     })
-    pinnedKeys = [...trust.author_keys, ...authorKeyFlags]
+    pinnedKeys = mergePinnedAuthorKeys(trust.author_keys, authorKeyFlags)
     // The config's own opt-out also counts, alongside the flag.
     if (trust.allow_unsigned === true) allowUnsigned = true
   } catch (err) {
@@ -353,6 +355,19 @@ async function addCommand(argv: string[]): Promise<number> {
  * semver, full SHA, package-name shape) are validated downstream by the schema, so
  * this only catches shape errors the user can fix from the message.
  */
+/**
+ * Merge operator-pinned author keys from the trust config with `--author-key`
+ * flags. Flags come **first** so a command-line key overrides a config entry for
+ * the same author (`lookupPinnedKey` returns the first match for an author_id) —
+ * the desired precedence for key rotation or a one-off override.
+ */
+export function mergePinnedAuthorKeys(
+  configKeys: PackAuthorKey[],
+  flagKeys: PackAuthorKey[],
+): PackAuthorKey[] {
+  return [...flagKeys, ...configKeys]
+}
+
 export function parseSourceArg(
   arg: string,
   opts: { integrity?: string; registry?: string },

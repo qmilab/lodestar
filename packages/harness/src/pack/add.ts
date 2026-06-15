@@ -1,5 +1,5 @@
 import { cp, mkdir, rm } from "node:fs/promises"
-import { join, resolve } from "node:path"
+import { join, resolve, sep } from "node:path"
 import {
   type PackLockEntry,
   type PackSourceRef,
@@ -100,11 +100,34 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
 }
 
 /**
+ * True when `a` and `b` are the same directory or one is a path-ancestor of the
+ * other (a lexical comparison on resolved paths). Used to detect an install target
+ * that overlaps its source: copying a directory into its own subtree fails, and
+ * removing the destination first could delete the source.
+ */
+function pathsOverlap(a: string, b: string): boolean {
+  const ar = resolve(a)
+  const br = resolve(b)
+  if (ar === br) return true
+  const aPrefix = ar.endsWith(sep) ? ar : ar + sep
+  const bPrefix = br.endsWith(sep) ? br : br + sep
+  return br.startsWith(aPrefix) || ar.startsWith(bPrefix)
+}
+
+/**
  * Copy a verified pack into `<installRoot>/<pack-name>` and re-verify the installed
  * copy. The re-verification is a TOCTOU closure: it proves the installed bytes are
  * the ones that verified (and that the copy did not introduce a symlink that
  * escapes the pack root). A failed re-verify removes the partial install so a
  * broken pack is never left behind.
+ *
+ * When the install target **overlaps the source** — the same directory, or one
+ * nested in the other — there is nothing to copy: the verified bytes already live
+ * at a stable location (a local pack added from its own tree, e.g. `pack add .`
+ * with the default `.lodestar/packs` install dir under it). Copying would mean
+ * `fs.cp` recursing a directory into its own subtree (which fails), and the `rm`
+ * below could delete the source first. In that case the source root *is* the
+ * install — already verified by resolution — so it is returned without a copy.
  */
 async function installVerifiedPack(
   pack: LoadedProbePack,
@@ -112,6 +135,11 @@ async function installVerifiedPack(
   verifyOptions: { authorizedAuthorKeys?: PinnedPublicKeys; allowUnsigned?: boolean },
 ): Promise<string> {
   const dest = join(installRoot, pack.manifest.name)
+  if (pathsOverlap(pack.root, dest)) {
+    // The source is its own stable install location (verified by resolution); a
+    // copy would be a self-copy. Leave the bytes in place.
+    return pack.root
+  }
   // Replace any existing install of this pack so a re-add is clean (no stale files
   // surviving alongside the new copy).
   await rm(dest, { recursive: true, force: true })
