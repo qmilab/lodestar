@@ -69,8 +69,13 @@ verification.**
   the system `tar` (the same posture as `adapter-git` shelling to system `git`)
   rather than take a `node-tar` dependency: `tar` handles every archive variant
   (ustar / GNU / PAX long names) correctly, and we layer our own confinement —
-  extract into a fresh `mkdtemp`, then reject the whole pack if any extracted
-  entry is a symlink or resolves outside the root (the tar-slip boundary).
+  **scan the archive's entry list and reject any symlink / hardlink or
+  path-traversal entry *before* writing a byte** (the tar-slip write-through
+  vector: `tar` can write *through* a symlink to outside the dest during
+  extraction, so a post-hoc check would run too late), extract into a fresh
+  per-resolution `mkdtemp`, and re-check on disk as defence-in-depth. The
+  downloaded tarball is written to a per-resolution unique path, so a shared
+  cache root cannot race two concurrent resolutions into a swapped artifact.
 - **git** = clone `--no-checkout` → `checkout --detach <sha>` with
   `core.hooksPath=/dev/null` and a scoped env (`GIT_CONFIG_GLOBAL/SYSTEM=/dev/null`,
   throwaway `HOME`, no host-env passthrough — mirroring `adapter-git`'s

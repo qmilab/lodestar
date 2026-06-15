@@ -122,11 +122,18 @@ export async function resolveNpmSource(
     )
   }
 
-  // 4. Non-executing extract into a confined directory.
+  // 4. Non-executing extract into a confined directory. Everything for this
+  // resolution lives under a per-call unique `work` dir (mkdtemp): the tarball at
+  // `work/pack.tgz` and the extracted root at `work/root`. A unique tarball path
+  // is essential — with a shared `cacheRoot` and concurrent resolutions, a single
+  // `cacheRoot/pack.tgz` could be overwritten by another call between this one's
+  // integrity check and its extraction, landing bytes that don't match the pin.
   const cacheRoot = options.cacheRoot ?? (await mkdtemp(join(tmpdir(), "lodestar-pack-npm-")))
   await mkdir(cacheRoot, { recursive: true })
-  const dest = await mkdtemp(join(cacheRoot, "pkg-"))
-  const tgzPath = join(cacheRoot, "pack.tgz")
+  const work = await mkdtemp(join(cacheRoot, "pkg-"))
+  const dest = join(work, "root")
+  await mkdir(dest)
+  const tgzPath = join(work, "pack.tgz")
   await writeFile(tgzPath, bytes)
   await extractTarball(tgzPath, dest)
   return dest

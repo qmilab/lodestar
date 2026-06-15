@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { PackSourceRef } from "@qmilab/lodestar-core"
 import { ProbePackError } from "./errors.js"
 import { resolveNpmSource } from "./npm-source.js"
 import { resolvePackSource } from "./source.js"
+import { extractTarball } from "./tar.js"
 
 const sha512 = (b: Buffer) => `sha512-${createHash("sha512").update(b).digest("base64")}`
 
@@ -86,5 +91,25 @@ describe("resolveNpmSource integrity gates", () => {
         { fetchImpl },
       ),
     ).rejects.toBeInstanceOf(ProbePackError)
+  })
+})
+
+describe("extractTarball confinement", () => {
+  test("rejects a tarball with a symlink entry BEFORE writing anything (tar-slip)", async () => {
+    const stage = await mkdtemp(join(tmpdir(), "lodestar-tar-evil-"))
+    const pkg = join(stage, "package")
+    await mkdir(pkg, { recursive: true })
+    await writeFile(join(pkg, "real.ts"), "ok")
+    // The write-through vector: a symlink pointing outside the pack root. tar can
+    // write *through* it during extraction, so it must be refused at the pre-scan.
+    await symlink("/etc/hosts", join(pkg, "evil-link"))
+    const tgz = join(stage, "evil.tgz")
+    expect(Bun.spawnSync(["tar", "-czf", tgz, "-C", stage, "package"]).exitCode).toBe(0)
+
+    const dest = await mkdtemp(join(tmpdir(), "lodestar-tar-dest-"))
+    await expect(extractTarball(tgz, dest)).rejects.toThrow(/link entry/)
+    // The pre-scan ran first: extraction never started, so nothing was written.
+    expect(existsSync(join(dest, "real.ts"))).toBe(false)
+    expect(existsSync(join(dest, "evil-link"))).toBe(false)
   })
 })
