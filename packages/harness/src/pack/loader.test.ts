@@ -123,12 +123,19 @@ describe("loadProbePack", () => {
     await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/failed validation/)
   })
 
-  test("rejects source_type npm in v0 with a clear error", async () => {
-    const dir = await makePack({
-      manifest: validManifest({ source_type: "npm" }),
-      probeFiles: ["probes/probe-one.ts"],
-    })
-    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/source_type "npm"/)
+  test("loads a local directory regardless of declared source_type (#86: bytes are present)", async () => {
+    // Once the bytes are on disk, source_type is advisory — the npm/git resolvers
+    // (loadProbePackFromSource) fetch to a confined dir, then this loads it. So a
+    // directory whose manifest declares npm/git loads directly.
+    for (const source_type of ["npm", "git"] as const) {
+      const dir = await makePack({
+        manifest: validManifest({ source_type }),
+        probeFiles: ["probes/probe-one.ts"],
+      })
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      expect(pack.manifest.source_type).toBe(source_type)
+      expect(pack.probes).toHaveLength(1)
+    }
   })
 
   test("throws when a declared probe file is missing", async () => {

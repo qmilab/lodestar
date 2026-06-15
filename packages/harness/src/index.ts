@@ -36,11 +36,22 @@
 
 export {
   loadProbePack,
+  loadProbePackFromSource,
   ProbePackError,
+  type LoadProbePackOptions,
   type LoadedProbe,
   type LoadedProbePack,
   type LoadedSentinel,
 } from "./pack/loader.js"
+
+export {
+  resolvePackSource,
+  type ResolvedPackSource,
+  type ResolvePackSourceOptions,
+} from "./pack/source.js"
+
+export { resolveNpmSource, type ResolveNpmOptions } from "./pack/npm-source.js"
+export { resolveGitSource, type ResolveGitOptions } from "./pack/git-source.js"
 
 export {
   Probe,

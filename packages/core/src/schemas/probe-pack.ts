@@ -14,21 +14,110 @@ import { SignatureSchema } from "./actor.js"
 export const PROBE_PACK_SPEC_VERSION = "1" as const
 
 /**
- * Where a pack's probe files come from.
+ * Where a pack's probe files come from — the manifest's self-declaration of
+ * its intended distribution channel. Distinct from {@link PackSourceRefSchema},
+ * which is the *consumer's* pinned addressing descriptor used to resolve the
+ * bytes (ADR-0016 §1, #86). The loader cross-checks the two: a pack resolved via
+ * an `npm` ref must declare `source_type: "npm"`.
  *
  * `local` — the pack lives on the filesystem; probe `file` paths are
  *   resolved relative to the directory containing the manifest.
  * `npm` — the pack ships as a published package; the loader reads the
  *   manifest from the package's `./lodestar.probe-pack.json` export and
- *   resolves probe files relative to the package root.
+ *   resolves probe files relative to the extracted package root.
+ * `git` — the pack ships in a git repository, resolved at a pinned full
+ *   commit SHA (a mutable branch/tag is rejected; ADR-0016 §1).
  *
- * Both source types are part of the spec from day one so external
- * authors can target a stable schema. The v0 loader resolves `local`
- * only; `npm` resolution follows the first external pack that needs it
- * (see docs/architecture/reflection-pass.md Q6).
+ * All source types are part of the spec from day one so external authors can
+ * target a stable schema. `npm` and `git` resolution landed in #86 (ADR-0018);
+ * once the bytes are on disk every source type loads identically.
  */
-export const ProbePackSourceTypeSchema = z.enum(["local", "npm"])
+export const ProbePackSourceTypeSchema = z.enum(["local", "npm", "git"])
 export type ProbePackSourceType = z.infer<typeof ProbePackSourceTypeSchema>
+
+/**
+ * A consumer's pinned, immutable addressing descriptor for resolving a pack to
+ * bytes (ADR-0016 §1, #86 / ADR-0018). This is *resolution input* — how an
+ * operator points the loader at a pack that lives elsewhere — and is distinct
+ * from a manifest's own {@link ProbePackSourceTypeSchema} self-declaration. The
+ * load-bearing property is **immutability**: source resolution is otherwise an
+ * unauthenticated step that could deliver different contents under a still-valid
+ * manifest signature, so every non-local ref pins an immutable artifact (an exact
+ * npm version + SRI integrity, or a full git commit SHA). After resolution the
+ * loader recomputes the signed `content_digest` over the fetched files, so a
+ * swapped artifact under a re-pointed ref is caught even if the signature still
+ * verifies.
+ */
+export const LocalPackSourceSchema = z
+  .object({
+    type: z.literal("local"),
+    path: z.string().min(1).describe("Filesystem path to the pack directory or its manifest file."),
+  })
+  .describe("A pack already on the local filesystem; no fetch, resolved in place.")
+
+export const NpmPackSourceSchema = z
+  .object({
+    type: z.literal("npm"),
+    package: z
+      .string()
+      .min(1)
+      .regex(
+        /^(?:@[a-z0-9][a-z0-9._-]*\/)?[a-z0-9][a-z0-9._-]*$/,
+        "must be a valid npm package name (optionally scoped)",
+      )
+      .describe("Published package name, e.g. '@qmilab/some-pack' or 'some-pack'."),
+    version: z
+      .string()
+      // EXACT version only: a range (`^1.2.3`, `~1.2`, `*`, `latest`) is not an
+      // immutable artifact, so resolution would not be reproducible. The npm
+      // registry's version endpoint requires an exact version anyway.
+      .regex(
+        /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/,
+        "must be an EXACT semver version — a range, tag, or 'latest' is rejected (resolution must be immutable)",
+      )
+      .describe("Exact published version. A range or dist-tag is rejected."),
+    integrity: z
+      .string()
+      .regex(
+        /^sha(?:256|512)-[A-Za-z0-9+/]+={0,2}$/,
+        "must be a Subresource-Integrity hash, e.g. 'sha512-<base64>'",
+      )
+      .describe(
+        "SRI integrity hash the downloaded tarball must match (the pin). Compared both against the registry's advertised integrity and the bytes actually downloaded.",
+      ),
+    registry: z
+      .string()
+      .url()
+      .optional()
+      .describe("Registry base URL. Defaults to the public npm registry when absent."),
+  })
+  .describe("A published npm package, pinned to an exact version + tarball SRI integrity.")
+
+export const GitPackSourceSchema = z
+  .object({
+    type: z.literal("git"),
+    url: z.string().min(1).describe("Git remote URL (https / ssh / file)."),
+    commit: z
+      .string()
+      .regex(
+        /^[0-9a-f]{40}$/,
+        "git source must pin a FULL 40-hex commit SHA — a branch, tag, or short SHA can be force-moved and is rejected",
+      )
+      .describe(
+        "Full 40-hex commit SHA. A mutable ref (branch/tag/short SHA) is rejected: it is not an immutable artifact (ADR-0016 §1).",
+      ),
+  })
+  .describe("A git repository, pinned to a full immutable commit SHA.")
+
+export const PackSourceRefSchema = z.discriminatedUnion("type", [
+  LocalPackSourceSchema,
+  NpmPackSourceSchema,
+  GitPackSourceSchema,
+])
+export type PackSourceRef = z.infer<typeof PackSourceRefSchema>
+export type LocalPackSource = z.infer<typeof LocalPackSourceSchema>
+export type NpmPackSource = z.infer<typeof NpmPackSourceSchema>
+export type GitPackSource = z.infer<typeof GitPackSourceSchema>
 
 /**
  * One probe entry in a pack manifest.
@@ -173,7 +262,7 @@ export const ProbePackManifestSchema = z.object({
       "Manifest-schema spec version. v0 loaders accept only '1' and reject unknown versions with a clear error rather than guessing.",
     ),
   source_type: ProbePackSourceTypeSchema.describe(
-    "How the loader resolves probe files. The v0 loader resolves 'local' only.",
+    "The pack's self-declared distribution channel (local / npm / git). A non-local resolution cross-checks this against the consumer's PackSourceRef.",
   ),
   description: z
     .string()

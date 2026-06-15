@@ -42,10 +42,12 @@ carries no executable logic. The schema lives in `@qmilab/lodestar-core`
 - `spec_version` is the version of the manifest *format*. The v0 loader
   understands `"1"` only and rejects anything else with a clear error
   rather than guessing.
-- `source_type` is `"local"` or `"npm"`. Both are in the schema from day
-  one so external authors can target a stable format, but the v0 loader
-  resolves `"local"` only. `"npm"` resolution follows the first external
-  pack that needs it.
+- `source_type` is `"local"`, `"npm"`, or `"git"` — the pack's self-declared
+  distribution channel. `loadProbePack(path)` loads bytes already on disk
+  regardless of `source_type`; `loadProbePackFromSource(ref)` resolves a pinned
+  `PackSourceRef` (an exact npm version + SRI integrity, or a full git commit
+  SHA) to a confined directory via a **non-executing fetch** (no `npm install`,
+  no git hooks) and then loads + verifies it — see "Source resolution" below.
 - `coverage_areas` and `invariants` are free-form taxonomy tags. They are
   not validated against a closed list; they drive grouping and the
   "which pack exercises invariant X?" question, not gating.
@@ -134,6 +136,38 @@ author keys (or accepts it unsigned under `allowUnsigned`), resolves every probe
 file to an absolute path, verifies each exists and lives inside the pack root,
 and — for a signed pack — recomputes the content digest over those files. It does
 **not** run probes — execution is the runner's job.
+
+## Source resolution (npm / git)
+
+To load a pack that ships as a published artifact rather than a local directory,
+give `loadProbePackFromSource` a pinned, immutable source descriptor. It fetches
+to a confined directory via a **non-executing fetch** — no `npm install` lifecycle
+scripts, no git hooks run — then delegates to `loadProbePack`, so the signature +
+content-digest verify-on-load applies to the fetched bytes.
+
+```ts
+import { loadProbePackFromSource } from "@qmilab/lodestar-harness"
+
+// npm: pinned to an exact version + SRI integrity (the registry's advertised
+// hash and the downloaded bytes must both match the pin).
+const fromNpm = await loadProbePackFromSource(
+  { type: "npm", package: "@acme/probes", version: "1.4.2", integrity: "sha512-…" },
+  { authorizedAuthorKeys: pinned },
+)
+
+// git: pinned to a full 40-hex commit SHA (a branch/tag is rejected).
+const fromGit = await loadProbePackFromSource(
+  { type: "git", url: "https://github.com/acme/probes.git", commit: "<40-hex SHA>" },
+  { authorizedAuthorKeys: pinned },
+)
+
+// The loaded pack records the exact pin it resolved:
+fromNpm.source?.ref // { type: "npm", version, integrity, … }
+```
+
+A swapped artifact under a re-pointed ref fails the content-digest check even if
+the old signature still verifies. Resolution delivers *authentic, inert bytes*;
+sandboxing what a probe does **when run** is a separate, runner-side concern.
 
 ## Running a pack
 
