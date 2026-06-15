@@ -40,7 +40,7 @@ describe("runPack", () => {
       ["bad.ts", "console.log('probe boom'); process.exit(2)\n"],
     ])
     try {
-      const pack = await loadProbePack(dir)
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
       const seen: ProbeRunOutcome[] = []
       const result = await runPack(pack, { onResult: (o) => seen.push(o) })
 
@@ -68,7 +68,7 @@ describe("runPack", () => {
       ["loud.ts", "console.log('x'.repeat(400 * 1024)); process.exit(0)\n"],
     ])
     try {
-      const pack = await loadProbePack(dir)
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
       const result = await runPack(pack)
       const loud = result.outcomes[0]
       expect(loud?.passed).toBe(true)
@@ -86,7 +86,7 @@ describe("runPack", () => {
       ["b.ts", "process.exit(0)\n"],
     ])
     try {
-      const pack = await loadProbePack(dir)
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
       const result = await runPack(pack)
       expect(result.outcomes.map((o) => o.name)).toEqual(["a", "b"])
       expect(result.passed).toBe(1)
@@ -103,7 +103,7 @@ describe("runPack", () => {
     ])
     const logRoot = await mkdtemp(join(tmpdir(), "lodestar-log-"))
     try {
-      const pack = await loadProbePack(dir)
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
       const record = eventLogRecorder({
         root: logRoot,
         project_id: "proj-test",

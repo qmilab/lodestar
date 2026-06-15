@@ -1,8 +1,15 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { PROBE_PACK_MANIFEST_FILENAME, type ProbePackManifest } from "@qmilab/lodestar-core"
+import {
+  PROBE_PACK_MANIFEST_FILENAME,
+  type PackContentDigest,
+  type ProbePackManifest,
+  generateEd25519KeyPair,
+  signProbePackManifest,
+} from "@qmilab/lodestar-core"
 import { ProbePackError, loadProbePack } from "./loader.js"
 
 let tmpRoot: string
@@ -55,7 +62,7 @@ describe("loadProbePack", () => {
       probeFiles: ["probes/probe-one.ts"],
     })
 
-    const pack = await loadProbePack(dir)
+    const pack = await loadProbePack(dir, { allowUnsigned: true })
 
     expect(pack.manifest.name).toBe("test-pack")
     expect(pack.root).toBe(dir)
@@ -71,37 +78,41 @@ describe("loadProbePack", () => {
       probeFiles: ["probes/probe-one.ts"],
     })
 
-    const pack = await loadProbePack(join(dir, PROBE_PACK_MANIFEST_FILENAME))
+    const pack = await loadProbePack(join(dir, PROBE_PACK_MANIFEST_FILENAME), {
+      allowUnsigned: true,
+    })
     expect(pack.manifest.name).toBe("test-pack")
   })
 
   test("throws when the target path does not exist", async () => {
-    await expect(loadProbePack(join(tmpRoot, "nope-does-not-exist"))).rejects.toBeInstanceOf(
-      ProbePackError,
-    )
+    await expect(
+      loadProbePack(join(tmpRoot, "nope-does-not-exist"), { allowUnsigned: true }),
+    ).rejects.toBeInstanceOf(ProbePackError)
   })
 
   test("throws when the directory has no manifest", async () => {
     const dir = join(tmpRoot, "empty-dir")
     await mkdir(dir, { recursive: true })
-    await expect(loadProbePack(dir)).rejects.toThrow(/No lodestar\.probe-pack\.json/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(
+      /No lodestar\.probe-pack\.json/,
+    )
   })
 
   test("throws on malformed JSON", async () => {
     const dir = await makePack({ manifest: "{ not valid json", probeFiles: [] })
-    await expect(loadProbePack(dir)).rejects.toThrow(/not valid JSON/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/not valid JSON/)
   })
 
   test("throws on a schema-invalid manifest (missing required field)", async () => {
     const m = validManifest()
     m.probes = undefined
     const dir = await makePack({ manifest: m })
-    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/failed validation/)
   })
 
   test("throws on a non-kebab-case pack name", async () => {
     const dir = await makePack({ manifest: validManifest({ name: "Test_Pack" }) })
-    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/failed validation/)
   })
 
   test("rejects an unknown spec_version", async () => {
@@ -109,7 +120,7 @@ describe("loadProbePack", () => {
       manifest: validManifest({ spec_version: "2" as ProbePackManifest["spec_version"] }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/failed validation/)
   })
 
   test("rejects source_type npm in v0 with a clear error", async () => {
@@ -117,12 +128,12 @@ describe("loadProbePack", () => {
       manifest: validManifest({ source_type: "npm" }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/source_type "npm"/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/source_type "npm"/)
   })
 
   test("throws when a declared probe file is missing", async () => {
     const dir = await makePack({ manifest: validManifest(), probeFiles: [] })
-    await expect(loadProbePack(dir)).rejects.toThrow(/file not found/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/file not found/)
   })
 
   test("rejects a probe file that escapes the pack root", async () => {
@@ -131,7 +142,9 @@ describe("loadProbePack", () => {
         probes: [{ name: "escaper", file: "../../../../etc/passwd" }],
       }),
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/outside the pack root/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(
+      /outside the pack root/,
+    )
   })
 
   test("rejects a probe file that escapes the pack root via a symlink", async () => {
@@ -146,7 +159,9 @@ describe("loadProbePack", () => {
     await mkdir(join(dir, "probes"), { recursive: true })
     await symlink(outsideSecret, join(dir, "probes/escaper.ts"))
 
-    await expect(loadProbePack(dir)).rejects.toThrow(/outside the pack root via a symlink/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(
+      /outside the pack root via a symlink/,
+    )
   })
 
   test("accepts an in-pack symlink (real target stays inside the root)", async () => {
@@ -156,7 +171,7 @@ describe("loadProbePack", () => {
     })
     await symlink(join(dir, "probes/real.ts"), join(dir, "probes/linked.ts"))
 
-    const pack = await loadProbePack(dir)
+    const pack = await loadProbePack(dir, { allowUnsigned: true })
     expect(pack.probes[0]?.name).toBe("linked")
   })
 
@@ -165,7 +180,7 @@ describe("loadProbePack", () => {
       manifest: validManifest({ probes: [{ name: "dotted", file: "..fixtures/probe.ts" }] }),
       probeFiles: ["..fixtures/probe.ts"],
     })
-    const pack = await loadProbePack(dir)
+    const pack = await loadProbePack(dir, { allowUnsigned: true })
     expect(pack.probes[0]?.name).toBe("dotted")
     expect(pack.probes[0]?.path).toBe(join(dir, "..fixtures/probe.ts"))
   })
@@ -174,7 +189,7 @@ describe("loadProbePack", () => {
     const dir = await makePack({
       manifest: validManifest({ probes: [{ name: "abs", file: "/var/tmp/probe.ts" }] }),
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/failed validation/)
   })
 
   test("rejects a non-regular file (FIFO) at a probe path", async () => {
@@ -185,7 +200,7 @@ describe("loadProbePack", () => {
     const made = Bun.spawnSync(["mkfifo", join(dir, "probes/fifo.ts")])
     if (!made.success) return // mkfifo unavailable on this platform; nothing to assert
 
-    await expect(loadProbePack(dir)).rejects.toThrow(/not a regular file/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/not a regular file/)
   })
 
   test("rejects duplicate probe names", async () => {
@@ -198,7 +213,7 @@ describe("loadProbePack", () => {
       }),
       probeFiles: ["probes/a.ts", "probes/b.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/more than once/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/more than once/)
   })
 
   test("resolves to an empty sentinels array when the manifest omits the field", async () => {
@@ -206,7 +221,7 @@ describe("loadProbePack", () => {
       manifest: validManifest(),
       probeFiles: ["probes/probe-one.ts"],
     })
-    const pack = await loadProbePack(dir)
+    const pack = await loadProbePack(dir, { allowUnsigned: true })
     // `sentinels` is an optional manifest field; absent means the pack ships
     // none, which the loader surfaces as an empty resolved array.
     expect(pack.sentinels).toEqual([])
@@ -219,7 +234,7 @@ describe("loadProbePack", () => {
       }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    const pack = await loadProbePack(dir)
+    const pack = await loadProbePack(dir, { allowUnsigned: true })
 
     expect(pack.sentinels.map((s) => s.id)).toEqual([
       "low-confidence-action",
@@ -237,7 +252,9 @@ describe("loadProbePack", () => {
       manifest: validManifest({ sentinels: [{ id: "does-not-exist" }] }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/unknown sentinel id 'does-not-exist'/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(
+      /unknown sentinel id 'does-not-exist'/,
+    )
   })
 
   // `constructor` passes the kebab-case id regex and, on a plain-object
@@ -249,7 +266,9 @@ describe("loadProbePack", () => {
       manifest: validManifest({ sentinels: [{ id: "constructor" }] }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/unknown sentinel id 'constructor'/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(
+      /unknown sentinel id 'constructor'/,
+    )
   })
 
   test("rejects duplicate sentinel ids", async () => {
@@ -259,7 +278,7 @@ describe("loadProbePack", () => {
       }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(
       /sentinel id 'low-confidence-action' more than once/,
     )
   })
@@ -269,6 +288,104 @@ describe("loadProbePack", () => {
       manifest: validManifest({ sentinels: [{ id: "Not_Kebab" }] }),
       probeFiles: ["probes/probe-one.ts"],
     })
-    await expect(loadProbePack(dir)).rejects.toThrow(/failed validation/)
+    await expect(loadProbePack(dir, { allowUnsigned: true })).rejects.toThrow(/failed validation/)
+  })
+})
+
+// Verify-on-load (#88, ADR-0017). `makePack` writes each probe file with the
+// fixed body below, so a content digest over it is reproducible. The three
+// probes in packs/lodestar-core exercise this end-to-end; these pin the loader's
+// own behaviour at the unit level.
+const DUMMY_PROBE_BODY = "// dummy probe\n"
+const AUTHOR = "pack-author"
+
+function digestFor(paths: string[]): PackContentDigest {
+  const files = paths
+    .map((p) => ({ path: p, sha256: createHash("sha256").update(DUMMY_PROBE_BODY).digest("hex") }))
+    .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  return { algorithm: "sha256", files }
+}
+
+function signManifest(
+  privateKeyPem: string,
+  overrides: Partial<ProbePackManifest> = {},
+): ProbePackManifest {
+  const unsigned = {
+    ...(validManifest() as unknown as ProbePackManifest),
+    author_id: AUTHOR,
+    content_digest: digestFor(["probes/probe-one.ts"]),
+    ...overrides,
+  }
+  return {
+    ...unsigned,
+    signature: signProbePackManifest(unsigned, {
+      authorId: AUTHOR,
+      privateKeyPem,
+      at: "2026-01-01T00:00:00.000Z",
+    }),
+  }
+}
+
+describe("loadProbePack verify-on-load", () => {
+  test("loads a manifest signed by a pinned author", async () => {
+    const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
+    const dir = await makePack({
+      manifest: signManifest(privateKeyPem),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    const pack = await loadProbePack(dir, {
+      authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+    })
+    expect(pack.manifest.name).toBe("test-pack")
+  })
+
+  test("rejects an unsigned manifest with no allowUnsigned", async () => {
+    const dir = await makePack({ manifest: validManifest(), probeFiles: ["probes/probe-one.ts"] })
+    await expect(loadProbePack(dir, { authorizedAuthorKeys: [] })).rejects.toThrow(/is unsigned/)
+  })
+
+  test("rejects a signature from an un-pinned author", async () => {
+    const { privateKeyPem } = generateEd25519KeyPair()
+    const dir = await makePack({
+      manifest: signManifest(privateKeyPem),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    await expect(loadProbePack(dir, { authorizedAuthorKeys: [] })).rejects.toThrow(
+      /not in the operator-pinned/,
+    )
+  })
+
+  test("rejects swapped probe bytes under a still-valid signature", async () => {
+    const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
+    const dir = await makePack({
+      manifest: signManifest(privateKeyPem),
+      probeFiles: ["probes/probe-one.ts"],
+    })
+    // Overwrite the probe file's bytes without touching the (still-valid) manifest.
+    await writeFile(join(dir, "probes/probe-one.ts"), "// tampered\n")
+    await expect(
+      loadProbePack(dir, {
+        authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+      }),
+    ).rejects.toThrow(/has been modified since it was signed/)
+  })
+
+  test("rejects a signed manifest with no content_digest", async () => {
+    const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
+    const unsigned = { ...(validManifest() as unknown as ProbePackManifest), author_id: AUTHOR }
+    const manifest: ProbePackManifest = {
+      ...unsigned,
+      signature: signProbePackManifest(unsigned, {
+        authorId: AUTHOR,
+        privateKeyPem,
+        at: "2026-01-01T00:00:00.000Z",
+      }),
+    }
+    const dir = await makePack({ manifest, probeFiles: ["probes/probe-one.ts"] })
+    await expect(
+      loadProbePack(dir, {
+        authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+      }),
+    ).rejects.toThrow(/no content_digest/)
   })
 })

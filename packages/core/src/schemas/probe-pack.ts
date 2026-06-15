@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { SignatureSchema } from "./actor.js"
 
 /**
  * The probe-pack format spec version. This is the version of the
@@ -94,6 +95,49 @@ export const SentinelEntrySchema = z.object({
 export type SentinelEntry = z.infer<typeof SentinelEntrySchema>
 
 /**
+ * One file's hash in a pack's content digest: a probe `file` path (relative to
+ * the pack root, as declared in the manifest) and the sha-256 hex of its bytes.
+ */
+export const PackFileDigestSchema = z.object({
+  path: z
+    .string()
+    .min(1)
+    .describe("Probe file path, relative to the pack root, as written in the manifest."),
+  sha256: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/, "sha256 must be 64 lowercase hex characters")
+    .describe("sha-256 hex of the file's bytes."),
+})
+export type PackFileDigest = z.infer<typeof PackFileDigestSchema>
+
+/**
+ * The content digest a signed manifest binds (ADR-0016 §2 / ADR-0017).
+ *
+ * A sorted per-file sha-256 list over every probe `file` the manifest declares.
+ * Because `content_digest` is part of the canonical manifest the signature
+ * covers, signing the manifest transitively authenticates the shipped probe
+ * *bytes*, not merely their names — so a re-pointed git tag or re-published npm
+ * artifact that swaps a probe's bytes under a still-valid signature is caught at
+ * load. The list is stored (not just a combined hash) so the loader can name the
+ * offending file on mismatch and so the binding is auditable.
+ *
+ * Sentinels are out of the digest by construction: a pack references them by id
+ * and the harness resolves them against its in-process registry, so the pack
+ * ships no sentinel bytes. v0 scope is the declared probe files; whole-tree
+ * hashing (catching an undeclared helper a probe imports) is a documented
+ * hardening follow-up.
+ */
+export const PackContentDigestSchema = z.object({
+  algorithm: z.literal("sha256").describe("Digest algorithm. v0 is sha-256 only."),
+  files: z
+    .array(PackFileDigestSchema)
+    .describe(
+      "Per-file sha-256 over every probe file the manifest declares, sorted by path. The loader recomputes this from the resolved files and rejects a mismatch.",
+    ),
+})
+export type PackContentDigest = z.infer<typeof PackContentDigestSchema>
+
+/**
  * A `lodestar.probe-pack.json` manifest.
  *
  * This is the on-disk / on-wire contract every probe pack — first-party
@@ -158,6 +202,25 @@ export const ProbePackManifestSchema = z.object({
     .describe(
       "The sentinels this pack ships, referenced by stable id and resolved by the harness against its built-in registry. Optional; an absent field means the pack ships no sentinels. Additive since spec '1' — a manifest without it still loads.",
     ),
+  // ── Signing (ADR-0017, #88). All three are additive-optional since spec "1":
+  // an older loader still reads a manifest without them, and an unsigned
+  // first-party pack omits all three. They appear together on a signed pack and
+  // are bound to each other — `author_id` and `content_digest` are part of the
+  // canonical document the `signature` covers (everything except `signature`),
+  // so a verifier reproduces the signed bytes from the rest of the manifest.
+  author_id: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The pack author's signer id. Present on a signed pack; the loader requires it equal signature.signer_id and be in the operator-pinned author-key set.",
+    ),
+  content_digest: PackContentDigestSchema.optional().describe(
+    "Per-file sha-256 over the declared probe files. Bound by the signature; recomputed and compared by the loader. Present on a signed pack.",
+  ),
+  signature: SignatureSchema.optional().describe(
+    "Ed25519 signature over the canonical manifest (every field except this one, content_digest included). Verified on load against operator-pinned author keys. Absent on an unsigned (allow_unsigned) pack.",
+  ),
 })
 export type ProbePackManifest = z.infer<typeof ProbePackManifestSchema>
 

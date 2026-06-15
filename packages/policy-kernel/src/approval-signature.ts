@@ -1,13 +1,13 @@
+import { createHash } from "node:crypto"
 import {
-  createHash,
-  createPrivateKey,
-  createPublicKey,
-  generateKeyPairSync,
-  sign,
-  verify,
-} from "node:crypto"
-import type { Signature } from "@qmilab/lodestar-core"
-import { stableStringify } from "./hash.js"
+  type PinnedPublicKeys,
+  type Signature,
+  assertValidPublicKeys,
+  generateEd25519KeyPair,
+  signPayloadHash,
+  stableStringify,
+  verifyPayloadHashSignature,
+} from "@qmilab/lodestar-core"
 
 /**
  * Signed approval resolutions — the cryptographic boundary the separate-process
@@ -109,30 +109,15 @@ export function signApprovalResolution(
   doc: ApprovalResolutionDoc,
   privateKeyPem: string,
 ): Signature {
-  const payloadHash = canonicalApprovalResolutionHash(doc)
-  let key: ReturnType<typeof createPrivateKey>
-  try {
-    key = createPrivateKey(privateKeyPem)
-  } catch (err) {
-    // Wrap the raw node:crypto PEM-parse error in the module's typed error, so
-    // every caller (not just the CLI, which already catches) gets a consistent
-    // ApprovalSignatureError rather than an opaque OpenSSL message.
-    throw new ApprovalSignatureError(`approver private key could not be parsed: ${String(err)}`)
-  }
-  if (key.asymmetricKeyType !== "ed25519") {
-    throw new ApprovalSignatureError(
-      `approver private key is ${key.asymmetricKeyType ?? "an unknown type"}, expected ed25519`,
-    )
-  }
-  // Ed25519 signs the message directly — the algorithm argument is null.
-  const sig = sign(null, Buffer.from(payloadHash, "utf8"), key)
-  return {
-    signer_id: doc.approver_id,
-    payload_hash: payloadHash,
-    algorithm: "ed25519",
-    signature: sig.toString("base64"),
+  // Delegates to the shared core primitive (ADR-0017); `makeError` keeps every
+  // failure a typed ApprovalSignatureError rather than an opaque OpenSSL message.
+  return signPayloadHash({
+    payloadHash: canonicalApprovalResolutionHash(doc),
+    signerId: doc.approver_id,
+    privateKeyPem,
     at: doc.at,
-  }
+    makeError: (m) => new ApprovalSignatureError(m),
+  })
 }
 
 /**
@@ -144,11 +129,7 @@ export function signApprovalResolution(
  * the three stay in lock-step on key format.
  */
 export function generateApproverKeyPair(): { publicKeyPem: string; privateKeyPem: string } {
-  const { publicKey, privateKey } = generateKeyPairSync("ed25519")
-  return {
-    publicKeyPem: publicKey.export({ type: "spki", format: "pem" }).toString(),
-    privateKeyPem: privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
-  }
+  return generateEd25519KeyPair()
 }
 
 /**
@@ -162,27 +143,11 @@ export function generateApproverKeyPair(): { publicKeyPem: string; privateKeyPem
 export function assertValidApproverKeys(
   keys: ReadonlyArray<{ actor_id: string; public_key: string }>,
 ): void {
-  for (const k of keys) {
-    let key: ReturnType<typeof createPublicKey>
-    try {
-      key = createPublicKey(k.public_key)
-    } catch (err) {
-      throw new ApprovalSignatureError(
-        `authorized approver '${k.actor_id}' has an unparseable public key: ${String(err)}`,
-      )
-    }
-    if (key.asymmetricKeyType !== "ed25519") {
-      throw new ApprovalSignatureError(
-        `authorized approver '${k.actor_id}' public key is ${key.asymmetricKeyType ?? "an unknown type"}, expected ed25519`,
-      )
-    }
-  }
+  assertValidPublicKeys(keys, (m) => new ApprovalSignatureError(m))
 }
 
 /** Operator-pinned approver public keys: `approver_id → SPKI PEM public key`. */
-export type AuthorizedApproverKeys =
-  | Map<string, string>
-  | ReadonlyArray<{ actor_id: string; public_key: string }>
+export type AuthorizedApproverKeys = PinnedPublicKeys
 
 export interface VerifyApprovalSignatureOptions {
   /**
@@ -196,11 +161,6 @@ export interface VerifyApprovalSignatureOptions {
    * never a silent default. Mirrors the policy `allow_unsigned` discipline.
    */
   allowUnsigned?: boolean
-}
-
-function lookupApproverKey(keys: AuthorizedApproverKeys, approverId: string): string | undefined {
-  if (keys instanceof Map) return keys.get(approverId)
-  return keys.find((k) => k.actor_id === approverId)?.public_key
 }
 
 /**
@@ -223,50 +183,15 @@ export function verifyApprovalSignature(
   signature: Signature | undefined,
   options: VerifyApprovalSignatureOptions,
 ): void {
-  if (signature === undefined) {
-    if (options.allowUnsigned === true) return
-    throw new ApprovalSignatureError(
-      `approval resolution for action '${doc.action_id}' is unsigned; a cross-process approval must be signed (set allow_unsigned: true only for a trusted in-process / development path)`,
-    )
-  }
-  const expected = canonicalApprovalResolutionHash(doc)
-  if (signature.payload_hash !== expected) {
-    throw new ApprovalSignatureError(
-      `approval resolution for action '${doc.action_id}' signature payload_hash does not match the canonical document — the resolution was tampered with or the signature is stale`,
-    )
-  }
-  if (signature.signer_id !== doc.approver_id) {
-    throw new ApprovalSignatureError(
-      `approval resolution signature signer_id '${signature.signer_id}' does not match approver_id '${doc.approver_id}'`,
-    )
-  }
-  if (signature.algorithm !== "ed25519") {
-    throw new ApprovalSignatureError(
-      `approval resolution signature algorithm '${signature.algorithm}' is not ed25519`,
-    )
-  }
-  const publicKeyPem = lookupApproverKey(options.authorizedKeys, signature.signer_id)
-  if (publicKeyPem === undefined) {
-    throw new ApprovalSignatureError(
-      `approver '${signature.signer_id}' is not in the operator-pinned authorized-approver set`,
-    )
-  }
-  let ok: boolean
-  try {
-    ok = verify(
-      null,
-      Buffer.from(expected, "utf8"),
-      createPublicKey(publicKeyPem),
-      Buffer.from(signature.signature, "base64"),
-    )
-  } catch (err) {
-    throw new ApprovalSignatureError(
-      `approval resolution signature could not be verified: ${String(err)}`,
-    )
-  }
-  if (!ok) {
-    throw new ApprovalSignatureError(
-      `approval resolution for action '${doc.action_id}' failed Ed25519 signature verification`,
-    )
-  }
+  // Delegates the full reject set to the shared core primitive (ADR-0017),
+  // binding the expected signer to the resolution's approver_id and keeping every
+  // failure a typed ApprovalSignatureError.
+  verifyPayloadHashSignature(signature, {
+    expectedPayloadHash: canonicalApprovalResolutionHash(doc),
+    expectedSignerId: doc.approver_id,
+    authorizedKeys: options.authorizedKeys,
+    allowUnsigned: options.allowUnsigned,
+    subject: `approval resolution for action '${doc.action_id}'`,
+    makeError: (m) => new ApprovalSignatureError(m),
+  })
 }

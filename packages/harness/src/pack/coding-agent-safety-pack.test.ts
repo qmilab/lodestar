@@ -10,7 +10,7 @@ const PACK_DIR = join(import.meta.dir, "../../../../packs/coding-agent-safety")
 
 describe("packs/coding-agent-safety (first non-core pack)", () => {
   test("loads cleanly through the v0 loader", async () => {
-    const pack = await loadProbePack(PACK_DIR)
+    const pack = await loadProbePack(PACK_DIR, { allowUnsigned: true })
 
     expect(pack.manifest.name).toBe("coding-agent-safety")
     expect(pack.manifest.source_type).toBe("local")
@@ -22,7 +22,7 @@ describe("packs/coding-agent-safety (first non-core pack)", () => {
   // sentinels by id, and each resolves to a factory whose instance reports
   // the same name.
   test("declares and resolves the three first-party sentinels", async () => {
-    const pack = await loadProbePack(PACK_DIR)
+    const pack = await loadProbePack(PACK_DIR, { allowUnsigned: true })
 
     expect(pack.sentinels.map((s) => s.id).sort()).toEqual([
       "anomalous-tool-sequence",
@@ -38,7 +38,7 @@ describe("packs/coding-agent-safety (first non-core pack)", () => {
   // If someone adds a probe file but forgets the manifest entry (or removes
   // one), this fails — the manifest is the spec, not a stale snapshot.
   test("declares exactly the .ts files present in probes/", async () => {
-    const pack = await loadProbePack(PACK_DIR)
+    const pack = await loadProbePack(PACK_DIR, { allowUnsigned: true })
 
     const onDisk = (await readdir(join(PACK_DIR, "probes"))).filter((f) => f.endsWith(".ts")).sort()
     const declared = pack.probes.map((p) => p.file.replace(/^probes\//, "")).sort()

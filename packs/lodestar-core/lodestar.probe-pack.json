@@ -24,7 +24,8 @@
     "messaging_adapter",
     "sql_adapter",
     "calibration",
-    "session_shipper"
+    "session_shipper",
+    "pack_registry"
   ],
   "invariants": [
     "no_self_promotion",
@@ -59,7 +60,9 @@
     "sql_injection_boundary",
     "durable_calibration_event",
     "ship_sensitivity_ceiling",
-    "ship_wire_roundtrip"
+    "ship_wire_roundtrip",
+    "pack_manifest_signature",
+    "pack_content_digest_binding"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -201,6 +204,18 @@
     {
       "name": "ship-wire-roundtrip",
       "file": "probes/ship-wire-roundtrip.ts"
+    },
+    {
+      "name": "pack-manifest-signature-required",
+      "file": "probes/pack-manifest-signature-required.ts"
+    },
+    {
+      "name": "forged-pack-cannot-load",
+      "file": "probes/forged-pack-cannot-load.ts"
+    },
+    {
+      "name": "tampered-pack-content-cannot-load",
+      "file": "probes/tampered-pack-content-cannot-load.ts"
     }
   ]
 }

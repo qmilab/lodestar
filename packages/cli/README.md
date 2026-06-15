@@ -93,10 +93,29 @@ observation in the event log so the run is itself auditable via
 lodestar harness run                       # the first-party lodestar-core pack
 lodestar harness run --pack ./packs/mine   # a local pack directory
 lodestar harness run --no-record           # skip event-log recording (CI)
+lodestar harness run --pack ./packs/mine --allow-unsigned   # load an unsigned local pack
+lodestar harness run --pack ./packs/acme \
+  --author-key acme-packs=./keys/acme.pub  # load a signed pack, author key pinned
 lodestar harness list
 ```
 
 `run` exits non-zero if any probe fails, so it works as a CI gate.
+
+A pack manifest is verified on load (ADR-0017). A **bundled first-party** pack
+(`lodestar-core` / `coding-agent-safety`), when the CLI runs from its own source
+tree, ships unsigned and loads automatically. Every other case — a `--pack
+<path>`, an arbitrarily-named bare pack, or *any* bare pack when the CLI is
+installed under a project's `node_modules` (where a name could otherwise collide
+with the project's own `./packs/<name>`) — must either:
+
+- carry a valid Ed25519 author signature whose author you pin with `--author-key
+  <author-id>=<spki-pem-file>` (repeatable), or
+- be loaded with `--allow-unsigned` (the explicit opt-out — no silent default).
+
+Trust keys off the resolved location, not the argument syntax, so an unsigned
+local `packs/acme` cannot masquerade as first-party. A signed pack is always fully
+verified against the pinned keys, and a content-digest mismatch (probe bytes
+swapped under a still-valid signature) is rejected.
 
 ### `lodestar harness calibrate <session-id>`
 

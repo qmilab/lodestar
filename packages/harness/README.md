@@ -72,13 +72,46 @@ under spec `"1"` — a manifest without it still loads. Per-pack
 construction-option overrides and third-party (file-referenced) sentinels
 are a later refinement; v0 resolves first-party ids only.
 
+## Signed manifests (verify-on-load)
+
+A pack manifest is the registry trust root. An author signs it with an Ed25519
+key; the consumer pins the trusted author keys and the loader verifies the
+signature **on load** (ADR-0017). A signed manifest carries three additive
+fields:
+
+```json
+{
+  "author_id": "acme-packs",
+  "content_digest": {
+    "algorithm": "sha256",
+    "files": [{ "path": "probes/p.ts", "sha256": "…64 hex…" }]
+  },
+  "signature": { "signer_id": "acme-packs", "payload_hash": "…", "algorithm": "ed25519", "signature": "…", "at": "…" }
+}
+```
+
+The signature covers the canonical manifest (every field except `signature`), so
+it binds `content_digest` too — and the loader recomputes that per-file digest
+over the resolved probe files, rejecting a swapped byte **even under a valid
+signature** (the re-pointed-tag / re-published-artifact hole). Pass the pinned
+keys via `loadProbePack(target, { authorizedAuthorKeys })`. An *unsigned* manifest
+is rejected unless you pass `{ allowUnsigned: true }` — the explicit opt-out for
+trusted first-party in-repo packs / local dev (no silent default). The fields are
+additive since spec `"1"`; producing the signature over frozen files is the
+publish CLI's job (#90).
+
 ## Library
 
 ```ts
 import { loadProbePack, ProbePackError } from "@qmilab/lodestar-harness"
 
 try {
-  const pack = await loadProbePack("./packs/coding-agent-safety")
+  // A signed external pack: pin the author's public key.
+  const pack = await loadProbePack("./packs/acme", {
+    authorizedAuthorKeys: [{ actor_id: "acme-packs", public_key: PINNED_SPKI_PEM }],
+  })
+  // A trusted first-party in-repo pack that ships unsigned: opt out explicitly.
+  // const pack = await loadProbePack("./packs/lodestar-core", { allowUnsigned: true })
   // pack.manifest — the validated manifest
   // pack.root — absolute pack directory
   // pack.probes — [{ name, file, path }], each path absolute and verified
@@ -86,17 +119,21 @@ try {
   //   const runner = new SentinelRunner(pack.sentinels.map((s) => s.create()))
 } catch (err) {
   if (err instanceof ProbePackError) {
-    // a broken pack: missing manifest, bad JSON, schema violation,
-    // unsupported source_type, escaping or missing probe file, dup name,
-    // or an unknown / duplicated sentinel id
+    // a broken or untrusted pack: missing manifest, bad JSON, schema violation,
+    // unsupported source_type, escaping or missing probe file, dup name, an
+    // unknown / duplicated sentinel id, or a verify-on-load failure (unsigned
+    // without allowUnsigned, tampered manifest, un-pinned / wrong signer,
+    // bad signature, or a content-digest mismatch)
   }
   throw err
 }
 ```
 
-`loadProbePack` validates the manifest, resolves every probe file to an
-absolute path, and verifies each one exists and lives inside the pack
-root. It does **not** run probes — execution is the runner's job.
+`loadProbePack` validates the manifest, verifies its signature against the pinned
+author keys (or accepts it unsigned under `allowUnsigned`), resolves every probe
+file to an absolute path, verifies each exists and lives inside the pack root,
+and — for a signed pack — recomputes the content digest over those files. It does
+**not** run probes — execution is the runner's job.
 
 ## Running a pack
 
