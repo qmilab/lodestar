@@ -30,6 +30,33 @@ function scopedGitEnv(home: string): Record<string, string> {
  */
 const HOOKS_OFF = ["-c", "core.hooksPath=/dev/null"]
 
+/**
+ * Redact credentials embedded in a remote URL (`scheme://user:secret@host/…`) for
+ * display. Operators should keep credentials out of the pinned URL, but if one
+ * slips in we never surface it in an error message. Mirrors the git adapter's
+ * `redactUrl`.
+ */
+function redactGitUrl(url: string): string {
+  return url.replace(/(\w+:\/\/)([^/@\s]+)@/g, (_m, scheme: string) => `${scheme}***@`)
+}
+
+/**
+ * The literal credential substrings in a URL's userinfo, so they can be stripped
+ * from captured `git` stderr (which can echo a failing remote URL verbatim).
+ */
+function gitUrlSecrets(url: string): string[] {
+  const match = url.match(/\w+:\/\/([^/@\s]+)@/)
+  const userinfo = match?.[1] ?? ""
+  if (userinfo.length === 0) return []
+  const out = [userinfo]
+  const colon = userinfo.indexOf(":")
+  if (colon >= 0) {
+    const secret = userinfo.slice(colon + 1)
+    if (secret.length > 0) out.push(secret)
+  }
+  return out
+}
+
 export interface ResolveGitOptions {
   /** Directory to clone beneath; a fresh subdir is created. Defaults to an OS temp dir. */
   cacheRoot?: string
@@ -63,6 +90,10 @@ export async function resolveGitSource(
   const dest = await mkdtemp(join(cacheRoot, "repo-"))
   const env = scopedGitEnv(home)
   const short = source.commit.slice(0, 12)
+  // Never surface a credential embedded in the URL: redact it from our own
+  // messages, and strip it from captured git stderr (which can echo it verbatim).
+  const safeUrl = redactGitUrl(source.url)
+  const redactions = gitUrlSecrets(source.url)
 
   // Clone without a working tree — no checkout, so no checkout hook runs here. A
   // full clone (not --depth): fetching an arbitrary SHA shallowly is not
@@ -70,11 +101,11 @@ export async function resolveGitSource(
   const clone = await spawnCaptured(
     "git",
     [...HOOKS_OFF, "clone", "--no-checkout", "--quiet", source.url, dest],
-    { env },
+    { env, redactions },
   )
   if (clone.code !== 0) {
     throw new ProbePackError(
-      `git clone failed for '${source.url}': ${clone.stderr.trim().slice(0, 500)}`,
+      `git clone failed for '${safeUrl}': ${clone.stderr.trim().slice(0, 500)}`,
     )
   }
 
@@ -82,16 +113,19 @@ export async function resolveGitSource(
   const checkout = await spawnCaptured(
     "git",
     [...HOOKS_OFF, "-C", dest, "checkout", "--quiet", "--detach", source.commit],
-    { env },
+    { env, redactions },
   )
   if (checkout.code !== 0) {
     throw new ProbePackError(
-      `git checkout of commit ${short}… failed for '${source.url}': ${checkout.stderr.trim().slice(0, 500)}. Is the commit present in the repository?`,
+      `git checkout of commit ${short}… failed for '${safeUrl}': ${checkout.stderr.trim().slice(0, 500)}. Is the commit present in the repository?`,
     )
   }
 
   // Verify HEAD really is the pinned SHA (a remote could resolve a ref oddly).
-  const head = await spawnCaptured("git", [...HOOKS_OFF, "-C", dest, "rev-parse", "HEAD"], { env })
+  const head = await spawnCaptured("git", [...HOOKS_OFF, "-C", dest, "rev-parse", "HEAD"], {
+    env,
+    redactions,
+  })
   if (head.code !== 0 || head.stdout.trim() !== source.commit) {
     throw new ProbePackError(
       `Resolved git HEAD (${head.stdout.trim().slice(0, 12)}…) does not match the pinned commit ${short}….`,

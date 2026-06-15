@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { PackSourceRef } from "@qmilab/lodestar-core"
 import { ProbePackError } from "./errors.js"
+import { resolveGitSource } from "./git-source.js"
 import { resolveNpmSource } from "./npm-source.js"
 import { resolvePackSource } from "./source.js"
 import { extractTarball } from "./tar.js"
@@ -111,5 +112,21 @@ describe("extractTarball confinement", () => {
     // The pre-scan ran first: extraction never started, so nothing was written.
     expect(existsSync(join(dest, "real.ts"))).toBe(false)
     expect(existsSync(join(dest, "evil-link"))).toBe(false)
+  })
+})
+
+describe("git source credential redaction", () => {
+  test("does not leak URL userinfo in a clone-failure error", async () => {
+    // Port 1 is closed → connection refused, so the clone fails fast. The error
+    // must carry the redacted URL, never the embedded token.
+    const url = "http://user:s3cr3t-token@127.0.0.1:1/repo.git"
+    let message = ""
+    try {
+      await resolveGitSource({ type: "git", url, commit: "0".repeat(40) })
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err)
+    }
+    expect(message).not.toContain("s3cr3t-token")
+    expect(message).toContain("***")
   })
 })
