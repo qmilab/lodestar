@@ -1,13 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  type PackSourceRef,
   type ProbePackManifest,
   canonicalProbePackManifestHash,
   generateEd25519KeyPair,
 } from "@qmilab/lodestar-core"
-import { addProbePack } from "./add.js"
+import { addProbePack, lockfileSafeSource } from "./add.js"
 import { ProbePackError } from "./errors.js"
 import { readPackLockfile, upsertPackLockEntry } from "./lockfile.js"
 import { publishProbePack } from "./publish.js"
@@ -172,6 +173,83 @@ describe("addProbePack (local source)", () => {
     await expect(readFile(join(dir, "probes/sample.ts"), "utf8")).resolves.toContain(
       "export const x",
     )
+  })
+
+  test("a symlinked local root is materialized as a real, stable install copy", async () => {
+    // Resolution may hand back a symlinked root; copying it with dereference:false
+    // would make the install a symlink back to the source, so later edits to the
+    // source silently change the "installed" bytes. The install must be a real copy.
+    const real = await writePack()
+    await publishProbePack({ target: real, authorId: AUTHOR, privateKeyPem, at: AT })
+    const link = join(tmpRoot, `link-${counter++}`)
+    await symlink(real, link, "dir")
+    const installRoot = join(tmpRoot, `install-sym-${counter++}`)
+
+    const added = await addProbePack({
+      ref: { type: "local", path: link },
+      authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+      at: AT,
+      installRoot,
+    })
+    const installed = added.installedRoot ?? ""
+    // The installed root is a real directory, NOT a symlink aliasing the source.
+    expect((await lstat(installed)).isSymbolicLink()).toBe(false)
+    expect((await lstat(installed)).isDirectory()).toBe(true)
+    // Editing the original source does not change the installed (stable) bytes.
+    await writeFile(join(real, "probes/sample.ts"), "export const x = 999\n", "utf8")
+    await expect(readFile(join(installed, "probes/sample.ts"), "utf8")).resolves.toContain(
+      "export const x = 1",
+    )
+  })
+})
+
+describe("lockfileSafeSource", () => {
+  test("strips credentials from a git source URL before recording", () => {
+    const ref: PackSourceRef = {
+      type: "git",
+      url: "https://alice:s3cret@example.com/acme/packs.git",
+      commit: "a".repeat(40),
+    }
+    const safe = lockfileSafeSource(ref)
+    expect(safe.type).toBe("git")
+    if (safe.type === "git") {
+      expect(safe.url).toBe("https://example.com/acme/packs.git")
+      expect(safe.url).not.toContain("s3cret")
+      expect(safe.commit).toBe(ref.commit) // the pin identity is preserved
+    }
+  })
+
+  test("leaves a credential-free git URL and an scp-like remote unchanged", () => {
+    const https: PackSourceRef = {
+      type: "git",
+      url: "https://example.com/acme/packs.git",
+      commit: "b".repeat(40),
+    }
+    expect(lockfileSafeSource(https)).toEqual(https)
+    // scp-like (git@host:path) is not a parseable URL — no userinfo secret to strip.
+    const scp: PackSourceRef = {
+      type: "git",
+      url: "git@example.com:acme/packs.git",
+      commit: "c".repeat(40),
+    }
+    expect(lockfileSafeSource(scp)).toEqual(scp)
+  })
+
+  test("strips credentials from a credentialed npm registry URL", () => {
+    const ref: PackSourceRef = {
+      type: "npm",
+      package: "@acme/pack",
+      version: "1.0.0",
+      integrity: "sha512-x",
+      registry: "https://tok3n:@npm.example.com",
+    }
+    const safe = lockfileSafeSource(ref)
+    if (safe.type === "npm") expect(safe.registry).not.toContain("tok3n")
+  })
+
+  test("leaves a local source unchanged", () => {
+    const ref: PackSourceRef = { type: "local", path: "/some/pack" }
+    expect(lockfileSafeSource(ref)).toEqual(ref)
   })
 })
 

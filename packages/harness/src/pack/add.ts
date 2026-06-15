@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from "node:fs/promises"
+import { cp, mkdir, realpath, rm } from "node:fs/promises"
 import { join, resolve, sep } from "node:path"
 import {
   type PackLockEntry,
@@ -87,8 +87,10 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
       name: pack.manifest.name,
       version: pack.manifest.version,
       // The validated pin from resolution (exact version + integrity, or full SHA),
-      // falling back to the caller's ref for a local source resolved in place.
-      source: pack.source?.ref ?? ref,
+      // falling back to the caller's ref for a local source resolved in place. Any
+      // URL credentials are stripped — the lockfile is a durable artifact likely to
+      // be committed/shared, and the pin's identity is url+commit, not the auth.
+      source: lockfileSafeSource(pack.source?.ref ?? ref),
       manifest_hash: canonicalProbePackManifestHash(pack.manifest),
       added_at: at,
     }
@@ -97,6 +99,37 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
   }
 
   return { pack, installedRoot, lockEntry }
+}
+
+/**
+ * Strip any credentials from a source descriptor before it is recorded in the
+ * lockfile. A `git:https://user:token@host/repo.git` (or a credentialed npm
+ * registry URL) carries a secret in its userinfo; the lockfile is a durable,
+ * shareable artifact, so the recorded pin keeps the repo + commit identity but
+ * never the auth — credentials are supplied out-of-band at fetch time, not from a
+ * committed file. A non-URL git remote (scp-like `git@host:path`, a file path)
+ * carries no userinfo secret and is left unchanged.
+ */
+export function lockfileSafeSource(ref: PackSourceRef): PackSourceRef {
+  if (ref.type === "git") return { ...ref, url: stripUrlCredentials(ref.url) }
+  if (ref.type === "npm" && ref.registry !== undefined) {
+    return { ...ref, registry: stripUrlCredentials(ref.registry) }
+  }
+  return ref
+}
+
+/** Remove `user:password@` userinfo from a URL, leaving a non-URL string as-is. */
+function stripUrlCredentials(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return url
+  }
+  if (parsed.username === "" && parsed.password === "") return url
+  parsed.username = ""
+  parsed.password = ""
+  return parsed.toString()
 }
 
 /**
@@ -144,10 +177,16 @@ async function installVerifiedPack(
   // surviving alongside the new copy).
   await rm(dest, { recursive: true, force: true })
   await mkdir(installRoot, { recursive: true })
-  // dereference:false copies symlinks AS symlinks; the re-verify below rejects any
-  // that escape the pack root (the loader's realpath containment check), so a
-  // malicious link in a local source cannot be laundered through the install copy.
-  await cp(pack.root, dest, { recursive: true, dereference: false })
+  // Resolve the source ROOT through symlinks so `dest` is a real directory copy.
+  // Copying a symlinked root with dereference:false would make `dest` itself a
+  // symlink back to the original bytes — not a stable install (later edits to the
+  // source would silently change the "installed" pack without re-verification).
+  // realpath resolves only links in the path TO the root; internal links are still
+  // copied AS links (dereference:false), so the re-verify below rejects any that
+  // escape the pack root (the loader's realpath containment check) — a malicious
+  // link inside a local source cannot be laundered through the install copy.
+  const realSource = await realpath(pack.root)
+  await cp(realSource, dest, { recursive: true, dereference: false })
 
   try {
     await loadProbePack(dest, verifyOptions)
