@@ -11,9 +11,9 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Fifty-seven probes pass under
+resolved for future versions.) Fifty-eight probes pass under
 strict TypeScript (two need a Postgres test database — see
-below). Fifty-three live in the first-party pack
+below). Fifty-four live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -163,7 +163,19 @@ a branch/tag/short-SHA is refused), and `resolution-runs-no-pack-code` (the
 checks out at the pinned ref with `npm install` never run and hooks disabled, so
 no pack-authored code runs before verification; system-`tar` extraction with
 self-enforced confinement, git clone with scoped env mirroring `adapter-git`,
-`.git` removed; #86, ADR-0016 §1, ADR-0018). The other four live in the first non-core
+`.git` removed; #86, ADR-0016 §1, ADR-0018), and one registry author+consumer
+probe — `pack-publish-add-roundtrip` (the **publish→add flow**, #90, ADR-0016
+step 4: `publishProbePack` freezes a pack's files, content-digests them, signs
+the manifest in place and self-verifies; `addProbePack` resolves the pinned
+source via the non-executing fetch, verifies the signature + content digest
+against the pinned author key **before any pack code runs**, installs to a stable
+dir with the installed copy re-verified, and records the immutable pin + manifest
+hash in a lockfile; a probe byte or a manifest field swapped after signing fails
+`add`, a signed pack from an un-pinned author is refused even under
+`allow_unsigned`, and the author private key never surfaces in any produced
+artifact; the logic lives in `@qmilab/lodestar-harness`, the consumer formats
+[trust config + lockfile] in `@qmilab/lodestar-core`, and `lodestar pack
+keygen/publish/add` is the CLI; ADR-0019). The other four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
 `poisoned-file-cannot-hijack-feature-work` (the governed-dev no-hijack
@@ -264,12 +276,12 @@ packages/
       letta/           # (exists) Letta blocks import adapter
       zep/             # (exists) Zep facts import adapter
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
-  cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe
+  cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe, pack (keygen/publish/add, ADR-0019)
   guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel; SentinelArbiter + compileWithSentinels wire the harness sentinels into the gate's arbitrate hook (sentinel→action, ADR-0001); arbiter also exposes observedBeliefIds() — the conservative observed-belief set guard-mcp reads to synthesize decisions for its opaque agent (cumulative, never reduced by execution; ADR-0003)
   trace/               # (exists) read side + `lodestar report` CLI
   viewer/              # (exists, post-v1) read-side Governing UI — `lodestar view`; Elysia + no-build vanilla SPA over the log; strictly read-only (no mutation route, never writes the log); surfaces pending approvals for visibility only
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`; held L4 actions wait up to `approval_timeout_ms` polling for an out-of-band `approval.granted@1`, else synthetic `approval_timeout`; optionally wires a SentinelArbiter (config.sentinels) and synthesizes a decision.made per action from the recency window so a belief-scoped alert holds the dependent tools/call — opaque-agent decision source (ADR-0003)
-  harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier); npm/git pack source resolution (loadProbePackFromSource — non-executing fetch to an immutable pin, then verify-on-load; #86, ADR-0018)
+  harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier); npm/git pack source resolution (loadProbePackFromSource — non-executing fetch to an immutable pin, then verify-on-load; #86, ADR-0018); pack publish/add flow (publishProbePack signs in place + self-verifies, addProbePack resolves→verifies→installs→records the pin; shared resolve.ts so publish and verify digest identically; #90, ADR-0019)
   policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). host wiring landed for all three paths: the in-process (guard.wrap() resolver seam), MCP-proxy (deadline/timeout out-of-band hold path), and the separate-process `lodestar approve` CLI (writes a side-channel the proxy promotes; proxy stays sole event-log writer)
   otel-exporter/       # (exists, post-v1) OTel GenAI semantic conventions bridge — `lodestar otel export`; read-side batch projection of a session into OTLP/HTTP-JSON spans (action-centric: invoke_agent root + execute_tool spans), hand-rolled wire format (no OTel SDK dep), with the sensitivity-ceiling export gate (content above the ceiling ships as metadata + payload hash only)
   ship/                # (exists) session shipper — `lodestar ship`; read-side batch transfer of a session's raw envelopes to a remote collector as the versioned NDJSON wire format `lodestar.session_ship@1` (POST {base}/v1/events), with the locked sensitivity ceiling applied client-side before egress (above-ceiling records ship redacted: payload replaced by a marker, original payload_hash kept so tamper evidence survives); bearer token from a named env var, never argv/logged; ADR-0014
@@ -292,7 +304,7 @@ examples/
                              #   DocAwareEvidenceLinker via the guard cognitive seam
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 40 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 54 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -370,7 +382,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Fifty-seven probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
+- **Fifty-eight probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI.)
 
 ## Quick references
 

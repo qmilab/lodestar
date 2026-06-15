@@ -1,17 +1,15 @@
-import { createHash } from "node:crypto"
-import { readFile, realpath, stat } from "node:fs/promises"
-import { dirname, isAbsolute, join, relative, resolve } from "node:path"
-import {
-  PROBE_PACK_MANIFEST_FILENAME,
-  type PackContentDigest,
-  type PackSourceRef,
-  type PinnedPublicKeys,
-  type ProbePackManifest,
-  ProbePackManifestSchema,
-  verifyProbePackManifestSignature,
-} from "@qmilab/lodestar-core"
+import type { PackSourceRef, PinnedPublicKeys, ProbePackManifest } from "@qmilab/lodestar-core"
+import { verifyProbePackManifestSignature } from "@qmilab/lodestar-core"
 import { FIRST_PARTY_SENTINELS, type SentinelFactory } from "../sentinels/registry.js"
 import { ProbePackError } from "./errors.js"
+import {
+  type LoadedProbe,
+  assertContentDigestMatches,
+  computePackContentDigest,
+  locateManifest,
+  readManifest,
+  resolveProbeFiles,
+} from "./resolve.js"
 import {
   type ResolvePackSourceOptions,
   type ResolvedPackSource,
@@ -23,15 +21,9 @@ import {
 // the loader's public surface.
 export { ProbePackError } from "./errors.js"
 
-/** One probe from a loaded pack, with its source resolved to an absolute path. */
-export interface LoadedProbe {
-  /** Stable identifier, unique within the pack. */
-  name: string
-  /** The path as written in the manifest, relative to the pack root. */
-  file: string
-  /** Absolute path to the probe source, guaranteed to exist and to live within the pack root. */
-  path: string
-}
+// LoadedProbe moved to ./resolve.js alongside the resolution it describes;
+// re-exported here because it has always been part of the loader's public surface.
+export type { LoadedProbe } from "./resolve.js"
 
 /**
  * One sentinel from a loaded pack, resolved to its first-party factory.
@@ -74,31 +66,6 @@ export interface LoadedProbePack {
   source?: ResolvedPackSource
 }
 
-// "file" means a *regular* file specifically. A FIFO/socket/device is
-// neither a regular file nor a directory and comes back as "other" —
-// reading a FIFO manifest could hang readFile(), and a non-regular
-// probe source violates the loader's regular-file guarantee.
-async function pathKind(p: string): Promise<"file" | "dir" | "other" | "missing"> {
-  try {
-    const s = await stat(p)
-    if (s.isDirectory()) return "dir"
-    if (s.isFile()) return "file"
-    return "other"
-  } catch {
-    return "missing"
-  }
-}
-
-// Given a path relative to the pack root, does it point at or outside
-// the root? Escape means a leading `..` *segment* or an absolute path.
-// Test the segment, not a bare "..": "..fixtures/p.ts" is a legitimate
-// in-pack name whose relative form merely starts with two dots.
-function escapesRoot(rel: string): boolean {
-  return (
-    rel === "" || rel === ".." || rel.startsWith("../") || rel.startsWith("..\\") || isAbsolute(rel)
-  )
-}
-
 /**
  * Options for {@link loadProbePack} — the verify-on-load trust controls (#88,
  * ADR-0017). Both default to the secure stance: with neither supplied, a signed
@@ -118,59 +85,6 @@ export interface LoadProbePackOptions {
    * this. A *signed* pack is always fully verified regardless of this flag.
    */
   allowUnsigned?: boolean
-}
-
-/**
- * Recompute the content digest over the resolved probe files: a sorted per-file
- * sha-256 list keyed by the path as declared in the manifest (relative, so the
- * digest is portable across machines). Compared against the manifest's signed
- * `content_digest` so a swapped probe byte is caught even under a valid signature.
- */
-async function computePackContentDigest(probes: LoadedProbe[]): Promise<PackContentDigest> {
-  const files = await Promise.all(
-    probes.map(async (p) => ({
-      path: p.file,
-      sha256: createHash("sha256")
-        .update(await readFile(p.path))
-        .digest("hex"),
-    })),
-  )
-  files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
-  return { algorithm: "sha256", files }
-}
-
-/**
- * Compare the on-disk content digest to the manifest's signed one, throwing a
- * {@link ProbePackError} that names the first offending file on any mismatch
- * (changed bytes, an added file, or a removed file).
- */
-function assertContentDigestMatches(
-  packName: string,
-  declared: PackContentDigest,
-  recomputed: PackContentDigest,
-): void {
-  const declaredMap = new Map(declared.files.map((f) => [f.path, f.sha256]))
-  const recomputedMap = new Map(recomputed.files.map((f) => [f.path, f.sha256]))
-  for (const [path, sha256] of recomputedMap) {
-    const expected = declaredMap.get(path)
-    if (expected === undefined) {
-      throw new ProbePackError(
-        `Pack '${packName}' content digest mismatch: file '${path}' is present on disk but not in the signed content_digest.`,
-      )
-    }
-    if (expected !== sha256) {
-      throw new ProbePackError(
-        `Pack '${packName}' content digest mismatch: file '${path}' has been modified since it was signed (on-disk sha256 ${sha256.slice(0, 12)}… ≠ signed ${expected.slice(0, 12)}…).`,
-      )
-    }
-  }
-  for (const path of declaredMap.keys()) {
-    if (!recomputedMap.has(path)) {
-      throw new ProbePackError(
-        `Pack '${packName}' content digest mismatch: signed file '${path}' is missing from the resolved pack.`,
-      )
-    }
-  }
 }
 
 /**
@@ -214,48 +128,8 @@ export async function loadProbePack(
   target: string,
   options: LoadProbePackOptions = {},
 ): Promise<LoadedProbePack> {
-  const absTarget = resolve(target)
-  const kind = await pathKind(absTarget)
-
-  if (kind === "missing") {
-    throw new ProbePackError(`Probe pack path does not exist: ${absTarget}`)
-  }
-  if (kind === "other") {
-    throw new ProbePackError(
-      `Probe pack path is neither a regular file nor a directory: ${absTarget}`,
-    )
-  }
-
-  const manifestPath = kind === "dir" ? join(absTarget, PROBE_PACK_MANIFEST_FILENAME) : absTarget
-
-  if (kind === "dir" && (await pathKind(manifestPath)) !== "file") {
-    throw new ProbePackError(
-      `No ${PROBE_PACK_MANIFEST_FILENAME} found in pack directory: ${absTarget}`,
-    )
-  }
-
-  let raw: string
-  try {
-    raw = await readFile(manifestPath, "utf8")
-  } catch (cause) {
-    throw new ProbePackError(`Could not read manifest: ${manifestPath}`, { cause })
-  }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(raw)
-  } catch (cause) {
-    throw new ProbePackError(`Manifest is not valid JSON: ${manifestPath}`, { cause })
-  }
-
-  const result = ProbePackManifestSchema.safeParse(parsed)
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((i) => `  - ${i.path.join(".") || "(root)"}: ${i.message}`)
-      .join("\n")
-    throw new ProbePackError(`Manifest failed validation: ${manifestPath}\n${issues}`)
-  }
-  const manifest = result.data
+  const { manifestPath, root } = await locateManifest(target)
+  const manifest = await readManifest(manifestPath)
 
   // No source_type gate here: by the time this function has a path, the bytes
   // are on disk. `npm`/`git` packs are fetched to a confined directory by the
@@ -273,62 +147,10 @@ export async function loadProbePack(
     makeError: (m) => new ProbePackError(m),
   })
 
-  const root = dirname(manifestPath)
-  // Canonical pack root, used for the post-symlink containment check.
-  const realRoot = await realpath(root)
-
-  const seen = new Set<string>()
-  const probes: LoadedProbe[] = []
-  for (const entry of manifest.probes) {
-    if (seen.has(entry.name)) {
-      throw new ProbePackError(
-        `Pack '${manifest.name}' declares probe name '${entry.name}' more than once.`,
-      )
-    }
-    seen.add(entry.name)
-
-    const probePath = resolve(root, entry.file)
-    // Security boundary: a pack manifest is potentially third-party. A
-    // probe file must stay within the pack root — reject any `file` that
-    // escapes it (e.g. "../../etc/passwd") before we ever touch the path.
-    const rel = relative(root, probePath)
-    if (escapesRoot(rel)) {
-      throw new ProbePackError(
-        `Probe '${entry.name}' resolves outside the pack root: '${entry.file}' (pack root ${root}).`,
-      )
-    }
-
-    // The lexical check above is not enough: the probe file (or a
-    // directory along the way) may be a symlink whose real target lives
-    // outside the pack root. realpath follows every link; re-check
-    // containment against the canonical root so a symlinked escape
-    // (e.g. probes/p.ts -> /etc/passwd) is rejected. realpath also
-    // throws if the path does not exist — that is the "not found" case.
-    let realProbe: string
-    try {
-      realProbe = await realpath(probePath)
-    } catch (cause) {
-      throw new ProbePackError(
-        `Probe '${entry.name}' file not found: ${probePath} (declared as '${entry.file}').`,
-        { cause },
-      )
-    }
-
-    const realRel = relative(realRoot, realProbe)
-    if (escapesRoot(realRel)) {
-      throw new ProbePackError(
-        `Probe '${entry.name}' resolves outside the pack root via a symlink: '${entry.file}' -> ${realProbe} (pack root ${realRoot}).`,
-      )
-    }
-
-    if ((await pathKind(realProbe)) !== "file") {
-      throw new ProbePackError(
-        `Probe '${entry.name}' is not a regular file: ${probePath} (declared as '${entry.file}').`,
-      )
-    }
-
-    probes.push({ name: entry.name, file: entry.file, path: probePath })
-  }
+  // Resolve every probe file to an absolute path inside the pack root (the
+  // untrusted-manifest escape + symlink containment checks live in resolve.ts,
+  // shared verbatim with the publisher so the digest binds the same bytes).
+  const probes = await resolveProbeFiles(manifest, root)
 
   // Resolve declared sentinels against the built-in first-party registry.
   // A sentinel is referenced by id (not file): it is an in-process class,

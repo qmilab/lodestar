@@ -40,6 +40,9 @@ export * from "./schemas/calibration.js"
 // Probe pack format (Batch 4) — the lodestar.probe-pack.json manifest contract
 export * from "./schemas/probe-pack.js"
 
+// Consumer registry formats (#90, ADR-0019) — the pack trust config + lockfile
+export * from "./schemas/pack-registry.js"
+
 // Sentinels (Batch 4) — the sentinel.alerted@1 alert wire format
 export * from "./schemas/sentinel.js"
 

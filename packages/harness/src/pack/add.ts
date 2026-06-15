@@ -1,0 +1,136 @@
+import { cp, mkdir, rm } from "node:fs/promises"
+import { join, resolve } from "node:path"
+import {
+  type PackLockEntry,
+  type PackSourceRef,
+  type PinnedPublicKeys,
+  canonicalProbePackManifestHash,
+} from "@qmilab/lodestar-core"
+import { ProbePackError } from "./errors.js"
+import { type LoadedProbePack, loadProbePack, loadProbePackFromSource } from "./loader.js"
+import { upsertPackLockEntry } from "./lockfile.js"
+import type { ResolvePackSourceOptions } from "./source.js"
+
+/**
+ * `addProbePack` — the consumer side of the registry flow (#90, ADR-0019).
+ *
+ * The whole sequence is **resolve → verify → install → record**, and the order is
+ * the point: resolution is a non-executing fetch (#86) and verification is the #88
+ * signature + content-digest check, both of which run **before** any pack-authored
+ * code could (an `npm install` lifecycle script, a git hook) — that is what makes a
+ * pack a trust artifact and not raw capability. Only a verified pack is installed
+ * and recorded. Fail closed: an unverified or content-mismatched pack throws unless
+ * `allowUnsigned` is set explicitly.
+ */
+
+export interface AddProbePackOptions {
+  /** The immutable, pinned source descriptor to resolve (npm / git / local). */
+  ref: PackSourceRef
+  /** Operator-pinned author keys the manifest signature is verified against. */
+  authorizedAuthorKeys?: PinnedPublicKeys
+  /** Explicit opt-out: accept an unsigned pack. No silent default. */
+  allowUnsigned?: boolean
+  /**
+   * Directory to install the verified pack into (a `<pack-name>/` subdir is
+   * created beneath it). When set, the verified bytes are copied there and the
+   * installed copy is re-loaded + re-verified (a TOCTOU closure). Skip install when
+   * undefined.
+   */
+  installRoot?: string
+  /** Lockfile path to record the verified pin into. Skip recording when undefined. */
+  lockfilePath?: string
+  /** When the pin was recorded (ISO 8601). Caller-supplied so add is deterministic. */
+  at: string
+  /** Cache root for the npm/git non-executing fetch. Defaults to an OS temp dir. */
+  cacheRoot?: string
+  /** Injection seam for tests — the npm resolver's `fetch`. */
+  fetchImpl?: typeof fetch
+}
+
+export interface AddedProbePack {
+  /** The verified pack, resolved to confined bytes (its `source` records the pin). */
+  pack: LoadedProbePack
+  /** Absolute path the pack was installed to, when `installRoot` was set. */
+  installedRoot?: string
+  /** The lockfile entry recorded, when `lockfilePath` was set. */
+  lockEntry?: PackLockEntry
+}
+
+export async function addProbePack(options: AddProbePackOptions): Promise<AddedProbePack> {
+  const { ref, authorizedAuthorKeys, allowUnsigned, installRoot, lockfilePath, at } = options
+
+  // Resolve via the non-executing fetch, then verify on load (#86 + #88). No pack
+  // code has run at this point — resolution downloads/extracts/checks-out at the
+  // pin with install scripts and hooks disabled, and this returns only after the
+  // signature + content digest verify over the fetched bytes.
+  const resolveOpts: ResolvePackSourceOptions = {}
+  if (options.cacheRoot !== undefined) resolveOpts.cacheRoot = options.cacheRoot
+  if (options.fetchImpl !== undefined) resolveOpts.fetchImpl = options.fetchImpl
+
+  const pack = await loadProbePackFromSource(ref, {
+    authorizedAuthorKeys,
+    allowUnsigned,
+    ...resolveOpts,
+  })
+
+  let installedRoot: string | undefined
+  if (installRoot !== undefined) {
+    installedRoot = await installVerifiedPack(pack, resolve(installRoot), {
+      authorizedAuthorKeys,
+      allowUnsigned,
+    })
+  }
+
+  let lockEntry: PackLockEntry | undefined
+  if (lockfilePath !== undefined) {
+    lockEntry = {
+      name: pack.manifest.name,
+      version: pack.manifest.version,
+      // The validated pin from resolution (exact version + integrity, or full SHA),
+      // falling back to the caller's ref for a local source resolved in place.
+      source: pack.source?.ref ?? ref,
+      manifest_hash: canonicalProbePackManifestHash(pack.manifest),
+      added_at: at,
+    }
+    if (pack.manifest.author_id !== undefined) lockEntry.author_id = pack.manifest.author_id
+    await upsertPackLockEntry(lockfilePath, lockEntry)
+  }
+
+  return { pack, installedRoot, lockEntry }
+}
+
+/**
+ * Copy a verified pack into `<installRoot>/<pack-name>` and re-verify the installed
+ * copy. The re-verification is a TOCTOU closure: it proves the installed bytes are
+ * the ones that verified (and that the copy did not introduce a symlink that
+ * escapes the pack root). A failed re-verify removes the partial install so a
+ * broken pack is never left behind.
+ */
+async function installVerifiedPack(
+  pack: LoadedProbePack,
+  installRoot: string,
+  verifyOptions: { authorizedAuthorKeys?: PinnedPublicKeys; allowUnsigned?: boolean },
+): Promise<string> {
+  const dest = join(installRoot, pack.manifest.name)
+  // Replace any existing install of this pack so a re-add is clean (no stale files
+  // surviving alongside the new copy).
+  await rm(dest, { recursive: true, force: true })
+  await mkdir(installRoot, { recursive: true })
+  // dereference:false copies symlinks AS symlinks; the re-verify below rejects any
+  // that escape the pack root (the loader's realpath containment check), so a
+  // malicious link in a local source cannot be laundered through the install copy.
+  await cp(pack.root, dest, { recursive: true, dereference: false })
+
+  try {
+    await loadProbePack(dest, verifyOptions)
+  } catch (cause) {
+    await rm(dest, { recursive: true, force: true }).catch(() => {})
+    throw new ProbePackError(
+      `Pack '${pack.manifest.name}' verified on resolution but its installed copy at ${dest} failed re-verification; install removed: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      { cause },
+    )
+  }
+  return dest
+}

@@ -35,6 +35,29 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   (clone + checkout at a full SHA, hooks off), `tar.ts` (system-`tar` extract +
   confinement), `run.ts` (the one scoped-env subprocess runner). Non-executing and
   no new dependency; see invariant 5.
+  **Shared resolution (#90, ADR-0019):** `pack/resolve.ts` factors the loader's
+  probe-file resolution (the escape + symlink-realpath containment checks),
+  `computePackContentDigest`, and the manifest read/locate out of the loader, so
+  the loader (verify path) and the publisher (sign path) compute the digest over
+  *the same bytes the same way* — a publish that digested differently than the
+  loader verifies would be a latent forgery hole.
+- `src/pack/publish.ts` — `publishProbePack(opts)`, the author side (#90,
+  ADR-0019). Freeze files → `content_digest` → set `author_id` → sign the canonical
+  manifest → write in place → **self-verify** by re-loading through `loadProbePack`
+  (author pinned, `allowUnsigned` off). Signs *after* freezing (ADR-0016 §2): tooling
+  cannot sign a manifest then mutate its files. Returns the signed manifest, its
+  hash, and the author's derived SPKI public key (the consumer pin).
+- `src/pack/add.ts` — `addProbePack(opts)`, the consumer side (#90, ADR-0019):
+  resolve → verify → install → record. Resolves via `loadProbePackFromSource` (the
+  non-executing fetch + #88 verify-on-load, so **no pack code runs before
+  verification**), then copies the verified bytes into `<installRoot>/<name>` and
+  re-loads + re-verifies the installed copy (a TOCTOU closure), then records the
+  immutable pin + canonical manifest hash in the lockfile. Fail closed.
+- `src/pack/trust-config.ts` / `src/pack/lockfile.ts` — the consumer's
+  `pack-trust.json` (pinned author keys, mirroring the proxy's
+  `approvals.authorized_keys`) and `packs.lock.json` (recorded pins) IO. The
+  formats are core schemas (`schemas/pack-registry.ts`); these are the fs readers/
+  writers (atomic temp+rename for the lockfile). Driven by `lodestar pack`.
 - `src/probe.ts` — the `Probe` authoring surface (`Probe` base class,
   `ProbeSpec`, `ProbeResult`, `runProbeAsScript`, `formatProbeReport`).
   The contract *new* probes declare themselves against. The 17
