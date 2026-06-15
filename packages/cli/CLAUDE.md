@@ -19,8 +19,20 @@ src/
     ├── trace.ts              # `lodestar trace inspect`
     ├── probe.ts              # `lodestar probe <name>`
     ├── reflect.ts            # `lodestar reflect <session-id>`
-    └── harness.ts            # `lodestar harness run/list/calibrate`
+    ├── harness.ts            # `lodestar harness run/list/calibrate`
+    └── pack.ts               # `lodestar pack keygen/publish/add`
 ```
+
+The `pack` command is the trust-pack author + consumer flow (ADR-0019). It is a
+thin shell over `@qmilab/lodestar-harness`'s `publishProbePack` / `addProbePack`:
+`keygen` mints an Ed25519 author keypair (private key 0600, temp+rename, never on
+argv — same discipline as `approve keygen`); `publish` signs a pack's manifest in
+place (the author key from `--key`/`LODESTAR_AUTHOR_KEY`, never argv) and
+self-verifies; `add` resolves a **pinned** source (`npm:…@… --integrity …`,
+`git:…#<40-hex>`, or `local:`/path), verifies the signature + content digest
+against pinned author keys (the trust config + `--author-key`) **before any pack
+code could run**, then installs + records the pin. No event-log writes; all the
+signing/resolution/verification logic lives in the harness, not here.
 
 The `approve` command is the reference approval resolver: it writes a
 resolution to the MCP proxy's side-channel

@@ -26,6 +26,7 @@ import { guardWrapCommand } from "./commands/guard.js"
 import { harnessCommand } from "./commands/harness.js"
 import { HELP_TEXT } from "./commands/help.js"
 import { otelCommand } from "./commands/otel.js"
+import { packCommand } from "./commands/pack.js"
 import { probeCommand } from "./commands/probe.js"
 import { reflectCommand } from "./commands/reflect.js"
 import { reportCommand } from "./commands/report.js"
@@ -104,6 +105,9 @@ async function dispatch(): Promise<number> {
 
     case "harness":
       return harnessCommand(sub === undefined ? [] : [sub, ...rest])
+
+    case "pack":
+      return packCommand(sub === undefined ? [] : [sub, ...rest])
 
     case "reflect":
       return reflectCommand(sub === undefined ? [] : [sub, ...rest])

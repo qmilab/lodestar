@@ -53,6 +53,20 @@ export {
 export { resolveNpmSource, type ResolveNpmOptions } from "./pack/npm-source.js"
 export { resolveGitSource, type ResolveGitOptions } from "./pack/git-source.js"
 
+// Pack registry author + consumer flow (#90, ADR-0019)
+export {
+  publishProbePack,
+  type PublishProbePackOptions,
+  type PublishedProbePack,
+} from "./pack/publish.js"
+export { addProbePack, type AddProbePackOptions, type AddedProbePack } from "./pack/add.js"
+export { readPackTrustConfig, DEFAULT_PACK_TRUST_PATH } from "./pack/trust-config.js"
+export {
+  readPackLockfile,
+  upsertPackLockEntry,
+  DEFAULT_PACK_LOCKFILE_PATH,
+} from "./pack/lockfile.js"
+
 export {
   Probe,
   type ProbeResult,

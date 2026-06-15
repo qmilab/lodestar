@@ -155,3 +155,25 @@ The options we rejected, each with a one-line reason.
   spec version. Reuse core + policy-kernel + harness before a new package. Ordered
   children: #91 threat-model → #88 signed manifests → #86 npm/git resolution →
   #90 publish/add CLI → #89 badges → #87 discovery index.
+- [ADR-0017](0017-signed-pack-manifests.md) — Signed pack manifests (#88, the
+  trust root): Ed25519 over the canonical `lodestar.probe-pack.json`, verified on
+  load against operator-pinned author keys, the signature binding a per-file
+  `content_digest` so a swapped probe byte is caught under a valid signature. The
+  canonical-hash + sign/verify primitive graduated to `@qmilab/lodestar-core`
+  `src/crypto/` so manifest, approval, and badge signing share one implementation.
+- [ADR-0018](0018-npm-git-pack-source-resolution.md) — npm/git pack source
+  resolution (#86, the transport): `loadProbePackFromSource(ref)` resolves a pinned
+  `PackSourceRef` (npm: exact version + SRI integrity; git: full commit SHA) to
+  confined bytes via a **non-executing fetch** (no `npm install` lifecycle scripts,
+  no git hooks — system `tar` with self-enforced confinement, git clone with hooks
+  disabled and `.git` removed), then delegates to the #88 verify-on-load over the
+  *fetched* bytes. Zero new dependencies.
+- [ADR-0019](0019-pack-publish-add-cli.md) — `lodestar pack publish` / `pack add`
+  (#90, the author + consumer flow, ADR-0016 step 4): publish freezes the files,
+  computes the content digest, signs the canonical manifest **after** the files are
+  final, then self-verifies; `add` parses a pinned source, verifies signature +
+  digest against pinned author keys via the non-executing fetch **before** any pack
+  code runs, then surfaces / installs (with a re-verify of the installed copy) /
+  records the pin in a lockfile. Logic in `harness`, formats in `core`, shell in
+  `cli` — no new package (ADR-0016 §6). `pack keygen` mints author keys (never on
+  argv). Probe `pack-publish-add-roundtrip`.

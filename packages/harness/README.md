@@ -169,6 +169,42 @@ A swapped artifact under a re-pointed ref fails the content-digest check even if
 the old signature still verifies. Resolution delivers *authentic, inert bytes*;
 sandboxing what a probe does **when run** is a separate, runner-side concern.
 
+## Publishing and adding a pack (the author + consumer flow)
+
+`publishProbePack` (author) and `addProbePack` (consumer) are the programmatic
+backbone of `lodestar pack publish` / `lodestar pack add` (ADR-0019). Publish
+freezes the declared probe files, content-digests them, signs the manifest in
+place **after** the files are final (so tooling cannot sign then mutate), and
+self-verifies by re-loading through the same `loadProbePack` a consumer uses. Add
+resolves a pinned source via the non-executing fetch, verifies signature +
+content digest against pinned author keys before any pack code could run, installs
+the verified bytes (re-verifying the installed copy), and records the pin.
+
+```ts
+import { publishProbePack, addProbePack } from "@qmilab/lodestar-harness"
+
+// Author: sign ./packs/mine in place; returns the signed manifest, its hash, and
+// the author's derived public key (the pin a consumer adds to their trust config).
+const published = await publishProbePack({
+  target: "./packs/mine",
+  authorId: "acme",
+  privateKeyPem, // from a 0600 file / secret store — never argv
+  at: new Date().toISOString(),
+})
+
+// Consumer: resolve + verify + install + record the pin.
+const added = await addProbePack({
+  ref: { type: "local", path: "./packs/mine" },
+  authorizedAuthorKeys: [{ actor_id: "acme", public_key: published.publicKeyPem }],
+  installRoot: ".lodestar/packs",
+  lockfilePath: ".lodestar/packs.lock.json",
+  at: new Date().toISOString(),
+})
+```
+
+The trust config (`readPackTrustConfig`) and lockfile (`readPackLockfile` /
+`upsertPackLockEntry`) are the consumer-side IO; the formats are core schemas.
+
 ## Running a pack
 
 ```ts

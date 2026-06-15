@@ -62,6 +62,31 @@ export function generateEd25519KeyPair(): { publicKeyPem: string; privateKeyPem:
 }
 
 /**
+ * Derive the SPKI PEM public key from a PKCS#8 PEM private key. Used by the pack
+ * publisher: it holds only the author's private key but needs the matching public
+ * key to (a) self-verify the freshly signed manifest and (b) print the pin a
+ * consumer adds to their trust config. Pure compute over `node:crypto`; throws via
+ * `makeError` on a key that is unparseable or not Ed25519.
+ */
+export function publicKeyPemFromPrivate(
+  privateKeyPem: string,
+  makeError: SignatureErrorFactory = (m) => new Error(m),
+): string {
+  let key: ReturnType<typeof createPrivateKey>
+  try {
+    key = createPrivateKey(privateKeyPem)
+  } catch (err) {
+    throw makeError(`private key could not be parsed: ${String(err)}`)
+  }
+  if (key.asymmetricKeyType !== "ed25519") {
+    throw makeError(
+      `private key is ${key.asymmetricKeyType ?? "an unknown type"}, expected ed25519`,
+    )
+  }
+  return createPublicKey(key).export({ type: "spki", format: "pem" }).toString()
+}
+
+/**
  * Validate that every pinned public key is a parseable Ed25519 SPKI PEM, throwing
  * on the first bad one. Call this once at config load: a corrupt pinned key would
  * otherwise surface only at verification time as a *rejected* signature

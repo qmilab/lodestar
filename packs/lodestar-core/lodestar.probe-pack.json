@@ -63,7 +63,8 @@
     "ship_wire_roundtrip",
     "pack_manifest_signature",
     "pack_content_digest_binding",
-    "pack_source_resolution"
+    "pack_source_resolution",
+    "pack_publish_add_roundtrip"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -229,6 +230,10 @@
     {
       "name": "resolution-runs-no-pack-code",
       "file": "probes/resolution-runs-no-pack-code.ts"
+    },
+    {
+      "name": "pack-publish-add-roundtrip",
+      "file": "probes/pack-publish-add-roundtrip.ts"
     }
   ]
 }

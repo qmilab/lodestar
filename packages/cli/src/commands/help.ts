@@ -17,6 +17,9 @@ Usage:
   lodestar harness run [--pack <name|path>] [--log-root <path>] [--no-record]
   lodestar harness list [--pack <name|path>]
   lodestar harness calibrate <session-id> [--project <id>] [--no-emit] [--out <file>]
+  lodestar pack keygen --author <id> [--out <prefix>]
+  lodestar pack publish [--pack <dir>] --author <id> [--key <path>]
+  lodestar pack add <source> [--author-key <id>=<file>] [--allow-unsigned]
   lodestar reflect <session-id> [--since-seq <n>] [--trigger <name>] [--json]
   lodestar help
 
@@ -54,6 +57,15 @@ Commands:
                calibrate — score a session's stated confidence against realised
                            outcome per class and record the verdict as a durable
                            'calibration.computed@1' event (--no-emit to preview).
+  pack       Author and consume signed trust-packs (ADR-0019). Modes:
+               keygen   — mint an Ed25519 author keypair (private key 0600,
+                          never on argv).
+               publish  — freeze a pack's files, content-digest them, sign the
+                          manifest in place, and self-verify.
+               add      — resolve a PINNED source (npm/git/local) via a
+                          non-executing fetch, verify the signature + content
+                          digest against pinned author keys before any pack code
+                          runs, then install + record the pin in a lockfile.
   reflect    Dry-run a reflection pass over a session's event log: print the
              typed proposals reflection would produce. Applying is the host's
              job (Guard / the MCP proxy own the live firewall).
@@ -73,5 +85,7 @@ Examples:
   lodestar harness run --pack lodestar-core
   lodestar harness list
   lodestar harness calibrate session-1779551238212
+  lodestar pack keygen --author acme --out acme-author
+  lodestar pack add npm:@acme/safety-pack@1.2.0 --integrity sha512-… --author-key acme=acme-author.pub
   lodestar reflect session-1779551238212
 `
