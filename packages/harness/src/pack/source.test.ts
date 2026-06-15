@@ -134,6 +134,34 @@ describe("extractTarball confinement", () => {
   })
 })
 
+describe("git source confinement", () => {
+  test("rejects a checkout containing a symlink (e.g. a symlinked manifest)", async () => {
+    const repo = await mkdtemp(join(tmpdir(), "lodestar-git-symlink-"))
+    const env: Record<string, string> = {
+      ...(process.env as Record<string, string>),
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_SYSTEM: "/dev/null",
+      GIT_AUTHOR_NAME: "Probe",
+      GIT_AUTHOR_EMAIL: "probe@example.com",
+      GIT_COMMITTER_NAME: "Probe",
+      GIT_COMMITTER_EMAIL: "probe@example.com",
+    }
+    await writeFile(join(repo, "real.ts"), "ok")
+    // A symlinked manifest would be followed by loadProbePack outside the root.
+    await symlink("/etc/hosts", join(repo, "lodestar.probe-pack.json"))
+    expect(Bun.spawnSync(["git", "init", "-q", repo], { env }).exitCode).toBe(0)
+    Bun.spawnSync(["git", "-C", repo, "add", "-A"], { env })
+    expect(Bun.spawnSync(["git", "-C", repo, "commit", "-q", "-m", "x"], { env }).exitCode).toBe(0)
+    const sha = Bun.spawnSync(["git", "-C", repo, "rev-parse", "HEAD"], { env })
+      .stdout.toString()
+      .trim()
+
+    await expect(resolveGitSource({ type: "git", url: repo, commit: sha })).rejects.toThrow(
+      /symlink/,
+    )
+  })
+})
+
 describe("direct resolver input validation", () => {
   test("resolveNpmSource rejects a non-exact version even when called directly", async () => {
     await expect(

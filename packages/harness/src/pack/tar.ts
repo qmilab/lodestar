@@ -1,5 +1,5 @@
-import { lstat, readdir, realpath } from "node:fs/promises"
-import { isAbsolute, join, relative } from "node:path"
+import { isAbsolute } from "node:path"
+import { assertNoSymlinksOrEscapes } from "./confinement.js"
 import { ProbePackError } from "./errors.js"
 import { spawnCaptured } from "./run.js"
 
@@ -117,43 +117,4 @@ async function assertSafeEntries(tarballPath: string, maxListingBytes?: number):
       )
     }
   }
-}
-
-/**
- * Recursively reject any symlink in the extracted tree, and any entry whose real
- * path escapes `destDir`. Defence-in-depth behind {@link assertSafeEntries} — the
- * pre-scan should already have refused any link, but this catches anything that
- * slipped through (e.g. a tar variant the listing rendered unexpectedly).
- */
-async function assertNoSymlinksOrEscapes(destDir: string): Promise<void> {
-  const realRoot = await realpath(destDir)
-
-  const walk = async (dir: string): Promise<void> => {
-    const entries = await readdir(dir, { withFileTypes: true })
-    for (const entry of entries) {
-      const abs = join(dir, entry.name)
-      const stats = await lstat(abs)
-      if (stats.isSymbolicLink()) {
-        throw new ProbePackError(
-          `Extracted pack contains a symlink ('${relative(destDir, abs)}'), which is not allowed — a pack ships only regular files.`,
-        )
-      }
-      const real = await realpath(abs)
-      const rel = relative(realRoot, real)
-      if (
-        rel === "" ||
-        rel === ".." ||
-        rel.startsWith(`..${"/"}`) ||
-        rel.startsWith("..\\") ||
-        isAbsolute(rel)
-      ) {
-        throw new ProbePackError(
-          `Extracted pack entry escapes the pack root: '${relative(destDir, abs)}' -> ${real}.`,
-        )
-      }
-      if (stats.isDirectory()) await walk(abs)
-    }
-  }
-
-  await walk(destDir)
 }

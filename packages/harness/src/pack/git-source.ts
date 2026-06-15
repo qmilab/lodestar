@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { type GitPackSource, GitPackSourceSchema } from "@qmilab/lodestar-core"
+import { assertNoSymlinksOrEscapes } from "./confinement.js"
 import { ProbePackError } from "./errors.js"
 import { spawnCaptured } from "./run.js"
 
@@ -139,5 +140,11 @@ export async function resolveGitSource(
 
   // Drop .git: the resolved root is pack content only.
   await rm(join(dest, ".git"), { recursive: true, force: true })
+
+  // Same confinement scan as the npm path: a checked-out repo can contain
+  // symlinks, and `loadProbePack` reads the manifest before any realpath
+  // containment — so a symlinked `lodestar.probe-pack.json` (or any symlink)
+  // would otherwise be followed outside the root before verification.
+  await assertNoSymlinksOrEscapes(dest)
   return dest
 }
