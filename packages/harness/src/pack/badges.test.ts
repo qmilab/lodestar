@@ -1,0 +1,204 @@
+import { describe, expect, test } from "bun:test"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import {
+  PACK_BADGES_DIRNAME,
+  PROBE_PACK_SPEC_VERSION,
+  type ProbePackManifest,
+  generateEd25519KeyPair,
+} from "@qmilab/lodestar-core"
+import {
+  buildProbeResultsBadge,
+  buildSecurityScanBadge,
+  readPackBadges,
+  verifyPackBadges,
+  writePackBadge,
+} from "./badges.js"
+import type { PackRunResult } from "./runner.js"
+
+const AT = "2026-01-01T00:00:00.000Z"
+const ATTESTER = "acme-attester"
+
+function manifest(): ProbePackManifest {
+  return {
+    name: "demo-pack",
+    version: "1.0.0",
+    spec_version: PROBE_PACK_SPEC_VERSION,
+    source_type: "local",
+    coverage_areas: ["x"],
+    invariants: ["y"],
+    probes: [{ name: "p", file: "probes/p.ts" }],
+  }
+}
+
+function runResult(): PackRunResult {
+  return {
+    pack: "demo-pack",
+    ok: true,
+    total: 2,
+    passed: 2,
+    failed: 0,
+    duration_ms: 5,
+    outcomes: [
+      {
+        name: "p",
+        file: "probes/p.ts",
+        passed: true,
+        exit_code: 0,
+        signal: null,
+        duration_ms: 2,
+        started_at: AT,
+        stdout: "",
+        stderr: "",
+      },
+      {
+        name: "q",
+        file: "probes/q.ts",
+        passed: true,
+        exit_code: 0,
+        signal: null,
+        duration_ms: 3,
+        started_at: AT,
+        stdout: "",
+        stderr: "",
+      },
+    ],
+  }
+}
+
+describe("buildProbeResultsBadge", () => {
+  test("summarises the run, binds the manifest hash, signs as the attester", () => {
+    const { privateKeyPem } = generateEd25519KeyPair()
+    const badge = buildProbeResultsBadge(manifest(), runResult(), {
+      attesterId: ATTESTER,
+      privateKeyPem,
+      at: AT,
+      harnessVersion: "0.3.0",
+    })
+    expect(badge.kind).toBe("probe_results")
+    expect(badge.attester_id).toBe(ATTESTER)
+    expect(badge.signature.signer_id).toBe(ATTESTER)
+    expect(badge.subject.pack).toBe("demo-pack")
+    expect(badge.subject.manifest_hash).toMatch(/^[0-9a-f]{64}$/)
+    expect(badge.result).toMatchObject({ ok: true, total: 2, passed: 2, failed: 0 })
+    expect(badge.result.probes).toEqual(["p", "q"])
+  })
+})
+
+describe("write + read + verify round trip", () => {
+  test("a badge from a pinned attester verifies", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
+      const m = manifest()
+      const badge = buildProbeResultsBadge(m, runResult(), {
+        attesterId: ATTESTER,
+        privateKeyPem,
+        at: AT,
+        harnessVersion: "0.3.0",
+      })
+      const written = await writePackBadge(dir, badge)
+      expect(written).toContain(`${PACK_BADGES_DIRNAME}/${ATTESTER}.probe_results.badge.json`)
+
+      const raw = await readPackBadges(dir)
+      expect(raw).toHaveLength(1)
+      expect(raw[0]?.badge?.kind).toBe("probe_results")
+
+      const verifications = await verifyPackBadges(
+        { manifest: m, root: dir },
+        { authorizedAttesterKeys: [{ actor_id: ATTESTER, public_key: publicKeyPem }] },
+      )
+      expect(verifications).toHaveLength(1)
+      expect(verifications[0]?.status).toBe("verified")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("an un-pinned attester is surfaced as unverified, never trusted", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      const { privateKeyPem } = generateEd25519KeyPair()
+      const m = manifest()
+      await writePackBadge(
+        dir,
+        buildProbeResultsBadge(m, runResult(), {
+          attesterId: ATTESTER,
+          privateKeyPem,
+          at: AT,
+          harnessVersion: "0.3.0",
+        }),
+      )
+      // No attester pinned at all → the signed badge is surfaced but not trusted.
+      const verifications = await verifyPackBadges({ manifest: m, root: dir })
+      expect(verifications[0]?.status).toBe("unverified")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a badge over a different manifest is not_applicable (mis-attach)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
+      const m = manifest()
+      // Issue a valid badge over m…
+      await writePackBadge(
+        dir,
+        buildProbeResultsBadge(m, runResult(), {
+          attesterId: ATTESTER,
+          privateKeyPem,
+          at: AT,
+          harnessVersion: "0.3.0",
+        }),
+      )
+      // …but verify against a pack whose manifest differs (bumped version) → the
+      // recomputed manifest hash no longer matches the badge subject.
+      const moved = { ...m, version: "2.0.0" }
+      const verifications = await verifyPackBadges(
+        { manifest: moved, root: dir },
+        { authorizedAttesterKeys: [{ actor_id: ATTESTER, public_key: publicKeyPem }] },
+      )
+      expect(verifications[0]?.status).toBe("not_applicable")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a malformed badge file is surfaced as malformed", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      await mkdir(join(dir, PACK_BADGES_DIRNAME), { recursive: true })
+      await writeFile(join(dir, PACK_BADGES_DIRNAME, "junk.badge.json"), "{not json", "utf8")
+      const verifications = await verifyPackBadges({ manifest: manifest(), root: dir })
+      expect(verifications).toHaveLength(1)
+      expect(verifications[0]?.status).toBe("malformed")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("a missing badges/ directory yields no verifications", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      expect(await verifyPackBadges({ manifest: manifest(), root: dir })).toEqual([])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("buildSecurityScanBadge", () => {
+  test("signs a provided scan verdict", () => {
+    const { privateKeyPem } = generateEd25519KeyPair()
+    const badge = buildSecurityScanBadge(
+      manifest(),
+      { status: "clean", findings_count: 0, scanner: "demo-scanner" },
+      { attesterId: ATTESTER, privateKeyPem, at: AT },
+    )
+    expect(badge.kind).toBe("security_scan")
+    expect(badge.result.status).toBe("clean")
+    expect(badge.signature.signer_id).toBe(ATTESTER)
+  })
+})

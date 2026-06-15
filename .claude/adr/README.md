@@ -177,3 +177,13 @@ The options we rejected, each with a one-line reason.
   records the pin in a lockfile. Logic in `harness`, formats in `core`, shell in
   `cli` — no new package (ADR-0016 §6). `pack keygen` mints author keys (never on
   argv). Probe `pack-publish-add-roundtrip`.
+- [ADR-0020](0020-verification-badges.md) — verification badges (#89, ADR-0016
+  step 5): locally-verifiable signed attestations (`probe_results` /
+  `security_scan`) **attached to — not baked into** — a pack as `badges/*.badge.json`,
+  so they accrue without re-signing the manifest. Verified against a **separate**
+  pinned **attester** trust root (`attester_keys`); the `subject.manifest_hash`
+  binding defeats mis-attach, the signature defeats forgery. Badges are **advisory**:
+  `pack add` surfaces verified-vs-unverified and never gates on them. Schema +
+  shared-primitive crypto in `core`, production/verify in `harness`, `pack attest` +
+  `keygen --attester` in `cli`. The scanner/issuing authority at scale is commercial.
+  Probe `unverified-badge-not-trusted`.

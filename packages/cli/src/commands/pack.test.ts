@@ -47,6 +47,25 @@ describe("pack keygen flag validation", () => {
     expect(code).toBe(2)
     expect(out).not.toContain("PRIVATE KEY")
   })
+
+  test("exactly one of --author / --attester is required", async () => {
+    const neither = await captureStdio(() => packCommand(["keygen"]))
+    expect(neither.code).toBe(2)
+    const both = await captureStdio(() =>
+      packCommand(["keygen", "--author", "a", "--attester", "b"]),
+    )
+    expect(both.code).toBe(2)
+  })
+
+  test("--attester mints a badge key pinned under attester_keys (ADR-0020)", async () => {
+    const { code, out } = await captureStdio(() => packCommand(["keygen", "--attester", "scanner"]))
+    expect(code).toBe(0)
+    expect(out).toContain("attester_keys")
+    expect(out).toContain("attester_id")
+    expect(out).toContain("pack attest")
+    // The author pin shape must NOT be what's printed for an attester key.
+    expect(out).not.toContain('"actor_id"')
+  })
 })
 
 describe("mergePinnedAuthorKeys", () => {

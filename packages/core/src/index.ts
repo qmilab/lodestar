@@ -43,6 +43,9 @@ export * from "./schemas/probe-pack.js"
 // Consumer registry formats (#90, ADR-0019) — the pack trust config + lockfile
 export * from "./schemas/pack-registry.js"
 
+// Verification badges (#89, ADR-0020) — the locally-verifiable attestation format
+export * from "./schemas/pack-badge.js"
+
 // Sentinels (Batch 4) — the sentinel.alerted@1 alert wire format
 export * from "./schemas/sentinel.js"
 
@@ -57,6 +60,7 @@ export * from "./schemas/approval.js"
 export * from "./crypto/canonical.js"
 export * from "./crypto/signing.js"
 export * from "./crypto/probe-pack-signing.js"
+export * from "./crypto/badge-signing.js"
 
 // Schema registry
 export * as registry from "./registry.js"

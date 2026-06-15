@@ -61,11 +61,26 @@ export {
 } from "./pack/publish.js"
 export { addProbePack, type AddProbePackOptions, type AddedProbePack } from "./pack/add.js"
 export { readPackTrustConfig, DEFAULT_PACK_TRUST_PATH } from "./pack/trust-config.js"
+
+// Verification badges (#89, ADR-0020) — the locally-verifiable attestation surface
+export {
+  buildProbeResultsBadge,
+  buildSecurityScanBadge,
+  readPackBadges,
+  verifyPackBadges,
+  writePackBadge,
+  type AttestBadgeOptions,
+  type BadgeVerification,
+  type BadgeVerificationStatus,
+  type VerifyPackBadgesOptions,
+} from "./pack/badges.js"
 export {
   readPackLockfile,
   upsertPackLockEntry,
   DEFAULT_PACK_LOCKFILE_PATH,
 } from "./pack/lockfile.js"
+
+export { harnessVersion } from "./version.js"
 
 export {
   Probe,

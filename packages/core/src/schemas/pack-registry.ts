@@ -36,10 +36,36 @@ export const PackAuthorKeySchema = z
 export type PackAuthorKey = z.infer<typeof PackAuthorKeySchema>
 
 /**
+ * One operator-pinned **attester** public key — the separate trust root for
+ * verification badges (ADR-0020, #89). Distinct from {@link PackAuthorKeySchema}:
+ * an author signs the *bytes*, an attester signs an *attestation about* a pack
+ * (probe results / scan status). The two are pinned separately so an operator can
+ * trust an author's bytes without trusting that author's self-issued "my pack
+ * passed" badge, and can pin a third-party scanner's attester key without trusting
+ * it to author packs. A badge is trusted only when its `attester_id` is pinned here
+ * and its signature verifies against this key.
+ */
+export const PackAttesterKeySchema = z
+  .object({
+    attester_id: z
+      .string()
+      .min(1)
+      .describe("The attesting authority's signer id; must equal a badge's attester_id."),
+    public_key: z
+      .string()
+      .min(1)
+      .describe("The attester's Ed25519 public key in SPKI PEM form (the pinned trust anchor)."),
+  })
+  .describe("An operator-pinned badge-attester key.")
+export type PackAttesterKey = z.infer<typeof PackAttesterKeySchema>
+
+/**
  * The consumer trust config (`.lodestar/pack-trust.json` by default). Where an
  * operator pins the author keys `lodestar pack add` verifies a pack against, with
  * the same fail-closed default as the proxy's approver config: an unsigned pack is
- * rejected unless `allow_unsigned` is set explicitly.
+ * rejected unless `allow_unsigned` is set explicitly. `attester_keys` is the
+ * separate, additive trust root for verification badges (ADR-0020) — pinning an
+ * attester only governs which *badges* are trusted, never whether a pack loads.
  */
 export const PackTrustConfigSchema = z
   .object({
@@ -53,8 +79,16 @@ export const PackTrustConfigSchema = z
       .describe(
         "Explicit opt-out: accept an unsigned pack. No silent default — absent means a signed pack is required.",
       ),
+    attester_keys: z
+      .array(PackAttesterKeySchema)
+      .default([])
+      .describe(
+        "Operator-pinned attester keys badges are verified against (ADR-0020). Additive and advisory — an empty set means no badge is trusted, never that a pack is rejected.",
+      ),
   })
-  .describe("Consumer-side pack trust config: pinned author keys + the unsigned opt-out.")
+  .describe(
+    "Consumer-side pack trust config: pinned author keys + the unsigned opt-out + pinned badge-attester keys.",
+  )
 export type PackTrustConfig = z.infer<typeof PackTrustConfigSchema>
 
 /**

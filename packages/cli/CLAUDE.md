@@ -20,19 +20,28 @@ src/
     ├── probe.ts              # `lodestar probe <name>`
     ├── reflect.ts            # `lodestar reflect <session-id>`
     ├── harness.ts            # `lodestar harness run/list/calibrate`
-    └── pack.ts               # `lodestar pack keygen/publish/add`
+    └── pack.ts               # `lodestar pack keygen/publish/attest/add`
 ```
 
-The `pack` command is the trust-pack author + consumer flow (ADR-0019). It is a
-thin shell over `@qmilab/lodestar-harness`'s `publishProbePack` / `addProbePack`:
-`keygen` mints an Ed25519 author keypair (private key 0600, temp+rename, never on
-argv — same discipline as `approve keygen`); `publish` signs a pack's manifest in
-place (the author key from `--key`/`LODESTAR_AUTHOR_KEY`, never argv) and
-self-verifies; `add` resolves a **pinned** source (`npm:…@… --integrity …`,
-`git:…#<40-hex>`, or `local:`/path), verifies the signature + content digest
-against pinned author keys (the trust config + `--author-key`) **before any pack
-code could run**, then installs + records the pin. No event-log writes; all the
-signing/resolution/verification logic lives in the harness, not here.
+The `pack` command is the trust-pack author + consumer + attestation flow
+(ADR-0019 / ADR-0020). It is a thin shell over `@qmilab/lodestar-harness`'s
+`publishProbePack` / `addProbePack` / badge surface: `keygen` mints an Ed25519
+keypair for one role — `--author` (signs manifests, pinned under `author_keys`) or
+`--attester` (signs badges, pinned under `attester_keys`) — with the private key
+0600, temp+rename, never on argv (same discipline as `approve keygen`); `publish`
+signs a pack's manifest in place (the author key from `--key`/`LODESTAR_AUTHOR_KEY`,
+never argv) and self-verifies; `attest` issues a locally-verifiable signed badge
+into the pack's `badges/` (a `probe_results` summary of a real `runPack`, or a
+`security_scan` verdict from `--scan <file>`; the attester key from
+`--key`/`LODESTAR_ATTESTER_KEY`, never argv — a *signed* pack needs its author
+pinned via `--author-key` to load); `add` resolves a **pinned** source
+(`npm:…@… --integrity …`, `git:…#<40-hex>`, or `local:`/path), verifies the
+signature + content digest against pinned author keys (the trust config +
+`--author-key`) **before any pack code could run**, then installs + records the pin
+and **surfaces** the pack's badges verified against pinned attester keys
+(`--attester-key` + the config's `attester_keys`) — advisory, never a gate. No
+event-log writes; all the signing/resolution/verification logic lives in the
+harness, not here.
 
 The `approve` command is the reference approval resolver: it writes a
 resolution to the MCP proxy's side-channel

@@ -53,11 +53,23 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   verification**), then copies the verified bytes into `<installRoot>/<name>` and
   re-loads + re-verifies the installed copy (a TOCTOU closure), then records the
   immutable pin + canonical manifest hash in the lockfile. Fail closed.
+- `src/pack/badges.ts` — verification badges (#89, ADR-0020), the I/O side. Reads
+  `badges/*.badge.json` at a pack root and classifies each against the operator's
+  pinned **attester** keys: `verified` (subject applies + signature verifies),
+  `not_applicable` (mis-attached — `subject.manifest_hash` ≠ this pack),
+  `unverified` (forged / un-pinned attester / tampered), or `malformed`. Advisory —
+  `verifyPackBadges` never throws on a badge failure (it classifies); only
+  `verified` is trusted. `addProbePack` consumes this and surfaces it without
+  gating. `buildProbeResultsBadge` (signs a `PackRunResult` summary) and
+  `buildSecurityScanBadge` (signs a provided verdict) produce badges;
+  `writePackBadge` drops one into `badges/` atomically. Core owns the format + pure
+  sign/verify; this is the harness's fs half.
 - `src/pack/trust-config.ts` / `src/pack/lockfile.ts` — the consumer's
   `pack-trust.json` (pinned author keys, mirroring the proxy's
-  `approvals.authorized_keys`) and `packs.lock.json` (recorded pins) IO. The
-  formats are core schemas (`schemas/pack-registry.ts`); these are the fs readers/
-  writers (atomic temp+rename for the lockfile). Driven by `lodestar pack`.
+  `approvals.authorized_keys`, plus the separate `attester_keys` badge trust root)
+  and `packs.lock.json` (recorded pins) IO. The formats are core schemas
+  (`schemas/pack-registry.ts`); these are the fs readers/ writers (atomic
+  temp+rename for the lockfile). Driven by `lodestar pack`.
 - `src/probe.ts` — the `Probe` authoring surface (`Probe` base class,
   `ProbeSpec`, `ProbeResult`, `runProbeAsScript`, `formatProbeReport`).
   The contract *new* probes declare themselves against. The 17
