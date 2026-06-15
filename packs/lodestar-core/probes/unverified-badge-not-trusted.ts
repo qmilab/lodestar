@@ -246,6 +246,20 @@ async function run(): Promise<{ passed: boolean; details: string[] }> {
     details.push(
       "F: a junk badge file → malformed; in every case the pack still verifies (advisory) ✓",
     )
+
+    // ── G — UNREADABLE badges/ PATH NEVER GATES (Codex review, PR #118) ──────────
+    // A pack can ship `badges` as a regular file (or an EACCES dir / malformed
+    // archive entry): readdir throws ENOTDIR/EACCES, not ENOENT. That must NOT fail
+    // an otherwise-verified pack — badge state is advisory, never a gate.
+    const gatePack = await signedPack(workspace, "gate", "gate-pack", author.privateKeyPem)
+    await writeFile(join(gatePack.dir, "badges"), "i am a file, not a directory", "utf8")
+    const unreadable = only((await add(gatePack.dir, pinnedAttester)).badges)
+    if (unreadable.status !== "malformed") {
+      throw new Error(`an unreadable badges/ path should be malformed, got '${unreadable.status}'`)
+    }
+    details.push(
+      "G: a `badges` path that is not a readable directory → malformed, the pack still adds ✓",
+    )
   } catch (err) {
     return {
       passed: false,

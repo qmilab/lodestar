@@ -78,11 +78,16 @@ function errMessage(err: unknown): string {
 
 /**
  * Read every `badges/*.badge.json` at a pack root, parsing each against the badge
- * schema. A missing `badges/` directory is normal and yields `[]`. A file that does
- * not parse (unreadable, bad JSON, schema failure) is returned with a `parseError`
- * rather than thrown — it surfaces downstream as a `malformed` badge. A non-ENOENT
- * failure to read the directory itself is exceptional and does throw (a genuine
- * filesystem fault is not a badge-trust outcome).
+ * schema. A missing `badges/` directory is normal and yields `[]`. Any other failure
+ * is surfaced as a `parseError` entry (a `malformed` badge downstream), never thrown
+ * — badges are advisory and must NEVER gate an otherwise-verified pack (ADR-0020).
+ * That includes:
+ *  - a single badge file that does not parse (unreadable, bad JSON, schema failure);
+ *  - the `badges/` path not being a readable directory at all — a regular file named
+ *    `badges`, an EACCES directory, or a malformed archive entry (`readdir` throws
+ *    ENOTDIR / EACCES / …). A pack can legitimately ship such a thing, so treating a
+ *    non-ENOENT read failure as a gate would let advisory metadata reject a signed,
+ *    content-verified pack. It is recorded as one malformed entry instead.
  */
 export async function readPackBadges(packRoot: string): Promise<RawBadge[]> {
   const dir = join(packRoot, PACK_BADGES_DIRNAME)
@@ -90,8 +95,16 @@ export async function readPackBadges(packRoot: string): Promise<RawBadge[]> {
   try {
     names = await readdir(dir)
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return []
-    throw new ProbePackError(`Could not read pack badges directory: ${dir}`, { cause: err })
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === "ENOENT") return []
+    // Advisory, never a gate: surface the unreadable directory as a malformed
+    // badge rather than throwing (which would fail `pack add` on badge state).
+    return [
+      {
+        file: PACK_BADGES_DIRNAME,
+        parseError: `badges directory is not readable (${code ?? "unknown error"}): ${errMessage(err)}`,
+      },
+    ]
   }
 
   const raw: RawBadge[] = []

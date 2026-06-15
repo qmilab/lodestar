@@ -187,6 +187,22 @@ describe("write + read + verify round trip", () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  test("a non-directory `badges` path is surfaced as malformed, never thrown (advisory)", async () => {
+    // Codex review (PR #118): a pack can ship `badges` as a regular file (or an
+    // EACCES dir / malformed archive entry); readdir throws ENOTDIR/EACCES, not
+    // ENOENT. That must NOT gate an otherwise-verified pack — it is advisory.
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      await writeFile(join(dir, PACK_BADGES_DIRNAME), "i am a file, not a directory", "utf8")
+      const verifications = await verifyPackBadges({ manifest: manifest(), root: dir })
+      expect(verifications).toHaveLength(1)
+      expect(verifications[0]?.status).toBe("malformed")
+      expect(verifications[0]?.reason).toContain("not readable")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("buildSecurityScanBadge", () => {
