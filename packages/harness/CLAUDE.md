@@ -28,6 +28,13 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   split. Reject set: signature absent (unless `allowUnsigned`), tampered manifest
   (`payload_hash` mismatch), signer ≠ declared `author_id`, signer not pinned,
   non-ed25519, bad signature bytes, on-disk content-digest mismatch.
+  **Source resolution (#86, ADR-0018):** `loadProbePackFromSource(ref, opts)` (and
+  the lower-level `resolvePackSource`) fetch a pinned `PackSourceRef` to a confined
+  directory before loading — `pack/source.ts` (dispatcher), `npm-source.ts`
+  (registry-metadata read + dual integrity check + `tar` extract), `git-source.ts`
+  (clone + checkout at a full SHA, hooks off), `tar.ts` (system-`tar` extract +
+  confinement), `run.ts` (the one scoped-env subprocess runner). Non-executing and
+  no new dependency; see invariant 5.
 - `src/probe.ts` — the `Probe` authoring surface (`Probe` base class,
   `ProbeSpec`, `ProbeResult`, `runProbeAsScript`, `formatProbeReport`).
   The contract *new* probes declare themselves against. The 17
@@ -107,9 +114,22 @@ Coming in later Batch 4+ steps (do not pre-build):
 4. **Probes are spec, not scaffolding.** When probes move into packs
    (kickoff step 4) they are repackaged, not rewritten. Do not edit a
    probe to match changed code; new behaviour gets a new probe.
-5. **v0 resolves `local` packs only.** `source_type: "npm"` is valid in
-   the schema but the loader rejects it with a clear error until npm
-   resolution ships.
+5. **Source resolution is upstream of loading; verification is unchanged
+   (#86, ADR-0018).** `loadProbePack(path)` loads bytes already on disk and
+   no longer gates on `source_type` — once the bytes are present every
+   source type loads identically. `loadProbePackFromSource(ref, opts)`
+   resolves a pinned `PackSourceRef` (`local` / `npm` / `git`) to a confined
+   directory via a **non-executing fetch**, then delegates to `loadProbePack`
+   so #88's verify-on-load applies to the *fetched* bytes. The pins are
+   immutable (npm: exact version + SRI integrity, checked against both the
+   registry's advertised hash and the downloaded bytes; git: a full 40-hex
+   commit SHA — a branch/tag is rejected). Resolution runs **no** pack-authored
+   code (no `npm install` lifecycle scripts, no git hooks): npm extraction
+   shells to system `tar` with self-enforced confinement (reject symlinks /
+   escapes), git clones with hooks disabled (`core.hooksPath=/dev/null`, scoped
+   env mirroring `adapter-git`'s `baseGitEnv`) and removes `.git`. This is a
+   TS/process-level boundary that delivers *authentic, inert bytes*; making
+   those bytes **safe to run** is the orthogonal runner-side gap (#114).
 6. **The runner drives files, not classes.** Execution is a subprocess
    spawn (`bun run <file>`) keyed on exit code. This is what keeps the 17
    first-party probes (invariant 4) unchanged and lets external/future

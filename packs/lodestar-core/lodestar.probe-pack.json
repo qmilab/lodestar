@@ -62,7 +62,8 @@
     "ship_sensitivity_ceiling",
     "ship_wire_roundtrip",
     "pack_manifest_signature",
-    "pack_content_digest_binding"
+    "pack_content_digest_binding",
+    "pack_source_resolution"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -216,6 +217,18 @@
     {
       "name": "tampered-pack-content-cannot-load",
       "file": "probes/tampered-pack-content-cannot-load.ts"
+    },
+    {
+      "name": "pack-resolves-from-npm",
+      "file": "probes/pack-resolves-from-npm.ts"
+    },
+    {
+      "name": "mutable-git-ref-rejected",
+      "file": "probes/mutable-git-ref-rejected.ts"
+    },
+    {
+      "name": "resolution-runs-no-pack-code",
+      "file": "probes/resolution-runs-no-pack-code.ts"
     }
   ]
 }

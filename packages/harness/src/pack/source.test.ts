@@ -1,0 +1,90 @@
+import { describe, expect, test } from "bun:test"
+import { createHash } from "node:crypto"
+import type { PackSourceRef } from "@qmilab/lodestar-core"
+import { ProbePackError } from "./errors.js"
+import { resolveNpmSource } from "./npm-source.js"
+import { resolvePackSource } from "./source.js"
+
+const sha512 = (b: Buffer) => `sha512-${createHash("sha512").update(b).digest("base64")}`
+
+/** A fake fetch routing the registry metadata endpoint and the tarball endpoint. */
+function fakeFetch(opts: { meta: unknown; metaStatus?: number; tarball?: Buffer }): typeof fetch {
+  return (async (input: string | URL) => {
+    const url = String(input)
+    if (url.endsWith("/-/pack.tgz")) {
+      return new Response(opts.tarball ?? Buffer.alloc(0))
+    }
+    return new Response(JSON.stringify(opts.meta), {
+      status: opts.metaStatus ?? 200,
+      headers: { "content-type": "application/json" },
+    })
+  }) as unknown as typeof fetch
+}
+
+describe("resolvePackSource", () => {
+  test("local resolves in place to its path", async () => {
+    const resolved = await resolvePackSource({ type: "local", path: "/some/pack" })
+    expect(resolved.root).toBe("/some/pack")
+    expect(resolved.ref.type).toBe("local")
+  })
+
+  test("rejects a git ref that is not a full 40-hex commit SHA", async () => {
+    for (const commit of ["main", "v1.0.0", "abc1234", "0".repeat(39), "A".repeat(40)]) {
+      const ref = { type: "git", url: "/repo", commit } as PackSourceRef
+      await expect(resolvePackSource(ref)).rejects.toThrow(/40-hex commit SHA/)
+    }
+  })
+
+  test("rejects an npm version that is a range, not exact", async () => {
+    const ref = {
+      type: "npm",
+      package: "p",
+      version: "^1.0.0",
+      integrity: "sha512-AAAA",
+    } as PackSourceRef
+    await expect(resolvePackSource(ref)).rejects.toThrow(/Invalid pack source descriptor/)
+  })
+})
+
+describe("resolveNpmSource integrity gates", () => {
+  const REG = "http://registry.test"
+
+  test("rejects when the registry-advertised integrity differs from the pin", async () => {
+    const fetchImpl = fakeFetch({
+      meta: { dist: { tarball: `${REG}/-/pack.tgz`, integrity: "sha512-OTHER" } },
+    })
+    await expect(
+      resolveNpmSource(
+        { type: "npm", package: "p", version: "1.0.0", integrity: "sha512-PINNED", registry: REG },
+        { fetchImpl },
+      ),
+    ).rejects.toThrow(/does not match the pinned integrity/)
+  })
+
+  test("rejects when the downloaded bytes do not match the pinned SRI", async () => {
+    const tarball = Buffer.from("not the pinned bytes")
+    const wrongPin = sha512(Buffer.from("different bytes entirely"))
+    const fetchImpl = fakeFetch({
+      // Registry advertises the (wrong) pin so the registry-vs-pin check passes;
+      // the bytes-vs-pin check is the one that must fire.
+      meta: { dist: { tarball: `${REG}/-/pack.tgz`, integrity: wrongPin } },
+      tarball,
+    })
+    await expect(
+      resolveNpmSource(
+        { type: "npm", package: "p", version: "1.0.0", integrity: wrongPin, registry: REG },
+        { fetchImpl },
+      ),
+    ).rejects.toThrow(/integrity mismatch/)
+  })
+
+  test("surfaces a non-OK registry response as a ProbePackError", async () => {
+    const fetchImpl = fakeFetch({ meta: {}, metaStatus: 404 })
+    await expect(
+      resolveNpmSource(
+        { type: "npm", package: "p", version: "1.0.0", integrity: "sha512-AAAA", registry: REG },
+        { fetchImpl },
+      ),
+    ).rejects.toBeInstanceOf(ProbePackError)
+  })
+})

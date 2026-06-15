@@ -4,24 +4,24 @@ import { dirname, isAbsolute, join, relative, resolve } from "node:path"
 import {
   PROBE_PACK_MANIFEST_FILENAME,
   type PackContentDigest,
+  type PackSourceRef,
   type PinnedPublicKeys,
   type ProbePackManifest,
   ProbePackManifestSchema,
   verifyProbePackManifestSignature,
 } from "@qmilab/lodestar-core"
 import { FIRST_PARTY_SENTINELS, type SentinelFactory } from "../sentinels/registry.js"
+import { ProbePackError } from "./errors.js"
+import {
+  type ResolvePackSourceOptions,
+  type ResolvedPackSource,
+  resolvePackSource,
+} from "./source.js"
 
-/**
- * Raised for every failure mode of pack loading: missing manifest,
- * malformed JSON, schema-invalid manifest, an unsupported source type,
- * a probe file that escapes the pack root, a missing probe file, a
- * duplicate probe name, or a sentinel that is unknown or declared twice.
- * A single typed error lets callers (the CLI, a runner) distinguish
- * "this pack is broken" from an unexpected crash.
- */
-export class ProbePackError extends Error {
-  override readonly name = "ProbePackError"
-}
+// ProbePackError lives in ./errors.js (so the source resolvers can raise it
+// without an import cycle); re-exported here because it has always been part of
+// the loader's public surface.
+export { ProbePackError } from "./errors.js"
 
 /** One probe from a loaded pack, with its source resolved to an absolute path. */
 export interface LoadedProbe {
@@ -64,6 +64,14 @@ export interface LoadedProbePack {
   probes: LoadedProbe[]
   /** Sentinels the pack declares, each resolved to its first-party factory. */
   sentinels: LoadedSentinel[]
+  /**
+   * What was resolved to produce this pack — present only when loaded via
+   * {@link loadProbePackFromSource} (the npm/git/local source-resolution path,
+   * #86). A direct {@link loadProbePack} over a path leaves it undefined. Records
+   * the immutable pin (exact version + integrity, or full commit SHA) the
+   * verified signature binds to.
+   */
+  source?: ResolvedPackSource
 }
 
 // "file" means a *regular* file specifically. A FIFO/socket/device is
@@ -178,9 +186,13 @@ function assertContentDigestMatches(
  * unknown or duplicated id). It does NOT execute anything — neither
  * running a probe nor constructing a sentinel; running is the runner's
  * job (`runPack` in `../runner.ts`) and constructing a sentinel is the
- * host's (it calls the resolved `create` factory). Passes for
- * `source_type: "npm"` are rejected: the v0 loader resolves `local`
- * packs only.
+ * host's (it calls the resolved `create` factory).
+ *
+ * This entry loads from a path whose bytes are already on disk and accepts any
+ * declared `source_type` — a `local` pack directly, or an `npm`/`git` pack after
+ * {@link loadProbePackFromSource} has fetched it to a confined directory. To
+ * resolve an `npm`/`git` pack from its pinned source, call
+ * {@link loadProbePackFromSource}, which fetches then delegates here.
  *
  * ## Verify-on-load (#88, ADR-0017)
  *
@@ -245,11 +257,11 @@ export async function loadProbePack(
   }
   const manifest = result.data
 
-  if (manifest.source_type === "npm") {
-    throw new ProbePackError(
-      `Pack '${manifest.name}' declares source_type "npm", which the v0 harness loader does not resolve. Use source_type "local" until npm pack resolution ships.`,
-    )
-  }
+  // No source_type gate here: by the time this function has a path, the bytes
+  // are on disk. `npm`/`git` packs are fetched to a confined directory by the
+  // source resolvers (loadProbePackFromSource, #86); once resolved every source
+  // type loads identically — the security work is the verify-on-load below, which
+  // applies to whatever bytes are present.
 
   // Verify-on-load trust root (#88): the manifest signature, against the
   // operator-pinned author keys. Pure (signature half only); the content-digest
@@ -367,4 +379,40 @@ export async function loadProbePack(
   }
 
   return { manifest, root, manifestPath, probes, sentinels }
+}
+
+/**
+ * Resolve a pinned pack source to confined local bytes, then load and fully
+ * verify it (#86 / ADR-0018).
+ *
+ * For a `local` ref this resolves in place; for `npm`/`git` it performs a
+ * **non-executing fetch** to an immutable, content-verified directory (an exact
+ * npm version + SRI integrity, or a full git commit SHA — a mutable branch/tag is
+ * rejected) and runs no pack-authored code (no `npm install`, no git hooks)
+ * before verification. It then delegates to {@link loadProbePack} over the
+ * resolved root, so the #88 signature + content-digest verify-on-load applies to
+ * the *fetched bytes*: a swapped artifact under a re-pointed ref fails the
+ * content-digest check even if the old signature still verifies (ADR-0016 §2).
+ *
+ * As a consistency gate, a pack resolved via an `npm`/`git` ref must self-declare
+ * the matching `source_type`; a mismatch (e.g. an npm-fetched pack whose manifest
+ * claims `local`) is rejected. The returned pack carries a {@link ResolvedPackSource}
+ * recording the exact pin loaded.
+ *
+ * Throws {@link ProbePackError} on any resolution or verification failure.
+ */
+export async function loadProbePackFromSource(
+  ref: PackSourceRef,
+  options: LoadProbePackOptions & ResolvePackSourceOptions = {},
+): Promise<LoadedProbePack> {
+  const resolved = await resolvePackSource(ref, options)
+  const pack = await loadProbePack(resolved.root, options)
+
+  if (resolved.ref.type !== "local" && pack.manifest.source_type !== resolved.ref.type) {
+    throw new ProbePackError(
+      `Pack '${pack.manifest.name}' was resolved via a '${resolved.ref.type}' source but its manifest declares source_type '${pack.manifest.source_type}'.`,
+    )
+  }
+
+  return { ...pack, source: resolved }
 }
