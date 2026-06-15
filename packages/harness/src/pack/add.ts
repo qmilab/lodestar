@@ -1,5 +1,5 @@
 import { cp, mkdir, realpath, rm } from "node:fs/promises"
-import { join, resolve, sep } from "node:path"
+import { basename, dirname, join, resolve, sep } from "node:path"
 import {
   type PackLockEntry,
   type PackSourceRef,
@@ -148,6 +148,29 @@ function pathsOverlap(a: string, b: string): boolean {
 }
 
 /**
+ * Canonicalise a path that may not exist yet: realpath the deepest existing
+ * ancestor and re-join the non-existing tail. Used so the overlap check compares
+ * *real* paths — the install destination usually does not exist, and a lexical
+ * compare would miss that it lives inside the source's real tree when the source
+ * (or destination) is reached through a symlink.
+ */
+async function canonicalizePath(p: string): Promise<string> {
+  let current = resolve(p)
+  const tail: string[] = []
+  while (true) {
+    try {
+      const real = await realpath(current)
+      return tail.length > 0 ? join(real, ...tail) : real
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolve(p) // reached the root; nothing resolved
+      tail.unshift(basename(current))
+      current = parent
+    }
+  }
+}
+
+/**
  * Copy a verified pack into `<installRoot>/<pack-name>` and re-verify the installed
  * copy. The re-verification is a TOCTOU closure: it proves the installed bytes are
  * the ones that verified (and that the copy did not introduce a symlink that
@@ -161,6 +184,11 @@ function pathsOverlap(a: string, b: string): boolean {
  * `fs.cp` recursing a directory into its own subtree (which fails), and the `rm`
  * below could delete the source first. In that case the source root *is* the
  * install — already verified by resolution — so it is returned without a copy.
+ *
+ * The overlap check compares *real* paths (source resolved through symlinks, dest
+ * canonicalised via its deepest existing ancestor): a lexical compare on a
+ * symlinked source root could miss that dest lives inside the source's real tree —
+ * the exact path the copy below uses — and attempt a self-copy.
  */
 async function installVerifiedPack(
   pack: LoadedProbePack,
@@ -168,7 +196,12 @@ async function installVerifiedPack(
   verifyOptions: { authorizedAuthorKeys?: PinnedPublicKeys; allowUnsigned?: boolean },
 ): Promise<string> {
   const dest = join(installRoot, pack.manifest.name)
-  if (pathsOverlap(pack.root, dest)) {
+  // Resolve the source ROOT through symlinks: it is both what the overlap check
+  // must compare against and what is copied below (so `dest` is a real directory
+  // copy, not a symlink aliasing the original bytes — later edits to the source
+  // would otherwise silently change the "installed" pack without re-verification).
+  const realSource = await realpath(pack.root)
+  if (pathsOverlap(realSource, await canonicalizePath(dest))) {
     // The source is its own stable install location (verified by resolution); a
     // copy would be a self-copy. Leave the bytes in place.
     return pack.root
@@ -177,15 +210,10 @@ async function installVerifiedPack(
   // surviving alongside the new copy).
   await rm(dest, { recursive: true, force: true })
   await mkdir(installRoot, { recursive: true })
-  // Resolve the source ROOT through symlinks so `dest` is a real directory copy.
-  // Copying a symlinked root with dereference:false would make `dest` itself a
-  // symlink back to the original bytes — not a stable install (later edits to the
-  // source would silently change the "installed" pack without re-verification).
-  // realpath resolves only links in the path TO the root; internal links are still
+  // realpath resolved only links in the path TO the root; internal links are still
   // copied AS links (dereference:false), so the re-verify below rejects any that
   // escape the pack root (the loader's realpath containment check) — a malicious
   // link inside a local source cannot be laundered through the install copy.
-  const realSource = await realpath(pack.root)
   await cp(realSource, dest, { recursive: true, dereference: false })
 
   try {

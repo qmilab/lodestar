@@ -201,6 +201,29 @@ describe("addProbePack (local source)", () => {
       "export const x = 1",
     )
   })
+
+  test("overlap is detected through a symlinked source root (no self-copy)", async () => {
+    // The source is reached via a symlink, and the install dir is inside the
+    // source's REAL tree. A lexical overlap check on the symlink path would miss
+    // this and attempt to copy the resolved source into its own subtree; the real-
+    // path comparison catches it and takes the in-place shortcut instead.
+    const real = await writePack()
+    await publishProbePack({ target: real, authorId: AUTHOR, privateKeyPem, at: AT })
+    const link = join(tmpRoot, `link-overlap-${counter++}`)
+    await symlink(real, link, "dir")
+
+    const added = await addProbePack({
+      ref: { type: "local", path: link },
+      authorizedAuthorKeys: [{ actor_id: AUTHOR, public_key: publicKeyPem }],
+      at: AT,
+      installRoot: join(real, ".lodestar/packs"), // inside the source's real tree
+    })
+    // No self-copy: the source root (the ref path) is returned, and it survives.
+    expect(added.installedRoot).toBe(link)
+    await expect(readFile(join(real, "probes/sample.ts"), "utf8")).resolves.toContain(
+      "export const x = 1",
+    )
+  })
 })
 
 describe("lockfileSafeSource", () => {
