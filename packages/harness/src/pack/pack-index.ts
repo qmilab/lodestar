@@ -53,6 +53,50 @@ function classifySource(
 }
 
 /**
+ * Read a fetch `Response` body to a UTF-8 string, enforcing the byte cap *before*
+ * buffering the whole thing. A declared `Content-Length` over the cap is rejected
+ * up front; then the body is streamed and aborted the moment the running byte count
+ * exceeds the cap — so a hostile or misconfigured endpoint with a missing or lying
+ * length cannot force the process to buffer an unbounded response. Falls back to a
+ * capped `arrayBuffer()` only when the Response exposes no stream (e.g. a synthetic
+ * Response in a test), which is still bounded by the post-read check.
+ */
+async function readCappedResponseBody(
+  res: Response,
+  maxBytes: number,
+  url: string,
+): Promise<string> {
+  const tooBig = (): never => {
+    throw new ProbePackError(`Discovery index exceeds the ${maxBytes}-byte cap: ${url}`)
+  }
+  const advertised = Number(res.headers.get("content-length"))
+  if (Number.isFinite(advertised) && advertised > maxBytes) tooBig()
+
+  const reader = res.body?.getReader()
+  if (reader === undefined) {
+    const body = Buffer.from(await res.arrayBuffer())
+    if (body.byteLength > maxBytes) tooBig()
+    return body.toString("utf8")
+  }
+
+  const chunks: Uint8Array[] = []
+  let total = 0
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value !== undefined) {
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => {})
+        tooBig()
+      }
+      chunks.push(value)
+    }
+  }
+  return Buffer.concat(chunks).toString("utf8")
+}
+
+/**
  * Fetch + parse + schema-validate an index from `source`, WITHOUT verifying its
  * signature (that is {@link loadPackIndex}). A malformed document, an oversized
  * response, an unreadable path, or a non-2xx HTTP status throws a `ProbePackError`.
@@ -87,11 +131,7 @@ export async function fetchPackIndex(
         `Discovery index fetch failed (HTTP ${res.status} ${res.statusText}): ${where.url}`,
       )
     }
-    const body = Buffer.from(await res.arrayBuffer())
-    if (body.byteLength > maxBytes) {
-      throw new ProbePackError(`Discovery index exceeds the ${maxBytes}-byte cap: ${where.url}`)
-    }
-    text = body.toString("utf8")
+    text = await readCappedResponseBody(res, maxBytes, where.url)
   }
 
   let json: unknown
@@ -149,11 +189,16 @@ export async function loadPackIndex(
     allowUnsigned: options.allowUnsigned,
     makeError: (m) => new ProbePackError(`${m} (index source: ${source})`),
   })
+  // Surface `publisherId` ONLY when a signature actually verified. An unsigned index
+  // loaded under allowUnsigned can carry a `publisher_id` field that was never bound
+  // to a signature — attributing it to that publisher would let an unsigned index
+  // claim a name it never proved. An unsigned index is always UNSIGNED, no attribution.
+  const signed = index.signature !== undefined
   return {
     index,
     source,
-    signed: index.signature !== undefined,
-    ...(index.publisher_id !== undefined ? { publisherId: index.publisher_id } : {}),
+    signed,
+    ...(signed && index.publisher_id !== undefined ? { publisherId: index.publisher_id } : {}),
   }
 }
 

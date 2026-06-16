@@ -105,6 +105,15 @@ describe("loadPackIndex — verification", () => {
     expect(loaded.publisherId).toBeUndefined()
   })
 
+  test("an unsigned index cannot claim a publisher it never signed for", async () => {
+    // A publisher_id present WITHOUT a signature must not be surfaced as attribution.
+    const claiming: PackIndex = { ...unsignedIndex(), publisher_id: "evil-claims-acme" }
+    const path = await writeIndex("claiming.json", claiming)
+    const loaded = await loadPackIndex(path, { allowUnsigned: true })
+    expect(loaded.signed).toBe(false)
+    expect(loaded.publisherId).toBeUndefined()
+  })
+
   test("a signed index from an un-pinned publisher is rejected", async () => {
     const path = await writeIndex("unpinned.json", sign(unsignedIndex()))
     await expect(loadPackIndex(path, { authorizedIndexPublisherKeys: [] })).rejects.toThrow(
@@ -136,6 +145,22 @@ describe("fetchPackIndex — remote", () => {
     const path = await writeIndex("big.json", sign(unsignedIndex()))
     await expect(
       loadPackIndex(path, { authorizedIndexPublisherKeys: pinned, maxBytes: 10 }),
+    ).rejects.toThrow(/cap/)
+  })
+
+  test("a streamed remote body with no Content-Length is capped mid-stream", async () => {
+    // No Content-Length → the fast-path is skipped and the streaming reader must abort
+    // once the running byte count exceeds the cap (defends against a lying/absent length).
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode("x".repeat(8)))
+        controller.enqueue(new TextEncoder().encode("x".repeat(8)))
+        controller.close()
+      },
+    })
+    const fetchImpl = (async () => new Response(stream, { status: 200 })) as unknown as typeof fetch
+    await expect(
+      fetchPackIndex("https://registry.test/stream", { fetchImpl, maxBytes: 10 }),
     ).rejects.toThrow(/cap/)
   })
 })

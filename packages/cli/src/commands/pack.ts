@@ -895,7 +895,11 @@ async function searchCommand(argv: string[]): Promise<number> {
       required: trustConfigPath !== undefined,
     })
     pinnedIndexKeys = [...indexKeyFlags, ...trust.index_publisher_keys]
-    if (trust.allow_unsigned === true) allowUnsignedIndex = true
+    // NB: the trust config's `allow_unsigned` is the pack-ADD unsigned opt-out — it
+    // deliberately does NOT relax index verification. Accepting an unsigned discovery
+    // index is a separate trust decision, opted into only by the explicit
+    // `--allow-unsigned-index` flag, so an operator who allowed unsigned packs for a
+    // dev path does not silently weaken fail-closed index discovery.
   } catch (err) {
     if (err instanceof ProbePackError) {
       process.stderr.write(`[pack] ${err.message}\n`)
@@ -1011,8 +1015,13 @@ function writeSearchResults(
 /** Reconstruct a `pack add` source argument from an entry's source ref (a copy-paste hint). */
 function addArgFor(source: PackSourceRef): string {
   switch (source.type) {
-    case "npm":
-      return `npm:${source.package}@${source.version} --integrity ${source.integrity}`
+    case "npm": {
+      // Carry --registry through when the entry advertises a non-default registry,
+      // else the copy-paste `add` resolves against the public registry instead of the
+      // advertised source.
+      const registry = source.registry !== undefined ? ` --registry ${source.registry}` : ""
+      return `npm:${source.package}@${source.version} --integrity ${source.integrity}${registry}`
+    }
     case "git":
       return `git:${source.url}#${source.commit}`
     case "local":
