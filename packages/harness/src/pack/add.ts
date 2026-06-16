@@ -1,11 +1,13 @@
 import { cp, mkdir, realpath, rm } from "node:fs/promises"
 import { basename, dirname, join, resolve, sep } from "node:path"
 import {
+  PACK_BADGES_DIRNAME,
   type PackLockEntry,
   type PackSourceRef,
   type PinnedPublicKeys,
   canonicalProbePackManifestHash,
 } from "@qmilab/lodestar-core"
+import { type BadgeVerification, verifyPackBadges } from "./badges.js"
 import { ProbePackError } from "./errors.js"
 import { type LoadedProbePack, loadProbePack, loadProbePackFromSource } from "./loader.js"
 import { readPackLockfile, upsertPackLockEntry } from "./lockfile.js"
@@ -28,6 +30,13 @@ export interface AddProbePackOptions {
   ref: PackSourceRef
   /** Operator-pinned author keys the manifest signature is verified against. */
   authorizedAuthorKeys?: PinnedPublicKeys
+  /**
+   * Operator-pinned **attester** keys the pack's verification badges are checked
+   * against (ADR-0020). Separate trust root from author keys, and **advisory**: an
+   * unverified or un-pinned-attester badge is surfaced, never a reason to reject the
+   * pack. Absent / empty means no badge is trusted.
+   */
+  authorizedAttesterKeys?: PinnedPublicKeys
   /** Explicit opt-out: accept an unsigned pack. No silent default. */
   allowUnsigned?: boolean
   /**
@@ -54,6 +63,12 @@ export interface AddedProbePack {
   installedRoot?: string
   /** The lockfile entry recorded, when `lockfilePath` was set. */
   lockEntry?: PackLockEntry
+  /**
+   * The pack's verification badges, classified against the pinned attester keys
+   * (ADR-0020). Empty when the pack carries no `badges/`. Advisory — surfaced for
+   * the operator, never a gate; only `status: "verified"` entries are trusted.
+   */
+  badges: BadgeVerification[]
 }
 
 export async function addProbePack(options: AddProbePackOptions): Promise<AddedProbePack> {
@@ -71,6 +86,15 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
     authorizedAuthorKeys,
     allowUnsigned,
     ...resolveOpts,
+  })
+
+  // Classify the pack's verification badges against the pinned attester keys
+  // (ADR-0020). Read over the resolved root (the verified bytes). Advisory: this
+  // never gates the add — only `verified` badges count, and the rest are surfaced.
+  const badges = await verifyPackBadges(pack, {
+    ...(options.authorizedAttesterKeys !== undefined
+      ? { authorizedAttesterKeys: options.authorizedAttesterKeys }
+      : {}),
   })
 
   // Validate the lockfile up front — a malformed/unreadable one throws here, before
@@ -109,7 +133,7 @@ export async function addProbePack(options: AddProbePackOptions): Promise<AddedP
     await upsertPackLockEntry(lockfilePath, lockEntry)
   }
 
-  return { pack, installedRoot, lockEntry }
+  return { pack, installedRoot, lockEntry, badges }
 }
 
 /**
@@ -239,7 +263,26 @@ async function installVerifiedPack(
   // copied AS links (dereference:false), so the re-verify below rejects any that
   // escape the pack root (the loader's realpath containment check) — a malicious
   // link inside a local source cannot be laundered through the install copy.
-  await cp(realSource, dest, { recursive: true, dereference: false })
+  //
+  // The `badges/` subtree is EXCLUDED from this copy and handled best-effort below:
+  // badges are advisory (ADR-0020), so an unreadable badge sidecar (an EACCES file,
+  // a malformed archive entry) must never make `cp` throw and fail the install of an
+  // otherwise verified, content-bound pack. The re-verify (loadProbePack) checks the
+  // author signature + content digest over the PROBE files only, so excluding badges
+  // here does not weaken it.
+  const realBadges = join(realSource, PACK_BADGES_DIRNAME)
+  const badgesPrefix = realBadges + sep
+  await cp(realSource, dest, {
+    recursive: true,
+    dereference: false,
+    filter: (src) => src !== realBadges && !src.startsWith(badgesPrefix),
+  })
+  // Carry the badges along when they are readable — but never let a bad one fail the
+  // install. A partial/failed copy just means fewer badges travel (still advisory).
+  await cp(realBadges, join(dest, PACK_BADGES_DIRNAME), {
+    recursive: true,
+    dereference: false,
+  }).catch(() => {})
 
   try {
     await loadProbePack(dest, verifyOptions)

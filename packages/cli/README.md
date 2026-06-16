@@ -133,32 +133,42 @@ lodestar harness calibrate session-… --no-emit                 # preview only
 lodestar harness calibrate session-… --out calibration.md      # also write md
 ```
 
-### `lodestar pack keygen` / `lodestar pack publish` / `lodestar pack add`
+### `lodestar pack keygen` / `publish` / `attest` / `add`
 
-The trust-pack author + consumer flow (ADR-0019). `keygen` mints an Ed25519
-author keypair (private key written 0600, never on argv). `publish` freezes a
-pack's probe files, computes a content digest over them, signs the manifest in
-place, and self-verifies (the signing key comes from `--key` or
-`LODESTAR_AUTHOR_KEY`, never argv). `add` resolves a **pinned** source via a
-non-executing fetch — no `npm install` lifecycle script or git hook runs — and
-verifies the signature + content digest against operator-pinned author keys
-**before any pack code could run**, then installs the verified bytes and records
-the immutable pin in a lockfile. An unsigned or content-mismatched pack is
-rejected unless `--allow-unsigned` is explicit.
+The trust-pack author + consumer + attestation flow (ADR-0019 / ADR-0020).
+`keygen` mints an Ed25519 keypair for one role — `--author` (signs manifests) or
+`--attester` (signs badges) — private key written 0600, never on argv. `publish`
+freezes a pack's probe files, computes a content digest over them, signs the
+manifest in place, and self-verifies (the signing key comes from `--key` or
+`LODESTAR_AUTHOR_KEY`, never argv). `attest` issues a locally-verifiable signed
+**badge** into the pack's `badges/` directory — a `probe_results` summary of a real
+run, or a `security_scan` verdict from `--scan <file>` — bound to the pack's
+manifest hash (the attester key comes from `--key` or `LODESTAR_ATTESTER_KEY`).
+`add` resolves a **pinned** source via a non-executing fetch — no `npm install`
+lifecycle script or git hook runs — and verifies the signature + content digest
+against operator-pinned author keys **before any pack code could run**, then
+installs the verified bytes, records the immutable pin in a lockfile, and
+**surfaces** the pack's badges verified against pinned **attester** keys. An
+unsigned or content-mismatched pack is rejected unless `--allow-unsigned` is
+explicit; badges are advisory and never gate the add.
 
 ```sh
-lodestar pack keygen --author acme --out acme-author            # mint a keypair
+lodestar pack keygen --author acme --out acme-author            # mint an author keypair
+lodestar pack keygen --attester acme-ci --out acme-ci           # mint an attester keypair
 lodestar pack publish --pack ./packs/mine --author acme --key acme-author.key
+lodestar pack attest  --pack ./packs/mine --kind probe_results \
+  --attester acme-ci --key acme-ci.key --author-key acme=acme-author.pub   # run + sign a badge
 lodestar pack add npm:@acme/safety-pack@1.2.0 \
-  --integrity sha512-… --author-key acme=acme-author.pub        # pinned + verified
+  --integrity sha512-… --author-key acme=acme-author.pub \
+  --attester-key acme-ci=acme-ci.pub                            # pinned + verified, badges surfaced
 lodestar pack add git:https://github.com/acme/packs.git#<40-hex-sha> \
   --author-key acme=acme-author.pub
 lodestar pack add local:./packs/mine --author-key acme=acme-author.pub
 ```
 
-Consumers pin author keys in `.lodestar/pack-trust.json` (or `--trust-config`),
-the same shape as the proxy's `approvals.authorized_keys`. The recorded pins
-live in `.lodestar/packs.lock.json`.
+Consumers pin author keys (and, separately, attester keys) in
+`.lodestar/pack-trust.json` (or `--trust-config`), the same shape as the proxy's
+`approvals.authorized_keys`. The recorded pins live in `.lodestar/packs.lock.json`.
 
 ## Exit codes
 

@@ -12,9 +12,9 @@ import { ProbePackError } from "./errors.js"
 /** Default location an operator pins author keys, relative to the cwd. */
 export const DEFAULT_PACK_TRUST_PATH = ".lodestar/pack-trust.json"
 
-/** An empty trust config: no pinned keys, so a signed pack is rejected unless an author is pinned elsewhere (e.g. a `--author-key` flag). */
+/** An empty trust config: no pinned keys, so a signed pack is rejected unless an author is pinned elsewhere (e.g. a `--author-key` flag), and no badge attester is trusted. */
 function emptyTrustConfig(): PackTrustConfig {
-  return { author_keys: [] }
+  return { author_keys: [], attester_keys: [] }
 }
 
 /**

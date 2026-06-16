@@ -205,6 +205,48 @@ const added = await addProbePack({
 The trust config (`readPackTrustConfig`) and lockfile (`readPackLockfile` /
 `upsertPackLockEntry`) are the consumer-side IO; the formats are core schemas.
 
+## Verification badges (ADR-0020)
+
+Badges are the registry's second trust axis — locally-verifiable signed
+attestations (`probe_results` / `security_scan`) **attached to** a pack in its
+`badges/` directory, verified against a **separate** pinned **attester** trust root.
+They are *advisory*: surfaced, never a gate. `buildProbeResultsBadge` signs the
+summary of a `runPack`; `writePackBadge` drops it into `badges/`; `addProbePack`
+classifies each badge against the pinned attester keys and returns the result.
+
+```ts
+import {
+  buildProbeResultsBadge,
+  writePackBadge,
+  runPack,
+  loadProbePack,
+  addProbePack,
+} from "@qmilab/lodestar-harness"
+
+// Attester: run the pack, sign a probe_results badge, write it into badges/.
+const pack = await loadProbePack("./packs/mine", { allowUnsigned: true })
+const run = await runPack(pack)
+const badge = buildProbeResultsBadge(pack.manifest, run, {
+  attesterId: "acme-ci",
+  privateKeyPem, // the attester key — never argv
+  at: new Date().toISOString(),
+  harnessVersion: "0.3.0",
+})
+await writePackBadge(pack.root, badge)
+
+// Consumer: pin the attester separately; badges come back classified, never gating.
+const added = await addProbePack({
+  ref: { type: "local", path: "./packs/mine" },
+  authorizedAuthorKeys: [{ actor_id: "acme", public_key: authorPub }],
+  authorizedAttesterKeys: [{ actor_id: "acme-ci", public_key: attesterPub }],
+  at: new Date().toISOString(),
+})
+added.badges // [{ file, status: "verified" | "unverified" | "not_applicable" | "malformed", … }]
+```
+
+The `subject.manifest_hash` binding defeats a mis-attached badge; the signature
+defeats a forged one. Only `status: "verified"` is trusted.
+
 ## Running a pack
 
 ```ts
