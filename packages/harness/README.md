@@ -247,6 +247,39 @@ added.badges // [{ file, status: "verified" | "unverified" | "not_applicable" | 
 The `subject.manifest_hash` binding defeats a mis-attached badge; the signature
 defeats a forged one. Only `status: "verified"` is trusted.
 
+## Discovery index (ADR-0021)
+
+Discovery is **a protocol, not a service**: a fetchable **static signed JSON
+listing** of packs, hostable anywhere, verified locally against a **third** pinned
+trust root — the operator's **index-publisher** keys. `loadPackIndex` fetches an
+index (a local path, `file:`, or https URL) and verifies its signature (fail closed —
+an unsigned index is rejected unless `allowUnsigned`); `searchPackIndexes` filters
+listings locally by name / coverage area / invariant, and multiple indexes compose.
+`publishPackIndex` signs an authored index in place (the thin publisher side).
+
+The load-bearing property: an index **advertises, never authorizes**. Choosing a
+listed pack still routes through `addProbePack` (#86/#88) against your pinned
+**author** keys, so a hostile or tampered index can mis-list or omit but never make a
+forged pack verify — the trust is in the pack signature, not the index.
+
+```ts
+import { loadPackIndex, searchPackIndexes, addProbePack } from "@qmilab/lodestar-harness"
+
+// Fetch + verify one or more indexes against pinned index-publisher keys.
+const index = await loadPackIndex("https://acme.example/pack-index.json", {
+  authorizedIndexPublisherKeys: [{ actor_id: "acme-index", public_key: publisherPub }],
+})
+const hits = searchPackIndexes([index], { coverageArea: "egress" })
+
+// A discovered entry carries the immutable source ref — but `add` re-verifies it
+// against your pinned AUTHOR keys before anything installs (the index only advertises).
+const chosen = hits[0]!.entry
+const added = await addProbePack({
+  ref: chosen.source,
+  authorizedAuthorKeys: [{ actor_id: chosen.author_id!, public_key: authorPub }],
+})
+```
+
 ## Running a pack
 
 ```ts

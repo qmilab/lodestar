@@ -6,6 +6,7 @@ import {
   type PackAuthorKey,
   type PackBadgeKind,
   PackBadgeKindSchema,
+  type PackIndexPublisherKey,
   type PackSourceRef,
   type ProbePackSourceType,
   ProbePackSourceTypeSchema,
@@ -17,16 +18,22 @@ import {
   type BadgeVerification,
   DEFAULT_PACK_LOCKFILE_PATH,
   DEFAULT_PACK_TRUST_PATH,
+  type PackIndexQuery,
+  type PackIndexSearchHit,
   ProbePackError,
+  type VerifiedPackIndex,
   addProbePack,
   assertPackBadgeable,
   buildProbeResultsBadge,
   buildSecurityScanBadge,
   harnessVersion,
+  loadPackIndex,
   loadProbePack,
+  publishPackIndex,
   publishProbePack,
   readPackTrustConfig,
   runPack,
+  searchPackIndexes,
   writePackBadge,
 } from "@qmilab/lodestar-harness"
 
@@ -35,6 +42,9 @@ const AUTHOR_KEY_ENV = "LODESTAR_AUTHOR_KEY"
 
 /** Env var holding the attester's PKCS#8 PEM private key (off argv; never logged). */
 const ATTESTER_KEY_ENV = "LODESTAR_ATTESTER_KEY"
+
+/** Env var holding the index publisher's PKCS#8 PEM private key (off argv; never logged). */
+const INDEX_KEY_ENV = "LODESTAR_INDEX_KEY"
 
 /** A malformed invocation (a value-taking flag with no value). Maps to exit 2. */
 class PackUsageError extends Error {
@@ -100,6 +110,12 @@ export async function packCommand(argv: string[]): Promise<number> {
       return attestCommand(rest)
     case "add":
       return addCommand(rest)
+    case "search":
+    case "list":
+      // `list` is `search` with no filter — both query fetched + verified indexes locally.
+      return searchCommand(rest)
+    case "index-sign":
+      return indexSignCommand(rest)
     default:
       process.stderr.write(`unknown subcommand: ${sub}\n`)
       writeUsage(process.stderr)
@@ -110,16 +126,19 @@ export async function packCommand(argv: string[]): Promise<number> {
 // ── keygen ─────────────────────────────────────────────────────────────────────
 
 /**
- * Mint an Ed25519 keypair for one of the two registry trust roles: an **author**
- * key (signs pack manifests; pinned under `author_keys`) or an **attester** key
- * (signs verification badges; pinned under `attester_keys`, ADR-0020). Exactly one
- * of `--author` / `--attester` is required — they are separate trust roots. Mirrors
- * `approve keygen` — same key format and the same temp+rename 0600 discipline for
- * the private key — but labels the printed pin for the role chosen.
+ * Mint an Ed25519 keypair for one of the three registry trust roles: an **author**
+ * key (signs pack manifests; pinned under `author_keys`), an **attester** key (signs
+ * verification badges; pinned under `attester_keys`, ADR-0020), or an **index
+ * publisher** key (signs discovery indexes; pinned under `index_publisher_keys`,
+ * ADR-0021). Exactly one of `--author` / `--attester` / `--index` is required — they
+ * are separate trust roots. Mirrors `approve keygen` — same key format and the same
+ * temp+rename 0600 discipline for the private key — but labels the printed pin for
+ * the role chosen.
  */
 async function keygenCommand(argv: string[]): Promise<number> {
   let author: string | undefined
   let attester: string | undefined
+  let index: string | undefined
   let outPath: string | undefined
   try {
     for (let i = 0; i < argv.length; i++) {
@@ -129,6 +148,9 @@ async function keygenCommand(argv: string[]): Promise<number> {
         i++
       } else if (arg === "--attester") {
         attester = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--index") {
+        index = takeValue(argv, i, arg)
         i++
       } else if (arg === "--out" || arg === "-o") {
         outPath = takeValue(argv, i, arg)
@@ -152,10 +174,11 @@ async function keygenCommand(argv: string[]): Promise<number> {
   }
   const hasAuthor = author !== undefined && author !== ""
   const hasAttester = attester !== undefined && attester !== ""
-  if (hasAuthor === hasAttester) {
+  const hasIndex = index !== undefined && index !== ""
+  if ([hasAuthor, hasAttester, hasIndex].filter(Boolean).length !== 1) {
     process.stderr.write(
-      "keygen needs exactly one of --author <id> or --attester <id>\n" +
-        "          (--author mints a manifest-signing key; --attester mints a badge-signing key — separate trust roots)\n",
+      "keygen needs exactly one of --author <id>, --attester <id>, or --index <id>\n" +
+        "          (--author mints a manifest-signing key; --attester a badge-signing key; --index a discovery-index-signing key — separate trust roots)\n",
     )
     return 2
   }
@@ -172,15 +195,25 @@ async function keygenCommand(argv: string[]): Promise<number> {
         useHint: (id: string, key: string) =>
           `lodestar pack publish --pack <dir> --author ${id} --key ${key}`,
       }
-    : {
-        id: attester as string,
-        idField: "attester_id" as const,
-        keysField: "attester_keys",
-        keyEnv: ATTESTER_KEY_ENV,
-        noun: "attester",
-        useHint: (id: string, key: string) =>
-          `lodestar pack attest --pack <dir> --kind probe_results --attester ${id} --key ${key}`,
-      }
+    : hasAttester
+      ? {
+          id: attester as string,
+          idField: "attester_id" as const,
+          keysField: "attester_keys",
+          keyEnv: ATTESTER_KEY_ENV,
+          noun: "attester",
+          useHint: (id: string, key: string) =>
+            `lodestar pack attest --pack <dir> --kind probe_results --attester ${id} --key ${key}`,
+        }
+      : {
+          id: index as string,
+          idField: "publisher_id" as const,
+          keysField: "index_publisher_keys",
+          keyEnv: INDEX_KEY_ENV,
+          noun: "index publisher",
+          useHint: (id: string, key: string) =>
+            `lodestar pack index-sign --index-file <file> --publisher ${id} --key ${key}`,
+        }
 
   const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
   const pin = JSON.stringify({ [role.idField]: role.id, public_key: publicKeyPem }, null, 2)
@@ -211,7 +244,7 @@ async function keygenCommand(argv: string[]): Promise<number> {
   process.stdout.write(
     `# Ed25519 pack-${role.noun} keypair. Keep the PRIVATE key secret (a secret store / a 0600 file).
 # Use with:  ${role.useHint(role.id, "<private-key-file>")}
-#       or:  ${role.keyEnv}="$(cat <private-key-file>)" lodestar pack ${hasAuthor ? "publish" : "attest"} ...
+#       or:  ${role.keyEnv}="$(cat <private-key-file>)" lodestar pack ${hasAuthor ? "publish" : hasAttester ? "attest" : "index-sign"} ...
 
 # --- PRIVATE KEY (PKCS#8) ---
 ${privateKeyPem}
@@ -766,6 +799,336 @@ export function parseSourceArg(
   return { ref: { type: "local", path: resolve(process.cwd(), path) } }
 }
 
+// ── search / list ─────────────────────────────────────────────────────────────
+
+/**
+ * `lodestar pack search` / `pack list` — the read-side discovery surface (ADR-0021,
+ * #87). Fetch one or more pinned static indexes, verify each against the operator's
+ * pinned **index-publisher** keys, and filter the listings locally. Discovery is a
+ * protocol, not a service: an index only *advertises* — resolving a chosen pack still
+ * routes through `pack add` (#86/#88) against pinned author keys, so a hostile index
+ * can mis-list but never make a forged pack verify.
+ *
+ *   lodestar pack search [<text>] --index <source>... [--coverage <area>] [--invariant <inv>]
+ *                        [--index-key <id>=<file>]... [--trust-config <path>]
+ *                        [--allow-unsigned-index] [--json]
+ *
+ * Fail closed: an unsigned index is rejected unless `--allow-unsigned-index`. A single
+ * index that fails to fetch/verify is reported and skipped, not fatal — the remaining
+ * indexes still compose.
+ */
+async function searchCommand(argv: string[]): Promise<number> {
+  let text: string | undefined
+  let coverage: string | undefined
+  let invariant: string | undefined
+  let trustConfigPath: string | undefined
+  let allowUnsignedIndex = false
+  let json = false
+  const indexSources: string[] = []
+  const indexKeyFlags: PackIndexPublisherKey[] = []
+  try {
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      if (arg === "--index" || arg === "-i") {
+        indexSources.push(takeValue(argv, i, arg))
+        i++
+      } else if (arg === "--coverage" || arg === "-c") {
+        coverage = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--invariant") {
+        invariant = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--trust-config") {
+        trustConfigPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--index-key") {
+        // `--index-key <publisher-id>=<spki-pem-file>` (repeatable).
+        const spec = takeValue(argv, i, arg)
+        i++
+        const parsed = await parseKeyFileFlag(spec, "--index-key")
+        if ("error" in parsed) {
+          process.stderr.write(`${parsed.error}\n`)
+          return 2
+        }
+        indexKeyFlags.push({ publisher_id: parsed.actorId, public_key: parsed.publicKey })
+      } else if (arg === "--allow-unsigned-index") {
+        allowUnsignedIndex = true
+      } else if (arg === "--json") {
+        json = true
+      } else if (arg === "--help" || arg === "-h") {
+        writeUsage(process.stdout)
+        return 0
+      } else if (arg?.startsWith("-")) {
+        process.stderr.write(`unknown flag for 'search': ${arg}\n`)
+        writeUsage(process.stderr)
+        return 2
+      } else if (text === undefined) {
+        text = arg
+      } else {
+        process.stderr.write(`unexpected extra argument for 'search': ${arg}\n`)
+        writeUsage(process.stderr)
+        return 2
+      }
+    }
+  } catch (err) {
+    if (err instanceof PackUsageError) {
+      process.stderr.write(`${err.message}\n`)
+      writeUsage(process.stderr)
+      return 2
+    }
+    throw err
+  }
+
+  if (indexSources.length === 0) {
+    process.stderr.write(
+      "missing --index <source> for 'search' (a static discovery index: a path, file:<path>, or https URL)\n",
+    )
+    writeUsage(process.stderr)
+    return 2
+  }
+
+  // Pin index-publisher keys: command-line flags first (override a config entry for
+  // the same publisher), then the trust config's index_publisher_keys.
+  let pinnedIndexKeys: PackIndexPublisherKey[]
+  try {
+    const trust = await readPackTrustConfig(trustConfigPath ?? DEFAULT_PACK_TRUST_PATH, {
+      required: trustConfigPath !== undefined,
+    })
+    pinnedIndexKeys = [...indexKeyFlags, ...trust.index_publisher_keys]
+    if (trust.allow_unsigned === true) allowUnsignedIndex = true
+  } catch (err) {
+    if (err instanceof ProbePackError) {
+      process.stderr.write(`[pack] ${err.message}\n`)
+      return 1
+    }
+    throw err
+  }
+
+  // Load each index, fail closed per-index but resilient: a bad index is skipped, not
+  // fatal, so one hostile/unreachable index does not break the rest of discovery.
+  const loaded: VerifiedPackIndex[] = []
+  let failures = 0
+  for (const source of indexSources) {
+    try {
+      loaded.push(
+        await loadPackIndex(source, {
+          authorizedIndexPublisherKeys: indexKeysAsPinned(pinnedIndexKeys),
+          allowUnsigned: allowUnsignedIndex,
+        }),
+      )
+    } catch (err) {
+      failures++
+      const msg = err instanceof ProbePackError ? err.message : errMessage(err)
+      process.stderr.write(`[pack] skipped index '${source}': ${msg}\n`)
+    }
+  }
+
+  const query: PackIndexQuery = {
+    ...(text !== undefined ? { text } : {}),
+    ...(coverage !== undefined ? { coverageArea: coverage } : {}),
+    ...(invariant !== undefined ? { invariant } : {}),
+  }
+  const hits = searchPackIndexes(loaded, query)
+
+  if (json) {
+    process.stdout.write(`${JSON.stringify(hits.map(hitToJson), null, 2)}\n`)
+    // Exit 3 (resource not found) if every named index failed to load.
+    return loaded.length === 0 ? 3 : 0
+  }
+
+  writeSearchResults(hits, { indexesLoaded: loaded.length, indexesNamed: indexSources.length })
+  if (loaded.length === 0) return 3
+  return failures > 0 ? 1 : 0
+}
+
+/** Shape one search hit for `--json` output (advisory note: trust is re-verified on add). */
+function hitToJson(hit: PackIndexSearchHit): Record<string, unknown> {
+  return {
+    name: hit.entry.name,
+    version: hit.entry.version,
+    source: hit.entry.source,
+    ...(hit.entry.author_id !== undefined ? { author_id: hit.entry.author_id } : {}),
+    ...(hit.entry.description !== undefined ? { description: hit.entry.description } : {}),
+    coverage_areas: hit.entry.coverage_areas,
+    invariants: hit.entry.invariants,
+    ...(hit.entry.badges !== undefined ? { badges: hit.entry.badges } : {}),
+    index_source: hit.indexSource,
+    ...(hit.indexPublisherId !== undefined ? { index_publisher_id: hit.indexPublisherId } : {}),
+  }
+}
+
+/** Compact one-line rendering of a source ref (where `pack add` would resolve it). */
+function formatSourceRef(source: PackSourceRef): string {
+  switch (source.type) {
+    case "npm":
+      return `npm ${source.package}@${source.version}`
+    case "git":
+      return `git ${source.url}#${source.commit.slice(0, 12)}…`
+    case "local":
+      return `local ${source.path}`
+  }
+}
+
+/** Human-readable search results: one block per hit, with an advisory closing note. */
+function writeSearchResults(
+  hits: PackIndexSearchHit[],
+  counts: { indexesLoaded: number; indexesNamed: number },
+): void {
+  const skipped = counts.indexesNamed - counts.indexesLoaded
+  process.stdout.write(
+    `[pack] ${hits.length} result(s) from ${counts.indexesLoaded}/${counts.indexesNamed} verified index(es)` +
+      `${skipped > 0 ? ` (${skipped} skipped)` : ""}.\n`,
+  )
+  for (const hit of hits) {
+    const e = hit.entry
+    process.stdout.write(
+      `\n  ${e.name}@${e.version}${e.author_id ? `  (author ${e.author_id})` : ""}\n`,
+    )
+    if (e.description) process.stdout.write(`    ${e.description}\n`)
+    if (e.coverage_areas.length > 0 || e.invariants.length > 0) {
+      process.stdout.write(
+        `    coverage: ${e.coverage_areas.join(", ") || "—"}   invariants: ${e.invariants.join(", ") || "—"}\n`,
+      )
+    }
+    process.stdout.write(`    source:   ${formatSourceRef(e.source)}\n`)
+    if (e.badges !== undefined && e.badges.length > 0) {
+      process.stdout.write(
+        `    badges:   ${e.badges.map((b) => `${b.kind} by ${b.attester_id}`).join(", ")} (advisory — verify locally)\n`,
+      )
+    }
+    process.stdout.write(
+      `    via:      ${hit.indexSource}${hit.indexPublisherId ? ` (publisher ${hit.indexPublisherId})` : " (UNSIGNED)"}\n`,
+    )
+  }
+  if (hits.length > 0) {
+    const first = hits[0] as PackIndexSearchHit
+    process.stdout.write(
+      `\nAdd one (re-verified against your pinned author keys before anything installs):\n  lodestar pack add ${addArgFor(first.entry.source)}\n`,
+    )
+  }
+}
+
+/** Reconstruct a `pack add` source argument from an entry's source ref (a copy-paste hint). */
+function addArgFor(source: PackSourceRef): string {
+  switch (source.type) {
+    case "npm":
+      return `npm:${source.package}@${source.version} --integrity ${source.integrity}`
+    case "git":
+      return `git:${source.url}#${source.commit}`
+    case "local":
+      return `local:${source.path}`
+  }
+}
+
+/** Map operator-pinned index-publisher keys to the shared pinned-key list shape. */
+function indexKeysAsPinned(
+  keys: PackIndexPublisherKey[],
+): { actor_id: string; public_key: string }[] {
+  return keys.map((k) => ({ actor_id: k.publisher_id, public_key: k.public_key }))
+}
+
+// ── index-sign ─────────────────────────────────────────────────────────────────
+
+/**
+ * `lodestar pack index-sign` — the thin publisher side of discovery (ADR-0021). Sign
+ * an authored (hand-written) static index in place: validate the file, set
+ * `publisher_id` + `generated_at`, sign the canonical document, self-verify, and write
+ * it back (or to `--out`). The publisher authors the listing (they know each pack's
+ * immutable source pin); this only signs it — exactly like `publish` for a pack.
+ * The signing key comes from `--key` or `LODESTAR_INDEX_KEY`, never argv. The
+ * hosted/managed index-building pipeline is the commercial surface (ADR-0016 §4).
+ *
+ *   lodestar pack index-sign --index-file <path> --publisher <id> [--key <path>] [--out <path>]
+ */
+async function indexSignCommand(argv: string[]): Promise<number> {
+  let indexFile: string | undefined
+  let publisher: string | undefined
+  let keyPath: string | undefined
+  let outPath: string | undefined
+  try {
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i]
+      if (arg === "--index-file" || arg === "-f") {
+        indexFile = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--publisher" || arg === "-p") {
+        publisher = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--key" || arg === "-k") {
+        keyPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--out" || arg === "-o") {
+        outPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--help" || arg === "-h") {
+        writeUsage(process.stdout)
+        return 0
+      } else {
+        process.stderr.write(`unknown flag for 'index-sign': ${arg}\n`)
+        writeUsage(process.stderr)
+        return 2
+      }
+    }
+  } catch (err) {
+    if (err instanceof PackUsageError) {
+      process.stderr.write(`${err.message}\n`)
+      writeUsage(process.stderr)
+      return 2
+    }
+    throw err
+  }
+
+  if (indexFile === undefined || indexFile === "") {
+    process.stderr.write("missing required --index-file <path> for 'index-sign'\n")
+    writeUsage(process.stderr)
+    return 2
+  }
+  if (publisher === undefined || publisher === "") {
+    process.stderr.write("missing required --publisher <id> for 'index-sign'\n")
+    writeUsage(process.stderr)
+    return 2
+  }
+
+  let privateKeyPem: string | undefined
+  try {
+    privateKeyPem = await loadSigningKey(keyPath, INDEX_KEY_ENV)
+  } catch (err) {
+    process.stderr.write(`[pack] could not read the index signing key: ${errMessage(err)}\n`)
+    return 1
+  }
+  if (privateKeyPem === undefined) {
+    process.stderr.write(
+      `[pack] missing the index signing key: pass --key <path> or set ${INDEX_KEY_ENV}.\n        Mint one with 'lodestar pack keygen --index ${publisher} --out <prefix>'.\n`,
+    )
+    return 2
+  }
+
+  try {
+    const published = await publishPackIndex({
+      source: resolve(process.cwd(), indexFile),
+      publisherId: publisher,
+      privateKeyPem,
+      at: new Date().toISOString(),
+      ...(outPath !== undefined ? { outPath: resolve(process.cwd(), outPath) } : {}),
+    })
+    process.stdout.write(
+      `[pack] signed and self-verified discovery index as '${publisher}'.\n` +
+        `       index:        ${published.indexPath}\n` +
+        `       packs listed:  ${published.index.packs.length}\n` +
+        `       index hash:    ${published.hash}\n\n` +
+        `Consumers pin your key in ${DEFAULT_PACK_TRUST_PATH} under index_publisher_keys:\n` +
+        `${JSON.stringify({ publisher_id: publisher, public_key: published.publicKeyPem }, null, 2)}\n`,
+    )
+    return 0
+  } catch (err) {
+    if (err instanceof ProbePackError) {
+      process.stderr.write(`[pack] index-sign failed: ${err.message}\n`)
+      return 1
+    }
+    throw err
+  }
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -818,7 +1181,7 @@ function errMessage(err: unknown): string {
 
 function writeUsage(stream: NodeJS.WritableStream): void {
   stream.write(
-    `usage: lodestar pack keygen  (--author <id> | --attester <id>) [--out <prefix>]
+    `usage: lodestar pack keygen  (--author <id> | --attester <id> | --index <id>) [--out <prefix>]
        lodestar pack publish [--pack <dir>] --author <id> [--key <path>]
                              [--source-type <local|npm|git>]
        lodestar pack attest  [--pack <dir>] --kind <probe_results|security_scan>
@@ -827,11 +1190,18 @@ function writeUsage(stream: NodeJS.WritableStream): void {
        lodestar pack add <source> [--author-key <id>=<file>]... [--attester-key <id>=<file>]...
                          [--trust-config <path>] [--integrity <sri>] [--registry <url>]
                          [--allow-unsigned] [--lockfile <path>] [--install-dir <dir>] [--no-install]
+       lodestar pack search [<text>] --index <source>... [--coverage <area>] [--invariant <inv>]
+                            [--index-key <id>=<file>]... [--trust-config <path>]
+                            [--allow-unsigned-index] [--json]
+       lodestar pack list   ...   (alias for search with no text filter)
+       lodestar pack index-sign --index-file <path> --publisher <id> [--key <path>] [--out <path>]
 
-  Author + consumer + attestation flow for signed trust-packs (ADR-0019 / ADR-0020).
+  Author + consumer + attestation + discovery flow for signed trust-packs
+  (ADR-0019 / ADR-0020 / ADR-0021).
 
   keygen  — mint an Ed25519 keypair for one role: --author (signs manifests, pinned
-            under author_keys) or --attester (signs badges, pinned under attester_keys).
+            under author_keys), --attester (signs badges, pinned under attester_keys),
+            or --index (signs discovery indexes, pinned under index_publisher_keys).
 
   publish — freeze the pack files, content-digest them, sign the manifest in place,
             and self-verify. The author key comes from --key or LODESTAR_AUTHOR_KEY
@@ -853,6 +1223,21 @@ function writeUsage(stream: NodeJS.WritableStream): void {
               attesters pinned there too (attester_keys) plus --attester-key (advisory).
               An unsigned pack is rejected unless --allow-unsigned is explicit; badges
               are advisory and never gate the add.
+
+  search  — fetch one or more PINNED static discovery indexes, verify each against your
+            pinned index-publisher keys (index_publisher_keys + --index-key), and filter
+            the listings locally by text / --coverage / --invariant. An index only
+            advertises: choosing a pack still routes through 'pack add' (re-verified
+            against your pinned author keys) before anything installs. An unsigned index
+            is rejected unless --allow-unsigned-index; a single bad index is skipped, not
+            fatal. --json emits the raw hits. ('list' is search with no text filter.)
+    index:    a local path, file:<path>, or an https URL to a lodestar.pack-index.json.
+
+  index-sign — sign an authored static discovery index in place (validate → set
+            publisher_id + generated_at → sign → self-verify → write). The publisher
+            writes the listing (they know each pack's source pin); this signs it. The
+            index key comes from --key or LODESTAR_INDEX_KEY (never argv). Mint one with
+            'lodestar pack keygen --index'.
 `,
   )
 }

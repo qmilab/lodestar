@@ -64,9 +64,23 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   `buildSecurityScanBadge` (signs a provided verdict) produce badges;
   `writePackBadge` drops one into `badges/` atomically. Core owns the format + pure
   sign/verify; this is the harness's fs half.
+- `src/pack/pack-index.ts` — pack discovery index (#87, ADR-0021), the read-side
+  fetch + verify + query. `fetchPackIndex` reads a static index from a local path,
+  `file:`, or an https URL (a plain read-only GET, size-capped); `loadPackIndex`
+  verifies it against operator-pinned **index-publisher** keys (fail closed — an
+  unsigned index is rejected unless `allowUnsigned`; a signed index is always fully
+  verified) and returns a `VerifiedPackIndex`; `searchPackIndexes` filters listings
+  locally by name/coverage/invariant (AND), one hit per (index, listing) so multiple
+  indexes compose. The load-bearing property: an index **advertises, never
+  authorizes** — choosing a listed pack still routes through `addProbePack` (#86/#88)
+  against pinned author keys, so a hostile index can mis-list but never make a forged
+  pack verify. `publishPackIndex` is the thin publisher side: sign an authored index
+  in place + self-verify (mirrors `publishProbePack`). Driven by `lodestar pack
+  search` / `list` / `index-sign`.
 - `src/pack/trust-config.ts` / `src/pack/lockfile.ts` — the consumer's
   `pack-trust.json` (pinned author keys, mirroring the proxy's
-  `approvals.authorized_keys`, plus the separate `attester_keys` badge trust root)
+  `approvals.authorized_keys`, plus the separate `attester_keys` badge trust root and
+  `index_publisher_keys` discovery-index trust root)
   and `packs.lock.json` (recorded pins) IO. The formats are core schemas
   (`schemas/pack-registry.ts`); these are the fs readers/ writers (atomic
   temp+rename for the lockfile). Driven by `lodestar pack`.

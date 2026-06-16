@@ -65,7 +65,8 @@
     "pack_content_digest_binding",
     "pack_source_resolution",
     "pack_publish_add_roundtrip",
-    "verification_badge_trust"
+    "verification_badge_trust",
+    "pack_index_signature_required"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -239,6 +240,10 @@
     {
       "name": "unverified-badge-not-trusted",
       "file": "probes/unverified-badge-not-trusted.ts"
+    },
+    {
+      "name": "pack-index-signature-required",
+      "file": "probes/pack-index-signature-required.ts"
     }
   ]
 }

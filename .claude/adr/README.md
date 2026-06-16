@@ -187,3 +187,17 @@ The options we rejected, each with a one-line reason.
   shared-primitive crypto in `core`, production/verify in `harness`, `pack attest` +
   `keygen --attester` in `cli`. The scanner/issuing authority at scale is commercial.
   Probe `unverified-badge-not-trusted`.
+- [ADR-0021](0021-pack-discovery-index.md) — pack discovery index (#87, ADR-0016
+  **step 6 of 6** — the last child): discovery as a **protocol, not a service** — a
+  fetchable **static signed JSON listing** (`schemas/pack-index.ts`), hostable
+  anywhere, verified locally against a **third** pinned trust root
+  (`index_publisher_keys`, distinct from author + attester keys). Each entry carries
+  the immutable `PackSourceRef` (#86), so discovery feeds resolution directly. The
+  load-bearing property: an index **advertises, never authorizes** — choosing a listed
+  pack still routes through `addProbePack` (#86/#88) against pinned **author** keys, so
+  a hostile/tampered index can mis-list or omit but never make an unsigned/forged pack
+  verify. `loadPackIndex` (fail closed, `allow_unsigned` opt-out) + `searchPackIndexes`
+  (local filter, multiple indexes compose) in `harness`; `pack search` / `pack list`
+  (read) + a thin `pack index-sign` / `keygen --index` publisher side in `cli`; the
+  format + sign/verify primitive in `core`. The hosted search/ranking backend stays
+  commercial. Probe `pack-index-signature-required`.

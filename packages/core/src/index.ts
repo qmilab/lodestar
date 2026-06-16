@@ -46,6 +46,9 @@ export * from "./schemas/pack-registry.js"
 // Verification badges (#89, ADR-0020) — the locally-verifiable attestation format
 export * from "./schemas/pack-badge.js"
 
+// Pack discovery index (#87, ADR-0021) — the static signed discovery listing format
+export * from "./schemas/pack-index.js"
+
 // Sentinels (Batch 4) — the sentinel.alerted@1 alert wire format
 export * from "./schemas/sentinel.js"
 
@@ -61,6 +64,7 @@ export * from "./crypto/canonical.js"
 export * from "./crypto/signing.js"
 export * from "./crypto/probe-pack-signing.js"
 export * from "./crypto/badge-signing.js"
+export * from "./crypto/pack-index-signing.js"
 
 // Schema registry
 export * as registry from "./registry.js"

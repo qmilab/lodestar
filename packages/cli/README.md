@@ -133,11 +133,13 @@ lodestar harness calibrate session-… --no-emit                 # preview only
 lodestar harness calibrate session-… --out calibration.md      # also write md
 ```
 
-### `lodestar pack keygen` / `publish` / `attest` / `add`
+### `lodestar pack keygen` / `publish` / `attest` / `add` / `search` / `index-sign`
 
-The trust-pack author + consumer + attestation flow (ADR-0019 / ADR-0020).
-`keygen` mints an Ed25519 keypair for one role — `--author` (signs manifests) or
-`--attester` (signs badges) — private key written 0600, never on argv. `publish`
+The trust-pack author + consumer + attestation + discovery flow
+(ADR-0019 / ADR-0020 / ADR-0021).
+`keygen` mints an Ed25519 keypair for one role — `--author` (signs manifests),
+`--attester` (signs badges), or `--index` (signs discovery indexes) — private key
+written 0600, never on argv. `publish`
 freezes a pack's probe files, computes a content digest over them, signs the
 manifest in place, and self-verifies (the signing key comes from `--key` or
 `LODESTAR_AUTHOR_KEY`, never argv). `attest` issues a locally-verifiable signed
@@ -152,9 +154,21 @@ installs the verified bytes, records the immutable pin in a lockfile, and
 unsigned or content-mismatched pack is rejected unless `--allow-unsigned` is
 explicit; badges are advisory and never gate the add.
 
+`search` / `list` are the read-side **discovery** surface: fetch one or more pinned
+static discovery indexes (`--index <source>`: a path, `file:`, or https URL), verify
+each against pinned **index-publisher** keys (`--index-key` + the config's
+`index_publisher_keys`; fail closed unless `--allow-unsigned-index`), and filter the
+listings locally by `--coverage` / `--invariant` / a text arg (`--json` for raw
+hits). An index **advertises but never authorizes** — choosing a listed pack still
+routes through `pack add` (re-verified against your pinned author keys) before
+anything installs, so a hostile or tampered index can mis-list or omit but never make
+a forged pack verify. A single bad index is skipped, not fatal. `index-sign` is the
+thin publisher side: sign an authored index file in place + self-verify.
+
 ```sh
 lodestar pack keygen --author acme --out acme-author            # mint an author keypair
 lodestar pack keygen --attester acme-ci --out acme-ci           # mint an attester keypair
+lodestar pack keygen --index acme-index --out acme-index        # mint an index-publisher keypair
 lodestar pack publish --pack ./packs/mine --author acme --key acme-author.key
 lodestar pack attest  --pack ./packs/mine --kind probe_results \
   --attester acme-ci --key acme-ci.key --author-key acme=acme-author.pub   # run + sign a badge
@@ -164,10 +178,14 @@ lodestar pack add npm:@acme/safety-pack@1.2.0 \
 lodestar pack add git:https://github.com/acme/packs.git#<40-hex-sha> \
   --author-key acme=acme-author.pub
 lodestar pack add local:./packs/mine --author-key acme=acme-author.pub
+lodestar pack index-sign --index-file ./pack-index.json \
+  --publisher acme-index --key acme-index.key                   # sign an authored discovery index
+lodestar pack search --index https://acme.example/pack-index.json \
+  --index-key acme-index=acme-index.pub --coverage egress       # verify + filter listings locally
 ```
 
-Consumers pin author keys (and, separately, attester keys) in
-`.lodestar/pack-trust.json` (or `--trust-config`), the same shape as the proxy's
+Consumers pin author keys (and, separately, attester keys, and index-publisher keys)
+in `.lodestar/pack-trust.json` (or `--trust-config`), the same shape as the proxy's
 `approvals.authorized_keys`. The recorded pins live in `.lodestar/packs.lock.json`.
 
 ## Exit codes

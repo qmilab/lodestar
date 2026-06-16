@@ -81,6 +81,22 @@ export {
   DEFAULT_PACK_LOCKFILE_PATH,
 } from "./pack/lockfile.js"
 
+// Pack discovery index (#87, ADR-0021) — the read-side fetch + verify + query surface
+// plus the thin publisher-side sign (publishPackIndex)
+export {
+  fetchPackIndex,
+  loadPackIndex,
+  publishPackIndex,
+  searchPackIndexes,
+  type FetchPackIndexOptions,
+  type LoadPackIndexOptions,
+  type PackIndexQuery,
+  type PackIndexSearchHit,
+  type PublishPackIndexOptions,
+  type PublishedPackIndex,
+  type VerifiedPackIndex,
+} from "./pack/pack-index.js"
+
 export { harnessVersion } from "./version.js"
 
 export {

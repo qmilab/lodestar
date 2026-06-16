@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { PackIndexPublisherKeySchema } from "./pack-index.js"
 import { PackSourceRefSchema } from "./probe-pack.js"
 
 /**
@@ -85,9 +86,15 @@ export const PackTrustConfigSchema = z
       .describe(
         "Operator-pinned attester keys badges are verified against (ADR-0020). Additive and advisory — an empty set means no badge is trusted, never that a pack is rejected.",
       ),
+    index_publisher_keys: z
+      .array(PackIndexPublisherKeySchema)
+      .default([])
+      .describe(
+        "Operator-pinned index-publisher keys discovery indexes are verified against (ADR-0021). The third, separate trust root — pinning a publisher governs only whose listing you trust, never whether a pack loads.",
+      ),
   })
   .describe(
-    "Consumer-side pack trust config: pinned author keys + the unsigned opt-out + pinned badge-attester keys.",
+    "Consumer-side pack trust config: pinned author keys + the unsigned opt-out + pinned badge-attester keys + pinned index-publisher keys.",
   )
 export type PackTrustConfig = z.infer<typeof PackTrustConfigSchema>
 
