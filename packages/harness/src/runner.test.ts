@@ -128,6 +128,77 @@ describe("runPack", () => {
   })
 })
 
+// process.env requires `delete`: assigning `undefined` coerces to the literal
+// string "undefined", which a spawned probe would then read as a real value.
+function unsetEnv(...keys: string[]): void {
+  for (const key of keys) delete process.env[key]
+}
+
+describe("scoped probe environment (#114, ADR-0022)", () => {
+  // A probe that echoes what it can see in its own env, then exits 0. The test
+  // reads the captured stdout, not the verdict.
+  const REPORTER = [
+    'console.log("SECRET=" + (process.env.LODESTAR_RUNNER_TEST_SECRET ?? "<absent>"))',
+    'console.log("ALLOWED=" + (process.env.LODESTAR_RUNNER_TEST_ALLOWED ?? "<absent>"))',
+    'console.log("PATH=" + ((process.env.PATH?.length ?? 0) > 0 ? "<present>" : "<absent>"))',
+    'console.log("HOME=" + (process.env.HOME ?? "<absent>"))',
+    "process.exit(0)",
+  ].join("\n")
+
+  test("does NOT pass host process.env through to a spawned probe", async () => {
+    process.env.LODESTAR_RUNNER_TEST_SECRET = "host-secret-must-not-leak"
+    const dir = await makeFixturePack("fixture-env-deny", [["reporter.ts", REPORTER]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack)).outcomes[0]
+      // The headline: the host secret is absent from the probe's environment.
+      expect(out?.stdout).toContain("SECRET=<absent>")
+      // PATH is still inherited so `bun` resolves; HOME is a fresh scoped dir.
+      expect(out?.stdout).toContain("PATH=<present>")
+      expect(out?.stdout).toContain("HOME=")
+      expect(out?.stdout).not.toContain("host-secret-must-not-leak")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      unsetEnv("LODESTAR_RUNNER_TEST_SECRET")
+    }
+  })
+
+  test("allowHostEnv forwards ONLY the named host var, not the rest", async () => {
+    process.env.LODESTAR_RUNNER_TEST_SECRET = "host-secret-must-not-leak"
+    process.env.LODESTAR_RUNNER_TEST_ALLOWED = "forwarded-yes"
+    const dir = await makeFixturePack("fixture-env-allow", [["reporter.ts", REPORTER]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { allowHostEnv: ["LODESTAR_RUNNER_TEST_ALLOWED"] }))
+        .outcomes[0]
+      // Allowlisted var reaches the probe; the un-listed secret still does not.
+      expect(out?.stdout).toContain("ALLOWED=forwarded-yes")
+      expect(out?.stdout).toContain("SECRET=<absent>")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      unsetEnv("LODESTAR_RUNNER_TEST_SECRET", "LODESTAR_RUNNER_TEST_ALLOWED")
+    }
+  })
+
+  test("a complete env override is used verbatim (host env never merged)", async () => {
+    process.env.LODESTAR_RUNNER_TEST_SECRET = "host-secret-must-not-leak"
+    const dir = await makeFixturePack("fixture-env-override", [["reporter.ts", REPORTER]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (
+        await runPack(pack, {
+          env: { PATH: process.env.PATH ?? "", LODESTAR_RUNNER_TEST_ALLOWED: "override-yes" },
+        })
+      ).outcomes[0]
+      expect(out?.stdout).toContain("ALLOWED=override-yes")
+      expect(out?.stdout).toContain("SECRET=<absent>")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      unsetEnv("LODESTAR_RUNNER_TEST_SECRET")
+    }
+  })
+})
+
 describe("formatProbeReport", () => {
   test("renders the canonical banner the first-party probes print", () => {
     const out = formatProbeReport("demo-probe", { passed: true, details: ["one", "two"] })

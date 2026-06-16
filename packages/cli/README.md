@@ -93,6 +93,7 @@ observation in the event log so the run is itself auditable via
 lodestar harness run                       # the first-party lodestar-core pack
 lodestar harness run --pack ./packs/mine   # a local pack directory
 lodestar harness run --no-record           # skip event-log recording (CI)
+lodestar harness run --allow-env LODESTAR_TEST_DATABASE_URL  # forward one host var to probes
 lodestar harness run --pack ./packs/mine --allow-unsigned   # load an unsigned local pack
 lodestar harness run --pack ./packs/acme \
   --author-key acme-packs=./keys/acme.pub  # load a signed pack, author key pinned
@@ -100,6 +101,16 @@ lodestar harness list
 ```
 
 `run` exits non-zero if any probe fails, so it works as a CI gate.
+
+Each probe is spawned under a **scoped environment** — a fresh empty `HOME` +
+inherited `PATH`, never the host `process.env` (#114, ADR-0022) — so a
+potentially-third-party probe cannot read host secrets it was not granted.
+`--allow-env <NAME>` (repeatable) forwards a single host var into the probes;
+it is the explicit operator allowlist (the pack manifest cannot widen the env).
+The first-party DB-gated probes need `--allow-env LODESTAR_TEST_DATABASE_URL`,
+which the repo's `probes:all` / `probes:safety` scripts already pass. This is a
+TS/process-level boundary, not an OS sandbox — it denies host-env secrets, not
+filesystem/network reach.
 
 A pack manifest is verified on load (ADR-0017). A **bundled first-party** pack
 (`lodestar-core` / `coding-agent-safety`), when the CLI runs from its own source

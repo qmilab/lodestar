@@ -201,3 +201,18 @@ The options we rejected, each with a one-line reason.
   (read) + a thin `pack index-sign` / `keygen --index` publisher side in `cli`; the
   format + sign/verify primitive in `core`. The hosted search/ranking backend stays
   commercial. Probe `pack-index-signature-required`.
+- [ADR-0022](0022-probe-runner-scoped-env-execution.md) — probe-runner scoped-env
+  execution (#114, the registry epic's **orthogonal runner-side sibling** — not a
+  child): the registry chain delivers *authentic bytes* to the runner but does not
+  govern what they do when run, and the runner used to spawn `bun run <probe>`
+  inheriting the **full host `process.env`**. **Step 1 (the unblocking step):** the
+  runner now spawns each probe with an explicit scoped env (fresh empty HOME + inherited
+  PATH), denying host secrets — mirroring `baseGitEnv`/`defaultScopedEnv` and the Action
+  Kernel's "no host env to sandboxes" rule. The operator widens it via an explicit
+  allowlist (`RunPackOptions.allowHostEnv` / `lodestar harness run --allow-env <NAME>`);
+  the **untrusted manifest cannot**, so a hostile pack can't declare its way to a secret.
+  First-party DB-gated probes keep working because `probes:all`/`probes:safety` forward
+  `LODESTAR_TEST_DATABASE_URL` explicitly. A **TS/process-level governance boundary, not
+  an OS sandbox** — it denies host-env secrets, not filesystem/network reach; the OS
+  sandbox is **step 2, deferred and filed separately**. Probe
+  `runner-denies-host-env-to-probe`.

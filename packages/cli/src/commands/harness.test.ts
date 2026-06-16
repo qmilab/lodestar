@@ -128,3 +128,39 @@ describe("lodestar harness verify-on-load", () => {
     expect(await harnessCommand(["list", "--pack", dir, "--author-key", "no-equals-sign"])).toBe(2)
   })
 })
+
+describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
+  test("accepts a repeatable --allow-env and runs the pack", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-allowenv-"))
+    await makePack(dir)
+    // The noop probe exits 0; we only assert the flag parses and the run succeeds.
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--allow-env",
+        "LODESTAR_TEST_DATABASE_URL",
+        "--allow-env",
+        "TZ",
+      ]),
+    ).toBe(0)
+  })
+
+  test("rejects --allow-env with no value (usage error)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-allowenv-bad-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--allow-env",
+      ]),
+    ).toBe(2)
+  })
+})

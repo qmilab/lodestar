@@ -1,4 +1,7 @@
 import { spawn } from "node:child_process"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import type { LoadedProbe, LoadedProbePack } from "./pack/loader.js"
 
 /**
@@ -13,9 +16,21 @@ import type { LoadedProbe, LoadedProbePack } from "./pack/loader.js"
  *
  * The runner does not load or interpret probe source. It does not record
  * to the event log either — recording is an injected {@link ProbeRunRecorder}
- * so the runner core depends on nothing but `node:child_process`. The
- * CLI wires in the event-log-backed recorder from `./recorder.ts` so
- * that probe runs are auditable through `lodestar report`.
+ * so the runner core depends on nothing but `node:child_process` (plus a
+ * temp dir for the scoped HOME). The CLI wires in the event-log-backed
+ * recorder from `./recorder.ts` so that probe runs are auditable through
+ * `lodestar report`.
+ *
+ * **Scoped-env execution (#114, ADR-0022).** A probe is potentially
+ * third-party — the loader treats pack manifests as untrusted — so each
+ * probe is spawned with an explicit, minimal environment (a fresh empty
+ * HOME + inherited PATH), never the host `process.env`. This denies host
+ * secrets to a probe it was not explicitly granted, mirroring the Action
+ * Kernel's "no host env to sandboxes" rule. The operator widens the env only
+ * via {@link RunPackOptions.allowHostEnv} (an explicit allowlist); the
+ * manifest cannot. This is a TS/process-level governance boundary, not an OS
+ * sandbox — it does not contain filesystem or network reach (the separate
+ * longer-term step).
  */
 
 /** The result of running one probe file as a subprocess. */
@@ -68,6 +83,79 @@ export interface RunPackOptions {
   record?: ProbeRunRecorder
   /** Optional progress callback fired as each probe completes. */
   onResult?: (outcome: ProbeRunOutcome) => void
+  /**
+   * The COMPLETE environment each probe subprocess sees. The host `process.env`
+   * is NEVER merged in — a probe is potentially third-party (the loader treats
+   * pack manifests as untrusted) and must not inherit host secrets. When set,
+   * this is passed verbatim and {@link allowHostEnv} is ignored. Tests and
+   * hermetic callers use this; the CLI uses {@link allowHostEnv}. (#114, ADR-0022)
+   */
+  env?: Record<string, string>
+  /**
+   * Names of host environment variables the **operator** explicitly permits a
+   * probe to receive, layered on top of the default scoped env (a fresh empty
+   * HOME + inherited PATH). This is the operator-controlled allowlist — the
+   * manifest cannot widen it (it is untrusted input), so a hostile pack cannot
+   * declare its way to a host secret. A named var that is unset on the host is
+   * simply not forwarded. No silent inheritance: anything not listed is absent.
+   */
+  allowHostEnv?: string[]
+}
+
+/**
+ * Build the default scoped environment a probe subprocess runs under: a fresh
+ * empty HOME (so a probe reads no host dotfiles / per-user credential stores)
+ * and PATH inherited (so `bun` and anything it shells to resolve). The host
+ * `process.env` is otherwise NOT passed through — denying host secrets to a
+ * potentially-third-party probe. Mirrors the Action Kernel's "no host env to
+ * sandboxes" rule and the native adapters' `defaultScopedEnv` / `baseGitEnv`.
+ *
+ * `allowHostEnv` names host vars the operator has explicitly permitted (e.g. a
+ * test database URL); each, if set on the host, is forwarded on top of the
+ * default. Returns the env plus a `cleanup` that removes the temp HOME — call
+ * it once the probe(s) using this env have finished.
+ *
+ * This is a TS/process-level governance boundary, not an OS sandbox: it denies
+ * host environment secrets, not filesystem or network reach. Real OS-level
+ * containment is the separate longer-term step (ADR-0022 step 2).
+ */
+function buildScopedProbeEnv(allowHostEnv?: string[]): {
+  env: Record<string, string>
+  cleanup: () => void
+} {
+  const home = mkdtempSync(join(tmpdir(), "lodestar-probe-home-"))
+  const env: Record<string, string> = { HOME: home }
+  const path = process.env.PATH
+  if (path !== undefined) env.PATH = path
+  for (const name of allowHostEnv ?? []) {
+    const value = process.env[name]
+    if (value !== undefined) env[name] = value
+  }
+  return {
+    env,
+    cleanup: () => {
+      try {
+        rmSync(home, { recursive: true, force: true })
+      } catch {
+        /* best-effort: a leaked temp HOME is harmless */
+      }
+    },
+  }
+}
+
+/**
+ * Resolve the probe environment for a run. A complete `env` override wins (used
+ * verbatim, host env never merged, nothing to clean up); otherwise build the
+ * default scoped env plus any operator-allowlisted host vars.
+ */
+function resolveProbeEnv(options: RunPackOptions): {
+  env: Record<string, string>
+  cleanup: () => void
+} {
+  if (options.env !== undefined) {
+    return { env: options.env, cleanup: () => {} }
+  }
+  return buildScopedProbeEnv(options.allowHostEnv)
 }
 
 // Per-stream capture cap, in characters (chunks are UTF-8-decoded before
@@ -112,9 +200,12 @@ class CappedBuffer {
 function spawnProbe(
   bun: string,
   probe: LoadedProbe,
+  env: Record<string, string>,
 ): Promise<{ exit_code: number | null; signal: string | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
-    const child = spawn(bun, ["run", probe.path], { stdio: ["ignore", "pipe", "pipe"] })
+    // `env` is the COMPLETE environment — host `process.env` is never spread in,
+    // so a probe cannot read host secrets it was not explicitly granted (#114).
+    const child = spawn(bun, ["run", probe.path], { env, stdio: ["ignore", "pipe", "pipe"] })
     const stdout = new CappedBuffer(MAX_CAPTURE_CHARS)
     const stderr = new CappedBuffer(MAX_CAPTURE_CHARS)
     child.stdout?.on("data", (chunk) => stdout.push(chunk))
@@ -142,15 +233,15 @@ function spawnProbe(
   })
 }
 
-/** Run a single resolved probe as a subprocess and return its outcome. */
-export async function runProbe(
+/** Run one probe under an already-resolved scoped env and return its outcome. */
+async function executeProbe(
   probe: LoadedProbe,
-  options: RunPackOptions = {},
+  bun: string,
+  env: Record<string, string>,
 ): Promise<ProbeRunOutcome> {
-  const bun = options.bun ?? "bun"
   const started_at = new Date().toISOString()
   const start = performance.now()
-  const { exit_code, signal, stdout, stderr } = await spawnProbe(bun, probe)
+  const { exit_code, signal, stdout, stderr } = await spawnProbe(bun, probe, env)
   const duration_ms = Math.round(performance.now() - start)
   return {
     name: probe.name,
@@ -162,6 +253,20 @@ export async function runProbe(
     started_at,
     stdout,
     stderr,
+  }
+}
+
+/** Run a single resolved probe as a subprocess and return its outcome. */
+export async function runProbe(
+  probe: LoadedProbe,
+  options: RunPackOptions = {},
+): Promise<ProbeRunOutcome> {
+  const bun = options.bun ?? "bun"
+  const { env, cleanup } = resolveProbeEnv(options)
+  try {
+    return await executeProbe(probe, bun, env)
+  } finally {
+    cleanup()
   }
 }
 
@@ -181,12 +286,20 @@ export async function runPack(
   options: RunPackOptions = {},
 ): Promise<PackRunResult> {
   const start = performance.now()
+  const bun = options.bun ?? "bun"
+  // Resolve the scoped env ONCE per pack run (one temp HOME shared across every
+  // probe) and clean it up after, rather than per-probe.
+  const { env, cleanup } = resolveProbeEnv(options)
   const outcomes: ProbeRunOutcome[] = []
-  for (const probe of pack.probes) {
-    const outcome = await runProbe(probe, options)
-    outcomes.push(outcome)
-    if (options.record) await options.record(outcome, pack.manifest.name)
-    options.onResult?.(outcome)
+  try {
+    for (const probe of pack.probes) {
+      const outcome = await executeProbe(probe, bun, env)
+      outcomes.push(outcome)
+      if (options.record) await options.record(outcome, pack.manifest.name)
+      options.onResult?.(outcome)
+    }
+  } finally {
+    cleanup()
   }
   const passed = outcomes.filter((o) => o.passed).length
   return {
