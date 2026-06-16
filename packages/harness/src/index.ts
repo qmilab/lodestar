@@ -64,6 +64,7 @@ export { readPackTrustConfig, DEFAULT_PACK_TRUST_PATH } from "./pack/trust-confi
 
 // Verification badges (#89, ADR-0020) — the locally-verifiable attestation surface
 export {
+  assertPackBadgeable,
   buildProbeResultsBadge,
   buildSecurityScanBadge,
   readPackBadges,

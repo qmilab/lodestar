@@ -27,9 +27,13 @@
  *   G. UNREADABLE badges/ PATH — a `badges` path that is not a readable directory
  *      (a regular file, EACCES, a malformed entry) is surfaced as `malformed`, never
  *      thrown: badge state must not gate an otherwise-verified pack.
- *   H. A BADGE BINDS THE BYTES — issuing a badge over an unsigned (non-content-bound)
- *      pack is refused, so a `probe_results` badge always attests the exact bytes
- *      that ran (its manifest_hash binds the probe bytes via the content digest).
+ *   H. A BADGE BINDS THE BYTES — issuing a badge over an unsigned pack is refused
+ *      (even one carrying a hand-written content_digest), because a digest is only
+ *      authenticated for a *signed* pack — so a badge always attests bytes that were
+ *      actually verified.
+ *   I. UNVALIDATED DIGEST NOT TRUSTED — on `add --allow-unsigned`, a pack's
+ *      hand-written content_digest (which the loader never validated against disk)
+ *      does not make its badge trusted: only a signed pack authenticates its bytes.
  *
  * Everything runs offline over temp directories; no network, no subprocess. The
  * harness run a real `probe_results` badge would summarise is faked here with a fixed
@@ -269,10 +273,11 @@ async function run(): Promise<{ passed: boolean; details: string[] }> {
     )
 
     // ── H — A BADGE MUST BIND THE BYTES (Codex review, PR #118) ──────────────────
-    // Over an unsigned pack (no content_digest) the subject's manifest_hash binds
-    // only the declared manifest fields, not the probe bytes — a probe byte could
-    // change with the badge still matching. Issuing a badge over such a pack is
-    // refused, so a `probe_results` badge always attests the exact bytes that ran.
+    // A content_digest is authenticated ONLY for a signed pack (the loader validates
+    // it against disk only then). So even a manifest that carries a (hand-written)
+    // content_digest but no signature cannot be badged — its bytes were never checked,
+    // so a probe byte could change with the badge still matching. Issuing a badge over
+    // such a pack is refused.
     const unsignedManifest: ProbePackManifest = {
       name: "unsigned-pack",
       version: "1.0.0",
@@ -281,6 +286,11 @@ async function run(): Promise<{ passed: boolean; details: string[] }> {
       coverage_areas: ["pack_registry"],
       invariants: ["unverified_badge_not_trusted"],
       probes: [{ name: "sample", file: PROBE_FILE }],
+      // a content_digest present but NOT signed — must still be refused.
+      content_digest: {
+        algorithm: "sha256",
+        files: [{ path: PROBE_FILE, sha256: "a".repeat(64) }],
+      },
     }
     let refused = false
     try {
@@ -291,14 +301,57 @@ async function run(): Promise<{ passed: boolean; details: string[] }> {
         harnessVersion: "probe",
       })
     } catch (err) {
-      if (err instanceof ProbePackError && /content_digest/.test(err.message)) refused = true
+      if (err instanceof ProbePackError && /not signed/.test(err.message)) refused = true
       else throw err
     }
     if (!refused) {
-      throw new Error("issuing a badge over an unsigned (non-content-bound) pack should be refused")
+      throw new Error(
+        "issuing a badge over an unsigned pack should be refused (even with a digest)",
+      )
     }
     details.push(
-      "H: issuing a badge over an unsigned (non-content-bound) pack is refused — a badge binds the probe bytes ✓",
+      "H: issuing a badge over an unsigned pack (content_digest alone) is refused — a badge needs a signed pack ✓",
+    )
+
+    // ── I — UNVALIDATED content_digest IS NOT TRUSTED ON ADD (Codex P1, round 3) ──
+    // An --allow-unsigned pack can carry a content_digest the loader never validates
+    // against disk. Presence of the field must NOT make a badge trustworthy: only a
+    // signed (loader-verified) pack authenticates its bytes. Build a valid badge over
+    // a signed pack, then STRIP the on-disk signature (manifest_hash excludes the
+    // signature, so the badge still applies) — the badge must come back unverified.
+    const stripPack = await signedPack(workspace, "strip", "strip-pack", author.privateKeyPem)
+    await writePackBadge(
+      stripPack.dir,
+      buildProbeResultsBadge(stripPack.manifest, FAKE_RUN, {
+        attesterId: ATTESTER_ID,
+        privateKeyPem: attester.privateKeyPem,
+        at: AT,
+        harnessVersion: "probe",
+      }),
+    )
+    const stripManifestPath = join(stripPack.dir, "lodestar.probe-pack.json")
+    const parsedManifest = JSON.parse(await readFile(stripManifestPath, "utf8")) as Record<
+      string,
+      unknown
+    >
+    // Drop the signature (unsigned now) while keeping content_digest — without `delete`.
+    const { signature: _strippedSig, ...stripped } = parsedManifest
+    await writeFile(stripManifestPath, `${JSON.stringify(stripped, null, 2)}\n`, "utf8")
+    const strippedAdd = await addProbePack({
+      ref: { type: "local", path: stripPack.dir },
+      authorizedAuthorKeys: pinnedAuthor,
+      authorizedAttesterKeys: pinnedAttester,
+      allowUnsigned: true,
+      at: AT,
+    })
+    const strippedBadge = only(strippedAdd.badges)
+    if (strippedBadge.status === "verified") {
+      throw new Error(
+        "a badge over an unsigned pack (unvalidated content_digest) must not be verified",
+      )
+    }
+    details.push(
+      "I: an unsigned pack's hand-written content_digest does not make its badge trusted on add ✓",
     )
   } catch (err) {
     return {

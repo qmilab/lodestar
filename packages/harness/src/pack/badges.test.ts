@@ -20,10 +20,11 @@ import type { PackRunResult } from "./runner.js"
 const AT = "2026-01-01T00:00:00.000Z"
 const ATTESTER = "acme-attester"
 
-// A content-bound (as-if-signed) manifest: badges require a content_digest so the
-// subject's manifest_hash transitively binds the probe bytes (ADR-0020). The hash
-// value is a stand-in — badge verification never re-checks it against disk (that is
-// the loader's job); it only needs to be present and stable across build + verify.
+// A signed, content-bound manifest — the state a pack is in after loadProbePack has
+// verified it. Badges are trusted only over a *signed* pack: only then has the loader
+// authenticated content_digest against disk (ADR-0020). verifyPackBadges checks the
+// signature's presence (not its bytes — that is loadProbePack's job already done), so
+// the dummy values below stand in for "this pack loaded as signed + verified".
 function manifest(): ProbePackManifest {
   return {
     name: "demo-pack",
@@ -33,9 +34,17 @@ function manifest(): ProbePackManifest {
     coverage_areas: ["x"],
     invariants: ["y"],
     probes: [{ name: "p", file: "probes/p.ts" }],
+    author_id: "author",
     content_digest: {
       algorithm: "sha256",
       files: [{ path: "probes/p.ts", sha256: "a".repeat(64) }],
+    },
+    signature: {
+      signer_id: "author",
+      payload_hash: "x",
+      algorithm: "ed25519",
+      signature: "y",
+      at: AT,
     },
   }
 }
@@ -93,11 +102,12 @@ describe("buildProbeResultsBadge", () => {
     expect(badge.result.probes).toEqual(["p", "q"])
   })
 
-  test("refuses a manifest with no content_digest (a badge must bind the probe bytes)", () => {
-    // Codex review (PR #118): over an unsigned pack the subject would hash only the
-    // manifest fields, so a probe-byte change would not invalidate the badge.
+  test("refuses an unsigned manifest, even one carrying a content_digest", () => {
+    // Codex review (PR #118): a content_digest is only authenticated when the pack is
+    // signed (the loader validates it against disk only then). So presence of the
+    // field is not enough — issuing a badge requires a signed pack.
     const { privateKeyPem } = generateEd25519KeyPair()
-    const { content_digest: _drop, ...unsigned } = manifest()
+    const { signature: _drop, ...unsigned } = manifest() // keeps content_digest
     expect(() =>
       buildProbeResultsBadge(unsigned, runResult(), {
         attesterId: ATTESTER,
@@ -105,7 +115,7 @@ describe("buildProbeResultsBadge", () => {
         at: AT,
         harnessVersion: "0.3.0",
       }),
-    ).toThrow(/content_digest/)
+    ).toThrow(/not signed/)
   })
 })
 
@@ -211,10 +221,11 @@ describe("write + read + verify round trip", () => {
     }
   })
 
-  test("no badge is trusted over a non-content-bound (unsigned) pack", async () => {
-    // Consumer-side closure for Codex finding #1: even a validly-signed, applicable
-    // badge is downgraded to unverified when the pack it is verified against carries
-    // no content_digest — its manifest_hash cannot bind the probe bytes.
+  test("no badge is trusted over an unsigned pack, even with a hand-written content_digest", async () => {
+    // Consumer-side closure for Codex finding #1 (round 3): a content_digest the
+    // loader never validated (an --allow-unsigned pack) must not make a badge
+    // trustworthy. Even a validly-signed, applicable badge is downgraded to
+    // unverified when the pack it verifies against is unsigned.
     const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
     try {
       const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
@@ -228,14 +239,16 @@ describe("write + read + verify round trip", () => {
           harnessVersion: "0.3.0",
         }),
       )
-      // Verify against the same pack but with content_digest stripped (unsigned).
-      const { content_digest: _drop, ...unsigned } = m
+      // Verify against the same pack but UNSIGNED — signature stripped, content_digest
+      // kept. The manifest_hash still matches (it excludes the signature), but the
+      // pack's bytes were never authenticated, so the badge must not be trusted.
+      const { signature: _drop, ...unsigned } = m
       const verifications = await verifyPackBadges(
         { manifest: unsigned, root: dir },
         { authorizedAttesterKeys: [{ actor_id: ATTESTER, public_key: publicKeyPem }] },
       )
       expect(verifications[0]?.status).toBe("unverified")
-      expect(verifications[0]?.reason).toContain("content-bound")
+      expect(verifications[0]?.reason).toContain("not authenticated")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

@@ -159,14 +159,16 @@ export async function verifyPackBadges(
   }
   const attesterKeys = options.authorizedAttesterKeys ?? []
   const makeError = (m: string) => new ProbePackError(m)
-  // A badge's manifest_hash only binds the probe *bytes* transitively through the
-  // manifest's content_digest. An unsigned pack carries no content_digest, so its
-  // manifest_hash binds only the declared fields — a probe byte could change with the
-  // manifest unchanged and a badge would still match. So no badge over a non-content-
-  // bound (unsigned) pack can ever be trusted (ADR-0020). buildProbeResultsBadge /
-  // buildSecurityScanBadge refuse to issue one; this is the consumer-side closure for
-  // an externally-crafted badge.
-  const contentBound = pack.manifest.content_digest !== undefined
+  // A badge's manifest_hash binds the probe *bytes* only transitively, through the
+  // manifest's content_digest — and that digest is authenticated ONLY when the
+  // manifest is signed: `loadProbePack` recomputes + validates content_digest against
+  // disk only for a *signed* pack (an `allow_unsigned` pack with a hand-written
+  // content_digest is loaded WITHOUT validating it). So the presence of a
+  // content_digest is not enough; the pack must be signed (and therefore verified by
+  // the loader before we got here). No badge over an unsigned pack can be trusted
+  // (ADR-0020) — buildProbeResultsBadge / buildSecurityScanBadge refuse to issue one,
+  // and this is the consumer-side closure for an externally-crafted badge.
+  const bytesAuthenticated = pack.manifest.signature !== undefined
 
   const results: BadgeVerification[] = []
   for (const r of raw) {
@@ -175,13 +177,13 @@ export async function verifyPackBadges(
       continue
     }
     const badge = r.badge
-    if (!contentBound) {
+    if (!bytesAuthenticated) {
       results.push({
         file: r.file,
         status: "unverified",
         badge,
         reason:
-          "pack is unsigned / not content-bound (no content_digest), so a badge cannot bind its probe bytes",
+          "pack is unsigned (no verified manifest signature), so its probe bytes are not authenticated and a badge cannot bind them",
       })
       continue
     }
@@ -205,21 +207,27 @@ export async function verifyPackBadges(
 }
 
 /**
- * The pack subject (identity + manifest-hash binding) a badge attests over.
- *
- * Refuses a manifest with no `content_digest` (an unsigned pack): the subject's
- * `manifest_hash` only binds the probe *bytes* transitively through the manifest's
- * content_digest, so a badge over a non-content-bound manifest would attest "these
- * probes passed" while a probe byte could change with the manifest — and the badge —
- * unchanged. Publish/sign the pack first so the badge actually binds what ran
- * (ADR-0020).
+ * Assert a pack can carry a meaningful badge: its manifest must be **signed**
+ * (ADR-0020). A badge's `manifest_hash` binds the probe bytes only through the
+ * manifest's content_digest, and that digest is authenticated only for a signed
+ * pack (`loadProbePack` validates content_digest against disk solely when a
+ * signature is present). A badge over an unsigned pack — even one carrying a
+ * hand-written content_digest the loader never checked — would attest "these probes
+ * passed" while a probe byte could change underneath it. Callers should run this
+ * right after loading a pack and **before** doing expensive work like running its
+ * probes (so `pack attest` does not execute pack code for a pack it cannot badge).
  */
-function subjectFor(manifest: ProbePackManifest): PackBadgeSubject {
-  if (manifest.content_digest === undefined) {
+export function assertPackBadgeable(manifest: Pick<ProbePackManifest, "name" | "signature">): void {
+  if (manifest.signature === undefined) {
     throw new ProbePackError(
-      `Cannot issue a badge for pack '${manifest.name}': its manifest carries no content_digest, so the badge would bind only the declared manifest fields, not the probe bytes — a probe-byte change would not invalidate it. Publish/sign the pack first (lodestar pack publish).`,
+      `Cannot issue a badge for pack '${manifest.name}': it is not signed, so a badge could not bind its probe bytes (an unsigned pack's content digest is never authenticated). Publish/sign the pack first (lodestar pack publish).`,
     )
   }
+}
+
+/** The pack subject (identity + manifest-hash binding) a badge attests over. */
+function subjectFor(manifest: ProbePackManifest): PackBadgeSubject {
+  assertPackBadgeable(manifest)
   return {
     pack: manifest.name,
     version: manifest.version,

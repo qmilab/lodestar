@@ -19,6 +19,7 @@ import {
   DEFAULT_PACK_TRUST_PATH,
   ProbePackError,
   addProbePack,
+  assertPackBadgeable,
   buildProbeResultsBadge,
   buildSecurityScanBadge,
   harnessVersion,
@@ -429,6 +430,11 @@ async function attestCommand(argv: string[]): Promise<number> {
       allowUnsigned: true,
       authorizedAuthorKeys: authorKeyFlags,
     })
+
+    // Reject an un-badgeable (unsigned) pack BEFORE running its probes — otherwise
+    // `runPack` would execute pack-authored code for a command that cannot produce a
+    // badge (an unsigned pack's bytes are not authenticated; ADR-0020).
+    assertPackBadgeable(pack.manifest)
 
     let badgePath: string
     if (kind === "probe_results") {
