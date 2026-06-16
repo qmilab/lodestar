@@ -20,15 +20,17 @@ src/
     ├── probe.ts              # `lodestar probe <name>`
     ├── reflect.ts            # `lodestar reflect <session-id>`
     ├── harness.ts            # `lodestar harness run/list/calibrate`
-    └── pack.ts               # `lodestar pack keygen/publish/attest/add`
+    └── pack.ts               # `lodestar pack keygen/publish/attest/add/search/list/index-sign`
 ```
 
 The `pack` command is the trust-pack author + consumer + attestation flow
-(ADR-0019 / ADR-0020). It is a thin shell over `@qmilab/lodestar-harness`'s
-`publishProbePack` / `addProbePack` / badge surface: `keygen` mints an Ed25519
-keypair for one role — `--author` (signs manifests, pinned under `author_keys`) or
-`--attester` (signs badges, pinned under `attester_keys`) — with the private key
-0600, temp+rename, never on argv (same discipline as `approve keygen`); `publish`
+(ADR-0019 / ADR-0020 / ADR-0021). It is a thin shell over `@qmilab/lodestar-harness`'s
+`publishProbePack` / `addProbePack` / badge / discovery-index surface: `keygen` mints
+an Ed25519 keypair for one role — `--author` (signs manifests, pinned under
+`author_keys`), `--attester` (signs badges, pinned under `attester_keys`), or
+`--index` (signs discovery indexes, pinned under `index_publisher_keys`) — with the
+private key 0600, temp+rename, never on argv (same discipline as `approve keygen`);
+`publish`
 signs a pack's manifest in place (the author key from `--key`/`LODESTAR_AUTHOR_KEY`,
 never argv) and self-verifies; `attest` issues a locally-verifiable signed badge
 into the pack's `badges/` (a `probe_results` summary of a real `runPack`, or a
@@ -39,9 +41,15 @@ pinned via `--author-key` to load); `add` resolves a **pinned** source
 signature + content digest against pinned author keys (the trust config +
 `--author-key`) **before any pack code could run**, then installs + records the pin
 and **surfaces** the pack's badges verified against pinned attester keys
-(`--attester-key` + the config's `attester_keys`) — advisory, never a gate. No
-event-log writes; all the signing/resolution/verification logic lives in the
-harness, not here.
+(`--attester-key` + the config's `attester_keys`) — advisory, never a gate;
+`search` / `list` (read) fetch one or more pinned static discovery indexes
+(`--index <source>`), verify each against pinned index-publisher keys
+(`--index-key` + the config's `index_publisher_keys`; fail closed unless
+`--allow-unsigned-index`), and filter listings locally (`--coverage` / `--invariant`
+/ a text arg / `--json`) — an index advertises but never authorizes, so a chosen pack
+still routes through `add`; `index-sign` signs an authored index file in place +
+self-verifies (the thin publisher side). No event-log writes; all the
+signing/resolution/verification logic lives in the harness, not here.
 
 The `approve` command is the reference approval resolver: it writes a
 resolution to the MCP proxy's side-channel

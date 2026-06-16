@@ -14,13 +14,17 @@ This package defines the epistemic chain primitives. Everything else in the mono
   label); `probe-pack-signing.ts` (the `lodestar.probe-pack.json` canonical hash
   + sign/verify); `badge-signing.ts` (the verification-badge canonical hash +
   sign/verify, plus `assertBadgeAppliesTo` — the `manifest_hash` subject-binding
-  check that defeats a mis-attached badge; ADR-0020, #89). Pure `node:crypto`
+  check that defeats a mis-attached badge; ADR-0020, #89); `pack-index-signing.ts`
+  (the discovery-index canonical hash + sign/verify, structurally identical to the
+  badge/manifest signers; ADR-0021, #87). Pure `node:crypto`
   compute over the `Signature` type — the one audited implementation the
   approval-resolution path (`policy-kernel`), the pack manifest (`harness` loader),
-  and the badge path all share, so no consumer copies crypto or grows an awkward
-  cross-kernel dependency to verify a signature. The badge wire format itself lives
-  in `src/schemas/pack-badge.ts` (the `probe_results` / `security_scan` discriminated
-  union and the `badges/` layout constants), beside the manifest + registry schemas.
+  the badge path, and the discovery index all share, so no consumer copies crypto or
+  grows an awkward cross-kernel dependency to verify a signature. The badge wire
+  format itself lives in `src/schemas/pack-badge.ts` (the `probe_results` /
+  `security_scan` discriminated union and the `badges/` layout constants), and the
+  discovery-index format in `src/schemas/pack-index.ts` (the `PackIndex` listing +
+  `index_publisher_keys` trust-root key), beside the manifest + registry schemas.
 
 ## Invariants
 
