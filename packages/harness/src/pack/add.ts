@@ -1,6 +1,7 @@
 import { cp, mkdir, realpath, rm } from "node:fs/promises"
 import { basename, dirname, join, resolve, sep } from "node:path"
 import {
+  PACK_BADGES_DIRNAME,
   type PackLockEntry,
   type PackSourceRef,
   type PinnedPublicKeys,
@@ -262,7 +263,26 @@ async function installVerifiedPack(
   // copied AS links (dereference:false), so the re-verify below rejects any that
   // escape the pack root (the loader's realpath containment check) — a malicious
   // link inside a local source cannot be laundered through the install copy.
-  await cp(realSource, dest, { recursive: true, dereference: false })
+  //
+  // The `badges/` subtree is EXCLUDED from this copy and handled best-effort below:
+  // badges are advisory (ADR-0020), so an unreadable badge sidecar (an EACCES file,
+  // a malformed archive entry) must never make `cp` throw and fail the install of an
+  // otherwise verified, content-bound pack. The re-verify (loadProbePack) checks the
+  // author signature + content digest over the PROBE files only, so excluding badges
+  // here does not weaken it.
+  const realBadges = join(realSource, PACK_BADGES_DIRNAME)
+  const badgesPrefix = realBadges + sep
+  await cp(realSource, dest, {
+    recursive: true,
+    dereference: false,
+    filter: (src) => src !== realBadges && !src.startsWith(badgesPrefix),
+  })
+  // Carry the badges along when they are readable — but never let a bad one fail the
+  // install. A partial/failed copy just means fewer badges travel (still advisory).
+  await cp(realBadges, join(dest, PACK_BADGES_DIRNAME), {
+    recursive: true,
+    dereference: false,
+  }).catch(() => {})
 
   try {
     await loadProbePack(dest, verifyOptions)

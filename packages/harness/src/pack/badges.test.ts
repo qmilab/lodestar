@@ -20,6 +20,10 @@ import type { PackRunResult } from "./runner.js"
 const AT = "2026-01-01T00:00:00.000Z"
 const ATTESTER = "acme-attester"
 
+// A content-bound (as-if-signed) manifest: badges require a content_digest so the
+// subject's manifest_hash transitively binds the probe bytes (ADR-0020). The hash
+// value is a stand-in — badge verification never re-checks it against disk (that is
+// the loader's job); it only needs to be present and stable across build + verify.
 function manifest(): ProbePackManifest {
   return {
     name: "demo-pack",
@@ -29,6 +33,10 @@ function manifest(): ProbePackManifest {
     coverage_areas: ["x"],
     invariants: ["y"],
     probes: [{ name: "p", file: "probes/p.ts" }],
+    content_digest: {
+      algorithm: "sha256",
+      files: [{ path: "probes/p.ts", sha256: "a".repeat(64) }],
+    },
   }
 }
 
@@ -83,6 +91,21 @@ describe("buildProbeResultsBadge", () => {
     expect(badge.subject.manifest_hash).toMatch(/^[0-9a-f]{64}$/)
     expect(badge.result).toMatchObject({ ok: true, total: 2, passed: 2, failed: 0 })
     expect(badge.result.probes).toEqual(["p", "q"])
+  })
+
+  test("refuses a manifest with no content_digest (a badge must bind the probe bytes)", () => {
+    // Codex review (PR #118): over an unsigned pack the subject would hash only the
+    // manifest fields, so a probe-byte change would not invalidate the badge.
+    const { privateKeyPem } = generateEd25519KeyPair()
+    const { content_digest: _drop, ...unsigned } = manifest()
+    expect(() =>
+      buildProbeResultsBadge(unsigned, runResult(), {
+        attesterId: ATTESTER,
+        privateKeyPem,
+        at: AT,
+        harnessVersion: "0.3.0",
+      }),
+    ).toThrow(/content_digest/)
   })
 })
 
@@ -183,6 +206,36 @@ describe("write + read + verify round trip", () => {
     const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
     try {
       expect(await verifyPackBadges({ manifest: manifest(), root: dir })).toEqual([])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("no badge is trusted over a non-content-bound (unsigned) pack", async () => {
+    // Consumer-side closure for Codex finding #1: even a validly-signed, applicable
+    // badge is downgraded to unverified when the pack it is verified against carries
+    // no content_digest — its manifest_hash cannot bind the probe bytes.
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-badges-"))
+    try {
+      const { publicKeyPem, privateKeyPem } = generateEd25519KeyPair()
+      const m = manifest()
+      await writePackBadge(
+        dir,
+        buildProbeResultsBadge(m, runResult(), {
+          attesterId: ATTESTER,
+          privateKeyPem,
+          at: AT,
+          harnessVersion: "0.3.0",
+        }),
+      )
+      // Verify against the same pack but with content_digest stripped (unsigned).
+      const { content_digest: _drop, ...unsigned } = m
+      const verifications = await verifyPackBadges(
+        { manifest: unsigned, root: dir },
+        { authorizedAttesterKeys: [{ actor_id: ATTESTER, public_key: publicKeyPem }] },
+      )
+      expect(verifications[0]?.status).toBe("unverified")
+      expect(verifications[0]?.reason).toContain("content-bound")
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

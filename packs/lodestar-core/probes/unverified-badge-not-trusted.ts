@@ -24,6 +24,12 @@
  *      `unverified`.
  *   F. MALFORMED + ADVISORY — a junk badge file is surfaced as `malformed`, and in
  *      EVERY case above the pack itself still verifies and adds: a badge never gates.
+ *   G. UNREADABLE badges/ PATH — a `badges` path that is not a readable directory
+ *      (a regular file, EACCES, a malformed entry) is surfaced as `malformed`, never
+ *      thrown: badge state must not gate an otherwise-verified pack.
+ *   H. A BADGE BINDS THE BYTES — issuing a badge over an unsigned (non-content-bound)
+ *      pack is refused, so a `probe_results` badge always attests the exact bytes
+ *      that ran (its manifest_hash binds the probe bytes via the content digest).
  *
  * Everything runs offline over temp directories; no network, no subprocess. The
  * harness run a real `probe_results` badge would summarise is faked here with a fixed
@@ -42,6 +48,7 @@ import {
   type AddedProbePack,
   type BadgeVerification,
   type PackRunResult,
+  ProbePackError,
   addProbePack,
   buildProbeResultsBadge,
   publishProbePack,
@@ -259,6 +266,39 @@ async function run(): Promise<{ passed: boolean; details: string[] }> {
     }
     details.push(
       "G: a `badges` path that is not a readable directory → malformed, the pack still adds ✓",
+    )
+
+    // ── H — A BADGE MUST BIND THE BYTES (Codex review, PR #118) ──────────────────
+    // Over an unsigned pack (no content_digest) the subject's manifest_hash binds
+    // only the declared manifest fields, not the probe bytes — a probe byte could
+    // change with the badge still matching. Issuing a badge over such a pack is
+    // refused, so a `probe_results` badge always attests the exact bytes that ran.
+    const unsignedManifest: ProbePackManifest = {
+      name: "unsigned-pack",
+      version: "1.0.0",
+      spec_version: PROBE_PACK_SPEC_VERSION,
+      source_type: "local",
+      coverage_areas: ["pack_registry"],
+      invariants: ["unverified_badge_not_trusted"],
+      probes: [{ name: "sample", file: PROBE_FILE }],
+    }
+    let refused = false
+    try {
+      buildProbeResultsBadge(unsignedManifest, FAKE_RUN, {
+        attesterId: ATTESTER_ID,
+        privateKeyPem: attester.privateKeyPem,
+        at: AT,
+        harnessVersion: "probe",
+      })
+    } catch (err) {
+      if (err instanceof ProbePackError && /content_digest/.test(err.message)) refused = true
+      else throw err
+    }
+    if (!refused) {
+      throw new Error("issuing a badge over an unsigned (non-content-bound) pack should be refused")
+    }
+    details.push(
+      "H: issuing a badge over an unsigned (non-content-bound) pack is refused — a badge binds the probe bytes ✓",
     )
   } catch (err) {
     return {
