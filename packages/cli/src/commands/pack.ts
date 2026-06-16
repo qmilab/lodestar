@@ -73,7 +73,7 @@ function takeValue(argv: string[], i: number, flag: string): string {
  *   lodestar pack keygen  (--author <id> | --attester <id>) [--out <prefix>]
  *   lodestar pack publish [--pack <dir>] --author <id> [--key <path>] [--source-type <local|npm|git>]
  *   lodestar pack attest  [--pack <dir>] --kind <probe_results|security_scan> --attester <id>
- *                         [--key <path>] [--scan <file>] [--author-key <id>=<file>]... [--allow-unsigned]
+ *                         [--key <path>] [--scan <file>] [--allow-env <NAME>]... [--author-key <id>=<file>]...
  *   lodestar pack add <source> [--author-key <id>=<file>]... [--attester-key <id>=<file>]...
  *                     [--trust-config <path>] [--integrity <sri>] [--registry <url>]
  *                     [--allow-unsigned] [--lockfile <path>] [--install-dir <dir>] [--no-install]
@@ -369,6 +369,12 @@ async function attestCommand(argv: string[]): Promise<number> {
   let keyPath: string | undefined
   let scanPath: string | undefined
   const authorKeyFlags: PackAuthorKey[] = []
+  // Host env vars the operator permits the probes to receive when --kind
+  // probe_results runs the pack. The runner spawns probes under a scoped env
+  // (no host process.env; #114, ADR-0022), so without this an env-gated probe
+  // (e.g. the DB probes reading LODESTAR_TEST_DATABASE_URL) would skip/fail
+  // during attestation and the badge would summarise a degraded run.
+  const allowEnv: string[] = []
   try {
     for (let i = 0; i < argv.length; i++) {
       const arg = argv[i]
@@ -392,6 +398,9 @@ async function attestCommand(argv: string[]): Promise<number> {
         i++
       } else if (arg === "--scan") {
         scanPath = takeValue(argv, i, arg)
+        i++
+      } else if (arg === "--allow-env") {
+        allowEnv.push(takeValue(argv, i, arg))
         i++
       } else if (arg === "--author-key") {
         const spec = takeValue(argv, i, arg)
@@ -439,6 +448,9 @@ async function attestCommand(argv: string[]): Promise<number> {
   if (kind === "probe_results" && scanPath !== undefined) {
     process.stderr.write("[pack] note: --scan is ignored for --kind probe_results\n")
   }
+  if (kind === "security_scan" && allowEnv.length > 0) {
+    process.stderr.write("[pack] note: --allow-env is ignored for --kind security_scan\n")
+  }
 
   let privateKeyPem: string | undefined
   try {
@@ -471,7 +483,9 @@ async function attestCommand(argv: string[]): Promise<number> {
 
     let badgePath: string
     if (kind === "probe_results") {
-      const run = await runPack(pack)
+      // Pass the operator's env allowlist so env-gated probes run for real under
+      // the scoped runner, rather than skipping/failing and degrading the badge.
+      const run = await runPack(pack, { allowHostEnv: allowEnv })
       const badge = buildProbeResultsBadge(pack.manifest, run, {
         attesterId: attester,
         privateKeyPem,
@@ -1195,7 +1209,7 @@ function writeUsage(stream: NodeJS.WritableStream): void {
                              [--source-type <local|npm|git>]
        lodestar pack attest  [--pack <dir>] --kind <probe_results|security_scan>
                              --attester <id> [--key <path>] [--scan <file>]
-                             [--author-key <id>=<file>]...
+                             [--allow-env <NAME>]... [--author-key <id>=<file>]...
        lodestar pack add <source> [--author-key <id>=<file>]... [--attester-key <id>=<file>]...
                          [--trust-config <path>] [--integrity <sri>] [--registry <url>]
                          [--allow-unsigned] [--lockfile <path>] [--install-dir <dir>] [--no-install]
@@ -1221,6 +1235,9 @@ function writeUsage(stream: NodeJS.WritableStream): void {
               probe_results — run the pack's probes and sign the summary.
               security_scan — sign a provided verdict (--scan <result.json>).
             The attester key comes from --key or LODESTAR_ATTESTER_KEY (never argv).
+            Probes run under a scoped env (no host process.env); forward an env-gated
+            probe's var with --allow-env <NAME> (repeatable) so probe_results attests a
+            real run, e.g. --allow-env LODESTAR_TEST_DATABASE_URL.
 
   add     — resolve a PINNED source via a non-executing fetch (no install/lifecycle
             scripts run), verify the signature + content digest against pinned author
