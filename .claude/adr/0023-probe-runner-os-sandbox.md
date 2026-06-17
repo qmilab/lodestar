@@ -69,10 +69,11 @@ sandbox is the **outer** layer. Resolution/execution stays in the harness (invar
 
 **2. Two native backends in the first cut, selected by platform + capability probe at
 runtime — no daemon/container dependency.**
-- **macOS:** `sandbox-exec -p <SBPL profile>`. SBPL gives *granular* control:
-  `(deny default)`, allow file-read on system runtime paths + the read-root, allow
-  file-write on the scratch, `(deny network*)` with per-target
-  `(allow network-outbound (remote ip "localhost:*"))` and per-host allows.
+- **macOS:** `sandbox-exec -p <SBPL profile>`. `(deny network*)` with loopback
+  (`(allow network-outbound (remote ip "localhost:*"))`) plus **port-scoped** allows
+  (`*:port`) for each `--allow-host` — SBPL cannot filter by host/IP (a literal-IP rule
+  is rejected), only by port. (The filesystem clamp is the allow-default-then-deny-home
+  shape noted under "Implementation refinements".)
 - **Linux:** `bubblewrap` (`bwrap`): `--ro-bind` the system + read-root, `--bind` the
   scratch, `--unshare-net` for loopback-only isolation, `--die-with-parent`,
   `--unshare-pid`, drop everything else.
@@ -126,13 +127,14 @@ namespaces and is not a defence against a kernel-level sandbox escape. We claim:
 filesystem-read confinement to an operator-declared root, filesystem-write confinement
 to a per-run scratch, and outbound-network deny-by-default to loopback + an operator
 allowlist. We do **not** claim namespace/cgroup resource limits, defence against a
-kernel 0-day, or per-host network granularity *on Linux* (see known wrinkles). This is
-the same honesty every native adapter and step 1 itself practice.
+kernel 0-day, or per-host egress granularity — egress is coarse on both platforms
+(macOS scopes by port, Linux is all-or-nothing; see known wrinkles). This is the same
+honesty every native adapter and step 1 itself practice.
 
 ## Implementation refinements (what the build changed)
 
-The design held; four things were sharpened once it ran on a real macOS box (the
-Linux path is CI-validated):
+The design held; the following were sharpened during implementation and an
+adversarial review (the Linux path is CI-validated):
 
 - **macOS read confinement is deny-the-home, not a read-allowlist.** `bun` is a JIT
   runtime (JavaScriptCore); a strict SBPL `(deny default)` profile that hosts it
@@ -144,9 +146,9 @@ Linux path is CI-validated):
   re-allowing the declared read-roots. This does *not* deny reads of `/etc`, `/var`, or
   other users' files; it denies the running user's home, the actual secret store.
   **Linux (bwrap) keeps the stronger read-allowlist** via a mount namespace that binds
-  only the declared roots. So the filesystem guarantee is asymmetric (Linux stronger),
-  the mirror of the network granularity (macOS stronger) — both close the primary
-  threats, documented honestly.
+  only the declared roots. So the filesystem guarantee is asymmetric (Linux stronger);
+  egress is coarse on *both* — see the egress bullet — both close the primary threats,
+  documented honestly.
 - **Canonicalise every path the profile references.** `tmpdir()` and `$HOME` are
   symlinks on macOS (`/var` → `/private/var`), and SBPL matches the *real* path — an
   un-canonicalised scratch made a probe's own writes fail, and an un-canonicalised home
@@ -157,6 +159,20 @@ Linux path is CI-validated):
   machine's *own* LAN IP succeeds (delivered locally); only genuine **remote** egress is
   reliably blocked. The locking probe therefore targets a real remote and gates the
   assertion on an unsandboxed baseline so it is meaningful, never a false pass offline.
+- **macOS egress is port-scoped, and the Unix-socket hole is closed (adversarial
+  review).** Two macOS findings: (1) SBPL cannot filter outbound by host/IP — a literal
+  `(remote ip "1.2.3.4:port")` rule is *rejected* by `sandbox-exec`, only `*:port`
+  loads. So `--allow-host` is **port-scoped** (any host on the named port) and must
+  carry a port; a portless entry is **refused** (it could only widen to all-egress).
+  (2) An earlier unconditional `(allow network-outbound (remote unix-socket))` let a
+  probe reach arbitrary local daemon/agent sockets (e.g. under `/var/run`) outside the
+  policy — **removed**; the sandbox now allows no Unix-socket egress (which also denies
+  DNS, hence the port-scoped/IP-only guidance). Validated in both the backend (fails
+  closed at build) and the CLI (clean exit 2).
+- **Under a sandbox the probe runs by its CANONICAL path (review).** The read-roots are
+  `realpathSync`-ed so bwrap binds the real path; executing the *original* (possibly
+  symlinked) `probe.path` would address a file absent inside the bwrap view and fail to
+  spawn. The runner now runs `realpath(probe.path)` when sandboxed.
 - **`pack attest --kind probe_results` is not sandboxed yet.** It runs a pack's probes
   to mint a badge; sandboxing it (with the same first-party caveat) is a follow-up. The
   routine-external-execution surface this ADR is about is `lodestar harness run`.
@@ -165,14 +181,15 @@ Linux path is CI-validated):
 
 These are real and are why this is a design pass, not a one-line restatement of step 1:
 
-- **Linux per-host network granularity.** `bwrap --unshare-net` is all-or-nothing: an
-  isolated net namespace has only its *own* loopback, with no route to an external host
-  *or to the host's `127.0.0.1`*. So `--allow-host` cannot be honoured per-host under a
-  plain `--unshare-net`. macOS SBPL *can* allow a specific remote. v0 plan: with no
-  `--allow-host`, fully isolate the network (the common case — all local-double
-  probes). With `--allow-host`, on Linux fall back to a **coarser** policy for that run
-  (do not unshare the network; net allowed) with a banner; macOS stays granular.
-  Granular Linux egress (slirp/pasta, an allowlist proxy) is a documented follow-up.
+- **Egress granularity is coarse on both platforms.** `bwrap --unshare-net` is
+  all-or-nothing: an isolated net namespace has only its *own* loopback, with no route
+  to an external host *or to the host's `127.0.0.1`*. So on **Linux**, with no
+  `--allow-host` the network is fully isolated (the common case — all local-double
+  probes); with `--allow-host` the run falls back to sharing the host network (full
+  egress). On **macOS**, SBPL cannot filter by host/IP at all (only `*:port` loads), so
+  `--allow-host` is **port-scoped** — any host on the named port. Neither is true
+  per-host. Finer egress (slirp/pasta or an allowlist proxy on Linux; a userspace proxy
+  on macOS) is a documented follow-up; neither is the unfiltered-all-egress hole.
 - **CI Postgres over the host's loopback.** A GitHub Actions `postgres:16` service maps
   to the runner's `localhost:5432`, which is *outside* a `--unshare-net` namespace's
   loopback. So the DB-gated probes on Linux CI must run under the `--allow-host`
@@ -228,7 +245,8 @@ packs, and the fail-closed exit.
 - A platform-specific maintenance burden: two profiles (SBPL + bwrap flags) and a
   capability probe to keep green across macOS + Linux CI.
 - The honesty boundary is preserved and made precise: OS-primitive confinement, not
-  kernel-grade containment; granular per-host egress is macOS-only in v0.
+  kernel-grade containment; egress is coarse on both platforms (macOS port-scoped,
+  Linux all-or-nothing) — neither is per-host, neither is unfiltered.
 - Done in this change: `docs/concepts/threat-model/registry-supply-chain.md` (the "step
   2 not built" notes → built, with the documented limits), ADR-0022's "step 2 deferred"
   consequence, `packages/harness/CLAUDE.md` invariant 6, and the CI workflow (install

@@ -226,8 +226,9 @@ The options we rejected, each with a one-line reason.
   reads → an operator `--allow-read` root (default the pack dir). The read guarantee is
   **asymmetric**: Linux/bwrap binds only the declared roots (a true allowlist); macOS
   hosts a JIT runtime so it `(allow default)`-then-clamps, denying the **operator's home
-  directory** (the credential store) — and the network granularity is the reverse
-  (macOS exact per-host, Linux all-or-nothing under `--unshare-net`). The **untrusted
+  directory** (the credential store). Egress is coarse on both (macOS **port-scoped** —
+  SBPL can't filter by host; Linux all-or-nothing under `--unshare-net`), and macOS
+  allows no Unix-socket egress. The **untrusted
   manifest cannot widen** anything (mirrors `--allow-env`). Opt-in at the `runPack`
   library; the **CLI defaults it ON for external packs, OFF for the two bundled
   first-party packs** (the trusted reference set, several of whose probes drive `runPack`

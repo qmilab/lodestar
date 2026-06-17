@@ -329,14 +329,16 @@ that confines reads to the pack dir + `allowRead`, writes to a per-run scratch, 
 outbound network to loopback + `allowHost`:
 
 ```ts
-await runPack(pack, { sandbox: { allowRead: ["/abs/fixtures"], allowHost: ["db:5432"] } })
+await runPack(pack, { sandbox: { allowRead: ["/abs/fixtures"], allowHost: ["10.0.0.5:5432"] } })
 ```
 
 It is opt-in here and **fails closed** (a requested sandbox with no available
 mechanism throws); `sandbox` and a wholesale `env` override are mutually exclusive
 (the sandbox owns HOME/TMPDIR). An OS-primitive boundary, not kernel-grade
-containment; the filesystem/network guarantees are asymmetric by platform (see
-ADR-0023).
+containment; the guarantees are asymmetric by platform — Linux binds a filesystem
+read-allowlist but shares the host net once any host is allowed; macOS denies the
+user's home and scopes `allowHost` by **port** (it must carry a port; the probe
+connects by IP, as DNS is denied). See ADR-0023.
 
 When a `record` sink is supplied, every probe run is written as a
 `trust: "synthetic"` `observation.recorded` event (schema

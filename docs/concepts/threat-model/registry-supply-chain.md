@@ -175,8 +175,10 @@ keys it pinned.
   against a kernel-level sandbox escape, namespace/cgroup resource limits, or a kernel
   0-day. The two guarantees are **asymmetric by platform**: Linux gives a true
   filesystem read-allowlist (bind mounts) but coarse all-or-nothing network under
-  `--unshare-net`; macOS gives exact per-host network but, because it must host a JIT
-  runtime, denies the operator's *home directory* rather than allowlisting reads. **The
+  `--unshare-net`; macOS, because it must host a JIT runtime, denies the operator's
+  *home directory* rather than allowlisting reads and scopes egress by **port** (SBPL
+  cannot filter by host, and it allows no Unix-socket egress). Neither platform does
+  per-host egress, and neither emits an unfiltered all-egress grant. **The
   host-env, filesystem, and network exfiltration paths are now closed within those
   documented limits; running a verified external pack's probes is a routine surface on
   the supported platforms.**
@@ -218,10 +220,11 @@ keys it pinned.
   packs, the riskiest category, will need this threat model revisited.
 - **Probe-runner containment — both steps landed; remaining edges.** Step 1
   (scoped-env, ADR-0022) and step 2 (OS sandbox, ADR-0023) are both in. The open edges
-  are the documented per-platform ones, each a follow-up: granular per-host egress on
-  **Linux** (`bwrap --unshare-net` is all-or-nothing, so `--allow-host` coarsens to
-  full network there), bringing `lo` **up** inside the Linux net namespace (so a
-  sandboxed probe can use loopback servers), a true read-**allowlist** on **macOS**
+  are the documented per-platform ones, each a follow-up: finer per-host egress on
+  both platforms (Linux `bwrap --unshare-net` is all-or-nothing, so `--allow-host`
+  coarsens to full network there; macOS scopes egress by **port**, not host), bringing
+  `lo` **up** inside the Linux net namespace (so a sandboxed probe can use loopback
+  servers), a true read-**allowlist** on **macOS**
   (today it denies the user's home rather than allowlisting reads, because it hosts a
   JIT runtime), a per-probe (not per-run) write scratch, and sandboxing
   `pack attest --kind probe_results` (it runs probes to mint a badge but is not yet

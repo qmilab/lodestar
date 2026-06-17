@@ -15,6 +15,7 @@ import {
   eventLogRecorder,
   formatCalibrationReport,
   loadProbePack,
+  macosAllowHostError,
   runPack,
 } from "@qmilab/lodestar-harness"
 import { defaultLogRoot, loadSessionEvents } from "@qmilab/lodestar-trace"
@@ -316,6 +317,15 @@ async function harnessRun(argv: string[]): Promise<number> {
           "reach are NOT contained).\n",
       )
       return 2
+    }
+    // Fail closed on an --allow-host the macOS sandbox cannot express (a hostname
+    // or IPv6): silently widening it to all-egress is the hole Codex flagged.
+    if (mechanism === "sandbox-exec") {
+      const hostError = macosAllowHostError(flags.allowHost)
+      if (hostError !== null) {
+        process.stderr.write(`${hostError}\n`)
+        return 2
+      }
     }
     sandbox = { allowRead: flags.allowRead, allowHost: flags.allowHost }
     const hostNote =

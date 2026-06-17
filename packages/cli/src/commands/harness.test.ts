@@ -202,8 +202,40 @@ describe("lodestar harness run --sandbox flags (#121, ADR-0023)", () => {
 
   // An external pack defaults to sandbox ON; these need a real mechanism.
   const sbxTest = HAS_SANDBOX ? test : test.skip
-  sbxTest("sandboxes an external pack by default (accepts --allow-read/--allow-host)", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-sbx-"))
+  sbxTest(
+    "sandboxes an external pack by default (accepts --allow-read + an IP --allow-host)",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-sbx-"))
+      await makePack(dir)
+      expect(
+        await harnessCommand([
+          "run",
+          "--pack",
+          dir,
+          "--allow-unsigned",
+          "--no-record",
+          "--allow-read",
+          dir,
+          "--allow-host",
+          "10.0.0.5:5432", // an IP literal — expressible on both platforms
+        ]),
+      ).toBe(0)
+    },
+  )
+
+  // The mirror: where no mechanism exists, the default-on path must fail closed.
+  const noSbxTest = HAS_SANDBOX ? test.skip : test
+  noSbxTest("fails closed for an external pack when no mechanism is available", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-failclosed-"))
+    await makePack(dir)
+    expect(await harnessCommand(["run", "--pack", dir, "--allow-unsigned", "--no-record"])).toBe(2)
+  })
+
+  // macOS SBPL cannot express a hostname --allow-host; it must be REJECTED rather
+  // than silently widened to all-egress (the Codex P1). Only meaningful on macOS.
+  const macosTest = HAS_SANDBOX && process.platform === "darwin" ? test : test.skip
+  macosTest("rejects a hostname --allow-host on macOS (no all-egress widening)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-badhost-"))
     await makePack(dir)
     expect(
       await harnessCommand([
@@ -212,19 +244,9 @@ describe("lodestar harness run --sandbox flags (#121, ADR-0023)", () => {
         dir,
         "--allow-unsigned",
         "--no-record",
-        "--allow-read",
-        dir,
         "--allow-host",
-        "example.com:443",
+        "evil.example.com", // a bare hostname — unexpressible, must fail closed
       ]),
-    ).toBe(0)
-  })
-
-  // The mirror: where no mechanism exists, the default-on path must fail closed.
-  const noSbxTest = HAS_SANDBOX ? test.skip : test
-  noSbxTest("fails closed for an external pack when no mechanism is available", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-failclosed-"))
-    await makePack(dir)
-    expect(await harnessCommand(["run", "--pack", dir, "--allow-unsigned", "--no-record"])).toBe(2)
+    ).toBe(2)
   })
 })

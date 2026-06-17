@@ -96,7 +96,7 @@ lodestar harness run --no-record           # skip event-log recording (CI)
 lodestar harness run --allow-env LODESTAR_TEST_DATABASE_URL  # forward one host var to probes
 lodestar harness run --pack ./packs/mine --allow-unsigned   # load an unsigned local pack (sandboxed)
 lodestar harness run --pack ./packs/mine --no-sandbox       # opt out of the OS sandbox (audited)
-lodestar harness run --pack ./packs/mine --allow-read ./fixtures --allow-host db.example:5432
+lodestar harness run --pack ./packs/mine --allow-read ./fixtures --allow-host 10.0.0.5:5432
 lodestar harness list
 ```
 
@@ -118,7 +118,11 @@ for external packs** and **off for the two bundled first-party packs** (which
 self-test the runner); `--sandbox` / `--no-sandbox` force it either way, and it
 **fails closed** if no mechanism is available (`--no-sandbox` is the audited
 opt-out). Both `--allow-read` / `--allow-host` are operator-only — the manifest
-cannot widen them. An OS-primitive boundary, not kernel-grade containment.
+cannot widen them. Egress is coarse: **macOS scopes `--allow-host` by port**
+(SBPL can't filter by host, so it must carry a port — `10.0.0.5:5432` means *any
+host on 5432* — and the probe must connect by IP, since DNS is denied); **Linux**
+shares the host network once any host is allow-listed. An OS-primitive boundary,
+not kernel-grade containment.
 
 A pack manifest is verified on load (ADR-0017). A **bundled first-party** pack
 (`lodestar-core` / `coding-agent-safety`), when the CLI runs from its own source

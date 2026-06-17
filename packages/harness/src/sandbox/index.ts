@@ -19,7 +19,8 @@ import { buildSandboxExecSandbox } from "./macos.js"
  * namespaces. We claim filesystem-read confinement to the declared roots,
  * filesystem-write confinement to the scratch, and outbound-network
  * deny-by-default to loopback + the allowlist. We do not claim defence against a
- * kernel-level sandbox escape, nor (on Linux) per-host network granularity.
+ * kernel-level sandbox escape, nor per-host egress granularity — macOS scopes by
+ * port, Linux is all-or-nothing (both documented in ADR-0023).
  */
 
 /** A mechanism this host can enforce a probe sandbox with. */
@@ -120,4 +121,47 @@ export function createSandbox(policy: SandboxPolicy): Sandbox | null {
 /** Directory holding the bun binary — always granted read+exec in a sandbox. */
 export function bunBinDir(command: string): string {
   return dirname(resolveBunPath(command))
+}
+
+/** Split an `--allow-host` entry into `{ host, port }`. Supports `host`,
+ * `host:port`, `[v6]`, and `[v6]:port`; a bare IPv6 (multiple colons, no
+ * brackets) is treated as host-only (its colons are not a port). */
+export function splitHostPort(entry: string): { host: string; port: string } {
+  if (entry.startsWith("[")) {
+    const close = entry.indexOf("]")
+    if (close > 0) {
+      const rest = entry.slice(close + 1)
+      return { host: entry.slice(1, close), port: rest.startsWith(":") ? rest.slice(1) : "" }
+    }
+  }
+  const colon = entry.lastIndexOf(":")
+  if (colon > 0 && !entry.slice(0, colon).includes(":")) {
+    return { host: entry.slice(0, colon), port: entry.slice(colon + 1) }
+  }
+  return { host: entry, port: "" }
+}
+
+/**
+ * Is an `--allow-host` entry expressible in the **macOS** sandbox profile? SBPL
+ * scopes outbound network by **port, not host** — a literal IP in `(remote ip
+ * "1.2.3.4:port")` is rejected by `sandbox-exec`, only `*:port` is accepted — so
+ * an entry is expressible iff it carries a numeric port (the host part is
+ * coarsened to any host on that port). A portless entry would have to widen to
+ * all-egress, which we refuse. (Linux shares the host network when any host is
+ * allow-listed, so it accepts any form.)
+ */
+export function isMacosExpressibleHost(entry: string): boolean {
+  return /^\d+$/.test(splitHostPort(entry).port)
+}
+
+/**
+ * A clear error message for any `--allow-host` entries the macOS sandbox cannot
+ * express (so the caller can fail closed rather than silently over-grant), or
+ * `null` when every entry is fine. Linux accepts any entry.
+ */
+export function macosAllowHostError(allowHosts: string[]): string | null {
+  const bad = allowHosts.filter((h) => !isMacosExpressibleHost(h))
+  if (bad.length === 0) return null
+  const entries = bad.map((h) => `'${h}'`).join(", ")
+  return `macOS sandbox cannot express --allow-host ${entries}: SBPL scopes outbound network by PORT, not host, so an allow-host must include a numeric port (e.g. 10.0.0.5:5432 — any host on that port). The probe must connect by IP (the sandbox denies DNS). For host-based or DNS egress, run on Linux or pass --no-sandbox.`
 }

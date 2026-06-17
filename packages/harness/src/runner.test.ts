@@ -7,7 +7,7 @@ import { loadProbePack } from "./pack/loader.js"
 import { formatProbeReport } from "./probe.js"
 import { eventLogRecorder } from "./recorder.js"
 import { type ProbeRunOutcome, runPack } from "./runner.js"
-import { detectSandboxMechanism } from "./sandbox/index.js"
+import { detectSandboxMechanism, macosAllowHostError } from "./sandbox/index.js"
 
 /**
  * Build a throwaway local pack on disk with the given probe sources.
@@ -232,6 +232,15 @@ describe("OS sandbox (#121, ADR-0023)", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {
+    // The Codex P1 fix: a portless host can't be filtered, so it must be
+    // reported (caller fails closed), never silently widened to all-egress.
+    expect(macosAllowHostError(["10.0.0.5:5432", "192.168.1.9:443"])).toBeNull()
+    expect(macosAllowHostError(["db.example:5432"])).toBeNull() // port-scoped to *:5432
+    expect(macosAllowHostError(["10.0.0.5"])).toContain("--allow-host")
+    expect(macosAllowHostError(["db.example.com"])).toContain("--allow-host")
   })
 
   const mechanism = detectSandboxMechanism()

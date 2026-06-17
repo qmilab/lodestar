@@ -120,9 +120,12 @@ export {
 export {
   createSandbox,
   detectSandboxMechanism,
+  isMacosExpressibleHost,
+  macosAllowHostError,
   type Sandbox,
   type SandboxMechanism,
   type SandboxPolicy,
+  splitHostPort,
 } from "./sandbox/index.js"
 
 export { eventLogRecorder, type EventLogRecorderConfig } from "./recorder.js"

@@ -5,7 +5,9 @@ import {
   type SandboxPolicy,
   type WrappedCommand,
   bunBinDir,
+  macosAllowHostError,
   resolveBunPath,
+  splitHostPort,
 } from "./index.js"
 
 /**
@@ -26,10 +28,12 @@ import {
  * This is weaker than a read-allowlist: it does NOT deny reads of `/etc`,
  * `/var`, or other users' files — it denies the running user's home, the actual
  * secret store. Linux (bwrap) gets the stronger read-allowlist via a mount
- * namespace; the per-host network granularity is the reverse (macOS is exact,
- * Linux coarse). Both close the primary threats — read host secrets / exfiltrate
- * — with the per-platform edges documented in ADR-0023. An OS-primitive
- * boundary, not kernel-grade containment.
+ * namespace. Outbound egress is coarse on both platforms, just differently:
+ * macOS scopes by **port** (SBPL cannot filter by host — a literal IP is
+ * rejected, only `*:port` loads), Linux is **all-or-nothing** (sharing the host
+ * net once any host is allow-listed). Both close the primary threats — read host
+ * secrets / exfiltrate — with the per-platform edges documented in ADR-0023. An
+ * OS-primitive boundary, not kernel-grade containment.
  */
 
 /** Escape a path for embedding in an SBPL `"..."` string literal. */
@@ -43,20 +47,19 @@ function subpaths(dirs: string[]): string {
 }
 
 /**
- * Render the network-outbound allows for the operator allow-hosts. A bare IP or
- * `ip:port` is matched exactly; a hostname coarsens to its port (`*:port`) or,
- * with no port, to all outbound — SBPL cannot resolve names.
+ * Render the network-outbound allows for the operator allow-hosts. SBPL scopes
+ * by PORT, not host (a literal `(remote ip "1.2.3.4:port")` is rejected; only
+ * `*:port` loads), so each entry is allowed as any host on its port. Entries are
+ * validated to carry a port by {@link macosAllowHostError} before the sandbox is
+ * built — we never emit an unfiltered `(allow network-outbound)`, which would
+ * turn one grant into all egress.
  */
 function networkAllows(allowHosts: string[]): string[] {
   const lines: string[] = []
   for (const entry of allowHosts) {
-    const colon = entry.lastIndexOf(":")
-    const host = colon > 0 ? entry.slice(0, colon) : entry
-    const port = colon > 0 ? entry.slice(colon + 1) : ""
-    const isIp = /^[0-9.]+$/.test(host) || host.includes(":")
-    if (isIp) lines.push(`(allow network-outbound (remote ip "${sbplString(entry)}"))`)
-    else if (port) lines.push(`(allow network-outbound (remote ip "*:${sbplString(port)}"))`)
-    else lines.push("(allow network-outbound)")
+    const { port } = splitHostPort(entry)
+    if (!/^\d+$/.test(port)) continue // defensive: validated upstream (needs a port)
+    lines.push(`(allow network-outbound (remote ip "*:${sbplString(port)}"))`)
   }
   return lines
 }
@@ -90,7 +93,6 @@ function buildProfile(policy: SandboxPolicy, binDir: string): string {
     '(allow network-bind (local ip "localhost:*"))',
     '(allow network-inbound (local ip "localhost:*"))',
     '(allow network-outbound (remote ip "localhost:*"))',
-    "(allow network-outbound (remote unix-socket))",
     ...networkAllows(policy.allowHosts),
     // --- reads: deny the user's home, re-allow declared roots -----------------
     `(deny file-read* (subpath "${sbplString(home)}"))`,
@@ -101,6 +103,10 @@ function buildProfile(policy: SandboxPolicy, binDir: string): string {
 
 /** Build the macOS `sandbox-exec` sandbox for `policy`. */
 export function buildSandboxExecSandbox(policy: SandboxPolicy): Sandbox {
+  // Fail closed before any probe runs: a hostname/IPv6 allow-host cannot be
+  // expressed in SBPL, and silently widening it (or dropping it) is unsafe.
+  const hostError = macosAllowHostError(policy.allowHosts)
+  if (hostError !== null) throw new Error(hostError)
   return {
     mechanism: "sandbox-exec",
     wrap(command: string, args: string[]): WrappedCommand {

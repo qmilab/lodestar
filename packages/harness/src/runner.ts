@@ -351,11 +351,17 @@ function spawnProbe(
     // `process.env`, which would repopulate it with host secrets that are NOT in
     // the scoped env / allowlist — defeating the boundary. With it, the scoped
     // `env` is authoritative; the operator's only widening path stays `allowHostEnv`.
-    const baseArgs = ["run", "--no-env-file", probe.path]
+    // Under a sandbox, run the probe by its CANONICAL path: the sandbox binds /
+    // matches the real path (the read-roots are canonicalised), so a probe
+    // addressed through a symlinked pack dir would otherwise be absent inside the
+    // sandbox view and fail to spawn (#121, ADR-0023). Unsandboxed, the path is
+    // used as-is (unchanged behaviour).
+    const probePath = sandbox ? canonicalPath(probe.path) : probe.path
+    const baseArgs = ["run", "--no-env-file", probePath]
     // When a sandbox is in play it rewrites the spawn into the OS-sandbox
     // launcher (`sandbox-exec …` / `bwrap … --`); otherwise we spawn bun
-    // directly (#121, ADR-0023). The scoped `env` is unchanged either way — the
-    // sandbox is the outer (filesystem/network) layer, the env the inner.
+    // directly. The scoped `env` is unchanged either way — the sandbox is the
+    // outer (filesystem/network) layer, the env the inner.
     const launched = sandbox ? sandbox.wrap(bun, baseArgs) : { command: bun, args: baseArgs }
     const child = spawn(launched.command, launched.args, {
       env,

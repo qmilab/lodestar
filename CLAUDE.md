@@ -239,8 +239,9 @@ for the two bundled first-party packs (the trusted reference set, several of who
 probes drive `runPack` and would otherwise nest sandboxes). An **OS-primitive boundary,
 not kernel-grade containment**, with asymmetric per-platform edges — Linux gives a true
 read-allowlist (bind mounts) but coarse all-or-nothing network under `--unshare-net`;
-macOS gives exact per-host network but, hosting a JIT runtime, denies the user's *home*
-rather than allowlisting reads. The probe drives the **real** `runPack` over a fixture,
+macOS, hosting a JIT runtime, denies the user's *home* rather than allowlisting reads
+and scopes egress by **port** (SBPL can't filter by host; no Unix-socket egress, so a
+hostname `--allow-host` is refused — it must carry a port). The probe drives the **real** `runPack` over a fixture,
 pins read-home-secret/write-outside/remote-egress all **denied** plus the pack-dir-read
 and scratch-write positive controls, and **skips loudly** when no mechanism is available
 or it is non-functional; ADR-0023). The other
