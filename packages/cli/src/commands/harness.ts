@@ -328,12 +328,23 @@ async function harnessRun(argv: string[]): Promise<number> {
       }
     }
     sandbox = { allowRead: flags.allowRead, allowHost: flags.allowHost }
-    const hostNote =
-      flags.allowHost.length > 0 ? ` + ${flags.allowHost.length} allowed host(s)` : ""
+    // Report the network grant HONESTLY: --allow-host is NOT host-scoped. On
+    // Linux it shares the FULL host network; on macOS it opens the named PORTS to
+    // any host (SBPL cannot filter by host). Saying "N allowed host(s)" would let
+    // an operator think they granted far less than they did.
+    let netNote = "loopback only"
+    if (flags.allowHost.length > 0) {
+      netNote =
+        mechanism === "bwrap"
+          ? "loopback + FULL host network (Linux --allow-host shares the host net)"
+          : `loopback + ANY host on port(s) ${flags.allowHost
+              .map((h) => h.slice(h.lastIndexOf(":") + 1))
+              .join(", ")} (macOS scopes egress by port, not host)`
+    }
     process.stdout.write(
       `OS sandbox: ${mechanism} (reads → pack dir${
         flags.allowRead.length > 0 ? ` + ${flags.allowRead.length} path(s)` : ""
-      }; writes → scratch; network → loopback${hostNote})\n\n`,
+      }; writes → scratch; network → ${netNote})\n\n`,
     )
   } else {
     const why = firstParty && flags.sandbox === undefined ? " (bundled first-party pack)" : ""

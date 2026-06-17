@@ -38,9 +38,10 @@
  * consumer's filesystem or beacon out the moment it runs.
  */
 
+import { existsSync } from "node:fs"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import net from "node:net"
-import { homedir, tmpdir } from "node:os"
+import { homedir, tmpdir, userInfo } from "node:os"
 import { join } from "node:path"
 
 import {
@@ -195,9 +196,16 @@ async function run(): Promise<ProbeResult> {
   const baseline = await tryConnect(REMOTE_HOST, REMOTE_PORT)
   const remoteReachable = baseline === "CONNECTED"
 
-  // Plant a "host secret" UNDER the real home directory — where ssh/aws/gcloud
+  // Plant a "host secret" UNDER the REAL home directory — where ssh/aws/gcloud
   // credential stores live, and exactly what the sandbox must keep out of reach.
-  const secretDir = await mkdtemp(join(homedir(), ".lodestar-sbx-secret-"))
+  // Derive it independently of `$HOME` (this probe runs under a scoped HOME when
+  // driven by the harness, so `homedir()` is a temp dir, not the real home): on
+  // macOS use the account's `/Users/<username>` (what the sandbox denies via the
+  // `/Users` rule); on Linux any home path is unbound by bwrap, so `homedir()`
+  // suffices. This is what would catch a regression of the $HOME-independent deny.
+  const macHome = join("/Users", userInfo().username)
+  const realHome = process.platform === "darwin" && existsSync(macHome) ? macHome : homedir()
+  const secretDir = await mkdtemp(join(realHome, ".lodestar-sbx-secret-"))
   const secretFile = join(secretDir, "secret.txt")
   await writeFile(secretFile, "host-secret-must-not-be-readable-by-a-probe")
 

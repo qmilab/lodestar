@@ -21,13 +21,14 @@ import {
  *
  *   - **writes:** denied everywhere except the per-run scratch;
  *   - **network:** denied except loopback + the operator allow-hosts;
- *   - **reads:** the operator's **home directory** (where ssh/aws/gcloud/npm
- *     credential stores live) is denied, re-allowing only the declared
- *     read-roots (which may themselves sit under home).
+ *   - **reads:** the home credential stores (`/Users` plus the resolved home —
+ *     denied **independently of `$HOME`**, which `os.homedir()` follows and a
+ *     nested/wrapped caller may have scoped) are denied, re-allowing only the
+ *     declared read-roots (which may themselves sit under `/Users`).
  *
- * This is weaker than a read-allowlist: it does NOT deny reads of `/etc`,
- * `/var`, or other users' files — it denies the running user's home, the actual
- * secret store. Linux (bwrap) gets the stronger read-allowlist via a mount
+ * This is weaker than a read-allowlist: it does NOT deny reads of `/etc` or
+ * `/var` — it denies the home credential stores, the actual secret store. Linux
+ * (bwrap) gets the stronger read-allowlist via a mount
  * namespace. Outbound egress is coarse on both platforms, just differently:
  * macOS scopes by **port** (SBPL cannot filter by host — a literal IP is
  * rejected, only `*:port` loads), Linux is **all-or-nothing** (sharing the host
@@ -76,10 +77,17 @@ function canonical(p: string): string {
 }
 
 function buildProfile(policy: SandboxPolicy, binDir: string): string {
-  const home = canonical(homedir())
   // The probe's own scratch + bun's dir are always readable/writable as needed;
-  // bin dir is read so the runtime resolves even if it lives under $HOME.
+  // bin dir is read so the runtime resolves even if it lives under a home dir.
   const readRoots = [...policy.readRoots, policy.writeRoot, binDir]
+  // Deny the home credential stores INDEPENDENTLY of `$HOME`: `os.homedir()`
+  // follows the (possibly scoped/overridden) HOME env, so denying only that would
+  // leave the real home readable under `(allow default)` whenever the caller runs
+  // with a non-real HOME (a nested runPack, a wrapper that sets HOME, CI). `/Users`
+  // covers every standard macOS home regardless of HOME; the resolved homedir
+  // covers a non-`/Users` home (root / custom). Read-roots are re-allowed below
+  // (last-match-wins), so a declared root that sits under /Users still reads.
+  const denyReads = [...new Set(["/Users", canonical(homedir())])]
   const lines = [
     "(version 1)",
     // Let the JIT runtime run, then clamp the reachable surfaces below.
@@ -94,8 +102,8 @@ function buildProfile(policy: SandboxPolicy, binDir: string): string {
     '(allow network-inbound (local ip "localhost:*"))',
     '(allow network-outbound (remote ip "localhost:*"))',
     ...networkAllows(policy.allowHosts),
-    // --- reads: deny the user's home, re-allow declared roots -----------------
-    `(deny file-read* (subpath "${sbplString(home)}"))`,
+    // --- reads: deny home credential stores, re-allow declared roots ----------
+    `(deny file-read* ${denyReads.map((d) => `(subpath "${sbplString(d)}")`).join(" ")})`,
     `(allow file-read*\n${subpaths(readRoots)}\n)`,
   ]
   return lines.join("\n")

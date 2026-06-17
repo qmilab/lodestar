@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { homedir, tmpdir } from "node:os"
+import { homedir, tmpdir, userInfo } from "node:os"
 import { join } from "node:path"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import { loadProbePack } from "./pack/loader.js"
@@ -276,6 +276,38 @@ describe("OS sandbox (#121, ADR-0023)", () => {
       expect(out?.stdout).not.toContain(`HOME=${homedir()}`)
     } finally {
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  // The Codex round-2 P1: `os.homedir()` follows `$HOME`, so denying only that
+  // would leave the REAL home readable when the caller runs with a scoped/overridden
+  // HOME. macOS denies `/Users` independently of `$HOME`; pin that here.
+  const macosTest = mechanism === "sandbox-exec" ? test : test.skip
+  macosTest("denies the REAL macOS home even when $HOME is overridden", async () => {
+    const realHome = join("/Users", userInfo().username)
+    const secretDir = await mkdtemp(join(realHome, ".lodestar-sbx-real-"))
+    const secretFile = join(secretDir, "s.txt")
+    await writeFile(secretFile, "must-not-be-readable")
+    const probe = [
+      'import { readFileSync } from "node:fs"',
+      `try { readFileSync(${JSON.stringify(secretFile)}, "utf8"); console.log("READ=LEAKED") }`,
+      'catch { console.log("READ=DENIED") }',
+      "process.exit(0)",
+    ].join("\n")
+    const dir = await makeFixturePack("fixture-sbx-realhome", [["read.ts", probe]])
+    const savedHome = process.env.HOME
+    try {
+      // Point HOME at a throwaway dir — the OLD deny-homedir() would target THIS,
+      // leaving the real home open. The /Users deny must close it regardless.
+      process.env.HOME = await mkdtemp(join(tmpdir(), "fake-home-"))
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { sandbox: {} })).outcomes[0]
+      expect(out?.stdout).toContain("READ=DENIED")
+      expect(out?.stdout).not.toContain("READ=LEAKED")
+    } finally {
+      if (savedHome !== undefined) process.env.HOME = savedHome
+      await rm(dir, { recursive: true, force: true })
+      await rm(secretDir, { recursive: true, force: true })
     }
   })
 
