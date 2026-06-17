@@ -304,6 +304,26 @@ fails). This is why the first-party probes are plain scripts and stay
 that way — probes are spec, not scaffolding. A failing probe does not
 abort the run; every probe executes so you see the full picture.
 
+**Scoped-env execution (#114, ADR-0022).** A probe is potentially
+third-party (the loader treats manifests as untrusted), so each probe is
+spawned with an explicit, minimal environment — a fresh empty `HOME` +
+inherited `PATH` — and **never** the host `process.env`. This denies host
+secrets (API keys, tokens) to a probe it was not granted, mirroring the
+Action Kernel's "no host env to sandboxes" rule. To forward a specific host
+var, pass `allowHostEnv` (the operator's allowlist — the manifest cannot
+widen the env):
+
+```ts
+const result = await runPack(pack, {
+  allowHostEnv: ["LODESTAR_TEST_DATABASE_URL"], // forwarded only if set on the host
+})
+// Or replace the env wholesale (host env still never merged):
+await runPack(pack, { env: { PATH: process.env.PATH ?? "" } })
+```
+
+This is a TS/process-level governance boundary, not an OS sandbox — it
+denies host-env secrets, not filesystem/network reach.
+
 When a `record` sink is supplied, every probe run is written as a
 `trust: "synthetic"` `observation.recorded` event (schema
 `harness.probe_run@1`) so the run is itself auditable through
@@ -312,14 +332,17 @@ When a `record` sink is supplied, every probe run is written as a
 From the CLI:
 
 ```
-lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record]
+lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record] [--allow-env <NAME>]
 lodestar harness list [--pack <name|path>]
 ```
 
 `--pack` accepts a first-party pack name (e.g. `lodestar-core`, the
 default), a pack directory, or a manifest file. `run` executes the pack
 and records runs by default; `list` inspects the manifest without
-executing anything.
+executing anything. `--allow-env <NAME>` (repeatable) forwards a single
+host env var into the spawned probes — the explicit allowlist on top of the
+scoped env (e.g. `--allow-env LODESTAR_TEST_DATABASE_URL` for the DB-gated
+probes).
 
 ## Authoring a new probe
 

@@ -36,7 +36,10 @@ never argv) and self-verifies; `attest` issues a locally-verifiable signed badge
 into the pack's `badges/` (a `probe_results` summary of a real `runPack`, or a
 `security_scan` verdict from `--scan <file>`; the attester key from
 `--key`/`LODESTAR_ATTESTER_KEY`, never argv — a *signed* pack needs its author
-pinned via `--author-key` to load); `add` resolves a **pinned** source
+pinned via `--author-key` to load; `probe_results` runs the probes under the
+scoped runner, so `--allow-env <NAME>` forwards an env-gated probe's var — e.g.
+`--allow-env LODESTAR_TEST_DATABASE_URL` — so the badge attests a real run, #114);
+`add` resolves a **pinned** source
 (`npm:…@… --integrity …`, `git:…#<40-hex>`, or `local:`/path), verifies the
 signature + content digest against pinned author keys (the trust config +
 `--author-key`) **before any pack code could run**, then installs + records the pin

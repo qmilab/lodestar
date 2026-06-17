@@ -25,7 +25,8 @@
     "sql_adapter",
     "calibration",
     "session_shipper",
-    "pack_registry"
+    "pack_registry",
+    "probe_runner"
   ],
   "invariants": [
     "no_self_promotion",
@@ -66,7 +67,8 @@
     "pack_source_resolution",
     "pack_publish_add_roundtrip",
     "verification_badge_trust",
-    "pack_index_signature_required"
+    "pack_index_signature_required",
+    "runner_scoped_env"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -244,6 +246,10 @@
     {
       "name": "pack-index-signature-required",
       "file": "probes/pack-index-signature-required.ts"
+    },
+    {
+      "name": "runner-denies-host-env-to-probe",
+      "file": "probes/runner-denies-host-env-to-probe.ts"
     }
   ]
 }

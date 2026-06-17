@@ -95,7 +95,24 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   each probe is run as `bun run <file>` and its exit code is the verdict
   (0 passes, anything else fails). Runs every probe (a failure does not
   abort the run) and returns a `PackRunResult`. The runner core depends
-  on nothing but `node:child_process`; recording is injected.
+  on nothing but `node:child_process` (plus a temp dir for the scoped HOME);
+  recording is injected.
+  **Scoped-env execution (#114, ADR-0022):** a probe is potentially third-party
+  (the loader treats manifests as untrusted, invariant 3), so each probe is
+  spawned with an explicit, minimal env — a fresh empty HOME + inherited PATH —
+  and **never the host `process.env`**, denying host secrets to a probe it was
+  not granted (the Action Kernel's "no host env to sandboxes" rule, mirroring
+  `baseGitEnv`/`defaultScopedEnv`). The operator widens it via
+  `RunPackOptions.allowHostEnv` (an explicit allowlist; the CLI's `lodestar
+  harness run --allow-env <NAME>`), or replaces it wholesale with
+  `RunPackOptions.env` (used verbatim, host env still never merged — for hermetic
+  callers/tests). The **manifest cannot** widen the env. The spawn also passes
+  `bun run --no-env-file` so Bun cannot auto-load a working-directory `.env` back
+  into the probe's `process.env` (which would re-introduce host secrets past the
+  scoped env). `runPack` resolves the scoped env once per run (one temp HOME for all
+  probes) and cleans it up. This is a TS/process-level boundary, not an OS sandbox —
+  it denies host-env secrets, not filesystem/network reach (the OS sandbox is the
+  separate step 2). See invariant 6.
 - `src/recorder.ts` — `eventLogRecorder()`. Builds the injected
   `ProbeRunRecorder` that writes each run as a synthetic
   `observation.recorded` event. This is where the event-log dependency
@@ -179,12 +196,19 @@ Coming in later Batch 4+ steps (do not pre-build):
    env mirroring `adapter-git`'s `baseGitEnv`) and removes `.git`. This is a
    TS/process-level boundary that delivers *authentic, inert bytes*; making
    those bytes **safe to run** is the orthogonal runner-side gap (#114).
-6. **The runner drives files, not classes.** Execution is a subprocess
-   spawn (`bun run <file>`) keyed on exit code. This is what keeps the 17
-   first-party probes (invariant 4) unchanged and lets external/future
-   probes be authored in any way that ends in a `bun run`-able script.
-   Do not switch the runner to in-process import — that would force every
-   probe to export a `Probe`, i.e. rewrite the spec.
+6. **The runner drives files, not classes — under a scoped env.** Execution
+   is a subprocess spawn (`bun run <file>`) keyed on exit code. This is what
+   keeps the 17 first-party probes (invariant 4) unchanged and lets
+   external/future probes be authored in any way that ends in a `bun
+   run`-able script. Do not switch the runner to in-process import — that
+   would force every probe to export a `Probe`, i.e. rewrite the spec.
+   The spawn passes an explicit scoped env and **never** the host
+   `process.env` (#114, ADR-0022): a probe is potentially third-party, so it
+   must not inherit host secrets. The allowlist that widens the env
+   (`allowHostEnv` / `--allow-env`) is the **operator's**, never the
+   (untrusted) manifest's — do not add a manifest-declared env field, and do
+   not restore host-env passthrough. This closes the host-env exfiltration
+   hole; it is not an OS sandbox (no filesystem/network containment — step 2).
 7. **A probe run is itself auditable.** When recording is enabled the
    runner writes one `trust: "synthetic"` observation per run. Synthetic
    is non-negotiable: a probe run must never be able to promote a real

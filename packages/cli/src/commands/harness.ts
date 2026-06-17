@@ -97,6 +97,7 @@ function resolvePackTarget(packArg: string): { target: string; firstParty: boole
 const USAGE =
   "usage: lodestar harness run      [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
   "                                  [--allow-unsigned] [--author-key <id>=<pubkey-file>]\n" +
+  "                                  [--allow-env <NAME>]\n" +
   "       lodestar harness list     [--pack <name|path>] [--allow-unsigned]\n" +
   "                                  [--author-key <id>=<pubkey-file>]\n" +
   "       lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
@@ -136,6 +137,13 @@ interface ParsedFlags {
   allowUnsigned: boolean
   /** Operator-pinned author public keys, from `--author-key <id>=<file>` (repeatable). */
   authorKeys: { actor_id: string; public_key: string }[]
+  /**
+   * Host env var names the operator explicitly permits a probe to receive, from
+   * `--allow-env <NAME>` (repeatable). The runner otherwise spawns each probe
+   * with a scoped env (no host `process.env`); this is the operator-controlled
+   * allowlist, never the (untrusted) manifest's to widen (#114, ADR-0022).
+   */
+  allowEnv: string[]
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -148,6 +156,7 @@ function parseFlags(argv: string[]): ParsedFlags {
     record: true,
     allowUnsigned: false,
     authorKeys: [],
+    allowEnv: [],
   }
   const takeValue = (i: number, flag: string): string => takeFlagValue(argv, i, flag)
   for (let i = 0; i < argv.length; i++) {
@@ -178,6 +187,13 @@ function parseFlags(argv: string[]): ParsedFlags {
         break
       case "--allow-unsigned":
         flags.allowUnsigned = true
+        break
+      case "--allow-env":
+        // Permit a single host env var to reach the spawned probes. Repeatable.
+        // The default is a scoped env (no host process.env passthrough); this is
+        // how the operator forwards e.g. LODESTAR_TEST_DATABASE_URL explicitly.
+        flags.allowEnv.push(takeValue(i, arg))
+        i++
         break
       case "--author-key": {
         // Pin a trusted pack author's public key: `--author-key <author-id>=<spki-pem-file>`.
@@ -250,6 +266,7 @@ async function harnessRun(argv: string[]): Promise<number> {
 
   const result = await runPack(pack, {
     record,
+    allowHostEnv: flags.allowEnv,
     onResult: (o) => {
       const mark = o.passed ? "✓" : "✗"
       process.stdout.write(`  ${mark} ${o.name.padEnd(46)} ${o.duration_ms}ms\n`)
