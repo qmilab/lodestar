@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
-import { dirname, resolve, sep } from "node:path"
+import { basename, dirname, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   type PackRunResult,
@@ -74,9 +74,18 @@ const FIRST_PARTY_PACK_NAMES = new Set(["lodestar-core", "coding-agent-safety"])
  * Everything else must carry a valid signature (pin with `--author-key`) or be
  * loaded with an explicit `--allow-unsigned`.
  */
-function resolvePackTarget(packArg: string): { target: string; firstParty: boolean } {
+function resolvePackTarget(packArg: string): {
+  target: string
+  firstParty: boolean
+  bundled: boolean
+} {
   const looksLikePath = packArg.includes("/") || packArg.includes("\\") || packArg.startsWith(".")
-  if (looksLikePath) return { target: resolve(process.cwd(), packArg), firstParty: false }
+  if (looksLikePath) {
+    const target = resolve(process.cwd(), packArg)
+    // firstParty (trust) stays false for a path; bundled (sandbox default) is true
+    // only if the path resolves to the repo's genuine bundled pack (real-path match).
+    return { target, firstParty: false, bundled: isBundledPack(target) }
+  }
 
   // Bare name → walk up from the CLI SOURCE (not the cwd) looking for a bundled
   // pack, so the lookup is anchored to this repo and works from any cwd.
@@ -85,7 +94,7 @@ function resolvePackTarget(packArg: string): { target: string; firstParty: boole
     const candidate = resolve(dir, "packs", packArg)
     if (existsSync(candidate)) {
       const firstParty = !CLI_RUNS_FROM_NODE_MODULES && FIRST_PARTY_PACK_NAMES.has(packArg)
-      return { target: candidate, firstParty }
+      return { target: candidate, firstParty, bundled: isBundledPack(candidate) }
     }
     const parent = dirname(dir)
     if (parent === dir) break
@@ -94,7 +103,42 @@ function resolvePackTarget(packArg: string): { target: string; firstParty: boole
   // cwd fallback: a bare name that is NOT bundled with the CLI. Resolve it so a
   // clear "not found" / signature error follows, but never treat it as
   // first-party — an unsigned pack here still needs an explicit opt-out.
-  return { target: resolve(process.cwd(), "packs", packArg), firstParty: false }
+  const fallback = resolve(process.cwd(), "packs", packArg)
+  return { target: fallback, firstParty: false, bundled: isBundledPack(fallback) }
+}
+
+/** The repo's bundled `packs/<name>` directory found by walking up from the CLI
+ * source, or `null`. Mirrors the bare-name resolution in {@link resolvePackTarget}. */
+function findBundledPackDir(name: string): string | null {
+  let dir = dirname(CLI_SOURCE_PATH)
+  while (true) {
+    const candidate = resolve(dir, "packs", name)
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+/**
+ * Is `target` the repo's **genuine** bundled first-party pack (`lodestar-core` /
+ * `coding-agent-safety`)? Used for the **OS-sandbox default** (off for bundled
+ * packs — they self-test the runner and several of their probes drive `runPack`),
+ * which is a separate concern from the `firstParty` *trust* flag (path-strict for
+ * security). Matches by **real path** against the bundled location, so a
+ * look-alike `./packs/lodestar-core` a user created elsewhere is NOT treated as
+ * bundled — only the repo's own pack, addressed by bare name or by its real path.
+ */
+function isBundledPack(target: string): boolean {
+  const name = basename(target)
+  if (!FIRST_PARTY_PACK_NAMES.has(name)) return false
+  const bundled = findBundledPackDir(name)
+  if (bundled === null) return false
+  try {
+    return realpathSync(target) === realpathSync(bundled)
+  } catch {
+    return false
+  }
 }
 
 const USAGE =
@@ -269,7 +313,7 @@ async function harnessRun(argv: string[]): Promise<number> {
     }
     throw err
   }
-  const { target, firstParty } = resolvePackTarget(flags.pack)
+  const { target, firstParty, bundled } = resolvePackTarget(flags.pack)
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
   try {
@@ -302,10 +346,13 @@ async function harnessRun(argv: string[]): Promise<number> {
 
   // OS sandbox (#121, ADR-0023). Default: ON for an external pack, OFF for a
   // bundled first-party pack — the trusted reference set, several of whose
-  // probes drive `runPack` themselves and would otherwise nest sandboxes.
-  // `--sandbox` / `--no-sandbox` force it either way. Fail closed: a requested
-  // sandbox with no available mechanism refuses rather than running uncontained.
-  const sandboxEnabled = flags.sandbox ?? !firstParty
+  // probes drive `runPack` themselves and would otherwise nest sandboxes. Keyed
+  // on `bundled` (the genuine bundled pack, addressed by bare name OR by its real
+  // path), NOT the path-strict `firstParty` trust flag — so `--pack
+  // ./packs/lodestar-core` is also off-by-default. `--sandbox` / `--no-sandbox`
+  // force it either way. Fail closed: a requested sandbox with no available
+  // mechanism refuses rather than running uncontained.
+  const sandboxEnabled = flags.sandbox ?? !bundled
   let sandbox: ProbeSandboxOptions | undefined
   if (sandboxEnabled) {
     const mechanism = detectSandboxMechanism()
@@ -347,7 +394,7 @@ async function harnessRun(argv: string[]): Promise<number> {
       }; writes → scratch; network → ${netNote})\n\n`,
     )
   } else {
-    const why = firstParty && flags.sandbox === undefined ? " (bundled first-party pack)" : ""
+    const why = bundled && flags.sandbox === undefined ? " (bundled first-party pack)" : ""
     process.stdout.write(
       `OS sandbox: off${why} — host env denied, but filesystem/network NOT contained\n\n`,
     )

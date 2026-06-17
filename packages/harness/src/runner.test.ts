@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { homedir, tmpdir, userInfo } from "node:os"
-import { join } from "node:path"
+import { isAbsolute, join } from "node:path"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import { loadProbePack } from "./pack/loader.js"
 import { formatProbeReport } from "./probe.js"
 import { eventLogRecorder } from "./recorder.js"
 import { type ProbeRunOutcome, runPack } from "./runner.js"
-import { detectSandboxMechanism, macosAllowHostError } from "./sandbox/index.js"
+import { detectSandboxMechanism, macosAllowHostError, resolveBunPath } from "./sandbox/index.js"
 
 /**
  * Build a throwaway local pack on disk with the given probe sources.
@@ -232,6 +232,15 @@ describe("OS sandbox (#121, ADR-0023)", () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  test("resolveBunPath honours the requested executable (absolute kept, else PATH)", () => {
+    // The Codex fix: a sandboxed run must execute the SAME bun the unsandboxed
+    // spawn would, not blindly process.execPath (which is `node` under Node, or
+    // the wrong binary when the caller picks `bun-canary`).
+    expect(resolveBunPath("/opt/custom/bun")).toBe("/opt/custom/bun")
+    const resolved = resolveBunPath("bun")
+    expect(isAbsolute(resolved)).toBe(true) // resolved on PATH, not left relative
   })
 
   test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {

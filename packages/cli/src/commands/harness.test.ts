@@ -223,6 +223,26 @@ describe("lodestar harness run --sandbox flags (#121, ADR-0023)", () => {
     },
   )
 
+  // Codex P2: a bundled pack addressed BY PATH must also default to NO sandbox
+  // (the default is keyed on the genuine-bundled signal, not the path-strict
+  // trust flag). If it regressed to sandbox-on, the first-party probes (which
+  // import repo packages) would fail — exit 1 with a mechanism, exit 2 without.
+  // So exit 0 proves the bundled-by-path default-off on every platform.
+  test("a bundled pack addressed by PATH defaults to NO sandbox", async () => {
+    const bundledPath = join(
+      import.meta.dir,
+      "..",
+      "..",
+      "..",
+      "..",
+      "packs",
+      "coding-agent-safety",
+    )
+    expect(
+      await harnessCommand(["run", "--pack", bundledPath, "--no-record", "--allow-unsigned"]),
+    ).toBe(0)
+  })
+
   // The mirror: where no mechanism exists, the default-on path must fail closed.
   const noSbxTest = HAS_SANDBOX ? test.skip : test
   noSbxTest("fails closed for an external pack when no mechanism is available", async () => {

@@ -72,11 +72,21 @@ export interface Sandbox {
   cleanup(): void
 }
 
+/** Absolute path of `cmd` on the current PATH (first match), or `null`. */
+function resolveOnPath(cmd: string): string | null {
+  const path = process.env.PATH
+  if (path === undefined) return null
+  for (const dir of path.split(delimiter)) {
+    if (dir.length === 0) continue
+    const candidate = join(dir, cmd)
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
 /** Does a `cmd` resolve to an executable on the current PATH? */
 function onPath(cmd: string): boolean {
-  const path = process.env.PATH
-  if (path === undefined) return false
-  return path.split(delimiter).some((dir) => dir.length > 0 && existsSync(join(dir, cmd)))
+  return resolveOnPath(cmd) !== null
 }
 
 /**
@@ -96,13 +106,18 @@ export function detectSandboxMechanism(): SandboxMechanism | null {
 }
 
 /**
- * Resolve the bun executable the sandbox must grant. An absolute path is used
- * verbatim; anything else resolves to the running interpreter
- * (`process.execPath`) so the binary is unambiguous inside the sandbox (PATH
- * resolution can differ once the filesystem view is confined).
+ * Resolve the bun executable the sandbox must grant to an absolute path — the
+ * **same binary the unsandboxed spawn would run**, so an operator's choice of
+ * `RunPackOptions.bun` (an absolute path, `bun-canary`, a PATH wrapper) is
+ * honoured. An absolute command is used verbatim; otherwise it is resolved on
+ * PATH. Only if PATH resolution fails do we fall back to the running interpreter
+ * (`process.execPath`) — a best-effort that is correct when the harness itself
+ * runs under the requested bun; if the command genuinely is not on PATH the run
+ * would fail unsandboxed too.
  */
 export function resolveBunPath(command: string): string {
-  return isAbsolute(command) ? command : process.execPath
+  if (isAbsolute(command)) return command
+  return resolveOnPath(command) ?? process.execPath
 }
 
 /**
