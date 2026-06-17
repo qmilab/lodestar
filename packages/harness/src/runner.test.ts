@@ -239,8 +239,9 @@ describe("OS sandbox (#121, ADR-0023)", () => {
     // spawn would, not blindly process.execPath (which is `node` under Node, or
     // the wrong binary when the caller picks `bun-canary`).
     expect(resolveBunPath("/opt/custom/bun")).toBe("/opt/custom/bun")
-    const resolved = resolveBunPath("bun")
-    expect(isAbsolute(resolved)).toBe(true) // resolved on PATH, not left relative
+    expect(isAbsolute(resolveBunPath("bun"))).toBe(true) // bare name → resolved on PATH
+    // A relative path resolves against the cwd (like spawn), not PATH — never left relative.
+    expect(isAbsolute(resolveBunPath("./bin/bun"))).toBe(true)
   })
 
   test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {

@@ -1,6 +1,6 @@
-import { existsSync } from "node:fs"
+import { existsSync, realpathSync } from "node:fs"
 import { platform } from "node:os"
-import { delimiter, dirname, isAbsolute, join } from "node:path"
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path"
 import { buildBwrapSandbox } from "./linux.js"
 import { buildSandboxExecSandbox } from "./macos.js"
 
@@ -106,18 +106,27 @@ export function detectSandboxMechanism(): SandboxMechanism | null {
 }
 
 /**
- * Resolve the bun executable the sandbox must grant to an absolute path — the
- * **same binary the unsandboxed spawn would run**, so an operator's choice of
- * `RunPackOptions.bun` (an absolute path, `bun-canary`, a PATH wrapper) is
- * honoured. An absolute command is used verbatim; otherwise it is resolved on
- * PATH. Only if PATH resolution fails do we fall back to the running interpreter
- * (`process.execPath`) — a best-effort that is correct when the harness itself
- * runs under the requested bun; if the command genuinely is not on PATH the run
- * would fail unsandboxed too.
+ * Resolve the bun executable the sandbox must grant to an absolute, real path —
+ * the **same binary the unsandboxed spawn would run** — so an operator's choice
+ * of `RunPackOptions.bun` is honoured. Mirrors `child_process.spawn` resolution:
+ * an absolute command is used verbatim; a command containing a path separator
+ * (`./bin/bun`, `node_modules/.bin/bun`) is resolved relative to the cwd; a bare
+ * name (`bun`, `bun-canary`) is resolved on PATH. Only if a bare name is not on
+ * PATH do we fall back to the running interpreter (`process.execPath`) — correct
+ * when the harness itself runs under the requested bun; an absent command would
+ * fail unsandboxed too. The result is `realpath`-ed so a symlinked launcher
+ * (e.g. `.bin/bun`) binds/execs its real target, not the dangling link.
  */
 export function resolveBunPath(command: string): string {
-  if (isAbsolute(command)) return command
-  return resolveOnPath(command) ?? process.execPath
+  let resolved: string
+  if (isAbsolute(command)) resolved = command
+  else if (command.includes("/") || command.includes("\\")) resolved = resolve(command)
+  else resolved = resolveOnPath(command) ?? process.execPath
+  try {
+    return realpathSync(resolved)
+  } catch {
+    return resolved
+  }
 }
 
 /**

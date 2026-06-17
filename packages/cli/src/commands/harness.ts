@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto"
-import { existsSync, readFileSync, realpathSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
 import { basename, dirname, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -130,12 +130,21 @@ function findBundledPackDir(name: string): string | null {
  * bundled — only the repo's own pack, addressed by bare name or by its real path.
  */
 function isBundledPack(target: string): boolean {
-  const name = basename(target)
+  // `--pack` accepts a pack directory OR a manifest file; normalise a manifest
+  // path (e.g. `…/lodestar-core/lodestar.probe-pack.json`) to its pack directory
+  // so addressing the same bundled pack either way is treated identically.
+  let dir = target
+  try {
+    if (statSync(target).isFile()) dir = dirname(target)
+  } catch {
+    /* missing target: fall through; realpathSync below returns false */
+  }
+  const name = basename(dir)
   if (!FIRST_PARTY_PACK_NAMES.has(name)) return false
   const bundled = findBundledPackDir(name)
   if (bundled === null) return false
   try {
-    return realpathSync(target) === realpathSync(bundled)
+    return realpathSync(dir) === realpathSync(bundled)
   } catch {
     return false
   }
