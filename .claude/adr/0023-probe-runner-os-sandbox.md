@@ -142,9 +142,15 @@ adversarial review (the Linux path is CI-validated):
   mach bootstrap, POSIX shm, the dyld shared cache, …) and aborted with `SIGABRT` in
   practice. The robust shape is `(allow default)` then **clamp**: deny writes (except
   the scratch), deny network (except loopback + allow-hosts), and deny **reads of the
-  operator's home directory** — where ssh/aws/gcloud/npm credential stores live —
-  re-allowing the declared read-roots. This does *not* deny reads of `/etc`, `/var`, or
-  other users' files; it denies the running user's home, the actual secret store.
+  home credential stores** — where ssh/aws/gcloud/npm credentials live — re-allowing the
+  declared read-roots. Crucially this is done **independently of `$HOME`** (two review
+  rounds): `os.homedir()` *and* bun's `os.userInfo()` both follow `$HOME`/`$USER`, so a
+  caller running with a scoped/overridden HOME (a nested `runPack`, a wrapper, CI) would
+  otherwise clamp the wrong dir and leave the real home readable under `(allow default)`.
+  The deny set is `/Users` (every standard home, regardless of HOME) + `/var/root` (root)
+  + the real account home resolved from **Directory Services** (`id -un` + `dscl`,
+  covering a non-`/Users` custom/network home) + the env-resolved homedir (a harmless
+  extra). It does *not* deny `/etc` or `/var`; it denies the home secret stores.
   **Linux (bwrap) keeps the stronger read-allowlist** via a mount namespace that binds
   only the declared roots. So the filesystem guarantee is asymmetric (Linux stronger);
   egress is coarse on *both* — see the egress bullet — both close the primary threats,
@@ -154,7 +160,7 @@ adversarial review (the Linux path is CI-validated):
   un-canonicalised scratch made a probe's own writes fail, and an un-canonicalised home
   deny silently *let a secret read through* (caught by the locking probe under the CLI's
   scoped HOME). The runner `realpathSync`-es the scratch + read-roots; the macOS backend
-  canonicalises the home it denies.
+  canonicalises the env-home it also denies.
 - **macOS treats the host's own addresses as local.** A sandboxed connect to the
   machine's *own* LAN IP succeeds (delivered locally); only genuine **remote** egress is
   reliably blocked. The locking probe therefore targets a real remote and gates the

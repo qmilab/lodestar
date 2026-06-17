@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import { realpathSync } from "node:fs"
 import { homedir } from "node:os"
 import {
@@ -21,10 +22,11 @@ import {
  *
  *   - **writes:** denied everywhere except the per-run scratch;
  *   - **network:** denied except loopback + the operator allow-hosts;
- *   - **reads:** the home credential stores (`/Users` plus the resolved home —
- *     denied **independently of `$HOME`**, which `os.homedir()` follows and a
- *     nested/wrapped caller may have scoped) are denied, re-allowing only the
- *     declared read-roots (which may themselves sit under `/Users`).
+ *   - **reads:** the home credential stores are denied **independently of
+ *     `$HOME`** (which `os.homedir()`/`os.userInfo()` follow and a nested/wrapped
+ *     caller may have scoped): `/Users`, `/var/root`, and the real account home
+ *     resolved from Directory Services (`id -un` + `dscl`, covering a non-`/Users`
+ *     custom/network home). Only the declared read-roots are re-allowed.
  *
  * This is weaker than a read-allowlist: it does NOT deny reads of `/etc` or
  * `/var` — it denies the home credential stores, the actual secret store. Linux
@@ -40,6 +42,36 @@ import {
 /** Escape a path for embedding in an SBPL `"..."` string literal. */
 function sbplString(p: string): string {
   return p.replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+}
+
+let realHomeCache: string | null | undefined
+/**
+ * The account's real home directory, resolved **independently of `$HOME`/`$USER`**
+ * — both of which bun's `os.homedir()`/`os.userInfo()` follow, so neither is safe
+ * for a security deny. We ask Directory Services: the real username from `id -un`
+ * (keyed on the effective uid, not the env), then its `NFSHomeDirectory`. This is
+ * what covers a non-`/Users` home (root / custom / network) when the caller runs
+ * with an overridden HOME. Returns `null` if it cannot be resolved (the `/Users`
+ * + `/var/root` static denials still apply). Memoised — it cannot change within a
+ * process and the lookup shells out.
+ */
+function realAccountHome(): string | null {
+  if (realHomeCache !== undefined) return realHomeCache
+  realHomeCache = null
+  try {
+    const username = execFileSync("id", ["-un"], { encoding: "utf8", timeout: 5000 }).trim()
+    if (username.length === 0) return realHomeCache
+    const record = execFileSync(
+      "/usr/bin/dscl",
+      [".", "-read", `/Users/${username}`, "NFSHomeDirectory"],
+      { encoding: "utf8", timeout: 5000 },
+    )
+    const matched = record.match(/NFSHomeDirectory:\s*(.+)/)
+    realHomeCache = matched?.[1]?.trim() || `/Users/${username}`
+  } catch {
+    // dscl/id unavailable or failed — fall back to the static denials.
+  }
+  return realHomeCache
 }
 
 /** Render `(subpath "…")` clauses, one per directory. */
@@ -80,14 +112,22 @@ function buildProfile(policy: SandboxPolicy, binDir: string): string {
   // The probe's own scratch + bun's dir are always readable/writable as needed;
   // bin dir is read so the runtime resolves even if it lives under a home dir.
   const readRoots = [...policy.readRoots, policy.writeRoot, binDir]
-  // Deny the home credential stores INDEPENDENTLY of `$HOME`: `os.homedir()`
-  // follows the (possibly scoped/overridden) HOME env, so denying only that would
-  // leave the real home readable under `(allow default)` whenever the caller runs
-  // with a non-real HOME (a nested runPack, a wrapper that sets HOME, CI). `/Users`
-  // covers every standard macOS home regardless of HOME; the resolved homedir
-  // covers a non-`/Users` home (root / custom). Read-roots are re-allowed below
-  // (last-match-wins), so a declared root that sits under /Users still reads.
-  const denyReads = [...new Set(["/Users", canonical(homedir())])]
+  // Deny the home credential stores INDEPENDENTLY of `$HOME`: `os.homedir()` (and
+  // bun's `os.userInfo().homedir`) follow the possibly-scoped/overridden HOME env,
+  // so denying only that would leave the real home readable under `(allow default)`
+  // whenever the caller runs with a non-real HOME (a nested runPack, a wrapper that
+  // sets HOME, CI). We deny: `/Users` (every standard macOS home, regardless of
+  // HOME), `/var/root` (root's home), the Directory-Services-resolved real home
+  // (covers a non-`/Users` custom/network home, resolved without trusting the env),
+  // and the env-resolved homedir (a harmless extra in the common case). Read-roots
+  // are re-allowed below (last-match-wins), so a declared root under /Users reads.
+  const denyReads = [
+    ...new Set(
+      ["/Users", "/var/root", realAccountHome(), canonical(homedir())].filter(
+        (d): d is string => d !== null,
+      ),
+    ),
+  ]
   const lines = [
     "(version 1)",
     // Let the JIT runtime run, then clamp the reachable surfaces below.
