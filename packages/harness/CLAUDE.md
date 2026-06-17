@@ -106,10 +106,13 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   `RunPackOptions.allowHostEnv` (an explicit allowlist; the CLI's `lodestar
   harness run --allow-env <NAME>`), or replaces it wholesale with
   `RunPackOptions.env` (used verbatim, host env still never merged — for hermetic
-  callers/tests). The **manifest cannot** widen the env. `runPack` resolves the
-  scoped env once per run (one temp HOME for all probes) and cleans it up. This is
-  a TS/process-level boundary, not an OS sandbox — it denies host-env secrets, not
-  filesystem/network reach (the OS sandbox is the separate step 2). See invariant 6.
+  callers/tests). The **manifest cannot** widen the env. The spawn also passes
+  `bun run --no-env-file` so Bun cannot auto-load a working-directory `.env` back
+  into the probe's `process.env` (which would re-introduce host secrets past the
+  scoped env). `runPack` resolves the scoped env once per run (one temp HOME for all
+  probes) and cleans it up. This is a TS/process-level boundary, not an OS sandbox —
+  it denies host-env secrets, not filesystem/network reach (the OS sandbox is the
+  separate step 2). See invariant 6.
 - `src/recorder.ts` — `eventLogRecorder()`. Builds the injected
   `ProbeRunRecorder` that writes each run as a synthetic
   `observation.recorded` event. This is where the event-log dependency

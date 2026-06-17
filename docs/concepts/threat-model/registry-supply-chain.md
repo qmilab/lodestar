@@ -164,7 +164,10 @@ keys it pinned.
   allowlist (`RunPackOptions.allowHostEnv`); the **untrusted manifest cannot** widen it,
   so a hostile pack cannot declare its way to a secret (`packages/harness/src/runner.ts`;
   probe `runner-denies-host-env-to-probe`). This mirrors the Action Kernel's "no host env
-  to sandboxes" rule and the native adapters' `baseGitEnv`/`defaultScopedEnv`. **Step 2 (a
+  to sandboxes" rule and the native adapters' `baseGitEnv`/`defaultScopedEnv`. The spawn
+  also passes `--no-env-file` so `bun run` cannot auto-load a working-directory `.env`
+  back into the probe's `process.env` (a back-door that would otherwise re-introduce host
+  secrets past the scoped env whenever the harness runs from a project holding a `.env`). **Step 2 (a
   real OS sandbox) is not built.** Scoped env denies host-environment secrets; it does
   **not** contain a probe's filesystem or network reach — a probe can still read files and
   open sockets the runner process can. Closing that is step 2, and even *that* would be a

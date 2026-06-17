@@ -55,7 +55,13 @@ or per-user credential stores) plus inherited `PATH` (so `bun`, and anything a p
 shells to, resolves). Nothing else passes through. This is exactly `baseGitEnv` /
 `defaultScopedEnv` restated for the runner. `spawnProbe` now receives a complete `env`
 and passes it to `spawn({ env })`; the host environment is never spread in. There is **no
-silent default**: a var a probe does not see is a var it was not granted.
+silent default**: a var a probe does not see is a var it was not granted. The spawn also
+passes **`--no-env-file`** (Codex review): `bun run` otherwise auto-loads a
+working-directory `.env` / `.env.local` and merges it into the probe's `process.env`,
+which would repopulate it with host secrets *outside* the scoped env / allowlist — a
+back-door around the whole boundary whenever the harness runs from a directory holding a
+`.env` (common in real projects). With `--no-env-file`, the scoped `env` is authoritative
+and the operator's only widening path stays `allowHostEnv`.
 
 **2. The operator widens the env via an explicit allowlist; the manifest cannot.** This
 is the load-bearing distinction. `RunPackOptions.allowHostEnv: string[]` names host vars
@@ -94,13 +100,15 @@ on step 2. The operator guidance softens, it does not disappear.
 ## Locking probe
 
 `runner-denies-host-env-to-probe` (lodestar-core, the 57th probe) drives the **real**
-`runPack` over a throwaway fixture pack whose probe reports its own environment, and pins:
-a host `process.env` secret is **absent** from the spawned probe under the default scoped
-env; `PATH` is **present** (the positive control that the runner is scoping, not breaking,
-execution); and an `allowHostEnv`-named var **is** forwarded while a non-allowlisted host
-secret stays **absent on the same run** (the allowlist is additive and scoped, never
-host-env-on). Unit tests in `runner.test.ts` cover the same three cases plus the complete
-`env` override; a CLI test covers `--allow-env` parsing.
+`runPack` over a throwaway fixture pack whose probe reports its own environment, and pins
+four things: a host `process.env` secret is **absent** from the spawned probe under the
+default scoped env; `PATH` is **present** (the positive control that the runner is scoping,
+not breaking, execution); an `allowHostEnv`-named var **is** forwarded while a
+non-allowlisted host secret stays **absent on the same run** (the allowlist is additive and
+scoped, never host-env-on); and a secret living **only in a working-directory `.env`** does
+**not** reach the probe (the `--no-env-file` defense). Unit tests in `runner.test.ts` cover
+the same cases plus the complete `env` override; CLI tests cover `--allow-env` parsing and
+that `pack attest --kind probe_results` threads the allowlist into its run.
 
 ## Consequences
 

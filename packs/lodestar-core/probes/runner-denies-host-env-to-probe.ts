@@ -12,7 +12,7 @@
  *
  * This drives the REAL `runPack` over a throwaway local fixture pack whose probe
  * is a "leak detector" that prints what it can see in its own environment, and
- * pins three things:
+ * pins four things:
  *
  *   1. No host-env passthrough (the headline). A secret placed in the parent's
  *      `process.env` is ABSENT in the spawned probe's environment — the runner
@@ -26,6 +26,11 @@
  *      stays absent even on that same run. The manifest cannot widen the env —
  *      the allowlist is the operator's, passed to `runPack`, not the (untrusted)
  *      pack's to declare.
+ *   4. No `.env` back-door. A secret living ONLY in a `.env` in the probe's
+ *      working directory does NOT reach it — `bun run` auto-loads `.env` unless
+ *      `--no-env-file` is passed, which would otherwise repopulate `process.env`
+ *      with host secrets past the scoped env. The runner passes `--no-env-file`,
+ *      so the scoped env stays authoritative.
  *
  * This is a TS/process-level governance boundary, not an OS sandbox: it denies
  * host-environment secrets, not filesystem or network reach. Real OS-level
@@ -56,15 +61,23 @@ const HOST_SECRET_VALUE = "host-secret-must-not-leak-7f3a"
 const ALLOWED_VAR = "LODESTAR_RUNNER_PROBE_ALLOWED"
 const ALLOWED_VALUE = "operator-allowlisted-yes"
 
+// A secret placed ONLY in a `.env` in the probe's working directory — never in
+// process.env. If it reaches the probe it could only have come from `bun run`
+// auto-loading `.env`, which the runner suppresses with `--no-env-file`.
+const DOTENV_VAR = "LODESTAR_RUNNER_PROBE_DOTENV"
+const DOTENV_VALUE = "secret-only-in-dotenv-must-not-load"
+
 // The fixture probe: a standalone bun script that reports what it can see in its
 // OWN environment, then always exits 0. The runner verdict here is irrelevant —
 // the outer probe reads the captured stdout to decide pass/fail.
 const LEAK_DETECTOR = `
 const secret = process.env.${HOST_SECRET_VAR}
 const allowed = process.env.${ALLOWED_VAR}
+const dotenv = process.env.${DOTENV_VAR}
 const path = process.env.PATH
 console.log("SECRET=" + (secret === undefined ? "<absent>" : "LEAKED:" + secret))
 console.log("ALLOWED=" + (allowed === undefined ? "<absent>" : allowed))
+console.log("DOTENV=" + (dotenv === undefined ? "<absent>" : "LEAKED:" + dotenv))
 console.log("PATH=" + (path && path.length > 0 ? "<present>" : "<absent>"))
 process.exit(0)
 `
@@ -150,14 +163,42 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // --- Case 3: a working-directory `.env` does not leak (--no-env-file). -----
+    // Plant a secret ONLY in a `.env` in the probe's cwd. `bun run` auto-loads
+    // `.env`; the runner passes `--no-env-file`, so it must not reach the probe.
+    await writeFile(join(dir, ".env"), `${DOTENV_VAR}=${DOTENV_VALUE}\n`)
+    const savedCwd = process.cwd()
+    let dotenv: ProbeRunOutcome
+    try {
+      // The spawned probe inherits this cwd → bun would auto-load ./.env from it.
+      process.chdir(dir)
+      dotenv = outcomeOf((await runPack(pack)).outcomes)
+    } finally {
+      // Restore cwd before the outer finally removes `dir` (can't sit in a deleted cwd).
+      process.chdir(savedCwd)
+    }
+    if (dotenv.stdout.includes("DOTENV=LEAKED:")) {
+      return {
+        passed: false,
+        details: `dotenv LEAK: a secret from a working-directory .env reached the probe. The runner must spawn 'bun run --no-env-file' so .env cannot repopulate process.env.\n${dotenv.stdout}`,
+      }
+    }
+    if (!dotenv.stdout.includes("DOTENV=<absent>")) {
+      return {
+        passed: false,
+        details: `expected DOTENV=<absent> with --no-env-file; got:\n${dotenv.stdout}`,
+      }
+    }
+
     return {
       passed: true,
       details:
         "Runner held the execution boundary: a host process.env secret was absent from the " +
         "spawned probe under the default scoped env (PATH still inherited so bun resolves), " +
-        "and an operator-allowlisted var was forwarded while a non-allowlisted host secret " +
-        "stayed absent on the same run — the allowlist is the operator's, additive and scoped, " +
-        "never the (untrusted) manifest's to widen.",
+        "an operator-allowlisted var was forwarded while a non-allowlisted host secret stayed " +
+        "absent on the same run (the allowlist is the operator's, additive and scoped, never " +
+        "the untrusted manifest's to widen), and a secret living only in a working-directory " +
+        ".env did not reach the probe (--no-env-file keeps the scoped env authoritative).",
     }
   } finally {
     await rm(dir, { recursive: true, force: true })

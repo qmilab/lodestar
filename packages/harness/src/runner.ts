@@ -28,9 +28,11 @@ import type { LoadedProbe, LoadedProbePack } from "./pack/loader.js"
  * secrets to a probe it was not explicitly granted, mirroring the Action
  * Kernel's "no host env to sandboxes" rule. The operator widens the env only
  * via {@link RunPackOptions.allowHostEnv} (an explicit allowlist); the
- * manifest cannot. This is a TS/process-level governance boundary, not an OS
- * sandbox — it does not contain filesystem or network reach (the separate
- * longer-term step).
+ * manifest cannot. The spawn also passes `--no-env-file` so `bun run` cannot
+ * auto-load a working-directory `.env` back into the probe's `process.env`
+ * (which would re-introduce host secrets outside the allowlist). This is a
+ * TS/process-level governance boundary, not an OS sandbox — it does not
+ * contain filesystem or network reach (the separate longer-term step).
  */
 
 /** The result of running one probe file as a subprocess. */
@@ -205,7 +207,15 @@ function spawnProbe(
   return new Promise((resolve) => {
     // `env` is the COMPLETE environment — host `process.env` is never spread in,
     // so a probe cannot read host secrets it was not explicitly granted (#114).
-    const child = spawn(bun, ["run", probe.path], { env, stdio: ["ignore", "pipe", "pipe"] })
+    // `--no-env-file` is load-bearing: `bun run` otherwise auto-loads `.env` /
+    // `.env.local` from the working directory and merges them into the probe's
+    // `process.env`, which would repopulate it with host secrets that are NOT in
+    // the scoped env / allowlist — defeating the boundary. With it, the scoped
+    // `env` is authoritative; the operator's only widening path stays `allowHostEnv`.
+    const child = spawn(bun, ["run", "--no-env-file", probe.path], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    })
     const stdout = new CappedBuffer(MAX_CAPTURE_CHARS)
     const stderr = new CappedBuffer(MAX_CAPTURE_CHARS)
     child.stdout?.on("data", (chunk) => stdout.push(chunk))

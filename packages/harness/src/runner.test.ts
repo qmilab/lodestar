@@ -197,6 +197,27 @@ describe("scoped probe environment (#114, ADR-0022)", () => {
       unsetEnv("LODESTAR_RUNNER_TEST_SECRET")
     }
   })
+
+  test("a working-directory .env does NOT repopulate the probe env (--no-env-file)", async () => {
+    // The secret lives ONLY in a .env in the probe's working directory — never in
+    // the parent process.env. `bun run` auto-loads .env unless --no-env-file is
+    // passed, which would smuggle it back in past the scoped env. The spawn passes
+    // --no-env-file, so it must stay absent.
+    const dir = await makeFixturePack("fixture-env-dotenv", [["reporter.ts", REPORTER]])
+    await writeFile(join(dir, ".env"), "LODESTAR_RUNNER_TEST_SECRET=leaked-via-dotenv\n")
+    const savedCwd = process.cwd()
+    try {
+      // The spawned probe inherits this cwd; bun would auto-load ./.env from it.
+      process.chdir(dir)
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack)).outcomes[0]
+      expect(out?.stdout).toContain("SECRET=<absent>")
+      expect(out?.stdout).not.toContain("leaked-via-dotenv")
+    } finally {
+      process.chdir(savedCwd)
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })
 
 describe("formatProbeReport", () => {
