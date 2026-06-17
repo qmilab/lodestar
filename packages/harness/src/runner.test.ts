@@ -8,6 +8,7 @@ import { formatProbeReport } from "./probe.js"
 import { eventLogRecorder } from "./recorder.js"
 import { type ProbeRunOutcome, runPack } from "./runner.js"
 import { detectSandboxMechanism, macosAllowHostError, resolveBunPath } from "./sandbox/index.js"
+import { buildBwrapSandbox } from "./sandbox/linux.js"
 
 /**
  * Build a throwaway local pack on disk with the given probe sources.
@@ -242,6 +243,22 @@ describe("OS sandbox (#121, ADR-0023)", () => {
     expect(isAbsolute(resolveBunPath("bun"))).toBe(true) // bare name → resolved on PATH
     // A relative path resolves against the cwd (like spawn), not PATH — never left relative.
     expect(isAbsolute(resolveBunPath("./bin/bun"))).toBe(true)
+    // A bare name NOT on PATH is returned unresolved (so the spawn fails ENOENT
+    // like unsandboxed) — never silently substituted with process.execPath.
+    const missing = "lodestar-definitely-not-a-real-bun-xyz"
+    expect(resolveBunPath(missing)).toBe(missing)
+  })
+
+  test("bwrap isolates the network unless a host is allow-listed (then shares it)", () => {
+    // Arg construction only — does not run bwrap, so it is platform-agnostic.
+    const policy = { readRoots: ["/tmp/pack"], writeRoot: "/tmp/scratch" }
+    const isolated = buildBwrapSandbox({ ...policy, allowHosts: [] }).wrap("bun", ["run", "x.ts"])
+    const shared = buildBwrapSandbox({ ...policy, allowHosts: ["example.com:443"] }).wrap("bun", [
+      "run",
+      "x.ts",
+    ])
+    expect(isolated.args).toContain("--unshare-net") // loopback-only isolation
+    expect(shared.args).not.toContain("--unshare-net") // host net shared for the allow-host
   })
 
   test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {

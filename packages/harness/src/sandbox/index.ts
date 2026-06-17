@@ -111,17 +111,18 @@ export function detectSandboxMechanism(): SandboxMechanism | null {
  * of `RunPackOptions.bun` is honoured. Mirrors `child_process.spawn` resolution:
  * an absolute command is used verbatim; a command containing a path separator
  * (`./bin/bun`, `node_modules/.bin/bun`) is resolved relative to the cwd; a bare
- * name (`bun`, `bun-canary`) is resolved on PATH. Only if a bare name is not on
- * PATH do we fall back to the running interpreter (`process.execPath`) — correct
- * when the harness itself runs under the requested bun; an absent command would
- * fail unsandboxed too. The result is `realpath`-ed so a symlinked launcher
- * (e.g. `.bin/bun`) binds/execs its real target, not the dangling link.
+ * name (`bun`, `bun-canary`) is resolved on PATH. A bare name **not** on PATH is
+ * returned unresolved so the sandboxed spawn fails the same `ENOENT` way the
+ * unsandboxed spawn would — we do NOT silently substitute `process.execPath`,
+ * which would run a different runtime than the caller selected and hide the
+ * misconfiguration. The result is `realpath`-ed so a symlinked launcher (e.g.
+ * `.bin/bun`) binds/execs its real target, not the dangling link.
  */
 export function resolveBunPath(command: string): string {
   let resolved: string
   if (isAbsolute(command)) resolved = command
   else if (command.includes("/") || command.includes("\\")) resolved = resolve(command)
-  else resolved = resolveOnPath(command) ?? process.execPath
+  else resolved = resolveOnPath(command) ?? command
   try {
     return realpathSync(resolved)
   } catch {

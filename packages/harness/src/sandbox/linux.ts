@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs"
 import {
   type Sandbox,
   type SandboxPolicy,
@@ -32,6 +33,24 @@ function roBindTry(path: string): string[] {
   return ["--ro-bind-try", path, path]
 }
 
+/**
+ * When the host network is shared (an allow-host is set), DNS needs the resolver
+ * config. On systemd systems `/etc/resolv.conf` is a symlink into `/run`
+ * (`/run/systemd/resolve/stub-resolv.conf`), whose target is NOT under the
+ * `/etc` bind — so the symlink dangles inside the sandbox and hostname lookups
+ * fail. Bind the symlink's real target (at its own path) when it lives outside
+ * `/etc`. A real file under `/etc` is already covered by the `/etc` bind.
+ */
+function resolverBinds(): string[] {
+  try {
+    const target = realpathSync("/etc/resolv.conf")
+    if (!target.startsWith("/etc/")) return ["--ro-bind-try", target, target]
+  } catch {
+    /* no resolver config to bind */
+  }
+  return []
+}
+
 /** Build the macOS-free bwrap argv that precedes `-- bun run …`. */
 function buildBwrapArgs(policy: SandboxPolicy, binDir: string): string[] {
   const args: string[] = [
@@ -56,8 +75,10 @@ function buildBwrapArgs(policy: SandboxPolicy, binDir: string): string[] {
   // Start inside the scratch so a confined cwd is always valid.
   args.push("--chdir", policy.writeRoot)
   // Network: isolate to loopback unless the operator allow-listed a host (then
-  // share the host net — the coarse Linux fallback; see the note above).
+  // share the host net — the coarse Linux fallback; see the note above). When
+  // shared, also bind the resolver target so hostname allow-hosts can resolve.
   if (policy.allowHosts.length === 0) args.push("--unshare-net")
+  else args.push(...resolverBinds())
   return args
 }
 
