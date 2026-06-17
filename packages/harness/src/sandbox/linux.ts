@@ -26,8 +26,37 @@ import {
  * unsandboxed, so they do not depend on this fallback.
  */
 
-/** System runtime paths a sandboxed bun/git/tar needs (read-only). */
-const SYSTEM_RO_PATHS = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/lib32", "/etc", "/opt"]
+/**
+ * Specific runtime executable + library directories a sandboxed bun/git/tar
+ * needs (read-only) — deliberately NOT broad prefixes like `/usr` or `/opt`,
+ * which on many hosts/containers also hold the application checkout
+ * (`/usr/src/app`, `/opt/app`) or secrets and would be readable past the
+ * `readRoots` allowlist, breaking the advertised pack-dir-only read confinement
+ * (Codex review P1). The bun binary's own directory is bound separately
+ * (`binDir`), so a bun installed anywhere (e.g. `/opt/bun`, `~/.bun`) still
+ * resolves. `/etc` stays for TLS certs / DNS / user lookup — POSIX perms still
+ * guard its sensitive files (e.g. `/etc/shadow`); a narrower per-file `/etc`
+ * allowlist is a documented follow-up.
+ */
+const SYSTEM_RO_PATHS = [
+  "/bin",
+  "/sbin",
+  "/lib",
+  "/lib32",
+  "/lib64",
+  "/usr/bin",
+  "/usr/sbin",
+  "/usr/lib",
+  "/usr/lib32",
+  "/usr/lib64",
+  "/usr/libexec",
+  "/usr/share",
+  "/usr/local/bin",
+  "/usr/local/sbin",
+  "/usr/local/lib",
+  "/usr/local/lib64",
+  "/etc",
+]
 
 function roBindTry(path: string): string[] {
   return ["--ro-bind-try", path, path]

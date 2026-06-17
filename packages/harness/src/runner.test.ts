@@ -259,6 +259,11 @@ describe("OS sandbox (#121, ADR-0023)", () => {
     ])
     expect(isolated.args).toContain("--unshare-net") // loopback-only isolation
     expect(shared.args).not.toContain("--unshare-net") // host net shared for the allow-host
+    // Read confinement: bind specific runtime dirs, never the broad /usr or /opt
+    // prefixes (which hold app checkouts / secrets on many hosts — Codex P1).
+    expect(isolated.args).toContain("/usr/lib")
+    expect(isolated.args).not.toContain("/usr")
+    expect(isolated.args).not.toContain("/opt")
   })
 
   test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {

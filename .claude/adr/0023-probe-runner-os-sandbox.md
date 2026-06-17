@@ -179,6 +179,14 @@ adversarial review (the Linux path is CI-validated):
   `realpathSync`-ed so bwrap binds the real path; executing the *original* (possibly
   symlinked) `probe.path` would address a file absent inside the bwrap view and fail to
   spawn. The runner now runs `realpath(probe.path)` when sandboxed.
+- **Linux binds the specific runtime dirs, not broad `/usr`/`/opt` (review).** An early
+  cut ro-bound whole `/usr` and `/opt`, which on many hosts/containers hold the app
+  checkout (`/usr/src/app`, `/opt/app`) or secrets — readable past the `readRoots`
+  allowlist, undermining the very read-confinement Linux is supposed to give. bwrap now
+  binds only the executable/library dirs (`/usr/bin`, `/usr/lib*`, `/usr/share`, `/lib*`,
+  `/usr/local/{bin,lib}`, …) plus the bun binary's own dir; `/etc` stays for TLS/DNS/user
+  lookup (POSIX perms guard its sensitive files; a per-file `/etc` allowlist is a
+  follow-up). This makes the "Linux is a true read-allowlist" claim actually hold.
 - **`pack attest --kind probe_results` is not sandboxed yet.** It runs a pack's probes
   to mint a badge; sandboxing it (with the same first-party caveat) is a follow-up. The
   routine-external-execution surface this ADR is about is `lodestar harness run`.
