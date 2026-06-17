@@ -11,9 +11,9 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Sixty-one probes pass under
+resolved for future versions.) Sixty-two probes pass under
 strict TypeScript (two need a Postgres test database — see
-below). Fifty-seven live in the first-party pack
+below). Fifty-eight live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -228,7 +228,22 @@ allowlist is the **operator's** (`RunPackOptions.allowHostEnv` / `lodestar harne
 DB-gated probes keep working because `probes:all`/`probes:safety` forward
 `LODESTAR_TEST_DATABASE_URL` explicitly. A **TS/process-level governance boundary, not
 an OS sandbox** — it denies host-env secrets, not filesystem/network reach; the OS
-sandbox is **step 2, deferred and filed separately**; ADR-0022). The other
+sandbox is **step 2, now landed**; ADR-0022), and one probe-runner OS-sandbox probe —
+`runner-sandboxes-probe-filesystem-and-network` (**step 2**, #121 / ADR-0023: each
+probe is additionally spawned inside an OS sandbox — `sandbox-exec` on macOS,
+`bubblewrap` on Linux — confining its **filesystem** (writes → a per-run scratch; reads
+deny the consumer's home, re-allowing operator `--allow-read` roots) and **outbound
+network** (loopback + operator `--allow-host`). Opt-in at `runPack`; the CLI defaults it
+ON for external packs and **fails closed** (`--no-sandbox` is the audited opt-out), OFF
+for the two bundled first-party packs (the trusted reference set, several of whose
+probes drive `runPack` and would otherwise nest sandboxes). An **OS-primitive boundary,
+not kernel-grade containment**, with asymmetric per-platform edges — Linux gives a true
+read-allowlist (bind mounts) but coarse all-or-nothing network under `--unshare-net`;
+macOS gives exact per-host network but, hosting a JIT runtime, denies the user's *home*
+rather than allowlisting reads. The probe drives the **real** `runPack` over a fixture,
+pins read-home-secret/write-outside/remote-egress all **denied** plus the pack-dir-read
+and scratch-write positive controls, and **skips loudly** when no mechanism is available
+or it is non-functional; ADR-0023). The other
 four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -358,7 +373,7 @@ examples/
                              #   DocAwareEvidenceLinker via the guard cognitive seam
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 54 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 58 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -436,7 +451,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Sixty-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. The runner now spawns probes under a scoped env (#114, ADR-0022), so the operator forwards that var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Sixty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 

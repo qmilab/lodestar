@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import { loadProbePack } from "./pack/loader.js"
 import { formatProbeReport } from "./probe.js"
 import { eventLogRecorder } from "./recorder.js"
 import { type ProbeRunOutcome, runPack } from "./runner.js"
+import { detectSandboxMechanism } from "./sandbox/index.js"
 
 /**
  * Build a throwaway local pack on disk with the given probe sources.
@@ -216,6 +217,78 @@ describe("scoped probe environment (#114, ADR-0022)", () => {
     } finally {
       process.chdir(savedCwd)
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("OS sandbox (#121, ADR-0023)", () => {
+  test("`env` override and `sandbox` are mutually exclusive", async () => {
+    const dir = await makeFixturePack("fixture-sbx-excl", [["ok.ts", "process.exit(0)\n"]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      await expect(
+        runPack(pack, { env: { PATH: process.env.PATH ?? "" }, sandbox: {} }),
+      ).rejects.toThrow(/mutually exclusive/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  const mechanism = detectSandboxMechanism()
+  // The behavioural tests need a real mechanism (sandbox-exec on macOS,
+  // bubblewrap on Linux CI); skip loudly elsewhere rather than fail.
+  const sandboxTest = mechanism ? test : test.skip
+  // The fail-closed test is the mirror: it runs ONLY where no mechanism exists.
+  const noMechTest = mechanism ? test.skip : test
+
+  noMechTest("fails closed when no sandbox mechanism is available", async () => {
+    const dir = await makeFixturePack("fixture-sbx-failclosed", [["ok.ts", "process.exit(0)\n"]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      await expect(runPack(pack, { sandbox: {} })).rejects.toThrow(/no mechanism is available/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  sandboxTest("runs a probe under a confined env (HOME/TMPDIR in a scratch)", async () => {
+    const report = [
+      'console.log("HOME=" + process.env.HOME)',
+      'console.log("TMPDIR=" + process.env.TMPDIR)',
+      "process.exit(0)",
+    ].join("\n")
+    const dir = await makeFixturePack("fixture-sbx-env", [["home.ts", report]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { sandbox: {} })).outcomes[0]
+      expect(out?.passed).toBe(true)
+      // HOME + TMPDIR live in the per-run scratch, not the operator's real home.
+      expect(out?.stdout).toContain("lodestar-probe-run-")
+      expect(out?.stdout).not.toContain(`HOME=${homedir()}`)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  sandboxTest("denies reading a secret under the operator's home directory", async () => {
+    const secretDir = await mkdtemp(join(homedir(), ".lodestar-sbx-test-"))
+    const secretFile = join(secretDir, "secret.txt")
+    await writeFile(secretFile, "must-not-be-readable-by-a-probe")
+    const probe = [
+      'import { readFileSync } from "node:fs"',
+      `try { readFileSync(${JSON.stringify(secretFile)}, "utf8"); console.log("READ=LEAKED") }`,
+      'catch (e) { console.log("READ=DENIED:" + (e instanceof Error ? (e as any).code : e)) }',
+      "process.exit(0)",
+    ].join("\n")
+    const dir = await makeFixturePack("fixture-sbx-read", [["read.ts", probe]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { sandbox: {} })).outcomes[0]
+      expect(out?.stdout).toContain("READ=DENIED")
+      expect(out?.stdout).not.toContain("READ=LEAKED")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(secretDir, { recursive: true, force: true })
     }
   })
 })

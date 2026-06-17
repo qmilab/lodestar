@@ -216,3 +216,21 @@ The options we rejected, each with a one-line reason.
   an OS sandbox** — it denies host-env secrets, not filesystem/network reach; the OS
   sandbox is **step 2, deferred and filed separately**. Probe
   `runner-denies-host-env-to-probe`.
+- [ADR-0023](0023-probe-runner-os-sandbox.md) — probe-runner **OS sandbox (step 2)**
+  (#121, the follow-up ADR-0022 deferred): step 1 closed host-env secrets but not a
+  probe's **filesystem/network reach**. Confines both together via a **pluggable
+  sandbox-launcher seam** wrapping the spawn, with **native per-platform** backends —
+  `sandbox-exec`/SBPL on macOS, `bubblewrap` on Linux — *no container/daemon
+  dependency* (container kept as a future opt-in the seam accepts). Writes → a per-run
+  `TMPDIR` scratch; outbound network → loopback + an operator `--allow-host` allowlist;
+  reads → an operator `--allow-read` root (default the pack dir). The read guarantee is
+  **asymmetric**: Linux/bwrap binds only the declared roots (a true allowlist); macOS
+  hosts a JIT runtime so it `(allow default)`-then-clamps, denying the **operator's home
+  directory** (the credential store) — and the network granularity is the reverse
+  (macOS exact per-host, Linux all-or-nothing under `--unshare-net`). The **untrusted
+  manifest cannot widen** anything (mirrors `--allow-env`). Opt-in at the `runPack`
+  library; the **CLI defaults it ON for external packs, OFF for the two bundled
+  first-party packs** (the trusted reference set, several of whose probes drive `runPack`
+  → would nest). **Degradation:** fail closed with an ergonomic `--no-sandbox` opt-out.
+  Honest boundary: OS-primitive confinement, not kernel-grade. **Status: Accepted.**
+  Locking probe `runner-sandboxes-probe-filesystem-and-network`.

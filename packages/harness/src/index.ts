@@ -113,8 +113,17 @@ export {
   type PackRunResult,
   type ProbeRunOutcome,
   type ProbeRunRecorder,
+  type ProbeSandboxOptions,
   type RunPackOptions,
 } from "./runner.js"
+
+export {
+  createSandbox,
+  detectSandboxMechanism,
+  type Sandbox,
+  type SandboxMechanism,
+  type SandboxPolicy,
+} from "./sandbox/index.js"
 
 export { eventLogRecorder, type EventLogRecorderConfig } from "./recorder.js"
 

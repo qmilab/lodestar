@@ -6,9 +6,11 @@ import { fileURLToPath } from "node:url"
 import {
   type PackRunResult,
   ProbePackError,
+  type ProbeSandboxOptions,
   buildCalibrationComputedPayload,
   calibrate,
   calibrationCursor,
+  detectSandboxMechanism,
   eventLogCalibrationSink,
   eventLogRecorder,
   formatCalibrationReport,
@@ -97,7 +99,8 @@ function resolvePackTarget(packArg: string): { target: string; firstParty: boole
 const USAGE =
   "usage: lodestar harness run      [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
   "                                  [--allow-unsigned] [--author-key <id>=<pubkey-file>]\n" +
-  "                                  [--allow-env <NAME>]\n" +
+  "                                  [--allow-env <NAME>] [--no-sandbox | --sandbox]\n" +
+  "                                  [--allow-read <path>] [--allow-host <host[:port]>]\n" +
   "       lodestar harness list     [--pack <name|path>] [--allow-unsigned]\n" +
   "                                  [--author-key <id>=<pubkey-file>]\n" +
   "       lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
@@ -144,6 +147,16 @@ interface ParsedFlags {
    * allowlist, never the (untrusted) manifest's to widen (#114, ADR-0022).
    */
   allowEnv: string[]
+  /**
+   * OS-sandbox toggle (#121, ADR-0023). `undefined` = the default (on for an
+   * external pack, off for a bundled first-party pack); `true` = `--sandbox`
+   * (force on); `false` = `--no-sandbox` (force off, the audited opt-out).
+   */
+  sandbox: boolean | undefined
+  /** Absolute paths a sandboxed probe may READ beyond the pack dir (`--allow-read`). */
+  allowRead: string[]
+  /** Non-loopback hosts a sandboxed probe may reach (`--allow-host`). */
+  allowHost: string[]
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -157,6 +170,9 @@ function parseFlags(argv: string[]): ParsedFlags {
     allowUnsigned: false,
     authorKeys: [],
     allowEnv: [],
+    sandbox: undefined,
+    allowRead: [],
+    allowHost: [],
   }
   const takeValue = (i: number, flag: string): string => takeFlagValue(argv, i, flag)
   for (let i = 0; i < argv.length; i++) {
@@ -193,6 +209,25 @@ function parseFlags(argv: string[]): ParsedFlags {
         // The default is a scoped env (no host process.env passthrough); this is
         // how the operator forwards e.g. LODESTAR_TEST_DATABASE_URL explicitly.
         flags.allowEnv.push(takeValue(i, arg))
+        i++
+        break
+      case "--no-sandbox":
+        // Audited opt-out: run probes without the OS sandbox (env-scoping only).
+        flags.sandbox = false
+        break
+      case "--sandbox":
+        // Force the OS sandbox on, even for a bundled first-party pack.
+        flags.sandbox = true
+        break
+      case "--allow-read":
+        // Widen the sandbox read-root by one absolute path. Repeatable. The
+        // operator's grant, never the (untrusted) manifest's (#121, ADR-0023).
+        flags.allowRead.push(resolve(process.cwd(), takeValue(i, arg)))
+        i++
+        break
+      case "--allow-host":
+        // Permit a sandboxed probe to reach one non-loopback host. Repeatable.
+        flags.allowHost.push(takeValue(i, arg))
         i++
         break
       case "--author-key": {
@@ -264,9 +299,43 @@ async function harnessRun(argv: string[]): Promise<number> {
       })
     : undefined
 
+  // OS sandbox (#121, ADR-0023). Default: ON for an external pack, OFF for a
+  // bundled first-party pack — the trusted reference set, several of whose
+  // probes drive `runPack` themselves and would otherwise nest sandboxes.
+  // `--sandbox` / `--no-sandbox` force it either way. Fail closed: a requested
+  // sandbox with no available mechanism refuses rather than running uncontained.
+  const sandboxEnabled = flags.sandbox ?? !firstParty
+  let sandbox: ProbeSandboxOptions | undefined
+  if (sandboxEnabled) {
+    const mechanism = detectSandboxMechanism()
+    if (mechanism === null) {
+      process.stderr.write(
+        "no OS sandbox mechanism available on this host (need sandbox-exec on macOS or\n" +
+          "bubblewrap on Linux). Install bubblewrap, or re-run with --no-sandbox to fall back to\n" +
+          "env-scoping only (host-env secrets stay denied, but a probe's filesystem and network\n" +
+          "reach are NOT contained).\n",
+      )
+      return 2
+    }
+    sandbox = { allowRead: flags.allowRead, allowHost: flags.allowHost }
+    const hostNote =
+      flags.allowHost.length > 0 ? ` + ${flags.allowHost.length} allowed host(s)` : ""
+    process.stdout.write(
+      `OS sandbox: ${mechanism} (reads → pack dir${
+        flags.allowRead.length > 0 ? ` + ${flags.allowRead.length} path(s)` : ""
+      }; writes → scratch; network → loopback${hostNote})\n\n`,
+    )
+  } else {
+    const why = firstParty && flags.sandbox === undefined ? " (bundled first-party pack)" : ""
+    process.stdout.write(
+      `OS sandbox: off${why} — host env denied, but filesystem/network NOT contained\n\n`,
+    )
+  }
+
   const result = await runPack(pack, {
     record,
     allowHostEnv: flags.allowEnv,
+    sandbox,
     onResult: (o) => {
       const mark = o.passed ? "✓" : "✗"
       process.stdout.write(`  ${mark} ${o.name.padEnd(46)} ${o.duration_ms}ms\n`)

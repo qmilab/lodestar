@@ -9,6 +9,7 @@ import {
   generateEd25519KeyPair,
   signProbePackManifest,
 } from "@qmilab/lodestar-core"
+import { detectSandboxMechanism } from "@qmilab/lodestar-harness"
 import { harnessCommand } from "./harness.js"
 
 /**
@@ -162,5 +163,68 @@ describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
         "--allow-env",
       ]),
     ).toBe(2)
+  })
+})
+
+describe("lodestar harness run --sandbox flags (#121, ADR-0023)", () => {
+  const HAS_SANDBOX = detectSandboxMechanism() !== null
+
+  test("--no-sandbox runs an external pack without a sandbox", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-nosbx-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--no-sandbox",
+      ]),
+    ).toBe(0)
+  })
+
+  test("--allow-read with no value is a usage error", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-allowread-bad-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--no-sandbox",
+        "--allow-read",
+      ]),
+    ).toBe(2)
+  })
+
+  // An external pack defaults to sandbox ON; these need a real mechanism.
+  const sbxTest = HAS_SANDBOX ? test : test.skip
+  sbxTest("sandboxes an external pack by default (accepts --allow-read/--allow-host)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-sbx-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--allow-read",
+        dir,
+        "--allow-host",
+        "example.com:443",
+      ]),
+    ).toBe(0)
+  })
+
+  // The mirror: where no mechanism exists, the default-on path must fail closed.
+  const noSbxTest = HAS_SANDBOX ? test.skip : test
+  noSbxTest("fails closed for an external pack when no mechanism is available", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-failclosed-"))
+    await makePack(dir)
+    expect(await harnessCommand(["run", "--pack", dir, "--allow-unsigned", "--no-record"])).toBe(2)
   })
 })

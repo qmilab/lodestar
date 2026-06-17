@@ -1,8 +1,9 @@
 import { spawn } from "node:child_process"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import type { LoadedProbe, LoadedProbePack } from "./pack/loader.js"
+import { type Sandbox, type SandboxPolicy, createSandbox } from "./sandbox/index.js"
 
 /**
  * The pack runner.
@@ -30,9 +31,18 @@ import type { LoadedProbe, LoadedProbePack } from "./pack/loader.js"
  * via {@link RunPackOptions.allowHostEnv} (an explicit allowlist); the
  * manifest cannot. The spawn also passes `--no-env-file` so `bun run` cannot
  * auto-load a working-directory `.env` back into the probe's `process.env`
- * (which would re-introduce host secrets outside the allowlist). This is a
- * TS/process-level governance boundary, not an OS sandbox — it does not
- * contain filesystem or network reach (the separate longer-term step).
+ * (which would re-introduce host secrets outside the allowlist).
+ *
+ * **OS sandbox (#121, ADR-0023 — step 2).** Scoped env denies host *secrets*;
+ * it does not contain a probe's *filesystem or network reach*. When
+ * {@link RunPackOptions.sandbox} is set, each probe is additionally spawned
+ * inside an OS sandbox (sandbox-exec on macOS, bubblewrap on Linux) that
+ * confines reads to the pack dir + operator-declared roots, writes to a per-run
+ * scratch (HOME + TMPDIR live there), and outbound network to loopback + an
+ * operator allowlist. It is opt-in here (the in-process/library default is no
+ * sandbox, unchanged); the CLI enables it by default for non-bundled packs.
+ * Fails closed: a requested sandbox with no available mechanism throws. This is
+ * an OS-primitive boundary, not kernel-grade containment (see `./sandbox/`).
  */
 
 /** The result of running one probe file as a subprocess. */
@@ -102,6 +112,40 @@ export interface RunPackOptions {
    * simply not forwarded. No silent inheritance: anything not listed is absent.
    */
   allowHostEnv?: string[]
+  /**
+   * OS-sandbox the probe execution (#121, ADR-0023 — step 2). When provided,
+   * each probe runs inside an OS sandbox (sandbox-exec on macOS, bubblewrap on
+   * Linux) that confines its filesystem reads to the pack dir + {@link
+   * ProbeSandboxOptions.allowRead}, its writes to a per-run scratch, and its
+   * outbound network to loopback + {@link ProbeSandboxOptions.allowHost}. When
+   * omitted, probes run with the step-1 scoped env only (no fs/network
+   * containment) — the in-process/library default; the CLI enables it by
+   * default for `lodestar harness run` over non-bundled packs.
+   *
+   * Fails closed: a sandbox requested with no available mechanism makes
+   * {@link runPack}/{@link runProbe} throw. Mutually exclusive with a complete
+   * {@link RunPackOptions.env} override (the sandbox owns HOME/TMPDIR).
+   */
+  sandbox?: ProbeSandboxOptions
+}
+
+/**
+ * Operator-controlled widenings of the probe sandbox (#121, ADR-0023). Like the
+ * env allowlist, these live with the operator (the CLI's `--allow-read` /
+ * `--allow-host`), never the untrusted manifest — a hostile pack cannot widen
+ * its own sandbox.
+ */
+export interface ProbeSandboxOptions {
+  /**
+   * Absolute paths a probe may READ beyond the pack directory (always granted)
+   * and the system runtime paths. The consumer's wider filesystem is denied.
+   */
+  allowRead?: string[]
+  /**
+   * Non-loopback hosts a probe may reach, each `host` or `host:port`. Loopback
+   * is always allowed; everything else is denied unless listed here.
+   */
+  allowHost?: string[]
 }
 
 /**
@@ -146,18 +190,111 @@ function buildScopedProbeEnv(allowHostEnv?: string[]): {
 }
 
 /**
- * Resolve the probe environment for a run. A complete `env` override wins (used
- * verbatim, host env never merged, nothing to clean up); otherwise build the
- * default scoped env plus any operator-allowlisted host vars.
+ * Resolve a path to its canonical real path for sandbox profiles (which match
+ * on the real path). Falls back to the input if it cannot be resolved (e.g. an
+ * operator `--allow-read` path that does not exist) — the sandbox backend then
+ * simply grants a path nothing resolves to, which is harmless.
  */
-function resolveProbeEnv(options: RunPackOptions): {
-  env: Record<string, string>
-  cleanup: () => void
-} {
-  if (options.env !== undefined) {
-    return { env: options.env, cleanup: () => {} }
+function canonicalPath(p: string): string {
+  try {
+    return realpathSync(p)
+  } catch {
+    return p
   }
-  return buildScopedProbeEnv(options.allowHostEnv)
+}
+
+/** A fully-resolved probe execution context for one run. */
+interface ResolvedExecution {
+  /** The complete environment every probe subprocess sees. */
+  env: Record<string, string>
+  /** The OS sandbox to wrap the spawn in, or null when unsandboxed. */
+  sandbox: Sandbox | null
+  /** Working directory for the spawn (the scratch when sandboxed; else inherit). */
+  cwd?: string
+  /** Remove any per-run scratch / profile. Call once the run has finished. */
+  cleanup: () => void
+}
+
+/**
+ * Resolve the environment, sandbox, and cwd for a run.
+ *
+ * - A complete `env` override wins (used verbatim, host env never merged,
+ *   nothing to clean up). It cannot be combined with a sandbox — the sandbox
+ *   owns HOME/TMPDIR and the scratch write-root, so the two are mutually
+ *   exclusive and we throw rather than silently ignore one.
+ * - With no sandbox requested: step-1 behaviour exactly (a fresh empty HOME +
+ *   inherited PATH + the operator allowlist), no fs/network containment.
+ * - With a sandbox requested: a per-run scratch holds HOME + TMPDIR (so a
+ *   probe's temp writes land inside the only writable tree), and the spawn is
+ *   wrapped by an OS sandbox confining reads to `readRoots` + the pack dir,
+ *   writes to the scratch, and outbound network to loopback + the allow-hosts.
+ *   Fails closed: if no mechanism is available the run throws.
+ */
+function resolveProbeExecution(readRoots: string[], options: RunPackOptions): ResolvedExecution {
+  if (options.env !== undefined) {
+    if (options.sandbox !== undefined) {
+      throw new Error(
+        "runPack: `env` override and `sandbox` are mutually exclusive — the sandbox owns " +
+          "HOME/TMPDIR and the scratch write-root, so a verbatim env cannot also be confined.",
+      )
+    }
+    return { env: options.env, sandbox: null, cleanup: () => {} }
+  }
+
+  if (options.sandbox === undefined) {
+    const { env, cleanup } = buildScopedProbeEnv(options.allowHostEnv)
+    return { env, sandbox: null, cleanup }
+  }
+
+  // Sandboxed: one scratch dir holds HOME + TMPDIR and is the only writable tree.
+  // Canonicalise every path the sandbox profile references — both `sandbox-exec`
+  // (SBPL subpath matching) and `bwrap` (bind mounts) operate on the real path,
+  // and `tmpdir()` on macOS is a symlink (`/var` → `/private/var`); an
+  // un-canonicalised scratch would never match and a probe's own writes would be
+  // denied.
+  const rawScratch = mkdtempSync(join(tmpdir(), "lodestar-probe-run-"))
+  const removeScratch = () => {
+    try {
+      rmSync(rawScratch, { recursive: true, force: true })
+    } catch {
+      /* best-effort: a leaked temp scratch is harmless */
+    }
+  }
+  const scratch = canonicalPath(rawScratch)
+  const home = join(scratch, "home")
+  const tmp = join(scratch, "tmp")
+  mkdirSync(home)
+  mkdirSync(tmp)
+  const env: Record<string, string> = { HOME: home, TMPDIR: tmp }
+  const path = process.env.PATH
+  if (path !== undefined) env.PATH = path
+  for (const name of options.allowHostEnv ?? []) {
+    const value = process.env[name]
+    if (value !== undefined) env[name] = value
+  }
+  const policy: SandboxPolicy = {
+    readRoots: [...readRoots, ...(options.sandbox.allowRead ?? [])].map(canonicalPath),
+    writeRoot: scratch,
+    allowHosts: options.sandbox.allowHost ?? [],
+  }
+  const sandbox = createSandbox(policy)
+  if (sandbox === null) {
+    removeScratch()
+    throw new Error(
+      "runPack: an OS sandbox was requested but no mechanism is available on this host " +
+        "(need sandbox-exec on macOS or bubblewrap on Linux). Re-run without a sandbox to " +
+        "fall back to env-scoping only (step-1 behaviour).",
+    )
+  }
+  return {
+    env,
+    sandbox,
+    cwd: scratch,
+    cleanup: () => {
+      sandbox.cleanup()
+      removeScratch()
+    },
+  }
 }
 
 // Per-stream capture cap, in characters (chunks are UTF-8-decoded before
@@ -203,6 +340,8 @@ function spawnProbe(
   bun: string,
   probe: LoadedProbe,
   env: Record<string, string>,
+  sandbox: Sandbox | null,
+  cwd: string | undefined,
 ): Promise<{ exit_code: number | null; signal: string | null; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     // `env` is the COMPLETE environment — host `process.env` is never spread in,
@@ -212,8 +351,15 @@ function spawnProbe(
     // `process.env`, which would repopulate it with host secrets that are NOT in
     // the scoped env / allowlist — defeating the boundary. With it, the scoped
     // `env` is authoritative; the operator's only widening path stays `allowHostEnv`.
-    const child = spawn(bun, ["run", "--no-env-file", probe.path], {
+    const baseArgs = ["run", "--no-env-file", probe.path]
+    // When a sandbox is in play it rewrites the spawn into the OS-sandbox
+    // launcher (`sandbox-exec …` / `bwrap … --`); otherwise we spawn bun
+    // directly (#121, ADR-0023). The scoped `env` is unchanged either way — the
+    // sandbox is the outer (filesystem/network) layer, the env the inner.
+    const launched = sandbox ? sandbox.wrap(bun, baseArgs) : { command: bun, args: baseArgs }
+    const child = spawn(launched.command, launched.args, {
       env,
+      cwd,
       stdio: ["ignore", "pipe", "pipe"],
     })
     const stdout = new CappedBuffer(MAX_CAPTURE_CHARS)
@@ -243,15 +389,21 @@ function spawnProbe(
   })
 }
 
-/** Run one probe under an already-resolved scoped env and return its outcome. */
+/** Run one probe under an already-resolved scoped env (and optional sandbox). */
 async function executeProbe(
   probe: LoadedProbe,
   bun: string,
-  env: Record<string, string>,
+  exec: ResolvedExecution,
 ): Promise<ProbeRunOutcome> {
   const started_at = new Date().toISOString()
   const start = performance.now()
-  const { exit_code, signal, stdout, stderr } = await spawnProbe(bun, probe, env)
+  const { exit_code, signal, stdout, stderr } = await spawnProbe(
+    bun,
+    probe,
+    exec.env,
+    exec.sandbox,
+    exec.cwd,
+  )
   const duration_ms = Math.round(performance.now() - start)
   return {
     name: probe.name,
@@ -272,11 +424,12 @@ export async function runProbe(
   options: RunPackOptions = {},
 ): Promise<ProbeRunOutcome> {
   const bun = options.bun ?? "bun"
-  const { env, cleanup } = resolveProbeEnv(options)
+  // A single probe's read-root defaults to its own directory.
+  const exec = resolveProbeExecution([dirname(probe.path)], options)
   try {
-    return await executeProbe(probe, bun, env)
+    return await executeProbe(probe, bun, exec)
   } finally {
-    cleanup()
+    exec.cleanup()
   }
 }
 
@@ -297,19 +450,20 @@ export async function runPack(
 ): Promise<PackRunResult> {
   const start = performance.now()
   const bun = options.bun ?? "bun"
-  // Resolve the scoped env ONCE per pack run (one temp HOME shared across every
-  // probe) and clean it up after, rather than per-probe.
-  const { env, cleanup } = resolveProbeEnv(options)
+  // Resolve the env + sandbox ONCE per pack run (one scratch / temp HOME shared
+  // across every probe) and clean it up after, rather than per-probe. The pack
+  // directory is the default sandbox read-root (the probe files live under it).
+  const exec = resolveProbeExecution([pack.root], options)
   const outcomes: ProbeRunOutcome[] = []
   try {
     for (const probe of pack.probes) {
-      const outcome = await executeProbe(probe, bun, env)
+      const outcome = await executeProbe(probe, bun, exec)
       outcomes.push(outcome)
       if (options.record) await options.record(outcome, pack.manifest.name)
       options.onResult?.(outcome)
     }
   } finally {
-    cleanup()
+    exec.cleanup()
   }
   const passed = outcomes.filter((o) => o.passed).length
   return {
