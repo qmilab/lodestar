@@ -130,6 +130,12 @@ function findBundledPackDir(name: string): string | null {
  * bundled — only the repo's own pack, addressed by bare name or by its real path.
  */
 function isBundledPack(target: string): boolean {
+  // Same guard as `firstParty` (Codex review P1): installed under a consuming
+  // project's `node_modules`, the walk-up reaches the PROJECT's directories and
+  // could match its own `packs/lodestar-core`, defaulting the sandbox OFF for an
+  // external pack and bypassing containment. Installed → there is no trustworthy
+  // bundled anchor, so nothing is "bundled" and every pack sandboxes by default.
+  if (CLI_RUNS_FROM_NODE_MODULES) return false
   // `--pack` accepts a pack directory OR a manifest file; normalise a manifest
   // path (e.g. `…/lodestar-core/lodestar.probe-pack.json`) to its pack directory
   // so addressing the same bundled pack either way is treated identically.
