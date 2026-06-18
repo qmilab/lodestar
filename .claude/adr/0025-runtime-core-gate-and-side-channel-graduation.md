@@ -81,6 +81,18 @@ path (the ADR-sanctioned headless default); the interrupt integration is exposed
 via the `govern`/`resume` primitives for callers that manage the LangGraph
 re-execution semantics.
 
+**Review hardening (PR #125 Codex review).** Three follow-ups closed: (a) a
+timeout-0 hold now emits a terminal `action.rejected` at `openHold` *and*
+`resume` refuses to resolve under a timeout-0 config — so the documented "no
+out-of-band resolution path" cannot be circumvented by reconstructing the parked
+action and resuming it; (b) `resume` is **serialized per action id**, so two
+concurrent resumes for the same held action cannot both pass the terminal-event
+check and double-execute a side-effectful body (the second runs only after the
+first settles and so sees its terminal event); (c) a **malformed `tool_result` /
+`tool_error` callback** rejects its pending remoted-execute promise instead of
+stranding it, so a buggy/hostile hook fails the action cleanly rather than hanging
+it. All three are locked by new scenarios in `runtime-gate-enforces-two-phase`.
+
 ### 5. The gate server is transport-agnostic; probe 1 drives it in-process
 
 `RuntimeGate` consumes an `RpcChannel` abstraction. `stdioChannel` is the CLI's

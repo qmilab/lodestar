@@ -253,7 +253,11 @@ held L4 stays held until a *signed* approval resolves it, a duplicate resume is 
 reconstructed by a **fresh** gate instance still resolves (restart durability over the
 durable log), an unregistered tool is denied fail-closed, `external_document` content
 cannot self-promote a belief, a synthesized decision links the observed-belief set, and
-parallel in-flight calls are correlated + ingested exactly once) and
+parallel in-flight calls are correlated + ingested exactly once, a **timeout-0 hold
+is a terminal soft denial that cannot be resumed into execution even with a valid
+signed grant**, **concurrent resumes of one held action run the body exactly once**
+(per-action serialization), and a **malformed tool callback fails the action rather
+than stranding it** — the last three hardened by the PR #125 Codex review) and
 `langgraph-tool-calls-are-governed` (the **runtime-gated end-to-end** sibling: a **real**
 Python LangGraph compiled graph + prebuilt `ToolNode` driven through the
 `lodestar-langgraph` hook + the TS gate, adding the real-runtime cases — `ToolNode`,

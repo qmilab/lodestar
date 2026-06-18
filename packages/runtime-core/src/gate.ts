@@ -166,6 +166,12 @@ export class RuntimeGate {
   /** Dedup for signature-rejected diagnostics, so a persistent bad file/event is
    *  logged once across polls. */
   private readonly warnedSignatureRejections = new Set<string>()
+  /** Per-action serialisation tail. Two concurrent `resume` messages for the same
+   *  held action would otherwise both pass the terminal-event check before either
+   *  appends `action.completed`, and both reach `executeAction` — double-running a
+   *  side-effectful tool. Resume handling is serialised per action id so the second
+   *  runs only after the first has settled (and so sees its terminal event). */
+  private readonly actionLocks = new Map<string, Promise<unknown>>()
 
   constructor(config: RuntimeGateConfig, overrides?: RuntimeGateOverrides) {
     this.config = config
@@ -349,8 +355,21 @@ export class RuntimeGate {
   private async dispatch(raw: unknown): Promise<void> {
     const parsed = InboundMessageSchema.safeParse(raw)
     if (!parsed.success) {
-      const id =
-        typeof (raw as { id?: unknown })?.id === "number" ? (raw as { id: number }).id : undefined
+      const shape = raw as { type?: unknown; id?: unknown }
+      const id = typeof shape.id === "number" ? shape.id : undefined
+      // A malformed `tool_result` / `tool_error` (e.g. a hostile or buggy hook
+      // returning an invalid `documents` shape) must not strand its remoted
+      // execute waiting forever — reject the pending run so the action fails
+      // cleanly (the kernel's execute catch turns it into a terminal `failed`).
+      if (id !== undefined && (shape.type === "tool_result" || shape.type === "tool_error")) {
+        const pending = this.pendingToolRuns.get(id)
+        if (pending !== undefined) {
+          this.pendingToolRuns.delete(id)
+          pending.reject(
+            new Error(`malformed ${String(shape.type)} callback: ${parsed.error.message}`),
+          )
+        }
+      }
       this.send({ type: "error", id, message: `invalid message: ${parsed.error.message}` })
       return
     }
@@ -493,6 +512,7 @@ export class RuntimeGate {
    * `resume` (the LangGraph `interrupt()` idiom).
    */
   private async openHold(parked: Action): Promise<Omit<GovernResultMessage, "id">> {
+    const kernel = this.requireKernel()
     await this.emit("action.pending_approval", parked)
     const timeoutMs = this.config.approval_timeout_ms ?? 0
     let evaluation: PolicyEvaluation = holdEvaluationForParkedAction(parked)
@@ -501,8 +521,23 @@ export class RuntimeGate {
       if (reevaluated.verdict === "hold") evaluation = reevaluated
     }
     if (timeoutMs <= 0) {
+      // No out-of-band resolution path (the documented timeout-0 contract): the
+      // hold is a TERMINAL soft denial. Resolve the parked action to rejected and
+      // emit the terminal `action.rejected`, so it is never left durably parked
+      // with no terminal — a later `resume` would otherwise reconstruct it and,
+      // if a resolution happened to exist, execute it. With the terminal recorded,
+      // a `resume` returns it idempotently and never runs the body. The hook
+      // re-proposes if it wants. (This gate also refuses to resume at all when
+      // timeout-0; see resolveResume.)
       const request = openApprovalRequest(parked, evaluation, {})
       await this.emit("approval.requested", request)
+      const expired: ApprovalOutcome = {
+        kind: "expired",
+        action_id: parked.id,
+        request_id: request.request_id,
+      }
+      const rejected = kernel.resolve(parked, expired)
+      await this.emit("action.rejected", rejected)
       return {
         type: "govern_result",
         phase: "rejected",
@@ -531,14 +566,64 @@ export class RuntimeGate {
     request_id: string
     wait_ms?: number
   }): Promise<void> {
+    let reply: Omit<GovernResultMessage, "id">
+    try {
+      // Serialise per action id (P1#2): a second concurrent resume for the same
+      // action runs only after the first settles, so it sees the first's terminal
+      // event and returns it idempotently rather than double-executing.
+      reply = await this.serialize(msg.action_id, () => this.resolveResume(msg))
+    } catch (err) {
+      reply = {
+        type: "govern_result",
+        phase: "failed",
+        action_id: msg.action_id,
+        reason: err instanceof Error ? err.message : String(err),
+        kind: "internal_error",
+      }
+    }
+    this.send({ ...reply, id: msg.id })
+  }
+
+  /** Run `fn` after any in-flight operation for `key` has settled, recording this
+   *  one as the new tail. Errors are swallowed for chaining; the cleanup removes
+   *  the entry once this run is the settled tail. */
+  private serialize<T>(key: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.actionLocks.get(key) ?? Promise.resolve()
+    const run = prev.then(fn, fn)
+    const tail = run.then(
+      () => {},
+      () => {},
+    )
+    this.actionLocks.set(key, tail)
+    void tail.then(() => {
+      if (this.actionLocks.get(key) === tail) this.actionLocks.delete(key)
+    })
+    return run
+  }
+
+  private async resolveResume(msg: {
+    action_id: string
+    request_id: string
+    wait_ms?: number
+  }): Promise<Omit<GovernResultMessage, "id">> {
     const kernel = this.requireKernel()
 
     // Exactly-once (§4/§5): a terminal event for this action in the durable log
     // means it already settled — return the recorded outcome, never re-execute.
     const terminal = await this.terminalOutcomeFromLog(msg.action_id)
-    if (terminal !== undefined) {
-      this.send({ ...terminal, id: msg.id })
-      return
+    if (terminal !== undefined) return terminal
+
+    // A timeout-0 gate has no out-of-band resolution path (P1#1) — a hold under it
+    // is a terminal soft denial, never resumable into execution. Refuse to resume
+    // (defence in depth beyond openHold's terminal `action.rejected`).
+    if ((this.config.approval_timeout_ms ?? 0) <= 0) {
+      return {
+        type: "govern_result",
+        phase: "rejected",
+        action_id: msg.action_id,
+        reason: "this gate does not resolve holds out-of-band (approval_timeout_ms is 0)",
+        kind: "approval_required",
+      }
     }
 
     // Reconstruct the parked action — from memory (fast path) or the durable log
@@ -547,15 +632,13 @@ export class RuntimeGate {
     const parked =
       this.pendingActions.get(msg.action_id) ?? (await this.reconstructParkedAction(msg.action_id))
     if (parked === undefined) {
-      this.send({
+      return {
         type: "govern_result",
-        id: msg.id,
         phase: "rejected",
         action_id: msg.action_id,
         reason: "no held action found for this id",
         kind: "unknown_action",
-      })
-      return
+      }
     }
     const recovered = await this.reconstructRequest(msg.action_id)
     const requestId = recovered?.request_id ?? msg.request_id
@@ -566,14 +649,12 @@ export class RuntimeGate {
     const startedAt = Date.now()
     for (;;) {
       if (this.stopping) {
-        this.send({
+        return {
           type: "govern_result",
-          id: msg.id,
           phase: "pending_approval",
           action_id: msg.action_id,
           request_id: requestId,
-        })
-        return
+        }
       }
       const resolution = await this.checkResolution(requestId, msg.action_id, deadlineAt)
       if (resolution !== undefined) {
@@ -584,20 +665,19 @@ export class RuntimeGate {
         const resolved = kernel.resolve(parked, resolution.outcome)
         if (resolved.phase !== "approved") {
           await this.emit("action.rejected", resolved)
-          this.send({
+          this.pendingActions.delete(msg.action_id)
+          return {
             type: "govern_result",
-            id: msg.id,
             phase: "rejected",
             action_id: msg.action_id,
             reason: resolution.outcome.reason ?? "approval denied",
             kind: "approval_denied",
-          })
-          return
+          }
         }
         await this.emit("action.approved", resolved)
         const result = await this.executeAction(resolved)
-        this.send({ ...result, id: msg.id })
-        return
+        this.pendingActions.delete(msg.action_id)
+        return result
       }
       // Fail closed on the deadline: once it passes, the action expires and a
       // late resolution can never un-park it.
@@ -614,15 +694,14 @@ export class RuntimeGate {
           at: rejected.approval?.at ?? new Date().toISOString(),
         })
         await this.emit("action.rejected", rejected)
-        this.send({
+        this.pendingActions.delete(msg.action_id)
+        return {
           type: "govern_result",
-          id: msg.id,
           phase: "rejected",
           action_id: msg.action_id,
           reason: "approval deadline passed with no valid resolution",
           kind: "approval_timeout",
-        })
-        return
+        }
       }
       if (waitMs > 0 && Date.now() - startedAt < waitMs) {
         await delay(RESOLUTION_POLL_INTERVAL_MS)
@@ -630,15 +709,13 @@ export class RuntimeGate {
       }
       // Single check (or wait window elapsed) with no resolution and no deadline
       // breach: still held. The hook resumes again later.
-      this.send({
+      return {
         type: "govern_result",
-        id: msg.id,
         phase: "pending_approval",
         action_id: msg.action_id,
         request_id: requestId,
         ...(recovered?.deadline !== undefined ? { deadline: recovered.deadline } : {}),
-      })
-      return
+      }
     }
   }
 

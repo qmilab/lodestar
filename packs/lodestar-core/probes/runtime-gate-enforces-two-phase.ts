@@ -77,6 +77,10 @@ class Hook {
   constructor(
     private readonly channel: ReturnType<typeof createLoopbackPair>["hook"],
     private readonly bodies: Record<string, ToolBody>,
+    /** Tools for which the hook returns a deliberately MALFORMED tool_result
+     *  (invalid `documents` shape) — to prove the gate fails the action rather
+     *  than stranding the remoted execute (P2). */
+    private readonly malformedTools: Set<string> = new Set(),
   ) {
     channel.onMessage((raw) => {
       const msg = raw as OutboundLike
@@ -87,6 +91,16 @@ class Hook {
       if (msg.type === "run_tool") {
         const tool = String(msg.tool)
         this.bodyRuns.push({ tool, action_id: String(msg.action_id) })
+        if (this.malformedTools.has(tool)) {
+          // `documents` must be an array; a string fails the inbound schema.
+          this.channel.send({
+            type: "tool_result",
+            id: msg.id,
+            output: {},
+            documents: "not-an-array",
+          })
+          return
+        }
         const body = this.bodies[tool]
         const out = body ? body(msg.args as Record<string, unknown>) : { output: null }
         this.channel.send({
@@ -157,7 +171,9 @@ async function buildHarness(opts: {
     }
   >
   approverPublicKey?: string
+  allowUnsigned?: boolean
   bodies: Record<string, ToolBody>
+  malformedTools?: string[]
   overrides?: RuntimeGateOverrides
 }): Promise<Harness> {
   const config = RuntimeGateConfigSchema.parse({
@@ -181,10 +197,13 @@ async function buildHarness(opts: {
         },
       ]),
     ),
-    ...(opts.approverPublicKey !== undefined
+    ...(opts.approverPublicKey !== undefined || opts.allowUnsigned !== undefined
       ? {
           approvals: {
-            authorized_keys: [{ actor_id: APPROVER_ID, public_key: opts.approverPublicKey }],
+            ...(opts.approverPublicKey !== undefined
+              ? { authorized_keys: [{ actor_id: APPROVER_ID, public_key: opts.approverPublicKey }] }
+              : {}),
+            ...(opts.allowUnsigned !== undefined ? { allow_unsigned: opts.allowUnsigned } : {}),
           },
         }
       : {}),
@@ -192,7 +211,7 @@ async function buildHarness(opts: {
   const gate = new RuntimeGate(config, opts.overrides)
   await gate.init()
   const pair = createLoopbackPair()
-  const hook = new Hook(pair.hook, opts.bodies)
+  const hook = new Hook(pair.hook, opts.bodies, new Set(opts.malformedTools ?? []))
   void gate.serve(pair.gate)
   await hook.waitReady()
   return { gate, hook, logRoot: opts.logRoot }
@@ -557,6 +576,128 @@ async function run(): Promise<ProbeResult> {
         "H: each result ingested exactly once",
         [...obsPerAction.values()].every((n) => n === 1),
         [...obsPerAction.values()].join(","),
+      )
+      await h.gate.stop()
+    }
+
+    // ── I: a timeout-0 hold is a TERMINAL soft denial — not resumable (P1#1) ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      // approval_timeout_ms defaults to 0. Pin a key so that, WERE the hold
+      // resumable, a valid signed grant could un-park it — proving the terminal
+      // soft-denial holds regardless.
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-timeout0",
+        approverPublicKey: approver.publicKeyPem,
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: true } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      check(
+        "I: timeout-0 L4 is a terminal soft denial",
+        held.phase === "rejected",
+        String(held.phase),
+      )
+      check(
+        "I: terminal kind is approval_required",
+        held.kind === "approval_required",
+        String(held.kind),
+      )
+      // Drop a VALID signed grant, then try to resume — it must NOT execute.
+      await writeSignedGrant(
+        logRoot,
+        String(held.action_id),
+        String(held.request_id),
+        approver.privateKeyPem,
+      )
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id))
+      check(
+        "I: resume of a timeout-0 hold stays rejected",
+        resumed.phase === "rejected",
+        String(resumed.phase),
+      )
+      check(
+        "I: body NEVER ran for a timeout-0 hold (even with a signed grant)",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── J: concurrent resumes of the same held action execute the body once (P1#2) ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-concurrent-resume",
+        approvalTimeoutMs: 60_000,
+        approverPublicKey: approver.publicKeyPem,
+        toolDefaults: { migrate: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { migrate: () => ({ output: { migrated: true } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("migrate")
+      const held = await h.hook.govern("migrate", {})
+      await writeSignedGrant(
+        logRoot,
+        String(held.action_id),
+        String(held.request_id),
+        approver.privateKeyPem,
+      )
+      // Two resumes for the SAME action, in flight together.
+      const [r1, r2] = await Promise.all([
+        h.hook.resume(String(held.action_id), String(held.request_id)),
+        h.hook.resume(String(held.action_id), String(held.request_id)),
+      ])
+      check(
+        "J: both concurrent resumes report completed",
+        r1.phase === "completed" && r2.phase === "completed",
+        `${r1.phase}/${r2.phase}`,
+      )
+      check(
+        "J: the body ran EXACTLY once despite concurrent resumes",
+        h.hook.bodyRuns.length === 1,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── K: a malformed tool callback fails the action — it does not hang (P2) ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-malformed",
+        toolDefaults: { flaky: { required_trust_level: 1 } },
+        bodies: { flaky: () => ({ output: "should-not-arrive" }) },
+        malformedTools: ["flaky"], // the hook returns an invalid tool_result shape
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("flaky")
+      // Guard against a hang: the fix must make govern resolve (failed), not block.
+      // The timeout timer is cleared after the race so it cannot keep the probe
+      // process alive once govern has resolved.
+      const governed = h.hook.govern("flaky", {})
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<{ timedOut: true; r: undefined }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOut: true, r: undefined }), 5_000)
+      })
+      const raced = await Promise.race([
+        governed.then((r) => ({ timedOut: false as const, r })),
+        timeout,
+      ])
+      if (timer !== undefined) clearTimeout(timer)
+      check("K: a malformed callback did NOT hang the remoted execute", !raced.timedOut)
+      check(
+        "K: the action failed cleanly on a malformed callback",
+        raced.r?.phase === "failed",
+        String(raced.r?.phase),
       )
       await h.gate.stop()
     }
