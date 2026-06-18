@@ -144,8 +144,17 @@ class GateClient:
 
     def _send(self, obj: dict) -> None:
         assert self._proc.stdin is not None
+        # `allow_nan=False` rejects NaN/Infinity: Python's default emits the
+        # literals `NaN`/`Infinity`, which are NOT valid JSON, so the TS gate's
+        # `JSON.parse` drops the line — and with unbounded request waits the caller
+        # would hang. Fail loudly here instead (the callers turn this into a
+        # GateError for a request, or a tool_error for a tool body).
+        try:
+            line = json.dumps(obj, allow_nan=False)
+        except ValueError as exc:
+            raise GateError(f"cannot serialise RPC message (non-finite number?): {exc}") from exc
         with self._write_lock:
-            self._proc.stdin.write(json.dumps(obj) + "\n")
+            self._proc.stdin.write(line + "\n")
             self._proc.stdin.flush()
 
     def _request(self, obj: dict) -> dict:
@@ -154,7 +163,13 @@ class GateClient:
             rid = self._next
             box: "queue.Queue[dict]" = queue.Queue(maxsize=1)
             self._futures[rid] = box
-        self._send({**obj, "id": rid})
+        try:
+            self._send({**obj, "id": rid})
+        except Exception:
+            # Serialisation/transport failed — don't leave an orphaned waiter.
+            with self._state_lock:
+                self._futures.pop(rid, None)
+            raise
         try:
             # timeout=None waits until the gate replies or (on gate death) the
             # reader injects a closed-connection error into the box.

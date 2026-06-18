@@ -1189,27 +1189,39 @@ export class RuntimeGate {
         kind: "execution_failed",
       }
     }
-    // Prefer the approval-lifecycle classification over the generic rejection, so a
-    // replayed timeout/denial keeps its kind.
-    if (expired) {
-      return {
-        type: "govern_result",
-        phase: "rejected",
-        action_id: actionId,
-        reason: "approval deadline passed with no valid resolution",
-        kind: "approval_timeout",
-      }
-    }
-    if (denied) {
-      return {
-        type: "govern_result",
-        phase: "rejected",
-        action_id: actionId,
-        reason: "approval denied",
-        kind: "approval_denied",
-      }
-    }
+    // A rejection terminal requires the gate's OWN `action.rejected` — a
+    // gate-authored event the gate emits only after it has itself resolved/expired
+    // the action (and, for an out-of-band resolution, *after* verifying its
+    // Ed25519 signature in checkResolution). `approval.expired` / `approval.denied`
+    // only REFINE the kind; they never make an action terminal on their own.
+    //
+    // This is the forgery boundary: a local writer who appends a *bare*
+    // `approval.denied` to the sibling NDJSON log (no gate-authored
+    // `action.rejected`) must NOT permanently mask a later genuine signed grant.
+    // Without `action.rejected` this returns undefined, so `resolveResume` falls
+    // through to `checkResolution`, which signature-verifies before un-parking —
+    // the forged denial is ignored and the real grant still wins. (A forged
+    // `approval.granted` is likewise inert: `completed` keys on the gate's own
+    // `action.completed`, never on `approval.granted`.)
     if (rejectedDetail !== undefined) {
+      if (expired) {
+        return {
+          type: "govern_result",
+          phase: "rejected",
+          action_id: actionId,
+          reason: "approval deadline passed with no valid resolution",
+          kind: "approval_timeout",
+        }
+      }
+      if (denied) {
+        return {
+          type: "govern_result",
+          phase: "rejected",
+          action_id: actionId,
+          reason: "approval denied",
+          kind: "approval_denied",
+        }
+      }
       return {
         type: "govern_result",
         phase: "rejected",

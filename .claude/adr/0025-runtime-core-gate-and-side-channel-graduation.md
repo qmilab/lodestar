@@ -122,7 +122,18 @@ every waiter via the stdout-close path, so a fixed client cap is unneeded for
 liveness (it stays available as an explicit hard cap); and (k) the LangGraph e2e
 imports the **installed** hook first (source tree only as a local fallback), so the
 CI job actually exercises the packaged artifact + its `pyproject` exports rather
-than the checkout.
+than the checkout. A sixth round closed two more: (l) `terminalOutcomeFromLog`
+keys a rejection terminal on the gate's *own* `action.rejected` (gate-authored,
+emitted only after the gate verified any out-of-band resolution), using
+`approval.expired` / `approval.denied` only to *refine* the kind — so a forged
+bare `approval.denied` appended to the sibling log can no longer mask a later
+genuine *signed* grant (without `action.rejected` the replay falls through to
+`checkResolution`, which signature-verifies before un-parking); and (m) the Python
+client serialises with `allow_nan=False`, so a `NaN`/`Infinity` in a govern arg or
+a tool result fails the call (GateError / tool_error → `execution_failed`) instead
+of emitting invalid JSON the gate drops — which, with unbounded request waits,
+would hang the caller. Locked by scenarios P (forged-denial) in
+`runtime-gate-enforces-two-phase` and the NaN checks in the LangGraph e2e.
 
 ### 5. The gate server is transport-agnostic; probe 1 drives it in-process
 

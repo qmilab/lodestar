@@ -25,10 +25,11 @@
  * Python LangGraph loop is exercised by the runtime-gated
  * `langgraph-tool-calls-are-governed` probe.
  */
+import { randomUUID } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { EventLogReader } from "@qmilab/lodestar-event-log"
+import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
   autoApprovePolicyDocument,
   compileWithSentinels,
@@ -274,6 +275,31 @@ async function writeSignedGrant(
   const signature = signApprovalResolution(doc, privateKeyPem)
   const resolution: ApprovalResolution = { ...doc, signature }
   await writeApprovalResolution(logRoot, PROJECT_ID, resolution)
+}
+
+/** Append a raw (attacker-authored) event directly to the sibling NDJSON log —
+ *  simulating a local writer forging an approval event without going through the
+ *  gate. */
+async function forgeEvent(
+  logRoot: string,
+  sessionId: string,
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  const writer = new EventLogWriter(logRoot)
+  await writer.append({
+    id: randomUUID(),
+    type,
+    schema_version: "0.1.0",
+    project_id: PROJECT_ID,
+    session_id: sessionId,
+    actor_id: "attacker",
+    timestamp: new Date().toISOString(),
+    causal_parent_ids: [],
+    payload,
+    payload_hash: canonicalHash(payload),
+    versions: { schema_registry_version: "0.1.0" },
+  })
 }
 
 async function run(): Promise<ProbeResult> {
@@ -848,6 +874,52 @@ async function run(): Promise<ProbeResult> {
           `type=${reg.type} required_level=${JSON.stringify(reg.required_level)}`,
         )
       }
+      await h.gate.stop()
+    }
+
+    // ── P: a forged bare approval.denied on the sibling log does NOT mask a later
+    //    genuine signed grant (P2 — the replay terminal must key on the gate's own
+    //    action.rejected, not an unverified approval.denied). ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-forged-deny",
+        approvalTimeoutMs: 60_000,
+        approverPublicKey: approver.publicKeyPem,
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: true } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      // Attacker forges a bare approval.denied into the sibling log (no gate
+      // action.rejected, no valid signature).
+      await forgeEvent(logRoot, "sess-forged-deny", "approval.denied", {
+        request_id: String(held.request_id),
+        action_id: String(held.action_id),
+        approver_id: APPROVER_ID,
+        at: new Date().toISOString(),
+      })
+      // The genuine, signed grant arrives after the forgery.
+      await writeSignedGrant(
+        logRoot,
+        String(held.action_id),
+        String(held.request_id),
+        approver.privateKeyPem,
+      )
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id))
+      check(
+        "P: a forged approval.denied does NOT mask a genuine signed grant",
+        resumed.phase === "completed",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "P: the genuine grant un-parked and ran the body once",
+        h.hook.bodyRuns.length === 1,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
       await h.gate.stop()
     }
   } finally {

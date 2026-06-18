@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 import sys
 import tempfile
 import time
@@ -88,6 +89,12 @@ async def fetch(url: str) -> dict:
     return {"fetched": url}
 
 
+def nan_out(x: int) -> dict:
+    # A tool whose result carries a non-finite float — invalid JSON for the gate.
+    # The hook must reject it (→ tool_error → failed action), never emit `NaN`.
+    return {"output": {"value": float("nan")}}
+
+
 def make_tool(fn) -> StructuredTool:
     return StructuredTool.from_function(func=fn, name=fn.__name__, description=fn.__name__)
 
@@ -129,6 +136,7 @@ def main() -> int:
                 "read_doc": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
                 "deploy": {"required_trust_level": 4, "reversibility": "irreversible", "sandbox": "controlled-shell", "permissions": [], "blast_radius": "external"},
                 "fetch": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
+                "nan_out": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
             },
         }
         config_path = Path(tmp) / "runtime-gate.config.json"
@@ -154,10 +162,16 @@ def main() -> int:
             print("langgraph-tool-calls-are-governed (real LangGraph ToolNode + hook + gate)")
             print("─" * 72)
 
-            tools = [make_tool(echo), make_tool(read_doc), make_tool(deploy), make_async_tool(fetch)]
+            tools = [
+                make_tool(echo),
+                make_tool(read_doc),
+                make_tool(deploy),
+                make_async_tool(fetch),
+                make_tool(nan_out),
+            ]
             governed = govern_tools(gate, tools, hold_wait_ms=2_000)
             governed_by_name = {t.name: t for t in governed}
-            check("0: only governed wrappers are exposed", set(governed_by_name) == {"echo", "read_doc", "deploy", "fetch"}, str(set(governed_by_name)))
+            check("0: only governed wrappers are exposed", set(governed_by_name) == {"echo", "read_doc", "deploy", "fetch", "nan_out"}, str(set(governed_by_name)))
 
             # Build a real compiled LangGraph with the prebuilt ToolNode. Driving
             # the node through a compiled graph (rather than a bare ToolNode.invoke)
@@ -229,6 +243,27 @@ def main() -> int:
             res_async = governed_call(gate, "fetch", {"url": "https://y"})
             check("7: async-only tool ran via governed_call", res_async == {"fetched": "https://y"}, str(res_async))
             check("7: async tool body ran exactly twice", runs["fetch"] == 2, str(runs["fetch"]))
+
+            # 8. Non-finite floats are rejected before they corrupt the JSON wire,
+            #    so a NaN in args or a tool result fails the call rather than hanging
+            #    it (Python's json.dumps would otherwise emit invalid `NaN`).
+            arg_nan_err = None
+            try:
+                governed_call(gate, "echo", {"msg": math.nan})
+            except GateError:
+                arg_nan_err = "gate_error"
+            except LodestarDenied as denied:
+                arg_nan_err = denied.kind
+            check("8: a NaN argument is rejected, not silently hung", arg_nan_err is not None, str(arg_nan_err))
+
+            out_nan_err = None
+            try:
+                governed_call(gate, "nan_out", {"x": 1})
+            except LodestarDenied as denied:
+                out_nan_err = denied.kind
+            except GateError:
+                out_nan_err = "gate_error"
+            check("8: a NaN tool result fails the action, not silently hung", out_nan_err is not None, str(out_nan_err))
 
             print("─" * 72)
             if failures:
