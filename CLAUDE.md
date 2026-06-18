@@ -11,9 +11,9 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Sixty-two probes pass under
-strict TypeScript (two need a Postgres test database — see
-below). Fifty-eight live in the first-party pack
+resolved for future versions.) Sixty-four probes pass under
+strict TypeScript (two need a Postgres test database; one needs a Python
++ LangGraph runtime — see below). Sixty live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -244,7 +244,23 @@ and scopes egress by **port** (SBPL can't filter by host; no Unix-socket egress,
 hostname `--allow-host` is refused — it must carry a port). The probe drives the **real** `runPack` over a fixture,
 pins read-home-secret/write-outside/remote-egress all **denied** plus the pack-dir-read
 and scratch-write positive controls, and **skips loudly** when no mechanism is available
-or it is non-functional; ADR-0023). The other
+or it is non-functional; ADR-0023), and two LangGraph runtime-adapter probes —
+`runtime-gate-enforces-two-phase` (the **always-on TS spine lock**, #83 / ADR-0024 /
+ADR-0025: drives the **real** `RuntimeGate` over the **real** NDJSON-RPC protocol with an
+in-process loopback stand-in for the native hook — no subprocess, no Python — pinning a
+held L4 stays held until a *signed* approval resolves it, a duplicate resume is idempotent
+(no double-execute), a post-deadline resolution is rejected fail-closed, a hold
+reconstructed by a **fresh** gate instance still resolves (restart durability over the
+durable log), an unregistered tool is denied fail-closed, `external_document` content
+cannot self-promote a belief, a synthesized decision links the observed-belief set, and
+parallel in-flight calls are correlated + ingested exactly once) and
+`langgraph-tool-calls-are-governed` (the **runtime-gated end-to-end** sibling: a **real**
+Python LangGraph compiled graph + prebuilt `ToolNode` driven through the
+`lodestar-langgraph` hook + the TS gate, adding the real-runtime cases — `ToolNode`,
+a custom node via `governed_call`, async `ainvoke`, batch/parallel, an L4 hold across the
+boundary (the body never runs), and a dynamically-unregistered tool rejected fail-closed;
+it **skips loudly** when Python/LangGraph is absent and runs for real in the CI
+`langgraph-runtime` job; ADR-0024 / ADR-0025). The other
 four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -351,6 +367,7 @@ packages/
   trace/               # (exists) read side + `lodestar report` CLI
   viewer/              # (exists, post-v1) read-side Governing UI — `lodestar view`; Elysia + no-build vanilla SPA over the log; strictly read-only (no mutation route, never writes the log); surfaces pending approvals for visibility only
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`; held L4 actions wait up to `approval_timeout_ms` polling for an out-of-band `approval.granted@1`, else synthetic `approval_timeout`; optionally wires a SentinelArbiter (config.sentinels) and synthesizes a decision.made per action from the recency window so a belief-scoped alert holds the dependent tools/call — opaque-agent decision source (ADR-0003)
+  runtime-core/        # (exists, v1.5) language-agnostic governance-gate sidecar — `lodestar runtime gate`; the reusable TS spine of the non-MCP runtime-adapter epic (#75/#83, ADR-0024/ADR-0025). Reuses the SAME engine the MCP proxy runs (ActionKernel two-phase, CompiledPolicy gate, CognitiveCore.ingest, SentinelArbiter decision synthesis, signed-approval hold path) and exposes it to a native runtime hook over a thin bidirectional NDJSON-RPC channel: govern → propose/arbitrate → (hold | remoted execute, the tool body runs back in the hook only inside the execute phase). Durable + idempotent holds reconstructed from the log + signed .approvals/ side-channel (survives a sidecar restart, exactly-once per action id); operator-owned tool_defaults contract (the untrusted hook only declares a name; unregistered → fail-closed deny); runtime tools namespaced runtime.<name> like the proxy's mcp.<server>.<tool>; lodestar.runtime_tool_result@1 observation + RuntimeAwareEvidenceLinker (external_document content can't auto-promote); RpcChannel transport seam (stdio for the CLI, in-process loopback for the always-on probe). No core schema / kernel change. Depends on guard (NOT guard-mcp → no MCP SDK)
   harness/             # (exists, Batch 4) probe-pack loader (probes + sentinel-id resolution) + Probe base class + pack runner (lodestar harness run) + Sentinel base class + three sentinels + FIRST_PARTY_SENTINELS registry + Calibrator (per-class ECE/Brier); npm/git pack source resolution (loadProbePackFromSource — non-executing fetch to an immutable pin, then verify-on-load; #86, ADR-0018); pack publish/add flow (publishProbePack signs in place + self-verifies, addProbePack resolves→verifies→installs→records the pin; shared resolve.ts so publish and verify digest identically; #90, ADR-0019); pack discovery index (loadPackIndex fetches + verifies a static signed listing against pinned index-publisher keys, searchPackIndexes filters locally, publishPackIndex signs an authored index; an index advertises but never authorizes — choosing a pack still routes through add/#88; #87, ADR-0021); scoped-env probe execution (runPack spawns each probe with a fresh empty HOME + inherited PATH, never the host process.env; operator widens via RunPackOptions.allowHostEnv / --allow-env, the untrusted manifest cannot; TS/process-level boundary, not an OS sandbox — host-env-secrets only, step 2 OS sandbox deferred; #114, ADR-0022)
   policy-kernel/       # (exists) compile(policy)→PolicyGate: trust-ladder floor, three-valued gate (allow/deny/hold), approval lifecycle, arbitrate hook (host-injected sentinel-alert + calibration-flag + synchronous low-confidence escalation; strengthens only). host wiring landed for all three paths: the in-process (guard.wrap() resolver seam), MCP-proxy (deadline/timeout out-of-band hold path), and the separate-process `lodestar approve` CLI (writes a side-channel the proxy promotes; proxy stays sole event-log writer)
   otel-exporter/       # (exists, post-v1) OTel GenAI semantic conventions bridge — `lodestar otel export`; read-side batch projection of a session into OTLP/HTTP-JSON spans (action-centric: invoke_agent root + execute_tool spans), hand-rolled wire format (no OTel SDK dep), with the sensitivity-ceiling export gate (content above the ceiling ships as metadata + payload hash only)
@@ -373,8 +390,15 @@ examples/
   documentation-agent/       # (exists, Batch 5) doc-agent; claim/evidence over docs,
                              #   DocAwareEvidenceLinker via the guard cognitive seam
 
+runtimes/                    # (v1.5) non-MCP runtime adapters — Python siblings of
+                             #   packages/ (published to PyPI, not npm); ADR-0024
+  langgraph/                 # (exists) `lodestar-langgraph` — the thin native LangGraph
+                             #   hook: spawns `lodestar runtime gate`, remotes each native
+                             #   tool call over NDJSON-RPC (GateClient + govern_tools +
+                             #   governed_call). Pure-stdlib client; langchain imported lazily
+
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 58 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 60 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -452,7 +476,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Sixty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Sixty-four probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 

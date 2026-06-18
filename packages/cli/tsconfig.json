@@ -12,6 +12,7 @@
     { "path": "../memory-firewall" },
     { "path": "../guard" },
     { "path": "../guard-mcp" },
+    { "path": "../runtime-core" },
     { "path": "../harness" },
     { "path": "../trace" },
     { "path": "../viewer" },

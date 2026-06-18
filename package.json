@@ -88,6 +88,7 @@
     "@qmilab/lodestar-harness": "workspace:*",
     "@qmilab/lodestar-guard": "workspace:*",
     "@qmilab/lodestar-guard-mcp": "workspace:*",
+    "@qmilab/lodestar-runtime-core": "workspace:*",
     "@qmilab/lodestar-memory-firewall-mem0": "workspace:*",
     "@qmilab/lodestar-memory-firewall-letta": "workspace:*",
     "@qmilab/lodestar-memory-firewall-zep": "workspace:*"

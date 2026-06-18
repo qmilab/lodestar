@@ -205,6 +205,13 @@ jobs:
             // mini-marathon described in the Batch 3 release notes
             // before CI can stage-publish it through this path.
             "packages/guard-mcp",
+            // runtime-core depends on core/event-log/action-kernel/
+            // policy-kernel/memory-firewall/cognitive-core/guard (NOT the MCP
+            // SDK); the CLI depends on it (`lodestar runtime gate`), so it
+            // publishes after `guard` and before `cli`. Like guard-mcp, its
+            // first publish needs the manual trusted-publisher mini-marathon
+            // before CI can stage-publish it through this path.
+            "packages/runtime-core",
             // viewer depends on core/event-log/trace; the CLI now depends
             // on it, so it publishes before `cli`. Like guard-mcp, its
             // first publish needs the manual trusted-publisher mini-marathon
@@ -308,6 +315,10 @@ jobs:
             # configured on npm) before this stage-publish step can
             # succeed — see docs/roadmap.md "Batch 3 follow-ups."
             packages/guard-mcp
+            # runtime-core is a CLI dependency (`lodestar runtime gate`);
+            # publishes after guard, before `cli`. Like guard-mcp, its first
+            # publish needs the manual bootstrap.
+            packages/runtime-core
             # viewer is a CLI dependency; publishes before `cli`. Like
             # guard-mcp, its first publish needs the manual bootstrap.
             packages/viewer

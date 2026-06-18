@@ -255,6 +255,14 @@
     {
       "name": "runner-sandboxes-probe-filesystem-and-network",
       "file": "probes/runner-sandboxes-probe-filesystem-and-network.ts"
+    },
+    {
+      "name": "runtime-gate-enforces-two-phase",
+      "file": "probes/runtime-gate-enforces-two-phase.ts"
+    },
+    {
+      "name": "langgraph-tool-calls-are-governed",
+      "file": "probes/langgraph-tool-calls-are-governed.ts"
     }
   ]
 }

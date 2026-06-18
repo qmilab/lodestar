@@ -24,6 +24,25 @@
 // ── Helpers and types defined here ──────────────────────────────────────────
 export { wrap, runGuarded } from "./wrap.js"
 export type { GuardRunResult } from "./wrap.js"
+
+// ── Signed approval side-channel (ADR-0010 / ADR-0015) ───────────────────────
+// The cross-process transport for a signed approval resolution, graduated here
+// from `@qmilab/lodestar-guard-mcp` once a second consumer appeared
+// (`@qmilab/lodestar-runtime-core`, ADR-0024 / ADR-0025). It lives next to the
+// Ed25519 sign/verify primitives it pairs with (`signApprovalResolution` /
+// `verifyApprovalSignature`, re-exported below), so a security-critical
+// signed-format reader has exactly one implementation. guard-mcp re-exports
+// these names unchanged.
+export {
+  type ApprovalResolution,
+  ApprovalResolutionSchema,
+  approvalResolutionPath,
+  approvalsChannelDir,
+  deleteApprovalResolution,
+  readApprovalResolution,
+  resolutionToOutcome,
+  writeApprovalResolution,
+} from "./approvals-channel.js"
 export type {
   AgentLoop,
   ApprovalResolver,
