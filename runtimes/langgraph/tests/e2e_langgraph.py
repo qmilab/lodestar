@@ -21,6 +21,7 @@ skips loudly when Python / LangGraph is absent. Exit 0 = pass, 1 = fail.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import tempfile
@@ -43,7 +44,7 @@ except Exception as exc:  # pragma: no cover - the probe gates on import availab
     sys.exit(0)
 
 # ── tool bodies (the REAL functions the gate remotes back to run) ─────────────
-runs: dict[str, int] = {"echo": 0, "read_doc": 0, "deploy": 0}
+runs: dict[str, int] = {"echo": 0, "read_doc": 0, "deploy": 0, "fetch": 0}
 
 
 def echo(msg: str) -> dict:
@@ -62,8 +63,19 @@ def deploy(target: str) -> dict:
     return {"deployed": target}
 
 
+async def fetch(url: str) -> dict:
+    # An ASYNC-ONLY tool body (coroutine, no sync impl): the gate remotes it on a
+    # loop-less worker thread, so the hook must run it via ainvoke, not sync invoke.
+    runs["fetch"] += 1
+    return {"fetched": url}
+
+
 def make_tool(fn) -> StructuredTool:
     return StructuredTool.from_function(func=fn, name=fn.__name__, description=fn.__name__)
+
+
+def make_async_tool(coro) -> StructuredTool:
+    return StructuredTool.from_function(coroutine=coro, name=coro.__name__, description=coro.__name__)
 
 
 def tool_call(name: str, args: dict, call_id: str) -> AIMessage:
@@ -98,6 +110,7 @@ def main() -> int:
                 "echo": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
                 "read_doc": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
                 "deploy": {"required_trust_level": 4, "reversibility": "irreversible", "sandbox": "controlled-shell", "permissions": [], "blast_radius": "external"},
+                "fetch": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
             },
         }
         config_path = Path(tmp) / "runtime-gate.config.json"
@@ -108,10 +121,10 @@ def main() -> int:
             print("langgraph-tool-calls-are-governed (real LangGraph ToolNode + hook + gate)")
             print("─" * 72)
 
-            tools = [make_tool(echo), make_tool(read_doc), make_tool(deploy)]
+            tools = [make_tool(echo), make_tool(read_doc), make_tool(deploy), make_async_tool(fetch)]
             governed = govern_tools(gate, tools, hold_wait_ms=2_000)
             governed_by_name = {t.name: t for t in governed}
-            check("0: only governed wrappers are exposed", set(governed_by_name) == {"echo", "read_doc", "deploy"}, str(set(governed_by_name)))
+            check("0: only governed wrappers are exposed", set(governed_by_name) == {"echo", "read_doc", "deploy", "fetch"}, str(set(governed_by_name)))
 
             # Build a real compiled LangGraph with the prebuilt ToolNode. Driving
             # the node through a compiled graph (rather than a bare ToolNode.invoke)
@@ -138,8 +151,6 @@ def main() -> int:
             check("2: echo body ran again exactly once", runs["echo"] == 2, str(runs["echo"]))
 
             # 3. async invocation through the compiled graph (ainvoke).
-            import asyncio
-
             aout = asyncio.run(app.ainvoke({"messages": [tool_call("read_doc", {"path": "/x"}, "c2")]}))
             check("3: ainvoke ran the governed read_doc", "read" in last_content(aout), last_content(aout))
             check("3: read_doc body ran once (async)", runs["read_doc"] == 1, str(runs["read_doc"]))
@@ -175,6 +186,16 @@ def main() -> int:
             except LodestarDenied as denied:
                 ghost_kind = denied.kind
             check("6: unregistered tool denied (fail closed)", ghost_kind == "unregistered_tool", str(ghost_kind))
+
+            # 7. an ASYNC-ONLY tool body runs through the gate's remoted execute
+            #    (the hook must ainvoke it on the loop-less worker thread, not the
+            #    failing sync invoke path). Exercised via the compiled graph's
+            #    ainvoke AND a direct governed_call.
+            afetch = asyncio.run(app.ainvoke({"messages": [tool_call("fetch", {"url": "https://x"}, "c3")]}))
+            check("7: async-only tool ran via ToolNode ainvoke", "fetched" in last_content(afetch), last_content(afetch))
+            res_async = governed_call(gate, "fetch", {"url": "https://y"})
+            check("7: async-only tool ran via governed_call", res_async == {"fetched": "https://y"}, str(res_async))
+            check("7: async tool body ran exactly twice", runs["fetch"] == 2, str(runs["fetch"]))
 
             print("─" * 72)
             if failures:

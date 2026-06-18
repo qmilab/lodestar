@@ -351,6 +351,15 @@ async function run(): Promise<ProbeResult> {
         h.hook.bodyRuns.length === 0,
         `${h.hook.bodyRuns.length} run(s)`,
       )
+      // A duplicate resume after a timeout must still report approval_timeout from
+      // the durable log — the trailing action.rejected must NOT relabel it
+      // policy_denied (callers branch on the kind to re-plan).
+      const replay = await h.hook.resume(String(held.action_id), String(held.request_id))
+      check(
+        "C: replayed timeout keeps the approval_timeout kind (not policy_denied)",
+        replay.phase === "rejected" && replay.kind === "approval_timeout",
+        `${replay.phase}/${replay.kind}`,
+      )
       await h.gate.stop()
     }
 

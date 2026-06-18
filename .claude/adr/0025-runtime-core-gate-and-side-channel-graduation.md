@@ -91,7 +91,14 @@ check and double-execute a side-effectful body (the second runs only after the
 first settles and so sees its terminal event); (c) a **malformed `tool_result` /
 `tool_error` callback** rejects its pending remoted-execute promise instead of
 stranding it, so a buggy/hostile hook fails the action cleanly rather than hanging
-it. All three are locked by new scenarios in `runtime-gate-enforces-two-phase`.
+it. A second review round closed two more: (d) `terminalOutcomeFromLog` tracks the
+`approval.expired` / `approval.denied` events **separately** from the trailing
+`action.rejected`, so a replayed timeout/denial keeps its `approval_timeout` /
+`approval_denied` kind instead of being relabelled `policy_denied` (callers branch
+on the kind to re-plan); and (e) the Python hook runs an **async-only** tool body
+via `ainvoke` (sync `invoke` raises `NotImplementedError` for a coroutine-only
+tool) on its loop-less worker thread. All locked by scenarios in
+`runtime-gate-enforces-two-phase` and the LangGraph e2e.
 
 ### 5. The gate server is transport-agnostic; probe 1 drives it in-process
 

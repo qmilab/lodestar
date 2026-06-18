@@ -25,6 +25,7 @@ and raise ``interrupt`` with the returned ``action_id`` / ``request_id``, then
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Callable, Iterable, Optional
 
 from .client import GateClient
@@ -115,12 +116,24 @@ def govern_tools(
 
 
 def _body_for(tool: Any) -> Callable[[dict], dict]:
-    """A run_tool body that executes the real LangChain tool synchronously and
-    wraps its result into the gate's tool-result shape. ``tool.invoke`` runs an
-    async-defined tool's coroutine too, so this serves sync and async tools."""
+    """A run_tool body that executes the real LangChain tool and wraps its result
+    into the gate's tool-result shape.
+
+    The gate remotes the body on a worker thread with no running event loop, so we
+    use the synchronous ``tool.invoke`` for a tool with a sync implementation, and
+    fall back to running the coroutine for an **async-only** tool (one defined with
+    a ``coroutine`` and no sync ``func``): for such a tool ``invoke`` raises
+    ``NotImplementedError``, so it must go through ``ainvoke``. This serves both
+    sync and async tools regardless of whether the graph drove ``invoke`` or
+    ``ainvoke``.
+    """
 
     def body(args: dict) -> dict:
-        output = tool.invoke(args)
+        try:
+            output = tool.invoke(args)
+        except NotImplementedError:
+            # Async-only tool: run its coroutine in this (loop-less) worker thread.
+            output = asyncio.run(tool.ainvoke(args))
         documents: list[dict] = []
         # A tool may surface untrusted document content for external_document
         # evidence by returning {"output": ..., "_lodestar_documents": [...]}.

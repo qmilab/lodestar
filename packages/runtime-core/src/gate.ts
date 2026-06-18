@@ -1077,8 +1077,15 @@ export class RuntimeGate {
     const events = await this.readSessionEvents()
     let output: unknown
     let completed = false
-    let rejected: { reason: string; kind: string } | undefined
     let failed: string | undefined
+    let rejectedDetail: string | undefined // a generic action.rejected (precondition / arbitrate)
+    // The approval-lifecycle classifications. These are tracked SEPARATELY from
+    // the trailing `action.rejected` the timeout/deny path also emits — otherwise a
+    // replay would relabel an `approval_timeout` / `approval_denied` as a generic
+    // `policy_denied` (the events are scanned in order and `action.rejected` comes
+    // last), breaking callers that branch on the kind for re-planning.
+    let expired = false
+    let denied = false
     for (const ev of events) {
       if (ev.type === "observation.recorded") {
         const obs = ev.payload as Observation
@@ -1092,12 +1099,11 @@ export class RuntimeGate {
         if (a?.id === actionId) failed = lastFailureDetail(a) ?? "tool execution failed"
       } else if (ev.type === "action.rejected") {
         const a = ev.payload as Action
-        if (a?.id === actionId)
-          rejected = { reason: lastFailureDetail(a) ?? "action rejected", kind: "policy_denied" }
+        if (a?.id === actionId) rejectedDetail = lastFailureDetail(a) ?? "action rejected"
       } else if (ev.type === "approval.expired") {
-        const p = ev.payload as { action_id?: string }
-        if (p?.action_id === actionId)
-          rejected = { reason: "approval deadline passed", kind: "approval_timeout" }
+        if ((ev.payload as { action_id?: string })?.action_id === actionId) expired = true
+      } else if (ev.type === "approval.denied") {
+        if ((ev.payload as { action_id?: string })?.action_id === actionId) denied = true
       }
     }
     if (completed) {
@@ -1112,13 +1118,33 @@ export class RuntimeGate {
         kind: "execution_failed",
       }
     }
-    if (rejected !== undefined) {
+    // Prefer the approval-lifecycle classification over the generic rejection, so a
+    // replayed timeout/denial keeps its kind.
+    if (expired) {
       return {
         type: "govern_result",
         phase: "rejected",
         action_id: actionId,
-        reason: rejected.reason,
-        kind: rejected.kind,
+        reason: "approval deadline passed with no valid resolution",
+        kind: "approval_timeout",
+      }
+    }
+    if (denied) {
+      return {
+        type: "govern_result",
+        phase: "rejected",
+        action_id: actionId,
+        reason: "approval denied",
+        kind: "approval_denied",
+      }
+    }
+    if (rejectedDetail !== undefined) {
+      return {
+        type: "govern_result",
+        phase: "rejected",
+        action_id: actionId,
+        reason: rejectedDetail,
+        kind: "policy_denied",
       }
     }
     return undefined
