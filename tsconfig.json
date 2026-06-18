@@ -16,6 +16,7 @@
     { "path": "./packages/adapters/sql" },
     { "path": "./packages/guard" },
     { "path": "./packages/guard-mcp" },
+    { "path": "./packages/runtime-core" },
     { "path": "./packages/trace" },
     { "path": "./packages/viewer" },
     { "path": "./packages/otel-exporter" },

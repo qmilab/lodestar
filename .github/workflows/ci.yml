@@ -94,6 +94,42 @@ jobs:
         env:
           LODESTAR_SANDBOX_NATIVE: "1"
 
+  # LangGraph runtime adapter (ADR-0024) — the one job that installs Python +
+  # LangGraph + the `lodestar-langgraph` hook so the runtime-gated
+  # `langgraph-tool-calls-are-governed` probe exercises its REAL end-to-end path
+  # (a real LangGraph compiled graph + ToolNode → the hook → the TS gate). In the
+  # `verify` job above that probe runs under `probes:ci` but skips loudly (no
+  # LangGraph there), mirroring the DB-gated cross-session probe.
+  langgraph-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the hook package itself (with its langgraph extra), so the probe
+      # exercises the published artifact, not just the in-repo source.
+      - name: Install the LangGraph runtime hook + LangGraph
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./runtimes/langgraph[langgraph]"
+
+      # The probe spawns `bun run …/cli runtime gate` (bun is on PATH from
+      # setup-bun) and drives a real LangGraph loop through it.
+      - name: Run the LangGraph runtime adapter probe (real path)
+        run: bun run packs/lodestar-core/probes/langgraph-tool-calls-are-governed.ts
+        env:
+          LODESTAR_PYTHON: python
+
   # License audit — fail the build if any dependency anywhere in the tree
   # (transitive and dev included) carries a non-permissive license. This is
   # independent of the build, so it runs as its own job for fast feedback

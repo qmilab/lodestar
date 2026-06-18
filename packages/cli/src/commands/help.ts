@@ -7,6 +7,7 @@ Usage:
   lodestar ship <session-id> [--endpoint <url>] [--token-env <NAME>] [--sensitivity-ceiling <level>]
   lodestar guard wrap --target <module> [--project <id>] [--actor <id>]
   lodestar guard mcp-proxy --config <path>
+  lodestar runtime gate --config <path>
   lodestar approve list --project <id> [--log-root <path>]
   lodestar approve grant <request-id> --approver <id> --project <id>
   lodestar approve deny  <request-id> --approver <id> --project <id>
@@ -40,6 +41,11 @@ Commands:
                wrap       — programmatic; loads a JS/TS loop module.
                mcp-proxy  — stdio MCP proxy; wrap any MCP-speaking agent
                             (Claude Code, Cursor, Aider).
+  runtime    Govern a non-MCP agent runtime. Mode:
+               gate       — stdio governance-gate sidecar; the native runtime
+                            hook (lodestar-langgraph for LangGraph, then CrewAI /
+                            AutoGen) spawns it and remotes each native tool call
+                            through the Action Kernel over NDJSON-RPC (ADR-0024).
   approve    Resolve an action the MCP proxy is holding for approval. Lists
              pending requests (list) and writes a grant/deny to the proxy's
              side-channel. The reference resolver that keeps the solo workflow
@@ -76,6 +82,7 @@ Examples:
   lodestar otel export session-1779551238212 --endpoint http://localhost:4318
   lodestar ship session-1779551238212 --endpoint https://collector.example.com
   lodestar guard mcp-proxy --config ./lodestar-mcp-proxy.config.json
+  lodestar runtime gate --config ./lodestar-runtime-gate.config.json
   lodestar approve list --project my-project
   lodestar approve grant 7f3c… --approver me --project my-project
   lodestar action list

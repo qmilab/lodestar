@@ -30,6 +30,7 @@ import { packCommand } from "./commands/pack.js"
 import { probeCommand } from "./commands/probe.js"
 import { reflectCommand } from "./commands/reflect.js"
 import { reportCommand } from "./commands/report.js"
+import { runtimeGateCommand } from "./commands/runtime.js"
 import { shipCommand } from "./commands/ship.js"
 import { traceInspectCommand } from "./commands/trace.js"
 import { viewCommand } from "./commands/view.js"
@@ -83,6 +84,11 @@ async function dispatch(): Promise<number> {
         "usage: lodestar guard wrap --target <module>\n" +
           "       lodestar guard mcp-proxy --config <path>\n",
       )
+      return 2
+
+    case "runtime":
+      if (sub === "gate") return runtimeGateCommand(rest)
+      process.stderr.write("usage: lodestar runtime gate --config <path>\n")
       return 2
 
     case "action":

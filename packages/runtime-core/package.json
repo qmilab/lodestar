@@ -1,25 +1,31 @@
 {
-  "name": "@qmilab/lodestar-cli",
+  "name": "@qmilab/lodestar-runtime-core",
   "version": "0.3.0",
-  "description": "The `lodestar` command-line interface — `lodestar report`, `lodestar guard wrap`, `lodestar action`, `lodestar trace`, `lodestar probe`. Part of Lodestar, the trust layer for AI agents.",
+  "description": "The language-agnostic governance-gate sidecar — govern a non-MCP agent runtime (LangGraph, CrewAI, AutoGen) by remoting each native tool call through the Action Kernel over a thin NDJSON-RPC seam. The reusable spine of Lodestar's runtime-adapter epic.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
   "homepage": "https://qmilab.com/lodestar",
   "repository": {
     "type": "git",
     "url": "https://github.com/qmilab/lodestar.git",
-    "directory": "packages/cli"
+    "directory": "packages/runtime-core"
   },
   "bugs": {
     "url": "https://github.com/qmilab/lodestar/issues"
   },
-  "keywords": ["ai-agents", "trust", "lodestar", "cli", "audit", "agent-governance"],
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "governance",
+    "runtime-adapter",
+    "langgraph",
+    "rpc",
+    "epistemic-chain"
+  ],
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": {
-    "lodestar": "./dist/index.js"
-  },
   "exports": {
     ".": {
       "bun": "./src/index.ts",
@@ -41,18 +47,10 @@
     "@qmilab/lodestar-core": "workspace:*",
     "@qmilab/lodestar-event-log": "workspace:*",
     "@qmilab/lodestar-action-kernel": "workspace:*",
+    "@qmilab/lodestar-policy-kernel": "workspace:*",
     "@qmilab/lodestar-memory-firewall": "workspace:*",
-    "@qmilab/lodestar-guard": "workspace:*",
-    "@qmilab/lodestar-guard-mcp": "workspace:*",
-    "@qmilab/lodestar-runtime-core": "workspace:*",
-    "@qmilab/lodestar-harness": "workspace:*",
-    "@qmilab/lodestar-trace": "workspace:*",
-    "@qmilab/lodestar-viewer": "workspace:*",
-    "@qmilab/lodestar-otel-exporter": "workspace:*",
-    "@qmilab/lodestar-ship": "workspace:*",
     "@qmilab/lodestar-cognitive-core": "workspace:*",
-    "@qmilab/lodestar-adapter-filesystem": "workspace:*",
-    "@qmilab/lodestar-adapter-git": "workspace:*",
+    "@qmilab/lodestar-guard": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

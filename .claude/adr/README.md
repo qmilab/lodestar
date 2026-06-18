@@ -270,3 +270,25 @@ The options we rejected, each with a one-line reason.
   over stdio NDJSON-RPC; held-L4-runs-nothing, resume, exactly-once duplicate
   resolve, and parallel-call correlation all pass — no kernel/schema change).
   **Status: Accepted.**
+- [ADR-0025](0025-runtime-core-gate-and-side-channel-graduation.md) — runtime-core
+  gate server **implementation decisions** + side-channel graduation (realises
+  ADR-0024). (1) The signed `.approvals/` side-channel **graduates** from
+  `guard-mcp` to `@qmilab/lodestar-guard` (a second consumer appeared — the runtime
+  gate — and a security-critical signed-format reader must have one implementation;
+  guard-mcp re-exports unchanged, so the proxy / `lodestar approve` / approval
+  probes are untouched, and `runtime-core` reaches the format through `guard`
+  without pulling the MCP SDK). (2) The gate **namespaces** runtime tool names
+  `runtime.<sanitised>` (the action-kernel registry needs `namespace.action`; a
+  native tool has none — the analogue of the proxy's `mcp.<server>.<tool>`). (3)
+  The **operator owns every tool contract** (`tool_defaults`); the untrusted hook
+  only declares a name → unregistered is fail-closed. (4) `govern` returns the hold
+  immediately, `resume` resolves it (single-check or block-poll); `approval_timeout_ms`
+  is the **hold deadline window** (`0` = terminal soft denial, no out-of-band
+  resolution / no forgery surface; `> 0` = park + enable signed out-of-band
+  resolution, requiring a pinned key/`allow_unsigned`); exactly-once keyed on the
+  durable terminal event; deadline reconstructed from the log (a restart can't reset
+  it). The v0 Python hook drives the sanctioned **block-poll** headless path; the
+  interrupt integration is exposed via the `govern`/`resume` primitives. (5) The
+  gate is **transport-agnostic** (`RpcChannel`): `stdioChannel` for the CLI,
+  `createLoopbackPair` so the always-on probe drives the real gate in-process.
+  **Status: Accepted.**
