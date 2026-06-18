@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { homedir, tmpdir, userInfo } from "node:os"
+import { isAbsolute, join } from "node:path"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import { loadProbePack } from "./pack/loader.js"
 import { formatProbeReport } from "./probe.js"
 import { eventLogRecorder } from "./recorder.js"
 import { type ProbeRunOutcome, runPack } from "./runner.js"
+import { detectSandboxMechanism, macosAllowHostError, resolveBunPath } from "./sandbox/index.js"
+import { buildBwrapSandbox } from "./sandbox/linux.js"
+import { buildSandboxExecSandbox } from "./sandbox/macos.js"
 
 /**
  * Build a throwaway local pack on disk with the given probe sources.
@@ -216,6 +219,164 @@ describe("scoped probe environment (#114, ADR-0022)", () => {
     } finally {
       process.chdir(savedCwd)
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("OS sandbox (#121, ADR-0023)", () => {
+  test("`env` override and `sandbox` are mutually exclusive", async () => {
+    const dir = await makeFixturePack("fixture-sbx-excl", [["ok.ts", "process.exit(0)\n"]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      await expect(
+        runPack(pack, { env: { PATH: process.env.PATH ?? "" }, sandbox: {} }),
+      ).rejects.toThrow(/mutually exclusive/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  test("resolveBunPath honours the requested executable (absolute kept, else PATH)", () => {
+    // The Codex fix: a sandboxed run must execute the SAME bun the unsandboxed
+    // spawn would, not blindly process.execPath (which is `node` under Node, or
+    // the wrong binary when the caller picks `bun-canary`).
+    expect(resolveBunPath("/opt/custom/bun")).toBe("/opt/custom/bun")
+    expect(isAbsolute(resolveBunPath("bun"))).toBe(true) // bare name → resolved on PATH
+    // A relative path resolves against the cwd (like spawn), not PATH — never left relative.
+    expect(isAbsolute(resolveBunPath("./bin/bun"))).toBe(true)
+    // A bare name NOT on PATH is returned unresolved (so the spawn fails ENOENT
+    // like unsandboxed) — never silently substituted with process.execPath.
+    const missing = "lodestar-definitely-not-a-real-bun-xyz"
+    expect(resolveBunPath(missing)).toBe(missing)
+  })
+
+  test("bwrap isolates the network unless a host is allow-listed (then shares it)", () => {
+    // Arg construction only — does not run bwrap, so it is platform-agnostic.
+    const policy = { readRoots: ["/tmp/pack"], writeRoot: "/tmp/scratch" }
+    const isolated = buildBwrapSandbox({ ...policy, allowHosts: [] }).wrap("bun", ["run", "x.ts"])
+    const shared = buildBwrapSandbox({ ...policy, allowHosts: ["example.com:443"] }).wrap("bun", [
+      "run",
+      "x.ts",
+    ])
+    expect(isolated.args).toContain("--unshare-net") // loopback-only isolation
+    expect(shared.args).not.toContain("--unshare-net") // host net shared for the allow-host
+    // Read confinement: bind specific runtime dirs, never the broad /usr or /opt
+    // prefixes (which hold app checkouts / secrets on many hosts — Codex P1).
+    expect(isolated.args).toContain("/usr/lib")
+    expect(isolated.args).not.toContain("/usr")
+    expect(isolated.args).not.toContain("/opt")
+  })
+
+  // macOS-only: SBPL matches canonical paths, and /var is a symlink to /private/var,
+  // so every home-deny entry must be canonicalized or it silently fails to match.
+  const macosCanonTest = process.platform === "darwin" ? test : test.skip
+  macosCanonTest("macOS home-deny paths are canonicalized (/var/root → /private/var/root)", () => {
+    const { args } = buildSandboxExecSandbox({
+      readRoots: ["/tmp/x"],
+      writeRoot: "/tmp/y",
+      allowHosts: [],
+    }).wrap("bun", [])
+    const profile = args[1] ?? ""
+    expect(profile).toContain('(subpath "/private/var/root")') // canonicalized
+    expect(profile).not.toContain('(subpath "/var/root")') // never the un-canonical form
+  })
+
+  test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {
+    // The Codex P1 fix: a portless host can't be filtered, so it must be
+    // reported (caller fails closed), never silently widened to all-egress.
+    expect(macosAllowHostError(["10.0.0.5:5432", "192.168.1.9:443"])).toBeNull()
+    expect(macosAllowHostError(["db.example:5432"])).toBeNull() // port-scoped to *:5432
+    expect(macosAllowHostError(["10.0.0.5"])).toContain("--allow-host")
+    expect(macosAllowHostError(["db.example.com"])).toContain("--allow-host")
+  })
+
+  const mechanism = detectSandboxMechanism()
+  // The behavioural tests need a real mechanism (sandbox-exec on macOS,
+  // bubblewrap on Linux CI); skip loudly elsewhere rather than fail.
+  const sandboxTest = mechanism ? test : test.skip
+  // The fail-closed test is the mirror: it runs ONLY where no mechanism exists.
+  const noMechTest = mechanism ? test.skip : test
+
+  noMechTest("fails closed when no sandbox mechanism is available", async () => {
+    const dir = await makeFixturePack("fixture-sbx-failclosed", [["ok.ts", "process.exit(0)\n"]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      await expect(runPack(pack, { sandbox: {} })).rejects.toThrow(/no mechanism is available/)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  sandboxTest("runs a probe under a confined env (HOME/TMPDIR in a scratch)", async () => {
+    const report = [
+      'console.log("HOME=" + process.env.HOME)',
+      'console.log("TMPDIR=" + process.env.TMPDIR)',
+      "process.exit(0)",
+    ].join("\n")
+    const dir = await makeFixturePack("fixture-sbx-env", [["home.ts", report]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { sandbox: {} })).outcomes[0]
+      expect(out?.passed).toBe(true)
+      // HOME + TMPDIR live in the per-run scratch, not the operator's real home.
+      expect(out?.stdout).toContain("lodestar-probe-run-")
+      expect(out?.stdout).not.toContain(`HOME=${homedir()}`)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  // The Codex round-2 P1: `os.homedir()` follows `$HOME`, so denying only that
+  // would leave the REAL home readable when the caller runs with a scoped/overridden
+  // HOME. macOS denies `/Users` independently of `$HOME`; pin that here.
+  const macosTest = mechanism === "sandbox-exec" ? test : test.skip
+  macosTest("denies the REAL macOS home even when $HOME is overridden", async () => {
+    const realHome = join("/Users", userInfo().username)
+    const secretDir = await mkdtemp(join(realHome, ".lodestar-sbx-real-"))
+    const secretFile = join(secretDir, "s.txt")
+    await writeFile(secretFile, "must-not-be-readable")
+    const probe = [
+      'import { readFileSync } from "node:fs"',
+      `try { readFileSync(${JSON.stringify(secretFile)}, "utf8"); console.log("READ=LEAKED") }`,
+      'catch { console.log("READ=DENIED") }',
+      "process.exit(0)",
+    ].join("\n")
+    const dir = await makeFixturePack("fixture-sbx-realhome", [["read.ts", probe]])
+    const savedHome = process.env.HOME
+    try {
+      // Point HOME at a throwaway dir — the OLD deny-homedir() would target THIS,
+      // leaving the real home open. The /Users deny must close it regardless.
+      process.env.HOME = await mkdtemp(join(tmpdir(), "fake-home-"))
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { sandbox: {} })).outcomes[0]
+      expect(out?.stdout).toContain("READ=DENIED")
+      expect(out?.stdout).not.toContain("READ=LEAKED")
+    } finally {
+      if (savedHome !== undefined) process.env.HOME = savedHome
+      await rm(dir, { recursive: true, force: true })
+      await rm(secretDir, { recursive: true, force: true })
+    }
+  })
+
+  sandboxTest("denies reading a secret under the operator's home directory", async () => {
+    const secretDir = await mkdtemp(join(homedir(), ".lodestar-sbx-test-"))
+    const secretFile = join(secretDir, "secret.txt")
+    await writeFile(secretFile, "must-not-be-readable-by-a-probe")
+    const probe = [
+      'import { readFileSync } from "node:fs"',
+      `try { readFileSync(${JSON.stringify(secretFile)}, "utf8"); console.log("READ=LEAKED") }`,
+      'catch (e) { console.log("READ=DENIED:" + (e instanceof Error ? (e as any).code : e)) }',
+      "process.exit(0)",
+    ].join("\n")
+    const dir = await makeFixturePack("fixture-sbx-read", [["read.ts", probe]])
+    try {
+      const pack = await loadProbePack(dir, { allowUnsigned: true })
+      const out = (await runPack(pack, { sandbox: {} })).outcomes[0]
+      expect(out?.stdout).toContain("READ=DENIED")
+      expect(out?.stdout).not.toContain("READ=LEAKED")
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+      await rm(secretDir, { recursive: true, force: true })
     }
   })
 })

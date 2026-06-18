@@ -1,18 +1,21 @@
 import { randomUUID } from "node:crypto"
-import { existsSync, readFileSync } from "node:fs"
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs"
 import { writeFile } from "node:fs/promises"
-import { dirname, resolve, sep } from "node:path"
+import { basename, dirname, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   type PackRunResult,
   ProbePackError,
+  type ProbeSandboxOptions,
   buildCalibrationComputedPayload,
   calibrate,
   calibrationCursor,
+  detectSandboxMechanism,
   eventLogCalibrationSink,
   eventLogRecorder,
   formatCalibrationReport,
   loadProbePack,
+  macosAllowHostError,
   runPack,
 } from "@qmilab/lodestar-harness"
 import { defaultLogRoot, loadSessionEvents } from "@qmilab/lodestar-trace"
@@ -71,9 +74,18 @@ const FIRST_PARTY_PACK_NAMES = new Set(["lodestar-core", "coding-agent-safety"])
  * Everything else must carry a valid signature (pin with `--author-key`) or be
  * loaded with an explicit `--allow-unsigned`.
  */
-function resolvePackTarget(packArg: string): { target: string; firstParty: boolean } {
+function resolvePackTarget(packArg: string): {
+  target: string
+  firstParty: boolean
+  bundled: boolean
+} {
   const looksLikePath = packArg.includes("/") || packArg.includes("\\") || packArg.startsWith(".")
-  if (looksLikePath) return { target: resolve(process.cwd(), packArg), firstParty: false }
+  if (looksLikePath) {
+    const target = resolve(process.cwd(), packArg)
+    // firstParty (trust) stays false for a path; bundled (sandbox default) is true
+    // only if the path resolves to the repo's genuine bundled pack (real-path match).
+    return { target, firstParty: false, bundled: isBundledPack(target) }
+  }
 
   // Bare name → walk up from the CLI SOURCE (not the cwd) looking for a bundled
   // pack, so the lookup is anchored to this repo and works from any cwd.
@@ -82,7 +94,7 @@ function resolvePackTarget(packArg: string): { target: string; firstParty: boole
     const candidate = resolve(dir, "packs", packArg)
     if (existsSync(candidate)) {
       const firstParty = !CLI_RUNS_FROM_NODE_MODULES && FIRST_PARTY_PACK_NAMES.has(packArg)
-      return { target: candidate, firstParty }
+      return { target: candidate, firstParty, bundled: isBundledPack(candidate) }
     }
     const parent = dirname(dir)
     if (parent === dir) break
@@ -91,13 +103,64 @@ function resolvePackTarget(packArg: string): { target: string; firstParty: boole
   // cwd fallback: a bare name that is NOT bundled with the CLI. Resolve it so a
   // clear "not found" / signature error follows, but never treat it as
   // first-party — an unsigned pack here still needs an explicit opt-out.
-  return { target: resolve(process.cwd(), "packs", packArg), firstParty: false }
+  const fallback = resolve(process.cwd(), "packs", packArg)
+  return { target: fallback, firstParty: false, bundled: isBundledPack(fallback) }
+}
+
+/** The repo's bundled `packs/<name>` directory found by walking up from the CLI
+ * source, or `null`. Mirrors the bare-name resolution in {@link resolvePackTarget}. */
+function findBundledPackDir(name: string): string | null {
+  let dir = dirname(CLI_SOURCE_PATH)
+  while (true) {
+    const candidate = resolve(dir, "packs", name)
+    if (existsSync(candidate)) return candidate
+    const parent = dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+}
+
+/**
+ * Is `target` the repo's **genuine** bundled first-party pack (`lodestar-core` /
+ * `coding-agent-safety`)? Used for the **OS-sandbox default** (off for bundled
+ * packs — they self-test the runner and several of their probes drive `runPack`),
+ * which is a separate concern from the `firstParty` *trust* flag (path-strict for
+ * security). Matches by **real path** against the bundled location, so a
+ * look-alike `./packs/lodestar-core` a user created elsewhere is NOT treated as
+ * bundled — only the repo's own pack, addressed by bare name or by its real path.
+ */
+function isBundledPack(target: string): boolean {
+  // Same guard as `firstParty` (Codex review P1): installed under a consuming
+  // project's `node_modules`, the walk-up reaches the PROJECT's directories and
+  // could match its own `packs/lodestar-core`, defaulting the sandbox OFF for an
+  // external pack and bypassing containment. Installed → there is no trustworthy
+  // bundled anchor, so nothing is "bundled" and every pack sandboxes by default.
+  if (CLI_RUNS_FROM_NODE_MODULES) return false
+  // `--pack` accepts a pack directory OR a manifest file; normalise a manifest
+  // path (e.g. `…/lodestar-core/lodestar.probe-pack.json`) to its pack directory
+  // so addressing the same bundled pack either way is treated identically.
+  let dir = target
+  try {
+    if (statSync(target).isFile()) dir = dirname(target)
+  } catch {
+    /* missing target: fall through; realpathSync below returns false */
+  }
+  const name = basename(dir)
+  if (!FIRST_PARTY_PACK_NAMES.has(name)) return false
+  const bundled = findBundledPackDir(name)
+  if (bundled === null) return false
+  try {
+    return realpathSync(dir) === realpathSync(bundled)
+  } catch {
+    return false
+  }
 }
 
 const USAGE =
   "usage: lodestar harness run      [--pack <name|path>] [--log-root <path>] [--no-record]\n" +
   "                                  [--allow-unsigned] [--author-key <id>=<pubkey-file>]\n" +
-  "                                  [--allow-env <NAME>]\n" +
+  "                                  [--allow-env <NAME>] [--no-sandbox | --sandbox]\n" +
+  "                                  [--allow-read <path>] [--allow-host <host[:port]>]\n" +
   "       lodestar harness list     [--pack <name|path>] [--allow-unsigned]\n" +
   "                                  [--author-key <id>=<pubkey-file>]\n" +
   "       lodestar harness calibrate <session-id> [--project <id>] [--log-root <path>]\n" +
@@ -144,6 +207,16 @@ interface ParsedFlags {
    * allowlist, never the (untrusted) manifest's to widen (#114, ADR-0022).
    */
   allowEnv: string[]
+  /**
+   * OS-sandbox toggle (#121, ADR-0023). `undefined` = the default (on for an
+   * external pack, off for a bundled first-party pack); `true` = `--sandbox`
+   * (force on); `false` = `--no-sandbox` (force off, the audited opt-out).
+   */
+  sandbox: boolean | undefined
+  /** Absolute paths a sandboxed probe may READ beyond the pack dir (`--allow-read`). */
+  allowRead: string[]
+  /** Non-loopback hosts a sandboxed probe may reach (`--allow-host`). */
+  allowHost: string[]
 }
 
 function parseFlags(argv: string[]): ParsedFlags {
@@ -157,6 +230,9 @@ function parseFlags(argv: string[]): ParsedFlags {
     allowUnsigned: false,
     authorKeys: [],
     allowEnv: [],
+    sandbox: undefined,
+    allowRead: [],
+    allowHost: [],
   }
   const takeValue = (i: number, flag: string): string => takeFlagValue(argv, i, flag)
   for (let i = 0; i < argv.length; i++) {
@@ -193,6 +269,25 @@ function parseFlags(argv: string[]): ParsedFlags {
         // The default is a scoped env (no host process.env passthrough); this is
         // how the operator forwards e.g. LODESTAR_TEST_DATABASE_URL explicitly.
         flags.allowEnv.push(takeValue(i, arg))
+        i++
+        break
+      case "--no-sandbox":
+        // Audited opt-out: run probes without the OS sandbox (env-scoping only).
+        flags.sandbox = false
+        break
+      case "--sandbox":
+        // Force the OS sandbox on, even for a bundled first-party pack.
+        flags.sandbox = true
+        break
+      case "--allow-read":
+        // Widen the sandbox read-root by one absolute path. Repeatable. The
+        // operator's grant, never the (untrusted) manifest's (#121, ADR-0023).
+        flags.allowRead.push(resolve(process.cwd(), takeValue(i, arg)))
+        i++
+        break
+      case "--allow-host":
+        // Permit a sandboxed probe to reach one non-loopback host. Repeatable.
+        flags.allowHost.push(takeValue(i, arg))
         i++
         break
       case "--author-key": {
@@ -233,7 +328,7 @@ async function harnessRun(argv: string[]): Promise<number> {
     }
     throw err
   }
-  const { target, firstParty } = resolvePackTarget(flags.pack)
+  const { target, firstParty, bundled } = resolvePackTarget(flags.pack)
 
   let pack: Awaited<ReturnType<typeof loadProbePack>>
   try {
@@ -264,9 +359,66 @@ async function harnessRun(argv: string[]): Promise<number> {
       })
     : undefined
 
+  // OS sandbox (#121, ADR-0023). Default: ON for an external pack, OFF for a
+  // bundled first-party pack — the trusted reference set, several of whose
+  // probes drive `runPack` themselves and would otherwise nest sandboxes. Keyed
+  // on `bundled` (the genuine bundled pack, addressed by bare name OR by its real
+  // path), NOT the path-strict `firstParty` trust flag — so `--pack
+  // ./packs/lodestar-core` is also off-by-default. `--sandbox` / `--no-sandbox`
+  // force it either way. Fail closed: a requested sandbox with no available
+  // mechanism refuses rather than running uncontained.
+  const sandboxEnabled = flags.sandbox ?? !bundled
+  let sandbox: ProbeSandboxOptions | undefined
+  if (sandboxEnabled) {
+    const mechanism = detectSandboxMechanism()
+    if (mechanism === null) {
+      process.stderr.write(
+        "no OS sandbox mechanism available on this host (need sandbox-exec on macOS or\n" +
+          "bubblewrap on Linux). Install bubblewrap, or re-run with --no-sandbox to fall back to\n" +
+          "env-scoping only (host-env secrets stay denied, but a probe's filesystem and network\n" +
+          "reach are NOT contained).\n",
+      )
+      return 2
+    }
+    // Fail closed on an --allow-host the macOS sandbox cannot express (a hostname
+    // or IPv6): silently widening it to all-egress is the hole Codex flagged.
+    if (mechanism === "sandbox-exec") {
+      const hostError = macosAllowHostError(flags.allowHost)
+      if (hostError !== null) {
+        process.stderr.write(`${hostError}\n`)
+        return 2
+      }
+    }
+    sandbox = { allowRead: flags.allowRead, allowHost: flags.allowHost }
+    // Report the network grant HONESTLY: --allow-host is NOT host-scoped. On
+    // Linux it shares the FULL host network; on macOS it opens the named PORTS to
+    // any host (SBPL cannot filter by host). Saying "N allowed host(s)" would let
+    // an operator think they granted far less than they did.
+    let netNote = "loopback only"
+    if (flags.allowHost.length > 0) {
+      netNote =
+        mechanism === "bwrap"
+          ? "loopback + FULL host network (Linux --allow-host shares the host net)"
+          : `loopback + ANY host on port(s) ${flags.allowHost
+              .map((h) => h.slice(h.lastIndexOf(":") + 1))
+              .join(", ")} (macOS scopes egress by port, not host)`
+    }
+    process.stdout.write(
+      `OS sandbox: ${mechanism} (reads → pack dir${
+        flags.allowRead.length > 0 ? ` + ${flags.allowRead.length} path(s)` : ""
+      }; writes → scratch; network → ${netNote})\n\n`,
+    )
+  } else {
+    const why = bundled && flags.sandbox === undefined ? " (bundled first-party pack)" : ""
+    process.stdout.write(
+      `OS sandbox: off${why} — host env denied, but filesystem/network NOT contained\n\n`,
+    )
+  }
+
   const result = await runPack(pack, {
     record,
     allowHostEnv: flags.allowEnv,
+    sandbox,
     onResult: (o) => {
       const mark = o.passed ? "✓" : "✗"
       process.stdout.write(`  ${mark} ${o.name.padEnd(46)} ${o.duration_ms}ms\n`)

@@ -94,9 +94,9 @@ lodestar harness run                       # the first-party lodestar-core pack
 lodestar harness run --pack ./packs/mine   # a local pack directory
 lodestar harness run --no-record           # skip event-log recording (CI)
 lodestar harness run --allow-env LODESTAR_TEST_DATABASE_URL  # forward one host var to probes
-lodestar harness run --pack ./packs/mine --allow-unsigned   # load an unsigned local pack
-lodestar harness run --pack ./packs/acme \
-  --author-key acme-packs=./keys/acme.pub  # load a signed pack, author key pinned
+lodestar harness run --pack ./packs/mine --allow-unsigned   # load an unsigned local pack (sandboxed)
+lodestar harness run --pack ./packs/mine --no-sandbox       # opt out of the OS sandbox (audited)
+lodestar harness run --pack ./packs/mine --allow-read ./fixtures --allow-host 10.0.0.5:5432
 lodestar harness list
 ```
 
@@ -108,9 +108,21 @@ potentially-third-party probe cannot read host secrets it was not granted.
 `--allow-env <NAME>` (repeatable) forwards a single host var into the probes;
 it is the explicit operator allowlist (the pack manifest cannot widen the env).
 The first-party DB-gated probes need `--allow-env LODESTAR_TEST_DATABASE_URL`,
-which the repo's `probes:all` / `probes:safety` scripts already pass. This is a
-TS/process-level boundary, not an OS sandbox — it denies host-env secrets, not
-filesystem/network reach.
+which the repo's `probes:all` / `probes:safety` scripts already pass.
+
+Each probe is **also** spawned inside an **OS sandbox** (#121, ADR-0023) —
+`sandbox-exec` on macOS, `bubblewrap` on Linux — confining its filesystem
+(writes to a per-run scratch; reads to the pack dir + `--allow-read <path>`) and
+outbound network (loopback + `--allow-host <host[:port]>`). It is **on by default
+for external packs** and **off for the two bundled first-party packs** (which
+self-test the runner); `--sandbox` / `--no-sandbox` force it either way, and it
+**fails closed** if no mechanism is available (`--no-sandbox` is the audited
+opt-out). Both `--allow-read` / `--allow-host` are operator-only — the manifest
+cannot widen them. Egress is coarse: **macOS scopes `--allow-host` by port**
+(SBPL can't filter by host, so it must carry a port — `10.0.0.5:5432` means *any
+host on 5432* — and the probe must connect by IP, since DNS is denied); **Linux**
+shares the host network once any host is allow-listed. An OS-primitive boundary,
+not kernel-grade containment.
 
 A pack manifest is verified on load (ADR-0017). A **bundled first-party** pack
 (`lodestar-core` / `coding-agent-safety`), when the CLI runs from its own source

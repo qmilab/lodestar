@@ -110,9 +110,26 @@ Batch 4; see `docs/roadmap.md` (Batch 4).
   `bun run --no-env-file` so Bun cannot auto-load a working-directory `.env` back
   into the probe's `process.env` (which would re-introduce host secrets past the
   scoped env). `runPack` resolves the scoped env once per run (one temp HOME for all
-  probes) and cleans it up. This is a TS/process-level boundary, not an OS sandbox —
-  it denies host-env secrets, not filesystem/network reach (the OS sandbox is the
-  separate step 2). See invariant 6.
+  probes) and cleans it up.
+  **OS sandbox (#121, ADR-0023, step 2):** scoped env denies host *secrets*; it does
+  not contain a probe's *filesystem/network reach*. When `RunPackOptions.sandbox` is
+  set, each probe is additionally spawned inside an OS sandbox (`src/sandbox/`:
+  `sandbox-exec` on macOS, `bubblewrap` on Linux) confining reads to the pack dir +
+  operator `allowRead`, writes to a per-run scratch (HOME + TMPDIR live there), and
+  outbound network to loopback + operator `allowHost`. It is opt-in here (default: no
+  sandbox, unchanged); the CLI enables it by default for non-bundled packs and fails
+  closed if no mechanism is available. An `env` override and a `sandbox` are mutually
+  exclusive (the sandbox owns HOME/TMPDIR). Still an OS-primitive boundary, not
+  kernel-grade containment. See invariant 6.
+- `src/sandbox/` — the OS-sandbox seam (#121, ADR-0023). `index.ts` is the API +
+  dispatch (`detectSandboxMechanism`, `createSandbox(policy)`, the `Sandbox`/`SandboxPolicy`
+  types); `macos.ts` builds an SBPL profile for `sandbox-exec -p` (`(allow default)`
+  then clamp writes→scratch, network→loopback+hosts, reads→deny the user's home,
+  re-allow declared roots — a JIT runtime can't host a strict `(deny default)`);
+  `linux.ts` builds the `bwrap` argv (ro-bind system + declared roots, bind the scratch,
+  `--unshare-net` for loopback-only unless a host is allow-listed). The runner
+  canonicalises (`realpathSync`) every path a profile references — SBPL/bind matching is
+  on the real path and `tmpdir()`/`$HOME` are symlinks on macOS.
 - `src/recorder.ts` — `eventLogRecorder()`. Builds the injected
   `ProbeRunRecorder` that writes each run as a synthetic
   `observation.recorded` event. This is where the event-log dependency
@@ -208,7 +225,13 @@ Coming in later Batch 4+ steps (do not pre-build):
    (`allowHostEnv` / `--allow-env`) is the **operator's**, never the
    (untrusted) manifest's — do not add a manifest-declared env field, and do
    not restore host-env passthrough. This closes the host-env exfiltration
-   hole; it is not an OS sandbox (no filesystem/network containment — step 2).
+   hole. **Filesystem/network containment is step 2 (#121, ADR-0023): the OS
+   sandbox in `src/sandbox/`, wired through `RunPackOptions.sandbox`** — an
+   OS-primitive boundary (`sandbox-exec`/`bubblewrap`), not kernel-grade. Its
+   widenings (`allowRead`/`allowHost`, the CLI's `--allow-read`/`--allow-host`)
+   are also the **operator's**, never the manifest's — the same rule as the env
+   allowlist. Do not let the manifest widen the sandbox, and do not remove the
+   fail-closed behaviour (a requested sandbox with no mechanism must throw).
 7. **A probe run is itself auditable.** When recording is enabled the
    runner writes one `trust: "synthetic"` observation per run. Synthetic
    is non-negotiable: a probe run must never be able to promote a real

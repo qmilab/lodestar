@@ -9,6 +9,7 @@ import {
   generateEd25519KeyPair,
   signProbePackManifest,
 } from "@qmilab/lodestar-core"
+import { detectSandboxMechanism } from "@qmilab/lodestar-harness"
 import { harnessCommand } from "./harness.js"
 
 /**
@@ -134,6 +135,9 @@ describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
     const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-allowenv-"))
     await makePack(dir)
     // The noop probe exits 0; we only assert the flag parses and the run succeeds.
+    // `--no-sandbox` decouples this env test from OS-sandbox availability (this
+    // external pack would otherwise default sandbox-on and fail closed where no
+    // functional mechanism exists, e.g. a host with unprivileged userns disabled).
     expect(
       await harnessCommand([
         "run",
@@ -141,6 +145,7 @@ describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
         dir,
         "--allow-unsigned",
         "--no-record",
+        "--no-sandbox",
         "--allow-env",
         "LODESTAR_TEST_DATABASE_URL",
         "--allow-env",
@@ -160,6 +165,110 @@ describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
         "--allow-unsigned",
         "--no-record",
         "--allow-env",
+      ]),
+    ).toBe(2)
+  })
+})
+
+describe("lodestar harness run --sandbox flags (#121, ADR-0023)", () => {
+  const HAS_SANDBOX = detectSandboxMechanism() !== null
+
+  test("--no-sandbox runs an external pack without a sandbox", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-nosbx-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--no-sandbox",
+      ]),
+    ).toBe(0)
+  })
+
+  test("--allow-read with no value is a usage error", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-allowread-bad-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--no-sandbox",
+        "--allow-read",
+      ]),
+    ).toBe(2)
+  })
+
+  // An external pack defaults to sandbox ON; these need a real mechanism.
+  const sbxTest = HAS_SANDBOX ? test : test.skip
+  sbxTest(
+    "sandboxes an external pack by default (accepts --allow-read + an IP --allow-host)",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-sbx-"))
+      await makePack(dir)
+      expect(
+        await harnessCommand([
+          "run",
+          "--pack",
+          dir,
+          "--allow-unsigned",
+          "--no-record",
+          "--allow-read",
+          dir,
+          "--allow-host",
+          "10.0.0.5:5432", // an IP literal — expressible on both platforms
+        ]),
+      ).toBe(0)
+    },
+  )
+
+  // Codex P2: a bundled pack addressed BY PATH must also default to NO sandbox
+  // (the default is keyed on the genuine-bundled signal, not the path-strict
+  // trust flag). If it regressed to sandbox-on, the first-party probes (which
+  // import repo packages) would fail — exit 1 with a mechanism, exit 2 without.
+  // So exit 0 proves the bundled-by-path default-off on every platform.
+  test("a bundled pack addressed by PATH (dir or manifest) defaults to NO sandbox", async () => {
+    const bundledDir = join(import.meta.dir, "..", "..", "..", "..", "packs", "coding-agent-safety")
+    // By directory:
+    expect(
+      await harnessCommand(["run", "--pack", bundledDir, "--no-record", "--allow-unsigned"]),
+    ).toBe(0)
+    // And by its manifest file — basename is lodestar.probe-pack.json, but it must
+    // still resolve to the bundled pack and default sandbox off (Codex round 5).
+    const manifestPath = join(bundledDir, "lodestar.probe-pack.json")
+    expect(
+      await harnessCommand(["run", "--pack", manifestPath, "--no-record", "--allow-unsigned"]),
+    ).toBe(0)
+  })
+
+  // The mirror: where no mechanism exists, the default-on path must fail closed.
+  const noSbxTest = HAS_SANDBOX ? test.skip : test
+  noSbxTest("fails closed for an external pack when no mechanism is available", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-failclosed-"))
+    await makePack(dir)
+    expect(await harnessCommand(["run", "--pack", dir, "--allow-unsigned", "--no-record"])).toBe(2)
+  })
+
+  // macOS SBPL cannot express a hostname --allow-host; it must be REJECTED rather
+  // than silently widened to all-egress (the Codex P1). Only meaningful on macOS.
+  const macosTest = HAS_SANDBOX && process.platform === "darwin" ? test : test.skip
+  macosTest("rejects a hostname --allow-host on macOS (no all-egress widening)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-badhost-"))
+    await makePack(dir)
+    expect(
+      await harnessCommand([
+        "run",
+        "--pack",
+        dir,
+        "--allow-unsigned",
+        "--no-record",
+        "--allow-host",
+        "evil.example.com", // a bare hostname — unexpressible, must fail closed
       ]),
     ).toBe(2)
   })

@@ -64,7 +64,7 @@ Everything below is in service of keeping packs on the trust-artifact side of th
 | **Pre-verification code execution** | Get code to run via `preinstall` / `postinstall` lifecycle scripts or git hooks during resolution, *before* anything is verified | Resolution is a **non-executing fetch**: tarball download + integrity check + extraction with scripts ignored (npm), `archive`/checkout at the pinned SHA with hooks disabled (git). No pack code runs until after the signature and digest verify (`resolution-runs-no-pack-code`). |
 | **MITM on fetch** | Tamper with bytes in transit | Transport integrity (npm integrity hash, git SHA) plus the signed content digest — the trust is in the signature/digest, never in the transport. A tampered stream fails the digest check. |
 | **Typosquatting** | Register `lodestar-prboes` and hope for a fat-fingered `pack add` | Not solved by signing alone — a squatted name carries its *own* valid author signature. Mitigated by the operator pinning author keys (a squat is a *different* key) and by reading the declared manifest before install; full namespace/name-reputation defence is a registry-curation concern (commercial). |
-| **Malicious probe at run time** | A pack whose probe, when *run*, reads host secrets out of `process.env` or escapes | **Partially held (runner-side, registry-orthogonal).** Step 1 has landed (ADR-0022): the runner spawns each probe with a **scoped env** (a fresh empty HOME + inherited PATH, no host `process.env`), so a probe cannot read host secrets out of the environment — the operator widens it only via an explicit `--allow-env` allowlist, never the untrusted manifest (`packages/harness/src/runner.ts`; probe `runner-denies-host-env-to-probe`). **Not yet held:** filesystem/network containment — a probe can still read files and open sockets the process can. That is step 2 (an OS sandbox), filed separately. Do not run a *fully* untrusted pack's probes until it lands. See ["what we don't defend against"](#what-we-dont-defend-against-yet). |
+| **Malicious probe at run time** | A pack whose probe, when *run*, reads host secrets out of `process.env`, reads the consumer's filesystem, or beacons out | **Held (runner-side, registry-orthogonal).** Step 1 (ADR-0022): the runner spawns each probe with a **scoped env** (fresh empty HOME + inherited PATH, no host `process.env`), so a probe cannot read host secrets out of the environment (`runner-denies-host-env-to-probe`). Step 2 (ADR-0023): each probe is spawned inside an **OS sandbox** (`sandbox-exec` on macOS, `bubblewrap` on Linux) confining its **filesystem** reads/writes and **outbound network** — reads denied to the consumer's home / wider tree (re-allowing only operator `--allow-read` roots), writes to a per-run scratch, network to loopback + operator `--allow-host` (`runner-sandboxes-probe-filesystem-and-network`). Both widenings are the operator's, never the untrusted manifest's. It is an OS-primitive boundary, not kernel-grade containment, with documented per-platform edges (see ["what we don't defend against"](#what-we-dont-defend-against-yet)). |
 
 ## Architectural responses
 
@@ -155,26 +155,33 @@ keys it pinned.
   list or key-rotation protocol; the blast radius is bounded to that author's packs,
   and recovery is the operator un-pinning the key by hand. Key rotation/revocation is
   an open question below.
-- **Probe execution containment — step 1 done, step 2 not built yet.** Be precise
-  about the current state. **Step 1 (scoped-env execution) has landed** (ADR-0022): the
-  harness runner now spawns each probe with an explicit scoped environment — a fresh
-  empty HOME + inherited PATH — and **never the host `process.env`**, so a probe cannot
-  read host secrets (API keys, cloud credentials, tokens) out of the environment. The
-  operator forwards a specific host var only via an explicit `--allow-env <NAME>`
-  allowlist (`RunPackOptions.allowHostEnv`); the **untrusted manifest cannot** widen it,
-  so a hostile pack cannot declare its way to a secret (`packages/harness/src/runner.ts`;
-  probe `runner-denies-host-env-to-probe`). This mirrors the Action Kernel's "no host env
-  to sandboxes" rule and the native adapters' `baseGitEnv`/`defaultScopedEnv`. The spawn
-  also passes `--no-env-file` so `bun run` cannot auto-load a working-directory `.env`
-  back into the probe's `process.env` (a back-door that would otherwise re-introduce host
-  secrets past the scoped env whenever the harness runs from a project holding a `.env`). **Step 2 (a
-  real OS sandbox) is not built.** Scoped env denies host-environment secrets; it does
-  **not** contain a probe's filesystem or network reach — a probe can still read files and
-  open sockets the runner process can. Closing that is step 2, and even *that* would be a
-  TS/process-level boundary, not namespace/cgroup/network containment, consistent with the
-  native adapters' "TS-level governance boundary, not an OS sandbox" honesty. **The
-  host-env exfiltration hole is closed; until step 2 lands, still do not run probes from a
-  pack you do not trust the author of as a routine execution surface.**
+- **Probe execution containment — steps 1 and 2 both landed; the limits are
+  per-platform, not absent.** **Step 1 (scoped-env execution, ADR-0022):** the harness
+  runner spawns each probe with an explicit scoped environment — a fresh empty HOME +
+  inherited PATH — and **never the host `process.env`**, so a probe cannot read host
+  secrets out of the environment. The operator forwards a specific host var only via an
+  explicit `--allow-env <NAME>` allowlist; the **untrusted manifest cannot** widen it
+  (`runner-denies-host-env-to-probe`). The spawn also passes `--no-env-file` so a
+  working-directory `.env` cannot smuggle host secrets back in. **Step 2 (OS sandbox,
+  ADR-0023):** each probe is additionally spawned inside an OS sandbox — `sandbox-exec`
+  on macOS, `bubblewrap` on Linux — confining its **filesystem** (writes to a per-run
+  scratch; reads denied to the consumer's home / wider tree, re-allowing only operator
+  `--allow-read` roots) and its **outbound network** (loopback + operator `--allow-host`
+  only). Both widenings are operator-side, never the manifest's
+  (`runner-sandboxes-probe-filesystem-and-network`). The CLI applies it by default for
+  external packs and **fails closed** (`--no-sandbox` is the audited opt-out). It is an
+  **OS-primitive boundary, not kernel-grade containment** — `sandbox-exec` is
+  Apple-deprecated; `bwrap` relies on unprivileged user namespaces; it is not a defence
+  against a kernel-level sandbox escape, namespace/cgroup resource limits, or a kernel
+  0-day. The two guarantees are **asymmetric by platform**: Linux gives a true
+  filesystem read-allowlist (bind mounts) but coarse all-or-nothing network under
+  `--unshare-net`; macOS, because it must host a JIT runtime, denies the operator's
+  *home directory* rather than allowlisting reads and scopes egress by **port** (SBPL
+  cannot filter by host, and it allows no Unix-socket egress). Neither platform does
+  per-host egress, and neither emits an unfiltered all-egress grant. **The
+  host-env, filesystem, and network exfiltration paths are now closed within those
+  documented limits; running a verified external pack's probes is a routine surface on
+  the supported platforms.**
 - **Registry availability and censorship.** A decentralized index is resilient to a
   single bad actor but offers no availability guarantee — an index host can simply go
   away, and there is no built-in mirroring/quorum in v0.
@@ -211,9 +218,16 @@ keys it pinned.
   format. Extending the same trust plumbing to policy-pack and adapter-pack kinds —
   a `kind` discriminant behind the spec version (ADR-0016 §5) — is where adapter
   packs, the riskiest category, will need this threat model revisited.
-- **Probe-runner containment (step 2).** Step 1 (scoped-env execution, deny host
-  `process.env`) has landed (ADR-0022); the open step is a real OS sandbox bounding a
-  probe's filesystem and network reach. Scoped env turned "verified third-party pack"
-  into "safe-to-run *without leaking host env secrets*"; the OS sandbox is what would
-  make external packs a *routine* execution surface. It will still be a TS/process-level
-  boundary, not namespace/cgroup/network containment — file it separately when picked up.
+- **Probe-runner containment — both steps landed; remaining edges.** Step 1
+  (scoped-env, ADR-0022) and step 2 (OS sandbox, ADR-0023) are both in. The open edges
+  are the documented per-platform ones, each a follow-up: finer per-host egress on
+  both platforms (Linux `bwrap --unshare-net` is all-or-nothing, so `--allow-host`
+  coarsens to full network there; macOS scopes egress by **port**, not host), bringing
+  `lo` **up** inside the Linux net namespace (so a sandboxed probe can use loopback
+  servers), a true read-**allowlist** on **macOS**
+  (today it denies the user's home rather than allowlisting reads, because it hosts a
+  JIT runtime), a per-probe (not per-run) write scratch, and sandboxing
+  `pack attest --kind probe_results` (it runs probes to mint a badge but is not yet
+  sandboxed). None of these reopen the host-env / home-secret / remote-egress paths
+  step 2 closes; they tighten or generalise it. A container backend (`--sandbox=
+  container`) remains the future opt-in the seam is built to accept.

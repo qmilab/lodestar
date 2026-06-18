@@ -167,7 +167,8 @@ fromNpm.source?.ref // { type: "npm", version, integrity, … }
 
 A swapped artifact under a re-pointed ref fails the content-digest check even if
 the old signature still verifies. Resolution delivers *authentic, inert bytes*;
-sandboxing what a probe does **when run** is a separate, runner-side concern.
+sandboxing what a probe does **when run** is the runner-side concern handled by the
+scoped env (#114) and the OS sandbox (#121, ADR-0023) — see "Running a pack" below.
 
 ## Publishing and adding a pack (the author + consumer flow)
 
@@ -321,8 +322,23 @@ const result = await runPack(pack, {
 await runPack(pack, { env: { PATH: process.env.PATH ?? "" } })
 ```
 
-This is a TS/process-level governance boundary, not an OS sandbox — it
-denies host-env secrets, not filesystem/network reach.
+**OS sandbox (#121, ADR-0023).** Scoped env denies host *secrets*; it does not
+contain a probe's *filesystem/network reach*. Pass `sandbox` to additionally spawn
+each probe inside an OS sandbox (`sandbox-exec` on macOS, `bubblewrap` on Linux)
+that confines reads to the pack dir + `allowRead`, writes to a per-run scratch, and
+outbound network to loopback + `allowHost`:
+
+```ts
+await runPack(pack, { sandbox: { allowRead: ["/abs/fixtures"], allowHost: ["10.0.0.5:5432"] } })
+```
+
+It is opt-in here and **fails closed** (a requested sandbox with no available
+mechanism throws); `sandbox` and a wholesale `env` override are mutually exclusive
+(the sandbox owns HOME/TMPDIR). An OS-primitive boundary, not kernel-grade
+containment; the guarantees are asymmetric by platform — Linux binds a filesystem
+read-allowlist but shares the host net once any host is allowed; macOS denies the
+user's home and scopes `allowHost` by **port** (it must carry a port; the probe
+connects by IP, as DNS is denied). See ADR-0023.
 
 When a `record` sink is supplied, every probe run is written as a
 `trust: "synthetic"` `observation.recorded` event (schema
@@ -333,6 +349,7 @@ From the CLI:
 
 ```
 lodestar harness run  [--pack <name|path>] [--log-root <path>] [--no-record] [--allow-env <NAME>]
+                      [--no-sandbox | --sandbox] [--allow-read <path>] [--allow-host <host[:port]>]
 lodestar harness list [--pack <name|path>]
 ```
 
@@ -342,7 +359,10 @@ and records runs by default; `list` inspects the manifest without
 executing anything. `--allow-env <NAME>` (repeatable) forwards a single
 host env var into the spawned probes — the explicit allowlist on top of the
 scoped env (e.g. `--allow-env LODESTAR_TEST_DATABASE_URL` for the DB-gated
-probes).
+probes). The OS sandbox is **on by default for external packs**, off for the
+two bundled first-party packs; `--no-sandbox` opts out (audited), `--sandbox`
+forces it on, and `--allow-read` / `--allow-host` (both repeatable) widen it —
+operator-only, never the manifest.
 
 ## Authoring a new probe
 

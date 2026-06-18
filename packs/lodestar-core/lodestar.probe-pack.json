@@ -68,7 +68,8 @@
     "pack_publish_add_roundtrip",
     "verification_badge_trust",
     "pack_index_signature_required",
-    "runner_scoped_env"
+    "runner_scoped_env",
+    "runner_os_sandbox"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -250,6 +251,10 @@
     {
       "name": "runner-denies-host-env-to-probe",
       "file": "probes/runner-denies-host-env-to-probe.ts"
+    },
+    {
+      "name": "runner-sandboxes-probe-filesystem-and-network",
+      "file": "probes/runner-sandboxes-probe-filesystem-and-network.ts"
     }
   ]
 }

@@ -43,6 +43,20 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # The probe-runner OS sandbox (#114/#121, ADR-0023) uses bubblewrap on
+      # Linux. Installing it here is what makes the sandbox unit tests and the
+      # `runner-sandboxes-probe-filesystem-and-network` probe exercise the real
+      # filesystem/network containment in CI; without it they skip loudly.
+      - name: Install bubblewrap (probe-runner OS sandbox)
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          # GitHub's Ubuntu 24.04 runners restrict unprivileged user namespaces
+          # via AppArmor, which bubblewrap requires; re-enable so the OS sandbox
+          # is actually FUNCTIONAL here (else detectSandboxMechanism reports none
+          # and the sandbox tests skip instead of validating). `|| true` tolerates
+          # older runners where the sysctl does not exist.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+
       # Lint is independent of the build (biome is standalone), so run it
       # first for the fastest feedback on style regressions.
       - name: Lint
@@ -69,6 +83,16 @@ jobs:
         run: bun run probes:ci
         env:
           LODESTAR_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/lodestar_test
+
+      # Validate the OS sandbox (#121, ADR-0023) under REAL bubblewrap natively
+      # (the runner is Linux with bwrap installed above): a sandboxed probe must
+      # not read host files outside its read-root allowlist — including trees
+      # under the broad runtime prefixes /opt and /usr/src that the narrowed binds
+      # must not expose. Locks the round-8 read-confinement boundary in CI.
+      - name: Validate OS sandbox (bubblewrap)
+        run: bash scripts/validate-linux-sandbox.sh
+        env:
+          LODESTAR_SANDBOX_NATIVE: "1"
 
   # License audit — fail the build if any dependency anywhere in the tree
   # (transitive and dev included) carries a non-permissive license. This is

@@ -122,6 +122,9 @@ that `pack attest --kind probe_results` threads the allowlist into its run.
   now an explicit, auditable act.
 - **Step 2 (OS sandbox) is deferred and will be filed separately**, per the threat-model
   doc. This ADR explicitly does not claim filesystem/network containment.
+  **Update:** step 2 has since landed — see #121 / **ADR-0023** (an OS sandbox confining
+  a probe's filesystem + network reach, `sandbox-exec` on macOS / `bubblewrap` on Linux).
+  The scoped env here remains the inner layer; the OS sandbox wraps it.
 
 ## Alternatives considered
 
