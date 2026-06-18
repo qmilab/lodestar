@@ -73,6 +73,9 @@ class Hook {
   private readyResolve?: () => void
   /** Every (tool, action_id) the gate remoted a body run for, in order. */
   readonly bodyRuns: { tool: string; action_id: string }[] = []
+  /** Every `error` message the gate sent — to assert a malformed-callback error
+   *  carries no request id (so it cannot collide with an in-flight request). */
+  readonly errors: OutboundLike[] = []
 
   constructor(
     private readonly channel: ReturnType<typeof createLoopbackPair>["hook"],
@@ -87,6 +90,11 @@ class Hook {
       if (msg.type === "ready") {
         this.readyResolve?.()
         return
+      }
+      if (msg.type === "error") {
+        // Record but fall through: a request-scoped error (with id) still resolves
+        // its pending request below; a callback diagnostic (no id) is just noted.
+        this.errors.push(msg)
       }
       if (msg.type === "run_tool") {
         const tool = String(msg.tool)
@@ -707,6 +715,13 @@ async function run(): Promise<ProbeResult> {
         "K: the action failed cleanly on a malformed callback",
         raced.r?.phase === "failed",
         String(raced.r?.phase),
+      )
+      // The callback error must NOT carry a request id — that id is a run_tool
+      // correlation id and would collide with an in-flight govern/resume request id.
+      check(
+        "K: malformed-callback error carries no request id (no cross-request collision)",
+        h.hook.errors.length > 0 && h.hook.errors.every((e) => e.id === undefined),
+        `errors=${JSON.stringify(h.hook.errors.map((e) => e.id))}`,
       )
       await h.gate.stop()
     }

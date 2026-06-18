@@ -69,6 +69,10 @@ class GateClient:
         self._futures: dict[int, "queue.Queue[dict]"] = {}
         self._bodies: dict[str, ToolBody] = {}
         self._ready = threading.Event()
+        # Set (with `_ready`) when the gate's stdout closes before the handshake —
+        # e.g. an invalid config/policy makes the CLI exit. Lets construction fail
+        # fast with a useful message instead of blocking the full ready timeout.
+        self._startup_error: Optional[str] = None
         self._closed = False
         self.session_id: Optional[str] = None
         self.project_id: Optional[str] = None
@@ -77,6 +81,9 @@ class GateClient:
         if not self._ready.wait(timeout=ready_timeout_s):
             self.close()
             raise GateError("gate did not signal ready in time")
+        if self._startup_error is not None:
+            self.close()
+            raise GateError(self._startup_error)
 
     # ── public API ──────────────────────────────────────────────────────────
 
@@ -170,7 +177,23 @@ class GateClient:
                         box = self._futures.pop(rid, None)
                     if box is not None:
                         box.put(msg)
-        # stdout closed: fail any waiters so callers don't hang.
+        # stdout closed. If it closed BEFORE the ready handshake, the gate exited
+        # at startup (bad config/policy, etc.) — record a fail-fast startup error
+        # and unblock construction's ready wait so it raises immediately with a
+        # useful message instead of blocking the full ready timeout.
+        if not self._ready.is_set():
+            code = self._proc.poll()
+            if code is None:
+                try:
+                    code = self._proc.wait(timeout=2)
+                except Exception:
+                    code = None
+            self._startup_error = (
+                f"gate exited before signalling ready (exit code {code}); "
+                "check the config/policy — see the gate's stderr above"
+            )
+            self._ready.set()
+        # Fail any waiters so callers don't hang.
         with self._state_lock:
             waiters = list(self._futures.values())
             self._futures.clear()

@@ -357,11 +357,11 @@ export class RuntimeGate {
     if (!parsed.success) {
       const shape = raw as { type?: unknown; id?: unknown }
       const id = typeof shape.id === "number" ? shape.id : undefined
-      // A malformed `tool_result` / `tool_error` (e.g. a hostile or buggy hook
-      // returning an invalid `documents` shape) must not strand its remoted
-      // execute waiting forever — reject the pending run so the action fails
-      // cleanly (the kernel's execute catch turns it into a terminal `failed`).
       if (id !== undefined && (shape.type === "tool_result" || shape.type === "tool_error")) {
+        // A malformed `tool_result` / `tool_error` (e.g. a hostile or buggy hook
+        // returning an invalid `documents` shape) must not strand its remoted
+        // execute waiting forever — reject the pending run so the action fails
+        // cleanly (the kernel's execute catch turns it into a terminal `failed`).
         const pending = this.pendingToolRuns.get(id)
         if (pending !== undefined) {
           this.pendingToolRuns.delete(id)
@@ -369,7 +369,20 @@ export class RuntimeGate {
             new Error(`malformed ${String(shape.type)} callback: ${parsed.error.message}`),
           )
         }
+        // This `id` is the gate-assigned `run_tool` correlation id, NOT a hook
+        // request id — the two id spaces overlap as plain integers. Echoing it as
+        // a request-scoped `error` would let the hook route it to an unrelated
+        // in-flight `govern`/`resume` whose request id happens to match. The
+        // action is already failed via `pending.reject`, so emit an id-less
+        // diagnostic instead (the hook ignores it).
+        this.send({
+          type: "error",
+          message: `invalid ${String(shape.type)} callback: ${parsed.error.message}`,
+        })
+        return
       }
+      // A malformed request (govern/resume/register): the id IS a hook request
+      // id, so echo it so the waiting request fails rather than hanging.
       this.send({ type: "error", id, message: `invalid message: ${parsed.error.message}` })
       return
     }

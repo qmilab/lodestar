@@ -25,6 +25,7 @@ import asyncio
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -32,7 +33,13 @@ CLI_INDEX = REPO_ROOT / "packages" / "cli" / "src" / "index.ts"
 
 sys.path.insert(0, str(REPO_ROOT / "runtimes" / "langgraph"))
 
-from lodestar_langgraph import GateClient, LodestarDenied, govern_tools, governed_call  # noqa: E402
+from lodestar_langgraph import (  # noqa: E402
+    GateClient,
+    GateError,
+    LodestarDenied,
+    govern_tools,
+    governed_call,
+)
 
 try:
     from langchain_core.messages import AIMessage
@@ -115,6 +122,21 @@ def main() -> int:
         }
         config_path = Path(tmp) / "runtime-gate.config.json"
         config_path.write_text(json.dumps(config))
+
+        # P3: a sidecar that exits before `ready` (here: an invalid config the CLI
+        # rejects) must fail construction FAST with a useful message, not block the
+        # full ready timeout.
+        bad_config = Path(tmp) / "bad.config.json"
+        bad_config.write_text("{}")  # missing required fields → the CLI exits 1
+        t0 = time.monotonic()
+        startup_err = None
+        try:
+            GateClient(str(bad_config), launcher=["bun", "run", str(CLI_INDEX)], ready_timeout_s=20)
+        except GateError as exc:
+            startup_err = str(exc)
+        elapsed = time.monotonic() - t0
+        check("P3: bad-config startup fails fast (not after the ready timeout)", startup_err is not None and elapsed < 10, f"{elapsed:.1f}s")
+        check("P3: the failure reports the gate exited before ready", startup_err is not None and "before signalling ready" in startup_err, str(startup_err))
 
         with GateClient(str(config_path), launcher=["bun", "run", str(CLI_INDEX)]) as gate:
             print("─" * 72)
