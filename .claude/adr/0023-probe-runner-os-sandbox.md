@@ -265,6 +265,11 @@ packs, and the fail-closed exit.
   2 not built" notes → built, with the documented limits), ADR-0022's "step 2 deferred"
   consequence, `packages/harness/CLAUDE.md` invariant 6, and the CI workflow (install
   bubblewrap). This ADR is Accepted.
+- The Linux/bwrap backend is validated under **real** bubblewrap, not just by inspection:
+  `scripts/validate-linux-sandbox.sh` runs an adversarial fs-read (a sandboxed probe must
+  be denied host files under `/opt` and `/usr/src` while reading its own pack dir) plus
+  the locking probe — in a container on a non-Linux dev box, or natively on Linux. CI runs
+  it natively each build, locking the read-confinement boundary.
 - Out of scope (unchanged): the registry verification chain (#88/#86/#90/#89/#87) and
   the *resolver's* own `git`/`tar` subprocesses in `pack/run.ts` (those fetch pack
   bytes and are already scoped; this ADR governs probe *execution*, not pack
