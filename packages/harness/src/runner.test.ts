@@ -9,6 +9,7 @@ import { eventLogRecorder } from "./recorder.js"
 import { type ProbeRunOutcome, runPack } from "./runner.js"
 import { detectSandboxMechanism, macosAllowHostError, resolveBunPath } from "./sandbox/index.js"
 import { buildBwrapSandbox } from "./sandbox/linux.js"
+import { buildSandboxExecSandbox } from "./sandbox/macos.js"
 
 /**
  * Build a throwaway local pack on disk with the given probe sources.
@@ -264,6 +265,20 @@ describe("OS sandbox (#121, ADR-0023)", () => {
     expect(isolated.args).toContain("/usr/lib")
     expect(isolated.args).not.toContain("/usr")
     expect(isolated.args).not.toContain("/opt")
+  })
+
+  // macOS-only: SBPL matches canonical paths, and /var is a symlink to /private/var,
+  // so every home-deny entry must be canonicalized or it silently fails to match.
+  const macosCanonTest = process.platform === "darwin" ? test : test.skip
+  macosCanonTest("macOS home-deny paths are canonicalized (/var/root → /private/var/root)", () => {
+    const { args } = buildSandboxExecSandbox({
+      readRoots: ["/tmp/x"],
+      writeRoot: "/tmp/y",
+      allowHosts: [],
+    }).wrap("bun", [])
+    const profile = args[1] ?? ""
+    expect(profile).toContain('(subpath "/private/var/root")') // canonicalized
+    expect(profile).not.toContain('(subpath "/var/root")') // never the un-canonical form
   })
 
   test("macosAllowHostError requires a port (SBPL scopes egress by port, not host)", () => {

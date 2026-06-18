@@ -119,13 +119,17 @@ function buildProfile(policy: SandboxPolicy, binDir: string): string {
   // sets HOME, CI). We deny: `/Users` (every standard macOS home, regardless of
   // HOME), `/var/root` (root's home), the Directory-Services-resolved real home
   // (covers a non-`/Users` custom/network home, resolved without trusting the env),
-  // and the env-resolved homedir (a harmless extra in the common case). Read-roots
-  // are re-allowed below (last-match-wins), so a declared root under /Users reads.
+  // and the env-resolved homedir (a harmless extra in the common case).
+  //
+  // EVERY entry is canonicalised: SBPL matches the *real* path, and `/var` is a
+  // symlink to `/private/var` on macOS — an un-canonicalised `/var/root` (or a DS
+  // home under a symlinked prefix) would never match, leaving that home readable.
+  // Read-roots are re-allowed below (last-match-wins), so a declared root reads.
   const denyReads = [
     ...new Set(
-      ["/Users", "/var/root", realAccountHome(), canonical(homedir())].filter(
-        (d): d is string => d !== null,
-      ),
+      ["/Users", "/var/root", realAccountHome(), homedir()]
+        .filter((d): d is string => d !== null)
+        .map(canonical),
     ),
   ]
   const lines = [
