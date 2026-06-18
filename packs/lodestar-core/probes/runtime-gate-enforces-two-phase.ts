@@ -84,6 +84,10 @@ class Hook {
      *  (invalid `documents` shape) — to prove the gate fails the action rather
      *  than stranding the remoted execute (P2). */
     private readonly malformedTools: Set<string> = new Set(),
+    /** Tools for which the hook returns a malformed tool_result with NO id (an
+     *  uncorrelatable callback) — to prove the exec-timeout fails the action
+     *  instead of hanging it (P2). */
+    private readonly strandTools: Set<string> = new Set(),
   ) {
     channel.onMessage((raw) => {
       const msg = raw as OutboundLike
@@ -99,6 +103,12 @@ class Hook {
       if (msg.type === "run_tool") {
         const tool = String(msg.tool)
         this.bodyRuns.push({ tool, action_id: String(msg.action_id) })
+        if (this.strandTools.has(tool)) {
+          // Malformed AND uncorrelatable: no id, bad documents. The gate cannot
+          // match it to a pending run, so only the exec-timeout can fail it.
+          this.channel.send({ type: "tool_result", output: {}, documents: "bad" })
+          return
+        }
         if (this.malformedTools.has(tool)) {
           // `documents` must be an array; a string fails the inbound schema.
           this.channel.send({
@@ -133,6 +143,12 @@ class Hook {
     return new Promise((resolve) => {
       this.readyResolve = resolve
     })
+  }
+
+  /** Send an arbitrary raw value (e.g. a JSON primitive) — to prove a non-object
+   *  message does not crash the gate. */
+  sendRaw(value: unknown): void {
+    this.channel.send(value)
   }
 
   private request(partial: Record<string, unknown>): Promise<OutboundLike> {
@@ -180,8 +196,10 @@ async function buildHarness(opts: {
   >
   approverPublicKey?: string
   allowUnsigned?: boolean
+  toolExecTimeoutMs?: number
   bodies: Record<string, ToolBody>
   malformedTools?: string[]
+  strandTools?: string[]
   overrides?: RuntimeGateOverrides
 }): Promise<Harness> {
   const config = RuntimeGateConfigSchema.parse({
@@ -193,6 +211,9 @@ async function buildHarness(opts: {
     default_sensitivity: "internal",
     auto_approve_ceiling: 3,
     approval_timeout_ms: opts.approvalTimeoutMs ?? 0,
+    ...(opts.toolExecTimeoutMs !== undefined
+      ? { tool_exec_timeout_ms: opts.toolExecTimeoutMs }
+      : {}),
     tool_defaults: Object.fromEntries(
       Object.entries(opts.toolDefaults).map(([name, d]) => [
         name,
@@ -219,7 +240,12 @@ async function buildHarness(opts: {
   const gate = new RuntimeGate(config, opts.overrides)
   await gate.init()
   const pair = createLoopbackPair()
-  const hook = new Hook(pair.hook, opts.bodies, new Set(opts.malformedTools ?? []))
+  const hook = new Hook(
+    pair.hook,
+    opts.bodies,
+    new Set(opts.malformedTools ?? []),
+    new Set(opts.strandTools ?? []),
+  )
   void gate.serve(pair.gate)
   await hook.waitReady()
   return { gate, hook, logRoot: opts.logRoot }
@@ -641,6 +667,78 @@ async function run(): Promise<ProbeResult> {
         "I: body NEVER ran for a timeout-0 hold (even with a signed grant)",
         h.hook.bodyRuns.length === 0,
         `${h.hook.bodyRuns.length} run(s)`,
+      )
+      // The timeout-0 hold must emit approval.expired (not just action.rejected),
+      // so read-side approval tooling sees the request resolved, not stuck pending.
+      const i_events = await new EventLogReader(logRoot).readSession(PROJECT_ID, "sess-timeout0")
+      const expiredForAction = i_events.some(
+        (e) =>
+          e.type === "approval.expired" &&
+          (e.payload as { action_id?: string }).action_id === String(held.action_id),
+      )
+      check(
+        "I: timeout-0 hold emits approval.expired (not stuck pending in approve tooling)",
+        expiredForAction,
+      )
+      await h.gate.stop()
+    }
+
+    // ── M: a non-object RPC message does not crash the gate (P2) ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-nonobject",
+        toolDefaults: { echo: { required_trust_level: 1 } },
+        bodies: { echo: (args) => ({ output: { echo: args.msg } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("echo")
+      // JSON primitives that parse but fail the message schema — must not throw.
+      h.hook.sendRaw(null)
+      h.hook.sendRaw(42)
+      h.hook.sendRaw("just a string")
+      // The gate must still be alive and serving: a normal govern still works.
+      const after = await h.hook.govern("echo", { msg: "still-alive" })
+      const out = after.output as { echo?: string } | undefined
+      check(
+        "M: gate survived non-object messages and still governs",
+        after.phase === "completed" && out?.echo === "still-alive",
+        `${after.phase}/${JSON.stringify(out)}`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── N: an uncorrelatable (no-id) malformed callback fails via the exec timeout (P2) ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-strand",
+        toolExecTimeoutMs: 200, // short, so the test is fast
+        toolDefaults: { stuck: { required_trust_level: 1 } },
+        bodies: { stuck: () => ({ output: "never-arrives" }) },
+        strandTools: ["stuck"], // hook returns a malformed tool_result with NO id
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("stuck")
+      const governed = h.hook.govern("stuck", {})
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<{ timedOut: true; r: undefined }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOut: true, r: undefined }), 5_000)
+      })
+      const raced = await Promise.race([
+        governed.then((r) => ({ timedOut: false as const, r })),
+        timeout,
+      ])
+      if (timer !== undefined) clearTimeout(timer)
+      check("N: uncorrelatable callback did NOT hang (exec timeout fired)", !raced.timedOut)
+      check(
+        "N: the action failed on the exec timeout",
+        raced.r?.phase === "failed",
+        String(raced.r?.phase),
       )
       await h.gate.stop()
     }

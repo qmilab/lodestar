@@ -152,6 +152,16 @@ export const RuntimeGateConfigSchema = z
      */
     approval_timeout_ms: z.number().int().min(0).default(0),
     approvals: ApprovalsConfigSchema.optional(),
+    /**
+     * Max time (ms) the gate waits for a remoted tool body to return before
+     * failing the action (`execution_timeout`). The hook is potentially
+     * buggy/hostile, so a lost, never-sent, or uncorrelatable (malformed, no-id)
+     * `tool_result` must not strand the kernel awaiting `remoteExecute` forever.
+     * Defaults to 120_000 (2 min) — generous for legitimate slow tools, bounded so
+     * a misbehaving hook cannot hang a governed call. Set 0 to disable (unbounded;
+     * only when the hook is fully trusted).
+     */
+    tool_exec_timeout_ms: z.number().int().min(0).default(120_000),
     tool_defaults: z.record(ToolContractDefaultsSchema).default({}),
     persistence: PersistenceConfigSchema.optional(),
   })

@@ -355,7 +355,11 @@ export class RuntimeGate {
   private async dispatch(raw: unknown): Promise<void> {
     const parsed = InboundMessageSchema.safeParse(raw)
     if (!parsed.success) {
-      const shape = raw as { type?: unknown; id?: unknown }
+      // `raw` may be any JSON value — a primitive like `null` or `42` parses but
+      // fails the schema. Coalesce to {} before reading fields so a non-object
+      // never throws here (which would reject dispatch without a protocol reply).
+      const shape =
+        typeof raw === "object" && raw !== null ? (raw as { type?: unknown; id?: unknown }) : {}
       const id = typeof shape.id === "number" ? shape.id : undefined
       if (id !== undefined && (shape.type === "tool_result" || shape.type === "tool_error")) {
         // A malformed `tool_result` / `tool_error` (e.g. a hostile or buggy hook
@@ -550,6 +554,16 @@ export class RuntimeGate {
         request_id: request.request_id,
       }
       const rejected = kernel.resolve(parked, expired)
+      // Emit `approval.expired@1` (not just `action.rejected`) so read-side
+      // approval tooling — `lodestar approve list`, the viewer — sees the request
+      // resolved rather than stuck "pending" forever (it keys resolution on the
+      // approval.* terminal events). This gate never reads the side-channel for a
+      // timeout-0 hold, so the request is genuinely done.
+      await this.emit("approval.expired", {
+        request_id: request.request_id,
+        action_id: parked.id,
+        at: rejected.approval?.at ?? new Date().toISOString(),
+      })
       await this.emit("action.rejected", rejected)
       return {
         type: "govern_result",
@@ -802,11 +816,36 @@ export class RuntimeGate {
   ): Promise<RuntimeToolResultObservationPayload> {
     const actionId = this.als.getStore()?.actionId ?? "unknown"
     const corr = ++this.runToolCounter
+    const timeoutMs = this.config.tool_exec_timeout_ms ?? 0
     const raw = await new Promise<{
       output: unknown
       documents: { text: string; source?: string }[]
     }>((resolve, reject) => {
-      this.pendingToolRuns.set(corr, { resolve, reject })
+      // Bound the wait so a lost, never-sent, or uncorrelatable (malformed, no-id)
+      // `tool_result` fails the action (the kernel's execute catch → terminal
+      // `failed`) instead of stranding the kernel awaiting forever. The timer is
+      // cleared when a real callback settles the run (resolve/reject below).
+      let timer: ReturnType<typeof setTimeout> | undefined
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          if (this.pendingToolRuns.delete(corr)) {
+            reject(new Error(`remoted tool '${name}' did not return within ${timeoutMs}ms`))
+          }
+        }, timeoutMs)
+      }
+      const clear = (): void => {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+      this.pendingToolRuns.set(corr, {
+        resolve: (out) => {
+          clear()
+          resolve(out)
+        },
+        reject: (err) => {
+          clear()
+          reject(err)
+        },
+      })
       this.send({ type: "run_tool", id: corr, tool: name, args: inputs, action_id: actionId })
     })
     return { tool_name: name, args: inputs, output: raw.output, documents: raw.documents }

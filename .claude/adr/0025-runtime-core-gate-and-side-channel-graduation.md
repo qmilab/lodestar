@@ -97,8 +97,17 @@ it. A second review round closed two more: (d) `terminalOutcomeFromLog` tracks t
 `approval_denied` kind instead of being relabelled `policy_denied` (callers branch
 on the kind to re-plan); and (e) the Python hook runs an **async-only** tool body
 via `ainvoke` (sync `invoke` raises `NotImplementedError` for a coroutine-only
-tool) on its loop-less worker thread. All locked by scenarios in
-`runtime-gate-enforces-two-phase` and the LangGraph e2e.
+tool) on its loop-less worker thread. A third round closed three edge-case
+hardenings: (f) a timeout-0 hold emits `approval.expired` (not just
+`action.rejected`) so read-side approval tooling sees the request resolved rather
+than stuck "pending"; (g) `dispatch` coalesces a non-object RPC value (`null`, a
+primitive) to `{}` before reading fields, so a malformed input can't throw out of
+the async dispatch; and (h) a bounded **remoted-execute timeout**
+(`tool_exec_timeout_ms`, default 2 min) fails an action whose `tool_result` is
+lost, never sent, or uncorrelatable (malformed + no id) instead of stranding the
+kernel — the general liveness backstop for any callback the per-id rejection
+cannot match. All locked by scenarios in `runtime-gate-enforces-two-phase` and the
+LangGraph e2e (37 + 18 checks).
 
 ### 5. The gate server is transport-agnostic; probe 1 drives it in-process
 
