@@ -62,6 +62,7 @@ import { z } from "zod"
 import {
   CONSERVATIVE_TOOL_DEFAULTS,
   type RuntimeGateConfig,
+  type ToolContractDefaults,
   hasUnauthenticatedApprovalGap,
 } from "./config.js"
 import type { RpcChannel } from "./connection.js"
@@ -771,8 +772,26 @@ export class RuntimeGate {
     return this.kernel
   }
 
+  /**
+   * The operator's contract defaults for a tool, or the conservative fallback.
+   *
+   * `tool_defaults` is a plain object, so a hook-chosen tool name that collides
+   * with an inherited `Object.prototype` member (`toString`, `constructor`,
+   * `hasOwnProperty`, …) would resolve to the prototype function on a bare index
+   * read — making the contract fields `undefined` and letting an untrusted hook
+   * dodge the conservative default by naming a tool cleverly. Gate on an
+   * *own*-property check so only an operator-declared entry is ever used; anything
+   * else falls through to `CONSERVATIVE_TOOL_DEFAULTS`.
+   */
+  private defaultsFor(name: string): ToolContractDefaults {
+    const own = Object.hasOwn(this.config.tool_defaults, name)
+      ? this.config.tool_defaults[name]
+      : undefined
+    return own ?? CONSERVATIVE_TOOL_DEFAULTS
+  }
+
   private contractFor(name: string): ActionContract {
-    const defaults = this.config.tool_defaults[name] ?? CONSERVATIVE_TOOL_DEFAULTS
+    const defaults = this.defaultsFor(name)
     return {
       required_level: defaults.required_trust_level,
       blast_radius: defaults.blast_radius,
@@ -787,7 +806,7 @@ export class RuntimeGate {
     originalName: string,
     internalName: string,
   ): Tool<Record<string, unknown>, RuntimeToolResultObservationPayload> {
-    const defaults = this.config.tool_defaults[originalName] ?? CONSERVATIVE_TOOL_DEFAULTS
+    const defaults = this.defaultsFor(originalName)
     return {
       // The kernel knows the tool by its namespaced name; the remoted execute
       // runs the body back in the hook under the ORIGINAL name (the closure

@@ -823,6 +823,33 @@ async function run(): Promise<ProbeResult> {
       )
       await h.gate.stop()
     }
+
+    // ── O: a prototype-named tool gets the CONSERVATIVE default, not an inherited
+    //    Object.prototype member (P1 — an untrusted hook must not dodge the
+    //    conservative contract by naming a tool `toString` / `constructor`). ──
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      // auto_approve_ceiling 3, NO tool_defaults entries for the prototype names.
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-proto",
+        toolDefaults: {},
+        bodies: { toString: () => ({ output: "x" }), constructor: () => ({ output: "x" }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      for (const name of ["toString", "constructor", "hasOwnProperty"]) {
+        const reg = await h.hook.register(name)
+        // CONSERVATIVE_TOOL_DEFAULTS.required_trust_level === 3 — a prototype
+        // member would make this `undefined`, letting the gate mis-evaluate it.
+        check(
+          `O: unconfigured '${name}' gets the conservative L3 contract (not a prototype member)`,
+          reg.type === "registered" && reg.required_level === 3,
+          `type=${reg.type} required_level=${JSON.stringify(reg.required_level)}`,
+        )
+      }
+      await h.gate.stop()
+    }
   } finally {
     for (const c of cleanups.reverse()) {
       await c().catch(() => {})

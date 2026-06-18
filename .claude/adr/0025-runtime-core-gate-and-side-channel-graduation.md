@@ -106,8 +106,13 @@ the async dispatch; and (h) a bounded **remoted-execute timeout**
 (`tool_exec_timeout_ms`, default 2 min) fails an action whose `tool_result` is
 lost, never sent, or uncorrelatable (malformed + no id) instead of stranding the
 kernel — the general liveness backstop for any callback the per-id rejection
-cannot match. All locked by scenarios in `runtime-gate-enforces-two-phase` and the
-LangGraph e2e (37 + 18 checks).
+cannot match. A fourth round closed one more — a **P1 governance bypass**: (i)
+`defaultsFor` resolves a tool's contract via an **own-property** check, so a
+hook-chosen tool name colliding with an `Object.prototype` member (`toString`,
+`constructor`, …) no longer reads the prototype function as its "contract"
+(making `required_trust_level` `undefined` and letting the gate mis-evaluate it) —
+an unconfigured tool always falls through to `CONSERVATIVE_TOOL_DEFAULTS`. All
+locked by scenarios in `runtime-gate-enforces-two-phase` and the LangGraph e2e.
 
 ### 5. The gate server is transport-agnostic; probe 1 drives it in-process
 
