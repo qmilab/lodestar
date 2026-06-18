@@ -52,11 +52,7 @@ if (!existsSync(E2E)) skip(`e2e driver not found at ${E2E}`)
 // 2. Python + CrewAI must be importable.
 const probe = spawnSync(PYTHON, ["-c", "import crewai"], { stdio: "ignore" })
 if (probe.error !== undefined || probe.status !== 0) {
-  skip(
-    probe.error !== undefined
-      ? `${PYTHON} not available`
-      : "crewai not importable",
-  )
+  skip(probe.error !== undefined ? `${PYTHON} not available` : "crewai not importable")
 }
 
 // 3. Run the real end-to-end driver; its exit code is the verdict. Its own
@@ -67,9 +63,7 @@ if (run.error !== undefined) {
   process.exit(1)
 }
 if (run.status === 0) {
-  banner("PASS ✓", [
-    "real CrewAI tool calls were governed end-to-end through the hook + sidecar",
-  ])
+  banner("PASS ✓", ["real CrewAI tool calls were governed end-to-end through the hook + sidecar"])
   process.exit(0)
 }
 banner("FAIL ✗", [`the CrewAI e2e driver exited ${run.status}`])
