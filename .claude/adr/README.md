@@ -244,13 +244,25 @@ The options we rejected, each with a one-line reason.
   **governance-gate sidecar** (`@qmilab/lodestar-runtime-core`, `lodestar runtime
   gate`) that reuses the engine unchanged. Callbacks are observe-only → rejected
   for enforcement; the hook **wraps tools** and surfaces L4 holds as LangGraph
-  `interrupt` (resolved via the signed ADR-0010/0015 side-channel). Two-phase is
-  preserved by **remoting execution back into Python** — from the kernel's view
-  the hook is "just another downstream," so no kernel/schema change. Transport:
-  bidirectional NDJSON-RPC over stdio. Layout: TS in `packages/runtime-core/`,
-  Python in a new `runtimes/langgraph/` (PyPI). The sidecar is the **shared spine**
-  the also-Python CrewAI (#84) / AutoGen (#85) reuse. Honest boundary: process-level
-  governance over actions, not OS containment (ADR-0004 lineage). Probes
-  `runtime-gate-enforces-two-phase` (always-on TS contract) +
-  `langgraph-tool-calls-are-governed` (runtime-gated end-to-end, skips loudly).
+  `interrupt`. Two-phase is preserved by **remoting execution back into Python**
+  — from the kernel's view the hook is "just another downstream," so no
+  kernel/schema change. **One closed, fail-closed enforcement surface** (wrap the
+  whole bound toolset at every entry point — `invoke`/`ainvoke`/`batch`/`abatch`
+  — `governed_call` for custom nodes; unrecognized tool → denied; raw out-of-band
+  I/O honestly out of scope, ADR-0004 lineage). **Durable, idempotent holds**: the
+  sidecar is **stateless across the hold boundary** — pending action + request +
+  deadline durably logged before `interrupt`, hold reconstructed from the event log
+  + signed ADR-0010/0015 side-channel by any (even freshly restarted) sidecar,
+  execution **exactly-once per action id** (terminal-event lookup → no
+  double-execute), deadline **fail-closed** (late approval rejected). Transport:
+  bidirectional NDJSON-RPC over stdio with **concurrency invariants** (unique
+  correlation+action ids per leg, order-independent matching, fail-closed
+  timeout/cancel, exactly-once ingest) for LangGraph's parallel tool calls. Layout:
+  TS in `packages/runtime-core/`, Python in a new `runtimes/langgraph/` (PyPI). The
+  sidecar is the **shared spine** the also-Python CrewAI (#84) / AutoGen (#85)
+  reuse. Probes `runtime-gate-enforces-two-phase` (always-on TS contract — held-L4,
+  idempotent duplicate resume, post-deadline rejection, restart-durable hold,
+  fail-closed unknown tool, parallel-call correlation) + `langgraph-tool-calls-are-governed`
+  (runtime-gated end-to-end, skips loudly). Durability / enforcement-closure /
+  concurrency specifics hardened by the PR #124 Codex adversarial review.
   **Status: Proposed.**
