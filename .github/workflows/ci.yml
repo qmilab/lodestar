@@ -48,7 +48,14 @@ jobs:
       # `runner-sandboxes-probe-filesystem-and-network` probe exercise the real
       # filesystem/network containment in CI; without it they skip loudly.
       - name: Install bubblewrap (probe-runner OS sandbox)
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: |
+          sudo apt-get update && sudo apt-get install -y bubblewrap
+          # GitHub's Ubuntu 24.04 runners restrict unprivileged user namespaces
+          # via AppArmor, which bubblewrap requires; re-enable so the OS sandbox
+          # is actually FUNCTIONAL here (else detectSandboxMechanism reports none
+          # and the sandbox tests skip instead of validating). `|| true` tolerates
+          # older runners where the sysctl does not exist.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
 
       # Lint is independent of the build (biome is standalone), so run it
       # first for the fastest feedback on style regressions.

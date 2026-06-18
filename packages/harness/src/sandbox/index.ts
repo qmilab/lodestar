@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process"
 import { existsSync, realpathSync } from "node:fs"
 import { platform } from "node:os"
 import { delimiter, dirname, isAbsolute, join, resolve } from "node:path"
@@ -84,23 +85,48 @@ function resolveOnPath(cmd: string): string | null {
   return null
 }
 
-/** Does a `cmd` resolve to an executable on the current PATH? */
-function onPath(cmd: string): boolean {
-  return resolveOnPath(cmd) !== null
+/** Can `cmd args…` run to a clean exit here? Confirms a sandbox mechanism is not
+ * just present but FUNCTIONAL — bwrap needs unprivileged user namespaces, which
+ * hardened hosts and CI (Ubuntu ≥23.10 AppArmor) restrict, and a nested/blocked
+ * `sandbox-exec` can fail too. Cheap and run once (memoised by the caller). */
+function canRun(cmd: string, args: string[]): boolean {
+  try {
+    return spawnSync(cmd, args, { stdio: "ignore", timeout: 10_000 }).status === 0
+  } catch {
+    return false
+  }
 }
 
+let mechanismCache: SandboxMechanism | null | undefined
+
 /**
- * The sandbox mechanism available on this host, or `null` if none is. macOS
- * ships `sandbox-exec`; Linux needs `bubblewrap` installed (and unprivileged
- * user namespaces enabled — not probed here, surfaced as a spawn failure). A
- * `null` return is the runner's fail-closed signal.
+ * The sandbox mechanism available AND functional on this host, or `null`. macOS
+ * uses `sandbox-exec`, Linux `bubblewrap` — each is **probed for real**, not just
+ * located on PATH: a mechanism that is installed but cannot create a sandbox here
+ * (bwrap where unprivileged user namespaces are disabled; a nested/blocked
+ * sandbox-exec) reports `null`, so callers fail closed / skip consistently
+ * instead of spawning probes that error. A `null` return is the runner's
+ * fail-closed signal. Memoised — the answer cannot change within a process and
+ * the probe spawns once.
  */
 export function detectSandboxMechanism(): SandboxMechanism | null {
+  if (mechanismCache === undefined) mechanismCache = probeSandboxMechanism()
+  return mechanismCache
+}
+
+function probeSandboxMechanism(): SandboxMechanism | null {
   if (platform() === "darwin") {
-    return existsSync("/usr/bin/sandbox-exec") ? "sandbox-exec" : null
+    if (!existsSync("/usr/bin/sandbox-exec")) return null
+    return canRun("/usr/bin/sandbox-exec", ["-p", "(version 1)(allow default)", "/usr/bin/true"])
+      ? "sandbox-exec"
+      : null
   }
   if (platform() === "linux") {
-    return onPath("bwrap") ? "bwrap" : null
+    const bwrap = resolveOnPath("bwrap")
+    if (bwrap === null) return null
+    // Minimal capability probe: bind the root read-only and run `true`. Fails
+    // when unprivileged user namespaces are restricted — the bwrap failure mode.
+    return canRun(bwrap, ["--ro-bind", "/", "/", "/usr/bin/true"]) ? "bwrap" : null
   }
   return null
 }

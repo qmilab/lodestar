@@ -135,6 +135,9 @@ describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
     const dir = await mkdtemp(join(tmpdir(), "lodestar-cli-allowenv-"))
     await makePack(dir)
     // The noop probe exits 0; we only assert the flag parses and the run succeeds.
+    // `--no-sandbox` decouples this env test from OS-sandbox availability (this
+    // external pack would otherwise default sandbox-on and fail closed where no
+    // functional mechanism exists, e.g. a host with unprivileged userns disabled).
     expect(
       await harnessCommand([
         "run",
@@ -142,6 +145,7 @@ describe("lodestar harness run --allow-env (#114, ADR-0022)", () => {
         dir,
         "--allow-unsigned",
         "--no-record",
+        "--no-sandbox",
         "--allow-env",
         "LODESTAR_TEST_DATABASE_URL",
         "--allow-env",
