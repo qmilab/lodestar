@@ -264,5 +264,9 @@ The options we rejected, each with a one-line reason.
   idempotent duplicate resume, post-deadline rejection, restart-durable hold,
   fail-closed unknown tool, parallel-call correlation) + `langgraph-tool-calls-are-governed`
   (runtime-gated end-to-end, skips loudly). Durability / enforcement-closure /
-  concurrency specifics hardened by the PR #124 Codex adversarial review.
-  **Status: Proposed.**
+  concurrency specifics hardened by the PR #124 Codex adversarial review. The
+  riskiest mechanic (re-entrant remoted execute) is **validated against the real
+  `ActionKernel`** by `spikes/adr-0024-remoted-execute/` (Python hook ↔ TS gate
+  over stdio NDJSON-RPC; held-L4-runs-nothing, resume, exactly-once duplicate
+  resolve, and parallel-call correlation all pass — no kernel/schema change).
+  **Status: Accepted.**

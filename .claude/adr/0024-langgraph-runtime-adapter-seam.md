@@ -1,14 +1,15 @@
 # ADR-0024: LangGraph runtime adapter — the native-hook + governance-gate-sidecar seam
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-06-18
 - **Deciders:** Nandan, Claude
 - **Related:** ADR-0002, ADR-0003 (proxy decision synthesis), ADR-0004 (TS-level
   boundary honesty), ADR-0005 (named the runtime-adapter backlog), ADR-0010 /
   ADR-0015 (signed approval side-channel), epic #75, #83, PR #124 (Codex
   adversarial review — drove the durability / enforcement-closure /
-  concurrency-invariant clarifications below), `packages/guard-mcp/`,
-  `packages/action-kernel/`, `packages/cognitive-core/`, `packages/guard/`
+  concurrency-invariant clarifications below), `spikes/adr-0024-remoted-execute/`
+  (the validation spike), `packages/guard-mcp/`, `packages/action-kernel/`,
+  `packages/cognitive-core/`, `packages/guard/`
 
 ## Context
 
@@ -225,6 +226,38 @@ concurrency story.)
   is absent — mirroring the DB-gated `tool-poisoning-cross-session` and the
   sandbox-gated `runner-sandboxes-probe-filesystem-and-network`. CI installs the
   runtime so the real path is exercised there.
+
+## Validation (remoted-execute spike)
+
+A throwaway spike (`spikes/adr-0024-remoted-execute/`, run `python3 hook.py`,
+needs `bun` on PATH) exercises the one mechanic this ADR was least sure of — the
+re-entrant remoted execute — against the **real `ActionKernel`** (a stand-in
+`PolicyGate` only; the kernel sees the gate as a plain function, so this is
+architecturally identical to the compiled gate, which is not what the spike is
+de-risking). A Python hook spawns the TS gate and drives it over bidirectional
+stdio NDJSON-RPC. All checks pass:
+
+- **A — remoted execute works.** An allowed call reaches `kernel.execute()`,
+  whose tool `execute()` calls *back* into Python to run the body; the result
+  flows into the chain via `observationSink`. "Hook as downstream" is realizable
+  with **no kernel or schema change** (§4).
+- **B — two-phase holds across the boundary.** An L4 call parks at
+  `pending_approval` and the Python body **never runs** — "no work before
+  approval" holds cross-language (the gate records the hold before any execute).
+- **C / D — resume + exactly-once.** `resolve(granted)` runs the body once; a
+  *duplicate* resolve is idempotent — no re-execution (§4/§5 exactly-once).
+- **E — concurrency correlation.** Two in-flight calls are each correlated to the
+  right action by RPC id and ingested once (§6).
+
+**Findings folded back in:** (1) the kernel does **not** pass the action id to
+`tool.execute(inputs, ctx)`, so the remoting layer threads it via
+`AsyncLocalStorage` (async-context, concurrency-safe) — a concrete requirement
+for `runtime-core`. (2) The spike holds its pending-action / idempotency state
+**in memory**; that is the *mechanic*, not the durability — §5's reconstruction
+from the durable log + signed side-channel (surviving a sidecar restart) is
+specified but deliberately **out of the spike's scope** and is an obligation of
+the `runtime-gate-enforces-two-phase` probe. With the mechanic proven, this ADR
+moves to **Accepted**.
 
 ## Consequences
 
