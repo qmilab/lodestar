@@ -263,6 +263,10 @@
     {
       "name": "langgraph-tool-calls-are-governed",
       "file": "probes/langgraph-tool-calls-are-governed.ts"
+    },
+    {
+      "name": "crewai-tool-calls-are-governed",
+      "file": "probes/crewai-tool-calls-are-governed.ts"
     }
   ]
 }

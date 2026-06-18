@@ -130,6 +130,44 @@ jobs:
         env:
           LODESTAR_PYTHON: python
 
+  # CrewAI runtime adapter (ADR-0026) — the sibling of langgraph-runtime: installs
+  # Python + CrewAI + the `lodestar-crewai` hook so the runtime-gated
+  # `crewai-tool-calls-are-governed` probe exercises its REAL end-to-end path (real
+  # CrewAI tools → the hook → the shared TS gate). In the `verify` job above that
+  # probe runs under `probes:ci` but skips loudly (no CrewAI there), mirroring the
+  # DB-gated cross-session probe.
+  crewai-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # CrewAI pulls chromadb, whose pydantic.v1 BaseSettings is incompatible with
+      # Python 3.14, so pin 3.12 (the hook itself supports 3.10+).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the hook package itself (with its crewai extra), so the probe
+      # exercises the published artifact, not just the in-repo source.
+      - name: Install the CrewAI runtime hook + CrewAI
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./runtimes/crewai[crewai]"
+
+      # The probe spawns `bun run …/cli runtime gate` (bun is on PATH from
+      # setup-bun) and drives real CrewAI tools through it.
+      - name: Run the CrewAI runtime adapter probe (real path)
+        run: bun run packs/lodestar-core/probes/crewai-tool-calls-are-governed.ts
+        env:
+          LODESTAR_PYTHON: python
+
   # License audit — fail the build if any dependency anywhere in the tree
   # (transitive and dev included) carries a non-permissive license. This is
   # independent of the build, so it runs as its own job for fast feedback

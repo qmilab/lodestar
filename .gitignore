@@ -21,7 +21,8 @@ _site/
 /docs/internal/walkthrough/*
 !/docs/internal/walkthrough/build-poison-cast.ts
 
-# Python bytecode caches (runtimes/ — the LangGraph hook, ADR-0024)
+# Python bytecode caches + build artifacts (runtimes/ — the LangGraph/CrewAI hooks)
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
