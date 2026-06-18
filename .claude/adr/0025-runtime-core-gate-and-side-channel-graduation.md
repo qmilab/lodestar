@@ -113,6 +113,16 @@ hook-chosen tool name colliding with an `Object.prototype` member (`toString`,
 (making `required_trust_level` `undefined` and letting the gate mis-evaluate it) —
 an unconfigured tool always falls through to `CONSERVATIVE_TOOL_DEFAULTS`. All
 locked by scenarios in `runtime-gate-enforces-two-phase` and the LangGraph e2e.
+A fifth round closed two Python-hook issues: (j) the `GateClient` per-request
+reply wait defaults to **unbounded** (`request_timeout_s=None`) rather than a fixed
+120s that could fire while the gate legitimately runs a slow tool (or one whose
+`tool_exec_timeout_ms` the operator raised above the cap) and discard a valid
+`govern_result` — the gate bounds execution itself and a gate *death* releases
+every waiter via the stdout-close path, so a fixed client cap is unneeded for
+liveness (it stays available as an explicit hard cap); and (k) the LangGraph e2e
+imports the **installed** hook first (source tree only as a local fallback), so the
+CI job actually exercises the packaged artifact + its `pyproject` exports rather
+than the checkout.
 
 ### 5. The gate server is transport-agnostic; probe 1 drives it in-process
 

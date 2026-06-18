@@ -25,8 +25,6 @@ from typing import Any, Callable, Optional
 # ``{"output": <any>, "documents": [{"text": str, "source"?: str}, ...]}``.
 ToolBody = Callable[[dict], dict]
 
-_DEFAULT_REQUEST_TIMEOUT_S = 120.0
-
 
 class GateError(RuntimeError):
     """A protocol-level error returned by the gate (e.g. a bad message)."""
@@ -45,6 +43,12 @@ class GateClient:
         ``["bun", "run", "<repo>/packages/cli/src/index.ts"]``.
     ready_timeout_s:
         How long to wait for the gate's ``ready`` handshake.
+    request_timeout_s:
+        Optional hard cap (seconds) on waiting for any single request's reply.
+        Defaults to ``None`` (wait until the gate replies or dies) — the gate
+        bounds tool execution itself, so a fixed cap is not needed for liveness and
+        a too-short one would drop a valid reply for a slow tool. If set, keep it
+        ≥ the gate's ``tool_exec_timeout_ms`` (plus any ``resume`` wait).
     """
 
     def __init__(
@@ -53,6 +57,7 @@ class GateClient:
         *,
         launcher: Optional[list[str]] = None,
         ready_timeout_s: float = 30.0,
+        request_timeout_s: Optional[float] = None,
     ) -> None:
         argv = list(launcher or ["lodestar"]) + ["runtime", "gate", "--config", config_path]
         self._proc = subprocess.Popen(
@@ -63,6 +68,15 @@ class GateClient:
             text=True,
             bufsize=1,
         )
+        # Per-request reply cap. None (the default) waits indefinitely: the gate
+        # bounds tool execution itself (RuntimeGateConfig.tool_exec_timeout_ms) and
+        # always replies, and a gate that *dies* releases every waiter when its
+        # stdout closes (see _read_loop). A fixed client-side cap is therefore not
+        # needed for liveness — and a too-short one would wrongly drop a valid
+        # govern_result for a legitimately slow tool (or one whose exec timeout the
+        # operator raised above the cap). Set a number only as an extra hard cap,
+        # and keep it ≥ the gate's tool_exec_timeout_ms (+ any resume wait).
+        self._request_timeout_s = request_timeout_s
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._next = 0
@@ -108,7 +122,7 @@ class GateClient:
         msg: dict[str, Any] = {"type": "resume", "action_id": action_id, "request_id": request_id}
         if wait_ms is not None:
             msg["wait_ms"] = wait_ms
-        return self._request(msg, timeout_s=max(_DEFAULT_REQUEST_TIMEOUT_S, (wait_ms or 0) / 1000 + 30))
+        return self._request(msg)
 
     def close(self) -> None:
         if self._closed:
@@ -134,7 +148,7 @@ class GateClient:
             self._proc.stdin.write(json.dumps(obj) + "\n")
             self._proc.stdin.flush()
 
-    def _request(self, obj: dict, *, timeout_s: float = _DEFAULT_REQUEST_TIMEOUT_S) -> dict:
+    def _request(self, obj: dict) -> dict:
         with self._state_lock:
             self._next += 1
             rid = self._next
@@ -142,7 +156,9 @@ class GateClient:
             self._futures[rid] = box
         self._send({**obj, "id": rid})
         try:
-            reply = box.get(timeout=timeout_s)
+            # timeout=None waits until the gate replies or (on gate death) the
+            # reader injects a closed-connection error into the box.
+            reply = box.get(timeout=self._request_timeout_s)
         except queue.Empty as exc:
             with self._state_lock:
                 self._futures.pop(rid, None)

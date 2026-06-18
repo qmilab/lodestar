@@ -31,15 +31,26 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 CLI_INDEX = REPO_ROOT / "packages" / "cli" / "src" / "index.ts"
 
-sys.path.insert(0, str(REPO_ROOT / "runtimes" / "langgraph"))
-
-from lodestar_langgraph import (  # noqa: E402
-    GateClient,
-    GateError,
-    LodestarDenied,
-    govern_tools,
-    governed_call,
-)
+# Prefer the INSTALLED hook so CI (which pip-installs runtimes/langgraph) actually
+# exercises the packaged artifact and its pyproject exports. Only fall back to the
+# source tree for a local run where the hook isn't installed.
+try:
+    from lodestar_langgraph import (  # noqa: E402
+        GateClient,
+        GateError,
+        LodestarDenied,
+        govern_tools,
+        governed_call,
+    )
+except ImportError:
+    sys.path.insert(0, str(REPO_ROOT / "runtimes" / "langgraph"))
+    from lodestar_langgraph import (  # noqa: E402
+        GateClient,
+        GateError,
+        LodestarDenied,
+        govern_tools,
+        governed_call,
+    )
 
 try:
     from langchain_core.messages import AIMessage
