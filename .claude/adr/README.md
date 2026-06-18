@@ -235,3 +235,22 @@ The options we rejected, each with a one-line reason.
   → would nest). **Degradation:** fail closed with an ergonomic `--no-sandbox` opt-out.
   Honest boundary: OS-primitive confinement, not kernel-grade. **Status: Accepted.**
   Locking probe `runner-sandboxes-probe-filesystem-and-network`.
+- [ADR-0024](0024-langgraph-runtime-adapter-seam.md) — LangGraph runtime adapter
+  (#83, epic #75 first child): wrap a non-MCP agent loop so its native tool calls
+  are governed. The engine is already proven (the MCP proxy's two-phase + held-L4
+  approval polling + cognitive-core ingest + decision synthesis are reusable
+  as-is), so the only new work is the **seam**. Decision: **Python-first**, a thin
+  pip-installable `lodestar-langgraph` hook + a language-agnostic TS
+  **governance-gate sidecar** (`@qmilab/lodestar-runtime-core`, `lodestar runtime
+  gate`) that reuses the engine unchanged. Callbacks are observe-only → rejected
+  for enforcement; the hook **wraps tools** and surfaces L4 holds as LangGraph
+  `interrupt` (resolved via the signed ADR-0010/0015 side-channel). Two-phase is
+  preserved by **remoting execution back into Python** — from the kernel's view
+  the hook is "just another downstream," so no kernel/schema change. Transport:
+  bidirectional NDJSON-RPC over stdio. Layout: TS in `packages/runtime-core/`,
+  Python in a new `runtimes/langgraph/` (PyPI). The sidecar is the **shared spine**
+  the also-Python CrewAI (#84) / AutoGen (#85) reuse. Honest boundary: process-level
+  governance over actions, not OS containment (ADR-0004 lineage). Probes
+  `runtime-gate-enforces-two-phase` (always-on TS contract) +
+  `langgraph-tool-calls-are-governed` (runtime-gated end-to-end, skips loudly).
+  **Status: Proposed.**
