@@ -292,3 +292,31 @@ The options we rejected, each with a one-line reason.
   gate is **transport-agnostic** (`RpcChannel`): `stdioChannel` for the CLI,
   `createLoopbackPair` so the always-on probe drives the real gate in-process.
   **Status: Accepted.**
+
+- [ADR-0026](0026-crewai-runtime-adapter.md) — CrewAI runtime adapter, the **second
+  thin hook** on the shared gate (#84, realises ADR-0024/0025 for a second
+  framework). The enforcement seam is a governed `crewai.tools.BaseTool` subclass
+  overriding `_run` (the single point `BaseTool.run` **and** `CrewStructuredTool`
+  dispatch through); the gate ref rides a Pydantic `PrivateAttr`, the original
+  `args_schema` is preserved, denials re-raise `LodestarDenied` which `ToolUsage`
+  surfaces as a re-plannable observation. The Python `client.py` is duplicated
+  verbatim (graduation to a shared package deferred to the third hook). Decisions
+  2–4 of ADR-0025 are inherited unchanged. Probe `crewai-tool-calls-are-governed` +
+  CI `crewai-runtime` job (Python 3.12, chromadb). **Status: Accepted.**
+
+- [ADR-0027](0027-autogen-runtime-adapter.md) — AutoGen runtime adapter, the **third
+  thin hook** on the shared gate (#85, the second proof the spine generalises). The
+  enforcement seam is a governed `autogen_core.tools.BaseTool` subclass overriding
+  **`run_json`** (the single point `AssistantAgent` → `StaticWorkbench.call_tool`
+  and direct callers dispatch through); AutoGen's `BaseTool` is not Pydantic, so the
+  gate ref lives in plain instance attrs and the original schema surface is
+  delegated; denials re-raise `LodestarDenied` which `StaticWorkbench.call_tool`
+  surfaces as an error `ToolResult`. **One mechanical divergence from ADR-0026:**
+  AutoGen's tool surface is fully async, so the wrapper offloads the blocking gate
+  RPC off the event loop (`asyncio.to_thread`) and the remoted body drives the
+  coroutine with `asyncio.run` — one path, no sync/async fallback. Targets the 0.4+
+  actor line (`autogen-agentchat`/`autogen-core`), not legacy `pyautogen`. The
+  Python `client.py` is the **third** verbatim copy; the shared-`lodestar-runtime-client`
+  graduation is **deferred to #128** (coupled to PyPI publish-ordering). Decisions
+  2–4 of ADR-0025 inherited unchanged. Probe `autogen-tool-calls-are-governed` + CI
+  `autogen-runtime` job (Python 3.12). **Status: Accepted.**

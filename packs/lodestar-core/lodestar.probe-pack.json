@@ -267,6 +267,10 @@
     {
       "name": "crewai-tool-calls-are-governed",
       "file": "probes/crewai-tool-calls-are-governed.ts"
+    },
+    {
+      "name": "autogen-tool-calls-are-governed",
+      "file": "probes/autogen-tool-calls-are-governed.ts"
     }
   ]
 }

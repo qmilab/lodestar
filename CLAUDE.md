@@ -11,10 +11,11 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Sixty-five probes pass under
+resolved for future versions.) Sixty-six probes pass under
 strict TypeScript (two need a Postgres test database; one needs a Python
-+ LangGraph runtime; one needs a Python + CrewAI runtime — see below).
-Sixty-one live in the first-party pack
++ LangGraph runtime; one needs a Python + CrewAI runtime; one needs a
+Python + AutoGen runtime — see below).
+Sixty-two live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -283,7 +284,30 @@ path directly. The Python RPC `client.py` is duplicated verbatim from `lodestar-
 (framework-agnostic stdlib; graduate to a shared `lodestar-runtime-client` PyPI package at
 the third hook — AutoGen #85). It **skips loudly** when Python/CrewAI is absent and runs
 for real in the CI `crewai-runtime` job (Python 3.12 — CrewAI's chromadb dep breaks on
-3.14); ADR-0026). The other
+3.14); ADR-0026), and one AutoGen runtime-adapter probe —
+`autogen-tool-calls-are-governed` (the **third framework on the shared gate**, #85 /
+ADR-0027: a **real** AutoGen (`autogen-agentchat`/`autogen-core`, the 0.4+ actor line)
+toolset driven through the `lodestar-autogen` hook + the **same unchanged** TS gate — the
+spine generalises a second time. The hook is again ~one new file (`adapter.py`: a governed
+`BaseTool` subclass overriding **`run_json`**, the single point `AssistantAgent` →
+`StaticWorkbench.call_tool` and any direct caller dispatch through; AutoGen's `BaseTool` is
+not Pydantic so the gate ref rides plain instance attrs, the original schema surface is
+delegated, denials re-raise `LodestarDenied` which `StaticWorkbench.call_tool` surfaces as
+an error `ToolResult`). The **one mechanical divergence from CrewAI**: AutoGen's tool
+surface is **fully async**, so the wrapper offloads the blocking gate RPC off the event
+loop (`asyncio.to_thread`) and the remoted body drives the coroutine with `asyncio.run` —
+one path, no sync/async fallback. It adds the real-runtime cases — AutoGen's own
+`StaticWorkbench.call_tool` path, a custom step via `governed_call`, an async `FunctionTool`
++ a custom `BaseTool` subclass via the remoted execute, concurrent calls correlated, an L4
+hold across the boundary (the body never runs, through both `governed_call` which raises and
+the framework path which surfaces an error `ToolResult`), an unregistered tool denied
+fail-closed, the wrappers attaching to a real `AssistantAgent` (a stub model client), and
+NaN arg/result rejection — **no LLM/key needed**. The Python RPC `client.py` is the **third**
+verbatim copy; per ADR-0027 §4 the shared-`lodestar-runtime-client` graduation is **deferred
+to #128** (coupled to PyPI publish-ordering), so #85 stays a clean "third hook, same shape"
+PR. It **skips loudly** when Python/AutoGen is absent and runs for real in the CI
+`autogen-runtime` job (Python 3.12, pinned only to match the siblings — AutoGen pulls no
+chromadb); ADR-0027). The other
 four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -423,10 +447,18 @@ runtimes/                    # (v1.5) non-MCP runtime adapters — Python siblin
                              #   ADR-0026) on the SAME gate: a governed BaseTool subclass
                              #   overriding `_run` (the seam BaseTool.run + CrewStructuredTool
                              #   share). client.py duplicated verbatim from langgraph; crewai
-                             #   imported lazily. AutoGen #85 is the near-mechanical third
+                             #   imported lazily
+  autogen/                   # (exists) `lodestar-autogen` — the third thin hook (#85,
+                             #   ADR-0027) on the SAME gate: a governed BaseTool subclass
+                             #   overriding `run_json` (the seam StaticWorkbench.call_tool +
+                             #   AssistantAgent dispatch through). The one divergence: AutoGen's
+                             #   tool surface is fully async, so the wrapper offloads the gate
+                             #   RPC off the event loop (asyncio.to_thread). client.py is the
+                             #   THIRD verbatim copy; autogen imported lazily; shared
+                             #   lodestar-runtime-client graduation deferred to #128
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 61 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 62 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -504,7 +536,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Sixty-five probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Sixty-six probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 

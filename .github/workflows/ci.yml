@@ -168,6 +168,44 @@ jobs:
         env:
           LODESTAR_PYTHON: python
 
+  # AutoGen runtime adapter (ADR-0027) — the third sibling: installs Python +
+  # AutoGen + the `lodestar-autogen` hook so the runtime-gated
+  # `autogen-tool-calls-are-governed` probe exercises its REAL end-to-end path (real
+  # AutoGen tools → the hook → the shared TS gate). In the `verify` job above that
+  # probe runs under `probes:ci` but skips loudly (no AutoGen there), mirroring the
+  # DB-gated cross-session probe.
+  autogen-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      # AutoGen (unlike CrewAI) does not pull chromadb, so it has no 3.14
+      # constraint; pin 3.12 anyway to match the sibling runtime jobs.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Install the hook package itself (with its autogen extra), so the probe
+      # exercises the published artifact, not just the in-repo source.
+      - name: Install the AutoGen runtime hook + AutoGen
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "./runtimes/autogen[autogen]"
+
+      # The probe spawns `bun run …/cli runtime gate` (bun is on PATH from
+      # setup-bun) and drives real AutoGen tools through it.
+      - name: Run the AutoGen runtime adapter probe (real path)
+        run: bun run packs/lodestar-core/probes/autogen-tool-calls-are-governed.ts
+        env:
+          LODESTAR_PYTHON: python
+
   # License audit — fail the build if any dependency anywhere in the tree
   # (transitive and dev included) carries a non-permissive license. This is
   # independent of the build, so it runs as its own job for fast feedback
