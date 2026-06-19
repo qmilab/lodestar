@@ -482,7 +482,7 @@ These are real items, but they belong later than v1:
 - **Public marketplace registry** — v1.5+. Requires signing infrastructure.
 - **Hosted dashboard** — v2. Requires team workflow design.
 - **Compliance exports** (SOC 2, GDPR DSR) — v2+. Requires legal review.
-- **Non-MCP runtime adapters** (Hermes, OpenClaw, LangGraph, CrewAI, Flue, Pi) — v1.5+. Each adapter is its own work item; do not block v1. (ADR-0005.) **LangGraph (#83) has landed** — the shared TS spine `@qmilab/lodestar-runtime-core` (`lodestar runtime gate`, ADR-0024/ADR-0025) + the Python `lodestar-langgraph` hook in `runtimes/langgraph/`, locked by the `runtime-gate-enforces-two-phase` (always-on) and `langgraph-tool-calls-are-governed` (runtime-gated) probes. CrewAI (#84) and AutoGen (#85) now collapse to "another thin hook on the same gate + protocol".
+- **Non-MCP runtime adapters** (Hermes, OpenClaw, LangGraph, CrewAI, Flue, Pi) — v1.5+. Each adapter is its own work item; do not block v1. (ADR-0005.) **LangGraph (#83) has landed** — the shared TS spine `@qmilab/lodestar-runtime-core` (`lodestar runtime gate`, ADR-0024/ADR-0025) + the Python `lodestar-langgraph` hook in `runtimes/langgraph/`, locked by the `runtime-gate-enforces-two-phase` (always-on) and `langgraph-tool-calls-are-governed` (runtime-gated) probes. **CrewAI (#84) has landed too** — the `lodestar-crewai` hook in `runtimes/crewai/` reused the gate unchanged (ADR-0026), locked by `crewai-tool-calls-are-governed`; this is the proof the spine generalises. AutoGen (#85) is now the near-mechanical third hook on the same gate + protocol.
 - **Advanced replay UI** — v2.
 - **Quantum world-model integration** — separate research arc under QMI Lab Pillar III. Not Lodestar's path.
 

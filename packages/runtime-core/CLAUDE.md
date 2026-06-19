@@ -1,11 +1,12 @@
 # @qmilab/lodestar-runtime-core — CLAUDE.md
 
 The language-agnostic **governance-gate sidecar** — the reusable TS spine of the
-runtime-adapter epic (ADR-0024 / ADR-0025, #75 / #83). It governs an agent runtime
-that does **not** speak MCP (LangGraph first; CrewAI #84, AutoGen #85 next) by
-remoting each native tool call through the Action Kernel over a thin NDJSON-RPC
-seam. Each framework contributes only a small native hook (in `runtimes/`); the
-gate server here is shared.
+runtime-adapter epic (ADR-0024 / ADR-0025 / ADR-0026, #75 / #83 / #84). It governs
+an agent runtime that does **not** speak MCP (LangGraph + CrewAI shipped; AutoGen
+#85 next) by remoting each native tool call through the Action Kernel over a thin
+NDJSON-RPC seam. Each framework contributes only a small native hook (in
+`runtimes/`); the gate server here is shared — CrewAI reused it unchanged, which is
+the proof the spine generalises.
 
 This is **not** a new governance implementation. It wires the *same* engine the
 MCP proxy runs — `ActionKernel` two-phase, the `CompiledPolicy` gate,

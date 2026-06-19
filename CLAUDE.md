@@ -11,9 +11,10 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Sixty-four probes pass under
+resolved for future versions.) Sixty-five probes pass under
 strict TypeScript (two need a Postgres test database; one needs a Python
-+ LangGraph runtime — see below). Sixty live in the first-party pack
++ LangGraph runtime; one needs a Python + CrewAI runtime — see below).
+Sixty-one live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -264,7 +265,25 @@ Python LangGraph compiled graph + prebuilt `ToolNode` driven through the
 a custom node via `governed_call`, async `ainvoke`, batch/parallel, an L4 hold across the
 boundary (the body never runs), and a dynamically-unregistered tool rejected fail-closed;
 it **skips loudly** when Python/LangGraph is absent and runs for real in the CI
-`langgraph-runtime` job; ADR-0024 / ADR-0025). The other
+`langgraph-runtime` job; ADR-0024 / ADR-0025), and one CrewAI runtime-adapter probe —
+`crewai-tool-calls-are-governed` (the **second framework on the shared gate**, #84 /
+ADR-0026: a **real** CrewAI toolset driven through the `lodestar-crewai` hook + the
+**same unchanged** TS gate, proving the runtime-core spine generalises — the hook is
+~one new file (`adapter.py`: a governed `BaseTool` subclass overriding `_run`, the
+single seam CrewAI's `BaseTool.run` **and** `CrewStructuredTool` both dispatch through;
+the gate ref rides a Pydantic `PrivateAttr`, the original `args_schema` is preserved,
+denials re-raise `LodestarDenied` which `ToolUsage` surfaces as a re-plannable
+observation). It adds the real-runtime cases — CrewAI's own `CrewStructuredTool.invoke`
+path (dict + JSON-string inputs), a custom step via `governed_call`, an async-only tool
+via the remoted execute, concurrent calls correlated, an L4 hold across the boundary (the
+body never runs, through both `governed_call` and the framework path), an unregistered
+tool denied fail-closed, the wrappers attaching to a real `Agent`/`Task`/`Crew`, and
+NaN arg/result rejection — **no LLM/key needed**, driving the framework's tool-execution
+path directly. The Python RPC `client.py` is duplicated verbatim from `lodestar-langgraph`
+(framework-agnostic stdlib; graduate to a shared `lodestar-runtime-client` PyPI package at
+the third hook — AutoGen #85). It **skips loudly** when Python/CrewAI is absent and runs
+for real in the CI `crewai-runtime` job (Python 3.12 — CrewAI's chromadb dep breaks on
+3.14); ADR-0026). The other
 four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
@@ -400,9 +419,14 @@ runtimes/                    # (v1.5) non-MCP runtime adapters — Python siblin
                              #   hook: spawns `lodestar runtime gate`, remotes each native
                              #   tool call over NDJSON-RPC (GateClient + govern_tools +
                              #   governed_call). Pure-stdlib client; langchain imported lazily
+  crewai/                    # (exists) `lodestar-crewai` — the second thin hook (#84,
+                             #   ADR-0026) on the SAME gate: a governed BaseTool subclass
+                             #   overriding `_run` (the seam BaseTool.run + CrewStructuredTool
+                             #   share). client.py duplicated verbatim from langgraph; crewai
+                             #   imported lazily. AutoGen #85 is the near-mechanical third
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 60 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 61 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -480,7 +504,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Sixty-four probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Sixty-five probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 
