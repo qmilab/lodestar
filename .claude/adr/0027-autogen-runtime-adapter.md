@@ -72,6 +72,12 @@ and any `Workbench`). This is the one-closed-fail-closed-surface rule of ADR-002
 §3 realised for AutoGen; an unregistered tool is **denied** by the gate (fail
 closed).
 
+- **`govern_tools` accepts the same toolset shapes `AssistantAgent` does** — a
+  `BaseTool` as-is, and a **bare callable normalised to a `FunctionTool`** (its
+  `__doc__` as the description, exactly as the agent's own ingestion does). So
+  `govern_tools(gate, tools)` works on the literal `tools=[my_func, ...]` list a
+  user would otherwise hand the agent; passing a plain function does not fail on a
+  missing `.name`.
 - **AutoGen's `BaseTool` is not a Pydantic model**, so — unlike the CrewAI hook's
   `PrivateAttr` — the gate reference + per-tool config live in plain instance
   attributes (`self._original` / `self._gov`); they are still never part of the
@@ -95,12 +101,26 @@ closed).
 AutoGen's `run` / `run_json` are coroutines, so the governed wrapper's `run_json`
 **offloads the blocking gate RPC onto a worker thread** (`asyncio.to_thread`) — it
 never stalls the agent's event loop on `govern`/`resume`. The remoted body in turn
-drives the original's coroutine with `asyncio.run` on the client's worker thread
-(no running loop there), serving both sync- and async-implemented tools regardless
-of how the agent drove them. This is the LangGraph `invoke`→`ainvoke` /
-CrewAI `run`→`arun` fallback's analogue, simpler because **every** AutoGen tool is
-async: there is one path, not a sync path with an async fallback. `governed_call`
-itself stays blocking (a custom step calls it via `await asyncio.to_thread(...)`).
+runs the original's coroutine on a **single persistent event loop** (a dedicated
+daemon thread, lazily created): because *every* AutoGen tool is async, a fresh
+`asyncio.run` per call would bind any loop-scoped state a tool caches (an
+`aiohttp.ClientSession`, an `asyncio.Event`/`Queue`, a pooled connection) to a loop
+that is then torn down — breaking the next call cross-loop. One stable loop keeps
+that state valid. This is the LangGraph `invoke`→`ainvoke` / CrewAI `run`→`arun`
+fallback's analogue, simpler in that there is one path (no sync path with an async
+fallback) and more robust in that the loop is reused, not recreated per call.
+
+**Cancellation.** The wrapper threads AutoGen's `CancellationToken` through: an
+already-cancelled token **short-circuits** (no action is proposed → a cancelled
+agent run starts no *new* governed work, and no event is written), and the
+in-flight `to_thread` future is **linked** to the token so cancelling the run
+promptly unblocks the await. The honest boundary (ADR-0004 lineage): once the gate
+reaches its **execute phase**, the remoted body runs server-side across the RPC
+boundary and **cannot be force-cancelled** mid-flight — the same property as the
+LangGraph / CrewAI remoted-execute model, and an unavoidable consequence of the
+two-phase "no work before approval" guarantee that *requires* the body to run
+server-side. `governed_call` itself stays blocking (a custom step calls it via
+`await asyncio.to_thread(...)`).
 
 ### 3. Denial default re-raises; AutoGen turns it into a re-plannable observation
 

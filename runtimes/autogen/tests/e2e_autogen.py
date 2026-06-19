@@ -5,13 +5,17 @@ Drives REAL AutoGen tools through the `lodestar-autogen` hook and the TypeScript
 governance-gate sidecar, exercising the real-runtime cases the in-TS
 `runtime-gate-enforces-two-phase` probe cannot:
 
+  0. a BARE CALLABLE in the toolset is normalised to a governed FunctionTool (the
+     same `tools=[my_func]` shape `AssistantAgent` accepts);
   1. govern_tools returns governed wrappers only; a governed L1 call executes
      through AutoGen's own execution path (`StaticWorkbench.call_tool`, the exact
      dispatch an `AssistantAgent` uses) — the body runs exactly once, remoted back;
-  2. a custom step invokes a governed tool via ``governed_call``;
+  2. a custom step invokes a governed tool via ``governed_call`` (incl. the
+     normalised bare-callable tool);
   3. an async-implemented AutoGen tool (an async ``FunctionTool``) runs through the
-     gate's remoted execute (the hook drives its coroutine with ``asyncio.run`` on
-     the loop-less worker thread); a custom ``BaseTool`` subclass works too;
+     gate's remoted execute, and a custom ``BaseTool`` subclass works too; the
+     remoted body runs on ONE stable persistent loop, so a tool's loop-scoped state
+     survives across calls (3c);
   4. concurrent in-flight calls are correlated to the right result;
   5. an L4 tool is HELD (two-phase across the boundary): with no approver it
      times out and the body NEVER runs — both through ``governed_call`` (raises)
@@ -20,7 +24,9 @@ governance-gate sidecar, exercising the real-runtime cases the in-TS
   7. the governed wrappers are valid AutoGen ``BaseTool``s the framework accepts —
      they attach to a real ``AssistantAgent`` (a stub model client, no LLM/key);
   8. a non-finite float in an argument or a result fails the call rather than
-     hanging it (Python's json would otherwise emit invalid ``NaN``).
+     hanging it (Python's json would otherwise emit invalid ``NaN``);
+  9. an already-cancelled ``CancellationToken`` short-circuits the wrapper — no
+     action is proposed and the body never runs.
 
 Spawns the gate via ``bun run <repo>/packages/cli/src/index.ts runtime gate``.
 Invoked by the runtime-gated ``autogen-tool-calls-are-governed`` probe, which skips
@@ -74,13 +80,35 @@ except Exception as exc:  # pragma: no cover - the probe gates on import availab
     sys.exit(0)
 
 # ── tool bodies (the REAL functions the gate remotes back to run) ─────────────
-runs: dict[str, int] = {"echo": 0, "read_doc": 0, "deploy": 0, "fetch": 0}
+runs: dict[str, int] = {"echo": 0, "read_doc": 0, "deploy": 0, "fetch": 0, "search": 0, "loop_check": 0}
 
 
 def echo(msg: str) -> dict:
     """echo a message back"""
     runs["echo"] += 1
     return {"echo": msg}
+
+
+def search(q: str) -> dict:
+    """search the web (a BARE CALLABLE — not a BaseTool; govern_tools must
+    normalise it to a FunctionTool the way AssistantAgent does)"""
+    runs["search"] += 1
+    return {"hits": [q]}
+
+
+# Records the running loop across calls to prove the remoted body runs on ONE
+# stable persistent loop (a fresh asyncio.run per call would give a new, torn-down
+# loop each time → cross-loop breakage for loop-scoped state).
+_loop_state: dict[str, object] = {"loop": None}
+
+
+async def loop_check(x: int) -> dict:
+    """async tool that reports whether it is running on the same loop as last call"""
+    runs["loop_check"] += 1
+    current = asyncio.get_running_loop()
+    same = _loop_state["loop"] is current
+    _loop_state["loop"] = current
+    return {"same_as_prev": same}
 
 
 def deploy(target: str) -> dict:
@@ -192,6 +220,8 @@ def main() -> int:
                 "deploy": {"required_trust_level": 4, "reversibility": "irreversible", "sandbox": "controlled-shell", "permissions": [], "blast_radius": "external"},
                 "fetch": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
                 "nan_out": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
+                "search": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
+                "loop_check": {"required_trust_level": 1, "reversibility": "reversible", "sandbox": "read", "permissions": [], "blast_radius": "session"},
             },
         }
         config_path = Path(tmp) / "runtime-gate.config.json"
@@ -222,15 +252,21 @@ def main() -> int:
             fetch_t = FunctionTool(fetch, description="fetch a url (async-implemented tool)", name="fetch")
             nan_t = FunctionTool(nan_out, description="returns a non-finite float", name="nan_out")
             read_doc_t = ReadDoc()
-            tools = [echo_t, read_doc_t, deploy_t, fetch_t, nan_t]
+            loop_check_t = FunctionTool(loop_check, description="reports its running loop", name="loop_check")
+            # `search` is a BARE CALLABLE (not pre-wrapped) — govern_tools must
+            # normalise it, exactly as AssistantAgent would.
+            tools = [echo_t, read_doc_t, deploy_t, fetch_t, nan_t, loop_check_t, search]
 
             governed = govern_tools(gate, tools, hold_wait_ms=2_000)
             governed_by_name = {t.name: t for t in governed}
-            check("0: only governed wrappers are exposed", set(governed_by_name) == {"echo", "read_doc", "deploy", "fetch", "nan_out"}, str(set(governed_by_name)))
+            expected_names = {"echo", "read_doc", "deploy", "fetch", "nan_out", "loop_check", "search"}
+            check("0: only governed wrappers are exposed", set(governed_by_name) == expected_names, str(set(governed_by_name)))
             # The wrappers are real AutoGen BaseTools (not the originals).
             check("0: wrappers are BaseTool instances, distinct from the originals", all(isinstance(t, BaseTool) for t in governed) and governed_by_name["echo"] is not echo_t, "")
             # The original schema is preserved (the model sees the right parameters).
             check("0: governed echo preserves the original schema", list(governed_by_name["echo"].schema["parameters"]["properties"]) == ["msg"], str(governed_by_name["echo"].schema["parameters"]["properties"]))
+            # A bare callable was accepted and normalised to a governed FunctionTool.
+            check("0: bare callable was normalised + governed (search)", isinstance(governed_by_name.get("search"), BaseTool) and list(governed_by_name["search"].schema["parameters"]["properties"]) == ["q"], str(governed_by_name.get("search") and governed_by_name["search"].schema["parameters"]["properties"]))
 
             # The governed wrappers dispatch through AutoGen's REAL execution path:
             # StaticWorkbench.call_tool → tool.run_json → the gate.
@@ -253,6 +289,11 @@ def main() -> int:
             check("2b: custom BaseTool subclass ran via the gate", doc == {"read": "/notes.md"}, str(doc))
             check("2b: read_doc body ran once", runs["read_doc"] == 1, str(runs["read_doc"]))
 
+            # 2c. the normalised bare-callable tool runs through the gate.
+            hits = governed_call(gate, "search", {"q": "lodestar"})
+            check("2c: normalised bare-callable tool ran via the gate", hits == {"hits": ["lodestar"]}, str(hits))
+            check("2c: search body ran once", runs["search"] == 1, str(runs["search"]))
+
             # 3. an async-implemented tool runs via the gate's remoted execute (the
             #    hook drives its coroutine with asyncio.run on the worker thread),
             #    through BOTH the framework path and a direct governed_call.
@@ -261,6 +302,14 @@ def main() -> int:
             res_async = governed_call(gate, "fetch", {"url": "https://y"})
             check("3: async tool ran via governed_call", res_async == {"fetched": "https://y"}, str(res_async))
             check("3: async tool body ran exactly twice", runs["fetch"] == 2, str(runs["fetch"]))
+
+            # 3c. the remoted body runs on ONE stable persistent loop, so a tool's
+            #     loop-scoped state survives across calls (a fresh asyncio.run per
+            #     call would give a new, torn-down loop each time → cross-loop break).
+            first = governed_call(gate, "loop_check", {"x": 1})
+            second = governed_call(gate, "loop_check", {"x": 2})
+            check("3c: first loop_check sees no previous loop", first == {"same_as_prev": False}, str(first))
+            check("3c: second loop_check runs on the SAME persistent loop", second == {"same_as_prev": True}, str(second))
 
             # 4. concurrent in-flight calls are each correlated to their own result.
             before = runs["echo"]
@@ -306,13 +355,29 @@ def main() -> int:
                 ghost_kind = denied.kind
             check("6: unregistered tool denied (fail closed)", ghost_kind == "unregistered_tool", str(ghost_kind))
 
+            # 9. an already-cancelled CancellationToken short-circuits the wrapper:
+            #    no action is proposed and the body never runs, so a cancelled agent
+            #    run starts no new governed work. (The remoted body, once in the
+            #    gate's execute phase, runs server-side and isn't force-cancellable
+            #    across the RPC boundary — a documented boundary, ADR-0027 §2.)
+            echo_before = runs["echo"]
+            cancelled = False
+            ct = CancellationToken()
+            ct.cancel()
+            try:
+                asyncio.run(governed_by_name["echo"].run_json({"msg": "nope"}, ct))
+            except asyncio.CancelledError:
+                cancelled = True
+            check("9: a pre-cancelled token short-circuits (CancelledError)", cancelled, str(cancelled))
+            check("9: echo body did NOT run on a cancelled token", runs["echo"] == echo_before, str(runs["echo"] - echo_before))
+
             # 7. the governed wrappers are valid AutoGen tools the framework accepts:
             #    they attach to a real AssistantAgent (construction validates the
             #    toolset; a stub model client means no LLM call / API key needed).
             agent_ok = None
             try:
                 agent = AssistantAgent("ops", model_client=_StubModelClient(), tools=governed)
-                agent_ok = {t.name for t in agent._tools} == {"echo", "read_doc", "deploy", "fetch", "nan_out"}
+                agent_ok = {t.name for t in agent._tools} == expected_names
             except Exception as exc:  # noqa: BLE001
                 agent_ok = False
                 print(f"      (AssistantAgent construction raised: {exc})")

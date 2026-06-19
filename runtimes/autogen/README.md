@@ -46,6 +46,11 @@ with GateClient("runtime-gate.config.json") as gate:
     result = await asyncio.to_thread(governed_call, gate, "search_web", {"q": "lodestar"})
 ```
 
+`govern_tools` accepts the same toolset shapes `AssistantAgent` does — a
+`BaseTool` as-is, or a **bare callable** (normalised to a `FunctionTool` using its
+docstring), so you can pass the literal `tools=[my_func, ...]` list you'd otherwise
+hand the agent.
+
 The gate's config (`runtime-gate.config.json`) is a `RuntimeGateConfig` — the
 signed policy document, approver keys, sentinel ids, persistence, and durable log
 root all live there. The hook never holds credentials or policy.
@@ -68,13 +73,20 @@ block-polling the gate up to the deadline for a *signed* approval (`hold_wait_ms
 surfaces the reason to the agent as a re-plannable error `ToolResult`. Pass
 `on_denied` to `govern_tools` to map a denial to a return value instead.
 
-## Async note
+## Async, loops & cancellation
 
 AutoGen's tool surface is fully async (`BaseTool.run_json` is a coroutine). The
 governed wrapper offloads the blocking gate RPC onto a worker thread so it never
 stalls the agent's event loop, and the gate's remoted body runs the original
-tool's coroutine on the client's own worker thread — so both sync and async tools
-work regardless of how the agent drives them.
+tool's coroutine on a single **persistent** event loop — so loop-scoped state a
+tool caches (an `aiohttp.ClientSession`, an `asyncio.Event`) stays valid across
+calls rather than being bound to a loop that is torn down after each call.
+
+The wrapper honours AutoGen's `CancellationToken`: an already-cancelled token
+short-circuits (no governed work starts), and an in-flight call is unblocked when
+the run is cancelled. Note that once the gate is executing the tool body it runs
+server-side and can't be force-cancelled mid-flight — a property of the
+remoted-execute model it shares with the LangGraph / CrewAI hooks.
 
 Apache-2.0. Part of the Lodestar monorepo (`runtimes/autogen/`). The pure-stdlib
 `client.py` is duplicated verbatim from `lodestar-langgraph` / `lodestar-crewai`;

@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 from typing import Any, Callable, Iterable, Optional
 
 from .client import GateClient
@@ -125,16 +126,58 @@ def govern_tools(
     # autogen installed (the client is pure stdlib). pydantic + CancellationToken
     # come in with autogen-core.
     from autogen_core import CancellationToken
+    from autogen_core.tools import BaseTool, FunctionTool
     from pydantic import BaseModel
 
     cls = _governed_tool_cls()
     governed: list[Any] = []
     for tool in tools:
+        # Accept the same toolset shapes AssistantAgent does — a BaseTool as-is, a
+        # bare callable normalised to a FunctionTool — so `govern_tools(gate, tools)`
+        # works on the exact `tools=[...]` list the agent would take, not only
+        # pre-wrapped BaseTools.
+        tool = _normalize_tool(tool, BaseTool, FunctionTool)
         # Bind the ORIGINAL tool body for the gate's remoted execute. Using the
         # original (not the wrapper) is what prevents recursion.
         client.register_tool(tool.name, _body_for(tool, CancellationToken, BaseModel))
         governed.append(_wrap_tool(cls, client, tool, hold_wait_ms, on_denied))
     return governed
+
+
+def _normalize_tool(tool: Any, base_tool_cls: Any, function_tool_cls: Any) -> Any:
+    """Mirror ``AssistantAgent``'s tool ingestion: a ``BaseTool`` is used as-is; a
+    bare callable is wrapped in a ``FunctionTool`` (its ``__doc__`` as the
+    description, exactly as the agent does). So ``govern_tools`` accepts the same
+    ``tools=[...]`` shapes the framework does — passing a plain function no longer
+    fails on a missing ``.name``."""
+    if isinstance(tool, base_tool_cls):
+        return tool
+    if callable(tool):
+        description = tool.__doc__ if getattr(tool, "__doc__", None) else ""
+        return function_tool_cls(tool, description=description)
+    raise TypeError(f"govern_tools: unsupported tool type {type(tool)!r}")
+
+
+# A single persistent event loop on a dedicated daemon thread runs every remoted
+# tool coroutine. AutoGen's tool surface is *fully* async, so a fresh `asyncio.run`
+# per call would bind any loop-scoped state a tool caches (an `aiohttp.ClientSession`,
+# an `asyncio.Event`/`Queue`, a pooled DB connection) to a loop that is then torn
+# down — the next call on a new loop would fail cross-loop. One stable loop keeps
+# that state valid across calls. Lazily created; never touched on the import path.
+_tool_loop_lock = threading.Lock()
+_tool_loop_holder: dict[str, Any] = {"loop": None}
+
+
+def _tool_loop() -> Any:
+    with _tool_loop_lock:
+        loop = _tool_loop_holder["loop"]
+        if loop is None:
+            loop = asyncio.new_event_loop()
+            threading.Thread(
+                target=loop.run_forever, name="lodestar-autogen-tool-loop", daemon=True
+            ).start()
+            _tool_loop_holder["loop"] = loop
+    return loop
 
 
 def _body_for(tool: Any, cancellation_token_cls: Any, base_model_cls: Any) -> Callable[[dict], dict]:
@@ -143,14 +186,18 @@ def _body_for(tool: Any, cancellation_token_cls: Any, base_model_cls: Any) -> Ca
 
     AutoGen's tool surface is fully async — ``run_json`` validates the args against
     the tool's ``args_type`` and awaits ``run``. The gate remotes this body on a
-    worker thread with no running event loop, so we drive the coroutine with
-    ``asyncio.run``. A Pydantic-model result is dumped to a JSON-safe value for the
-    wire; a non-finite float is rejected by the client before it can corrupt the
-    JSON (→ ``tool_error`` → failed action), never silently emitted as ``NaN``.
+    worker thread with no running event loop; we drive the coroutine on the shared
+    persistent tool loop (so loop-scoped state a tool caches survives across calls,
+    unlike a fresh ``asyncio.run`` per call) and block this worker thread on the
+    result. A Pydantic-model result is dumped to a JSON-safe value for the wire; a
+    non-finite float is rejected by the client before it can corrupt the JSON (→
+    ``tool_error`` → failed action), never silently emitted as ``NaN``.
     """
 
     def body(args: dict) -> dict:
-        output = asyncio.run(tool.run_json(args, cancellation_token_cls()))
+        loop = _tool_loop()
+        future = asyncio.run_coroutine_threadsafe(tool.run_json(args, cancellation_token_cls()), loop)
+        output = future.result()
         # Normalise a Pydantic-model return to a JSON-safe value for the wire.
         if isinstance(output, base_model_cls):
             output = output.model_dump(mode="json")
@@ -224,25 +271,37 @@ def _governed_tool_cls() -> type:
             except (TypeError, ValueError):
                 return str(value)
 
-        async def run_json(self, args: Any, cancellation_token: Any, call_id: Optional[str] = None) -> Any:
+        async def run_json(self, args: Any, cancellation_token: Any = None, call_id: Optional[str] = None) -> Any:
             # The choke point the workbench / agent dispatches through.
-            return await self._governed(dict(args or {}))
+            return await self._governed(dict(args or {}), cancellation_token)
 
-        async def run(self, args: Any, cancellation_token: Any) -> Any:
+        async def run(self, args: Any, cancellation_token: Any = None) -> Any:
             # The abstract method; also governs a direct programmatic caller that
             # already validated its args into the model. run_json does NOT delegate
             # here, so there is no double-governing.
             payload = args.model_dump() if hasattr(args, "model_dump") else dict(args or {})
-            return await self._governed(payload)
+            return await self._governed(payload, cancellation_token)
 
-        async def _governed(self, payload: dict) -> Any:
+        async def _governed(self, payload: dict, cancellation_token: Any = None) -> Any:
             gov = self._gov
+            # Honour an already-cancelled run: don't even propose the action, so a
+            # cancelled agent run starts no new governed work (no body, no event).
+            if cancellation_token is not None and cancellation_token.is_cancelled():
+                raise asyncio.CancelledError()
+            # Offload the blocking gate RPC onto a worker thread so the agent's event
+            # loop is never stalled by govern/resume; link the agent's cancellation
+            # token so cancelling the run promptly unblocks this await. NOTE: once the
+            # gate reaches its execute phase the remoted body runs server-side and
+            # cannot be force-cancelled across the RPC boundary — a documented boundary
+            # of the remoted-execute model (ADR-0027 §2). The early-cancel check above
+            # is what prevents a *new* call from starting on an already-cancelled run.
+            task = asyncio.ensure_future(
+                asyncio.to_thread(governed_call, gov["client"], gov["name"], payload, hold_wait_ms=gov["hold_wait_ms"])
+            )
+            if cancellation_token is not None:
+                cancellation_token.link_future(task)
             try:
-                # Offload the blocking gate RPC onto a worker thread so the agent's
-                # event loop is never stalled by govern/resume.
-                return await asyncio.to_thread(
-                    governed_call, gov["client"], gov["name"], payload, hold_wait_ms=gov["hold_wait_ms"]
-                )
+                return await task
             except LodestarDenied as denied:
                 on_denied = gov["on_denied"]
                 if on_denied is not None:
