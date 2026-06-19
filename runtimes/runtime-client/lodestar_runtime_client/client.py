@@ -8,9 +8,11 @@ body (the re-entrant remoted execute), so the tool body runs only inside the
 gate's execute phase, never before approval.
 
 A single reader thread dispatches every inbound line by id, so concurrent
-``govern`` calls (LangGraph issues parallel tool calls) are correlated
-correctly — no positional or ordering assumption. This module is pure stdlib; the
-LangGraph/LangChain integration lives in ``adapter``.
+``govern`` calls (a framework may issue parallel tool calls) are correlated
+correctly — no positional or ordering assumption. This module is pure stdlib and
+framework-agnostic — the shared spine of the Lodestar runtime-adapter hooks
+(``lodestar-langgraph``, ``lodestar-crewai``, ``lodestar-autogen``); each
+framework's integration lives in that hook's ``adapter`` module.
 """
 
 from __future__ import annotations

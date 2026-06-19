@@ -116,12 +116,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Install the hook package itself (with its langgraph extra), so the probe
-      # exercises the published artifact, not just the in-repo source.
+      # Install the shared RPC client (lodestar-runtime-client, #128 / ADR-0028)
+      # from its local path FIRST — the hook pins it `==<version>` and it is not
+      # yet on PyPI in this job — then the hook itself (with its langgraph extra),
+      # so the probe exercises the packaged artifact, not just the in-repo source.
       - name: Install the LangGraph runtime hook + LangGraph
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "./runtimes/langgraph[langgraph]"
+          python -m pip install ./runtimes/runtime-client "./runtimes/langgraph[langgraph]"
 
       # The probe spawns `bun run …/cli runtime gate` (bun is on PATH from
       # setup-bun) and drives a real LangGraph loop through it.
@@ -154,12 +156,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Install the hook package itself (with its crewai extra), so the probe
-      # exercises the published artifact, not just the in-repo source.
+      # Install the shared RPC client (lodestar-runtime-client, #128 / ADR-0028)
+      # from its local path FIRST — the hook pins it `==<version>` and it is not
+      # yet on PyPI in this job — then the hook itself (with its crewai extra), so
+      # the probe exercises the packaged artifact, not just the in-repo source.
       - name: Install the CrewAI runtime hook + CrewAI
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "./runtimes/crewai[crewai]"
+          python -m pip install ./runtimes/runtime-client "./runtimes/crewai[crewai]"
 
       # The probe spawns `bun run …/cli runtime gate` (bun is on PATH from
       # setup-bun) and drives real CrewAI tools through it.
@@ -192,12 +196,14 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Install the hook package itself (with its autogen extra), so the probe
-      # exercises the published artifact, not just the in-repo source.
+      # Install the shared RPC client (lodestar-runtime-client, #128 / ADR-0028)
+      # from its local path FIRST — the hook pins it `==<version>` and it is not
+      # yet on PyPI in this job — then the hook itself (with its autogen extra), so
+      # the probe exercises the packaged artifact, not just the in-repo source.
       - name: Install the AutoGen runtime hook + AutoGen
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "./runtimes/autogen[autogen]"
+          python -m pip install ./runtimes/runtime-client "./runtimes/autogen[autogen]"
 
       # The probe spawns `bun run …/cli runtime gate` (bun is on PATH from
       # setup-bun) and drives real AutoGen tools through it.

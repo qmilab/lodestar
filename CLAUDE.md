@@ -280,9 +280,9 @@ via the remoted execute, concurrent calls correlated, an L4 hold across the boun
 body never runs, through both `governed_call` and the framework path), an unregistered
 tool denied fail-closed, the wrappers attaching to a real `Agent`/`Task`/`Crew`, and
 NaN arg/result rejection — **no LLM/key needed**, driving the framework's tool-execution
-path directly. The Python RPC `client.py` is duplicated verbatim from `lodestar-langgraph`
-(framework-agnostic stdlib; graduate to a shared `lodestar-runtime-client` PyPI package at
-the third hook — AutoGen #85). It **skips loudly** when Python/CrewAI is absent and runs
+path directly. The Python RPC `client.py` was duplicated verbatim from `lodestar-langgraph`
+(framework-agnostic stdlib; since graduated to the shared `lodestar-runtime-client` PyPI
+package in #128 / ADR-0028). It **skips loudly** when Python/CrewAI is absent and runs
 for real in the CI `crewai-runtime` job (Python 3.12 — CrewAI's chromadb dep breaks on
 3.14); ADR-0026), and one AutoGen runtime-adapter probe —
 `autogen-tool-calls-are-governed` (the **third framework on the shared gate**, #85 /
@@ -302,10 +302,12 @@ one path, no sync/async fallback. It adds the real-runtime cases — AutoGen's o
 hold across the boundary (the body never runs, through both `governed_call` which raises and
 the framework path which surfaces an error `ToolResult`), an unregistered tool denied
 fail-closed, the wrappers attaching to a real `AssistantAgent` (a stub model client), and
-NaN arg/result rejection — **no LLM/key needed**. The Python RPC `client.py` is the **third**
-verbatim copy; per ADR-0027 §4 the shared-`lodestar-runtime-client` graduation is **deferred
-to #128** (coupled to PyPI publish-ordering), so #85 stays a clean "third hook, same shape"
-PR. It **skips loudly** when Python/AutoGen is absent and runs for real in the CI
+NaN arg/result rejection — **no LLM/key needed**. The Python RPC `client.py` was the **third**
+verbatim copy at merge; per ADR-0027 §4 the shared-`lodestar-runtime-client` graduation
+**landed next in #128 / ADR-0028** (extracted to `runtimes/runtime-client/`; the hooks now
+depend on it pinned `==<version>` and PyPI publishes via OIDC on the same `v*` tag as npm,
+client-first), so #85 stayed a clean "third hook, same shape" PR. It **skips loudly** when
+Python/AutoGen is absent and runs for real in the CI
 `autogen-runtime` job (Python 3.12, pinned only to match the siblings — AutoGen pulls no
 chromadb); ADR-0027). The other
 four live in the first non-core
@@ -438,24 +440,29 @@ examples/
                              #   DocAwareEvidenceLinker via the guard cognitive seam
 
 runtimes/                    # (v1.5) non-MCP runtime adapters — Python siblings of
-                             #   packages/ (published to PyPI, not npm); ADR-0024
+                             #   packages/ (published to PyPI via OIDC trusted publishing
+                             #   on the same `v*` tag as npm, lockstep; ADR-0024/0028)
+  runtime-client/            # (exists) `lodestar-runtime-client` — the shared pure-stdlib
+                             #   RPC client (GateClient/GateError/ToolBody): spawns the TS
+                             #   gate, speaks NDJSON over stdio. Graduated from the three
+                             #   hooks' verbatim copies (#128, ADR-0028); the hooks now
+                             #   depend on it pinned `==<version>`. No framework deps.
+                             #   Publishes FIRST (client → hooks matrix), like npm's PUBLISH_ORDER
   langgraph/                 # (exists) `lodestar-langgraph` — the thin native LangGraph
                              #   hook: spawns `lodestar runtime gate`, remotes each native
                              #   tool call over NDJSON-RPC (GateClient + govern_tools +
-                             #   governed_call). Pure-stdlib client; langchain imported lazily
+                             #   governed_call). Client from lodestar-runtime-client; langchain lazy
   crewai/                    # (exists) `lodestar-crewai` — the second thin hook (#84,
                              #   ADR-0026) on the SAME gate: a governed BaseTool subclass
                              #   overriding `_run` (the seam BaseTool.run + CrewStructuredTool
-                             #   share). client.py duplicated verbatim from langgraph; crewai
-                             #   imported lazily
+                             #   share). Depends on lodestar-runtime-client; crewai imported lazily
   autogen/                   # (exists) `lodestar-autogen` — the third thin hook (#85,
                              #   ADR-0027) on the SAME gate: a governed BaseTool subclass
                              #   overriding `run_json` (the seam StaticWorkbench.call_tool +
                              #   AssistantAgent dispatch through). The one divergence: AutoGen's
                              #   tool surface is fully async, so the wrapper offloads the gate
-                             #   RPC off the event loop (asyncio.to_thread). client.py is the
-                             #   THIRD verbatim copy; autogen imported lazily; shared
-                             #   lodestar-runtime-client graduation deferred to #128
+                             #   RPC off the event loop (asyncio.to_thread). Depends on
+                             #   lodestar-runtime-client (#128, ADR-0028); autogen imported lazily
 
 packs/
   lodestar-core/             # (exists, Batch 4) first-party probe pack: 62 probes +

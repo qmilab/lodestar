@@ -36,7 +36,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Iterable, Optional
 
-from .client import GateClient
+from lodestar_runtime_client import GateClient
 
 # Default block-poll budget for a held action, in ms. Keep comfortably under the
 # gate/client timeout; 0 means "don't wait" (surface the hold immediately).

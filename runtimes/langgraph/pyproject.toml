@@ -16,10 +16,11 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Intended Audience :: Developers",
 ]
-# The client is pure stdlib (it spawns the TS gate and speaks NDJSON over stdio),
-# so the base package has no runtime dependencies. The LangGraph/LangChain
-# integration in `adapter` imports langchain lazily; install the extra for it.
-dependencies = []
+# The Lodestar RPC client (spawns the TS gate, speaks NDJSON over stdio) is the
+# pure-stdlib `lodestar-runtime-client`, shared across the runtime hooks (#128,
+# ADR-0028) and pinned in lockstep with this package. The LangGraph/LangChain
+# integration in `adapter` imports langchain lazily; install the `langgraph` extra.
+dependencies = ["lodestar-runtime-client==0.3.0"]
 
 [project.optional-dependencies]
 langgraph = ["langgraph>=0.2.0", "langchain-core>=0.3.0"]

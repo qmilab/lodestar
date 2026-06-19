@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lodestar-runtime-client"
+version = "0.3.0"
+description = "The shared pure-stdlib Python RPC client for Lodestar runtime hooks — spawns the `lodestar runtime gate` sidecar and remotes native tool calls through the Action Kernel over NDJSON-RPC (ADR-0024 / ADR-0028)."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "QMI Lab", email = "hello@qmilab.com" }]
+keywords = ["ai-agents", "governance", "lodestar", "trust", "agents", "rpc"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Intended Audience :: Developers",
+]
+# Pure stdlib — spawns the TS gate (`lodestar runtime gate`) and speaks NDJSON over
+# stdio. No runtime dependencies; the per-framework hooks add their own framework dep.
+dependencies = []
+
+[project.urls]
+Homepage = "https://qmilab.com/lodestar"
+Repository = "https://github.com/qmilab/lodestar"
+Issues = "https://github.com/qmilab/lodestar/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lodestar_runtime_client"]
