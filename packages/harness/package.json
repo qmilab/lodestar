@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-harness",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The Lodestar Harness — probe packs, sentinels, and calibrators that exercise and audit the epistemic chain. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

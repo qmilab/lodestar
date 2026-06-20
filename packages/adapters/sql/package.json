@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-sql",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Governed SQL/database tool adapter (parameterized-only query + mutation) for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

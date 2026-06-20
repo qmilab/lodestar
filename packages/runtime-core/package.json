@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-runtime-core",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The language-agnostic governance-gate sidecar — govern a non-MCP agent runtime (LangGraph, CrewAI, AutoGen) by remoting each native tool call through the Action Kernel over a thin NDJSON-RPC seam. The reusable spine of Lodestar's runtime-adapter epic.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
