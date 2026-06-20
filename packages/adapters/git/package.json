@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-git",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Git status tool adapter for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

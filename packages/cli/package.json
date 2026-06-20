@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-cli",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "The `lodestar` command-line interface — `lodestar report`, `lodestar guard wrap`, `lodestar action`, `lodestar trace`, `lodestar probe`. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
