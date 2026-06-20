@@ -60,6 +60,9 @@ try:
         governed_call,
     )
 except ImportError:
+    # The hook's source __init__ imports lodestar_runtime_client (#128); put the
+    # shared client's source on the path too so the no-install fallback resolves it.
+    sys.path.insert(0, str(REPO_ROOT / "runtimes" / "runtime-client"))
     sys.path.insert(0, str(REPO_ROOT / "runtimes" / "autogen"))
     from lodestar_autogen import (  # noqa: E402
         GateClient,

@@ -320,3 +320,19 @@ The options we rejected, each with a one-line reason.
   graduation is **deferred to #128** (coupled to PyPI publish-ordering). Decisions
   2–4 of ADR-0025 inherited unchanged. Probe `autogen-tool-calls-are-governed` + CI
   `autogen-runtime` job (Python 3.12). **Status: Accepted.**
+
+- [ADR-0028](0028-pypi-publishing-and-runtime-client-graduation.md) — PyPI trusted
+  publishing for the three runtime hooks **+** graduating the triplicated `client.py`
+  into a shared **`lodestar-runtime-client`** package (#128, paying off the
+  deferral ADR-0026 §3 / ADR-0027 §4 scheduled here). The graduated client is
+  byte-identical below the docstring; the graduation is purely internal (hooks
+  re-export, public surface unchanged) and the hooks pin it `==<version>` in
+  lockstep. A new `publish-pypi.yml` fires on the **same `v*` tag** as npm (one
+  version line, lockstep cadence), publishes over **OIDC trusted publishing** (no
+  tokens) in a `pypi` environment, **client first → hooks matrix** (the analogue of
+  npm's `PUBLISH_ORDER`), with a pre-publish **guard** asserting every Python
+  version + the three client pins equal the tag (mirrors `publish.yml`'s version
+  guard). Manual bumps, not `hatch-vcs`. The only manual step is the one-time PyPI
+  **pending-publisher** registration per project (npm-bootstrap analogue), documented
+  in the workflow header. CI `*-runtime` jobs install the local client first.
+  **Status: Accepted.**

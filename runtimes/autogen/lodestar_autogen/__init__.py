@@ -26,7 +26,7 @@ from .adapter import (
     govern_tools,
     governed_call,
 )
-from .client import GateClient, GateError
+from lodestar_runtime_client import GateClient, GateError
 
 __all__ = [
     "GateClient",
