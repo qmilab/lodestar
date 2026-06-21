@@ -130,6 +130,29 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
     }
   }
 
+  // Resolve the HTTP approval channel's bearer token from its named env var
+  // (ADR-0015). Secrets stay in the environment, never in the config file — the
+  // same discipline as `persistence.connection_string_env`. The proxy never reads
+  // `process.env` itself; the CLI (the process owner) injects a resolver. Validate
+  // here — alongside the policy compile, BEFORE opening any database connection —
+  // so a `token_env` naming an unset var fails fast with a clear message and never
+  // leaks a Postgres store the persistence block below would otherwise have opened.
+  // (The schema accepts the config; only the runtime can know the env var.)
+  let resolveApprovalToken: MCPProxyOverrides["resolveApprovalToken"] | undefined
+  const approvalChannel = config.approvals?.channel
+  if (approvalChannel?.kind === "http" && approvalChannel.token_env !== undefined) {
+    const envName = approvalChannel.token_env
+    const token = process.env[envName]
+    if (token === undefined || token === "") {
+      process.stderr.write(
+        `[mcp-proxy] approvals.channel.token_env is '${envName}' but that env var is not set\n`,
+      )
+      return 1
+    }
+    resolveApprovalToken = () => token
+    process.stderr.write(`[mcp-proxy] approval channel http (bearer from $${envName})\n`)
+  }
+
   // Resolve the persistence backend into injected stores. The proxy
   // itself never opens a database connection (that keeps `bun:sql` out of
   // its import graph); the CLI owns the connection and closes it when the
@@ -187,6 +210,7 @@ export async function guardMCPProxyCommand(argv: string[]): Promise<number> {
   if (storeOverride !== undefined) overrides.stores = storeOverride
   if (policyOverride !== undefined) overrides.policyGate = policyOverride
   if (arbiterOverride !== undefined) overrides.arbiter = arbiterOverride
+  if (resolveApprovalToken !== undefined) overrides.resolveApprovalToken = resolveApprovalToken
   const proxy = new MCPProxy(config, overrides)
   process.stderr.write(`[mcp-proxy] session ${proxy.session_id}\n`)
   process.stderr.write(`[mcp-proxy] log root ${proxy.log_root}\n`)

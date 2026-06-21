@@ -19,7 +19,11 @@ Cognitive Core. The resulting event log is renderable by
   place of the ceiling preset, and the optional `approvals` field
   (`ApprovalsConfig`) pinning the Ed25519 approver public keys
   (`authorized_keys`) a side-channel resolution is signature-verified against
-  before promotion (ADR-0010). Every field is explicit; nothing in this package
+  before promotion (ADR-0010), plus the optional `approvals.channel`
+  (`ApprovalChannelConfig`, ADR-0015) selecting where out-of-band resolutions are
+  read from — omitted → the local `.approvals/` file channel (today's behaviour),
+  or `{ kind: "http", endpoint, token_env? }` for a remote approval service (which
+  requires a pinned key and forbids `allow_unsigned`). Every field is explicit; nothing in this package
   has a silent default for a security-relevant setting — in particular, a proxy
   that waits for an out-of-band resolution (`approval_timeout_ms > 0`) must pin
   an approver key or set `approvals.allow_unsigned: true`, enforced at both the
@@ -154,9 +158,21 @@ Cognitive Core. The resulting event log is renderable by
      *in-process* resolver path (a second `EventLogWriter` in the proxy's own
      process shares the single-writer mutex + seq counter, so it is seq-safe and
      already canonical; the proxy does not re-emit);
-   - a resolution file in the **side-channel** — the *separate-process* path the
-     `lodestar approve` CLI uses (`approvals-channel.ts`,
-     `<log_root>/.approvals/<project>/<request-id>.json`). The CLI never appends
+   - a resolution from the **approval channel** (ADR-0015) — the *separate-process*
+     transport, read via `ApprovalChannel.fetch(ref)` and cleaned up via
+     `consume(ref)` (both built once in the constructor from
+     `config.approvals.channel`, or injected via `MCPProxyOverrides.approvalChannel`).
+     The default `FileApprovalChannel` is the `lodestar approve` CLI's file
+     side-channel (`approvals-channel.ts`,
+     `<log_root>/.approvals/<project>/<request-id>.json`), byte-for-byte as before;
+     `{ kind: "http" }` reads a remote approval service instead. **The channel only
+     mediates the *source* — the signature gate (`resolutionVerified`) is unchanged
+     and runs AFTER `fetch`, in the consumer, so a hostile channel can only delay an
+     approval, never forge one; the log path is not channel-mediated.** An HTTP
+     channel requires a pinned approver key and forbids `allow_unsigned`
+     (`httpChannelForbidsUnsigned`, shared by the schema superRefine and the
+     constructor). The `lodestar approve` CLI write side (`writeApprovalResolution`)
+     is deliberately NOT part of the channel — a channel is consumer-side transport. The CLI never appends
      the log (cross-process `seq`/`logical_clock` would collide — the writer's
      counters are process-local), so the proxy **promotes** it: emits the
      canonical `approval.granted@1` / `approval.denied@1` into its *own* log,

@@ -63,9 +63,12 @@ import {
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
 import {
+  type ApprovalChannel,
+  type ApprovalRef,
   type ApprovalResolution,
-  deleteApprovalResolution,
-  readApprovalResolution,
+  type SecretValue,
+  createApprovalChannel,
+  httpChannelForbidsUnsigned,
   resolutionToOutcome,
 } from "./approvals-channel.js"
 import {
@@ -192,6 +195,24 @@ export interface MCPProxyOverrides {
    * arbiter is single-session — pass a fresh one per proxy.
    */
   arbiter?: SentinelArbiter
+  /**
+   * Override the approval transport (ADR-0015) — *where* the hold loop reads an
+   * out-of-band resolution and how it announces a hold. Defaults to the channel
+   * built from `config.approvals.channel` (the local `.approvals/` file channel
+   * unless `{ kind: "http" }`). This is the seam a probe (or a library host)
+   * injects an in-process / stub channel through. The signature gate is unchanged
+   * and runs AFTER `fetch` regardless of channel, so a hostile channel can only
+   * delay an approval, never forge one.
+   */
+  approvalChannel?: ApprovalChannel
+  /**
+   * Resolve a `token_env` name (from `config.approvals.channel.token_env`) into the
+   * bearer secret for the HTTP approval channel. The proxy never reads
+   * `process.env` itself (invariant 9 / no host-env passthrough); the host (the
+   * CLI) injects this resolver. Only consulted when the default HTTP channel is
+   * built from config — ignored when `approvalChannel` is injected directly.
+   */
+  resolveApprovalToken?: (envName: string) => SecretValue
 }
 
 /**
@@ -228,6 +249,15 @@ export class MCPProxy {
    * leaves the proxy in its pure, pre-sentinel behaviour.
    */
   private readonly arbiter?: SentinelArbiter
+  /**
+   * The approval transport (ADR-0015): where {@link waitForResolution} reads an
+   * out-of-band resolution and how {@link resolveProxyHold} announces a hold and
+   * consumes a promoted one. The default `.approvals/` file channel, an `http`
+   * channel from config, or an injected override. The signature gate
+   * ({@link resolutionVerified}) is untouched and runs AFTER `fetch`, so this only
+   * mediates the *source*, never the forgery boundary.
+   */
+  private readonly approvalChannel: ApprovalChannel
 
   private firewall?: MemoryFirewall
   private evidenceStore?: EvidenceStore
@@ -388,6 +418,25 @@ export class MCPProxy {
     // approval be silently rejected (indistinguishable from a forgery) at verify
     // time and time out. No-op when no keys are pinned.
     assertValidApproverKeys(config.approvals?.authorized_keys ?? [])
+    // Build the approval transport (ADR-0015). An injected channel (a probe / a
+    // library host's stub) wins; otherwise build it from `config.approvals.channel`
+    // (defaulting to the local `.approvals/` file channel). An `http` channel is a
+    // remote forgery surface that only the signature gate closes, so it requires a
+    // pinned key and forbids `allow_unsigned` — re-checked here via the SAME
+    // predicate the superRefine uses (a literal-config library host bypasses the
+    // schema), so the two guards can't drift. The signature gate
+    // (`resolutionVerified`) is unchanged and runs AFTER `fetch` regardless of
+    // channel: a hostile channel can only delay an approval, never forge one.
+    if (overrides?.approvalChannel !== undefined) {
+      this.approvalChannel = overrides.approvalChannel
+    } else {
+      const httpGuard = httpChannelForbidsUnsigned(config.approvals ?? {})
+      if (!httpGuard.ok) throw new Error(`MCPProxy: ${httpGuard.reason}`)
+      this.approvalChannel = createApprovalChannel(config.approvals?.channel ?? { kind: "file" }, {
+        logRoot: this.logRoot,
+        resolveToken: overrides?.resolveApprovalToken,
+      })
+    }
     // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
     // synthesizes decisions for it) AND a `CompiledPolicy` gate whose arbitrate
     // hook consults that arbiter. Two distinct silent-non-enforcement traps, two
@@ -994,7 +1043,9 @@ export class MCPProxy {
     await this.emit("approval.requested", request)
 
     // No wait configured: surface the hold immediately as a soft denial the
-    // agent re-proposes (the pre-deadline behaviour).
+    // agent re-proposes (the pre-deadline behaviour). Return BEFORE announcing —
+    // nobody will poll for a resolution, so a slow/down approval service must not
+    // delay the immediate `approval_required` (Codex review).
     if (timeoutMs <= 0) {
       return {
         result: buildPolicyDeniedResult({
@@ -1006,6 +1057,14 @@ export class MCPProxy {
         }),
       }
     }
+
+    // We will poll for a resolution. Notify the channel best-effort, **without
+    // awaiting** — `announce` is advisory (the HTTP channel POSTs the request; the
+    // file channel has no announce), so its latency or failure must never delay the
+    // first poll or eat into the approval budget. Fire-and-forget; the channel
+    // bounds the POST by its own wall-clock timeout, and `announceHold` swallows any
+    // error so nothing rejects unhandled.
+    void this.announceHold(request)
 
     const resolution = await this.waitForResolution(request, parked.id, deadlineAt)
 
@@ -1056,7 +1115,8 @@ export class MCPProxy {
     // single-writer mutex) is left as-is — re-emitting would duplicate it.
     if (source === "channel") {
       await this.emitCanonicalResolution(outcome, signature)
-      await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
+      // Fire-and-forget cleanup — must not delay executing the now-approved action.
+      this.consumeResolution(this.approvalRef(request.request_id, parked.id))
     }
 
     // A resolution arrived out-of-band. resolve() validates the binding.
@@ -1103,6 +1163,79 @@ export class MCPProxy {
    * timeout, never a late approval. A torn / partially-written read on either
    * source is swallowed and polling continues until the deadline.
    */
+  /** Build the {@link ApprovalRef} a channel keys a resolution by. */
+  private approvalRef(requestId: string, actionId: string): ApprovalRef {
+    return {
+      project_id: this.config.project_id,
+      session_id: this.sessionId,
+      request_id: requestId,
+      action_id: actionId,
+    }
+  }
+
+  /**
+   * Best-effort `announce` that swallows every failure — fired-and-forgotten by
+   * {@link resolveProxyHold} so an advisory notify can never block or fail the hold.
+   */
+  private async announceHold(request: ApprovalRequest): Promise<void> {
+    try {
+      await this.approvalChannel.announce?.(request)
+    } catch {
+      /* advisory — a failed/slow announce never blocks or fails the hold */
+    }
+  }
+
+  /**
+   * Best-effort `consume` (delete a spent / rejected resolution), **fire-and-forget**.
+   * Cleanup must never block the hold: a stalled remote DELETE would otherwise eat
+   * the approval budget at the rejection site, or delay executing an approved
+   * action at the promotion site. The channel bounds the request by its own
+   * wall-clock timeout; we never await it and swallow any error. A forged
+   * resolution re-fetched before its DELETE lands is harmless — the signature gate
+   * refuses it again and its `guard.approval.signature_rejected` audit is deduped.
+   */
+  private consumeResolution(ref: ApprovalRef): void {
+    void Promise.resolve(this.approvalChannel.consume?.(ref)).catch(() => {})
+  }
+
+  /**
+   * One `channel.fetch`, capped at the time remaining before `deadlineAt`. The
+   * channel has its OWN wall-clock timeout (`timeout_ms` for HTTP), which may be
+   * larger than the whole approval budget — e.g. a 1s `approval_timeout_ms` with
+   * the default 15s HTTP timeout. Without this cap a single slow fetch could
+   * overshoot the deadline (and the wrapped agent's `tools/call` timeout) before
+   * the loop's `remaining <= 0` check ever runs. Race the fetch against the
+   * remaining deadline; if the deadline wins, the (now-irrelevant) fetch is
+   * abandoned and we report "no resolution this poll" — the loop's deadline check
+   * then ends the hold conservatively (Codex review).
+   *
+   * Fail closed on a rejecting fetch: the built-in channels never reject (every
+   * failure → `undefined`), but a custom `MCPProxyOverrides.approvalChannel` might
+   * reject on a transient error. `.catch(() => undefined)` makes the RACED promise
+   * resolve `undefined` on rejection (not merely observe it), so a channel failure
+   * is treated as "not yet" and routes through the normal timeout/audit path rather
+   * than rejecting out of the hold (Codex review).
+   */
+  private async fetchWithinDeadline(
+    ref: ApprovalRef,
+    deadlineAt: number,
+  ): Promise<ApprovalResolution | undefined> {
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) return undefined
+    const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        fetchPromise,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), remaining)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   private async waitForResolution(
     request: ApprovalRequest,
     actionId: string,
@@ -1111,6 +1244,7 @@ export class MCPProxy {
     { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
   > {
     const reader = new EventLogReader(this.logRoot)
+    const ref = this.approvalRef(request.request_id, actionId)
     for (;;) {
       if (this.stopping) return undefined
       let events: EventEnvelope[] = []
@@ -1144,14 +1278,15 @@ export class MCPProxy {
           rejectedEventId: logResult.eventId,
         })
       }
-      // Then the separate-process side-channel. Read errors / malformed files
-      // surface as `undefined` (the helper is tolerant); keep polling.
-      const resolution = await readApprovalResolution(
-        this.logRoot,
-        this.config.project_id,
-        request.request_id,
-      )
-      const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
+      // Then the approval channel (the separate-process side-channel by default,
+      // or a remote HTTP service; ADR-0015). Read errors / malformed / oversized
+      // responses surface as `undefined` (every channel is tolerant by
+      // construction); keep polling. The fetch is capped at the time remaining
+      // before the deadline so a slow remote channel can't overshoot the approval
+      // budget. The returned resolution is UNTRUSTED input — the signature gate
+      // below verifies it before it can un-park anything.
+      const resolution = await this.fetchWithinDeadline(ref, deadlineAt)
+      const channelOutcome = channelOutcomeFor(resolution, request.request_id, actionId, deadlineAt)
       // A deadline-valid channel resolution must additionally clear signature
       // verification against the operator-pinned approver keys before it can
       // un-park the action. `resolution` is defined whenever `channelOutcome` is.
@@ -1163,11 +1298,13 @@ export class MCPProxy {
         // once (the diagnostic is the durable forensic record) and DELETE the
         // spent file so it is not re-read + re-verified every poll (a planted file
         // would otherwise be a per-poll crypto-amplification sink). A legitimate
-        // later resolution arrives as a fresh file and is verified normally.
+        // later resolution arrives as a fresh file and is verified normally. The
+        // delete is fire-and-forget so a stalled remote DELETE can't eat the
+        // approval budget; the dedup above keeps a not-yet-deleted re-read cheap.
         await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
           source: "side_channel",
         })
-        await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
+        this.consumeResolution(ref)
       }
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return undefined
@@ -1867,16 +2004,21 @@ function resolutionOutcomeFor(
  * is resolver-supplied and `TimestampSchema` permits a non-UTC offset, so a
  * lexical string compare against the UTC deadline would be wrong. A resolution
  * dated after the deadline is a timeout, never a late approval — the same rule
- * the log path applies. The action-id match is defense in depth: the file is
- * already keyed by `request_id`, and `ActionKernel.resolve()` re-validates the
- * binding regardless.
+ * the log path applies. The request-id AND action-id matches are the binding at
+ * the trust boundary: a channel (file keyed by `request_id`, or a misrouted /
+ * hostile HTTP service) must not resolve THIS request with a resolution issued
+ * for a different one — even one validly signed for the same action — which would
+ * leave the real `approval.requested` open in projections. `ActionKernel.resolve()`
+ * re-validates the action binding regardless.
  */
 function channelOutcomeFor(
   resolution: ApprovalResolution | undefined,
+  requestId: string,
   actionId: string,
   deadlineAt: number,
 ): ApprovalOutcome | undefined {
   if (resolution === undefined) return undefined
+  if (resolution.request_id !== requestId) return undefined
   if (resolution.action_id !== actionId) return undefined
   const at = Date.parse(resolution.at)
   if (Number.isNaN(at) || at > deadlineAt) return undefined

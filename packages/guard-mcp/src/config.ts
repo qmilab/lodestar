@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { ResourceScopeSchema } from "@qmilab/lodestar-core"
+import { ApprovalChannelConfigSchema, httpChannelForbidsUnsigned } from "@qmilab/lodestar-guard"
 import { z } from "zod"
 
 /**
@@ -185,8 +186,26 @@ export const ApprovalsConfigSchema = z.object({
    * setup where the `.approvals/` directory is not a forgery surface — never the
    * production cross-process path. The in-process `guard.wrap()` resolver is
    * unaffected either way (same trusted process, no side-channel).
+   *
+   * Forbidden when `channel.kind: "http"` (see {@link httpChannelForbidsUnsigned}):
+   * a remote approval channel is a forgery surface only the signature gate closes,
+   * so it must be signature-verified — an unsigned remote channel is unrepresentable.
    */
   allow_unsigned: z.boolean().default(false),
+  /**
+   * Where the proxy reads an out-of-band resolution from (ADR-0015). Omitted →
+   * the local signed `.approvals/` file side-channel (today's behaviour,
+   * byte-for-byte; the proxy coalesces an absent channel to `{ kind: "file" }`).
+   * `{ kind: "http", endpoint, … }` points the hold loop at a remote approval
+   * service. Optional rather than defaulted so an existing config that omits it
+   * keeps its exact inferred shape — no field appears that a literal-config host
+   * must now supply. The signature gate (`authorized_keys`) is unchanged and runs
+   * AFTER transport regardless of channel, so the channel can only delay an
+   * approval, never forge one. An `http` channel additionally requires a pinned
+   * key and forbids `allow_unsigned` (the superRefine below). See
+   * {@link ApprovalChannelConfigSchema}.
+   */
+  channel: ApprovalChannelConfigSchema.optional(),
 })
 export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>
 
@@ -390,6 +409,20 @@ export const ProxyConfigSchema = z
         path: ["approvals"],
         message:
           "`approval_timeout_ms > 0` lets the proxy promote an out-of-band approval from the side-channel, whose `approver_id` is unauthenticated. Pin at least one `approvals.authorized_keys` entry so resolutions are signature-verified, or set `approvals.allow_unsigned: true` to explicitly accept unsigned resolutions (a trusted local / development setup only).",
+      })
+    }
+    // An HTTP approval channel (ADR-0015) reads resolutions from a remote
+    // service — a forgery surface only the Ed25519 gate closes — so an *unsigned*
+    // HTTP channel must be unrepresentable: it requires a pinned approver key and
+    // forbids `allow_unsigned`. Shared with the MCPProxy constructor via
+    // `httpChannelForbidsUnsigned` so the two guards can never drift. The file
+    // channel is exempt (the trusted-local `.approvals/` escape stays).
+    const httpGuard = httpChannelForbidsUnsigned(config.approvals ?? {})
+    if (!httpGuard.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["approvals", "channel"],
+        message: httpGuard.reason,
       })
     }
   })

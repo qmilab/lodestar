@@ -71,7 +71,9 @@
     "pack_index_signature_required",
     "runner_scoped_env",
     "runner_os_sandbox",
-    "public_api_surface_stable"
+    "public_api_surface_stable",
+    "approval_channel_transport",
+    "approval_channel_forgery_boundary"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -160,6 +162,14 @@
     {
       "name": "forged-approval-cannot-execute",
       "file": "probes/forged-approval-cannot-execute.ts"
+    },
+    {
+      "name": "approval-via-http-channel",
+      "file": "probes/approval-via-http-channel.ts"
+    },
+    {
+      "name": "forged-approval-via-http-channel-cannot-execute",
+      "file": "probes/forged-approval-via-http-channel-cannot-execute.ts"
     },
     {
       "name": "pending-queue-excludes-rejected-forgery",
