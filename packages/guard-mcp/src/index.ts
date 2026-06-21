@@ -23,6 +23,17 @@ export {
   readApprovalResolution,
   resolutionToOutcome,
   writeApprovalResolution,
+  // Approval transport seam (ADR-0015), re-exported from guard.
+  type ApprovalChannel,
+  type ApprovalRef,
+  type ApprovalChannelConfig,
+  type SecretValue,
+  ApprovalChannelConfigSchema,
+  FileApprovalChannel,
+  HttpApprovalChannel,
+  assertChannelEndpoint,
+  createApprovalChannel,
+  httpChannelForbidsUnsigned,
 } from "./approvals-channel.js"
 
 export {

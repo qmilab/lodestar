@@ -21,3 +21,22 @@ export {
   resolutionToOutcome,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard"
+
+/**
+ * The approval **transport** seam (ADR-0015) — `ApprovalChannel` and its file /
+ * http implementations — graduated to `@qmilab/lodestar-guard` alongside the
+ * side-channel primitives it wraps. Re-exported here so the proxy, the CLI, and
+ * the probes import them from `@qmilab/lodestar-guard-mcp` unchanged.
+ */
+export {
+  type ApprovalChannel,
+  type ApprovalRef,
+  type ApprovalChannelConfig,
+  type SecretValue,
+  ApprovalChannelConfigSchema,
+  FileApprovalChannel,
+  HttpApprovalChannel,
+  assertChannelEndpoint,
+  createApprovalChannel,
+  httpChannelForbidsUnsigned,
+} from "@qmilab/lodestar-guard"

@@ -43,6 +43,27 @@ export {
   resolutionToOutcome,
   writeApprovalResolution,
 } from "./approvals-channel.js"
+// ── Approval transport seam (ADR-0015) ───────────────────────────────────────
+// The UNTRUSTED transport `ApprovalChannel` — where a host reads an out-of-band
+// resolution and how it announces a hold. Categorically distinct from the trusted
+// in-process `ApprovalResolver` (in ./types.ts): a channel moves bytes (the
+// consumer verifies the resolution's Ed25519 signature AFTER transport), a
+// resolver makes decisions. `FileApprovalChannel` wraps today's `.approvals/` file
+// side-channel byte-for-byte; `HttpApprovalChannel` is the config-driven remote
+// transport. `httpChannelForbidsUnsigned` is shared by the guard-mcp config
+// superRefine and the MCPProxy constructor so the two guards can't drift.
+export {
+  type ApprovalChannel,
+  type ApprovalRef,
+  type ApprovalChannelConfig,
+  type SecretValue,
+  ApprovalChannelConfigSchema,
+  FileApprovalChannel,
+  HttpApprovalChannel,
+  assertChannelEndpoint,
+  createApprovalChannel,
+  httpChannelForbidsUnsigned,
+} from "./approval-channel.js"
 export type {
   AgentLoop,
   ApprovalResolver,
