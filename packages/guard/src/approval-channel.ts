@@ -195,35 +195,50 @@ export class HttpApprovalChannel implements ApprovalChannel {
 
   async announce(request: ApprovalRequest): Promise<void> {
     // Best-effort: a failed notify must never block or fail the hold.
-    const resp = await this.send("POST", `${this.base}/v1/approvals`, JSON.stringify(request))
-    await drain(resp)
+    await this.withTimeout(async (signal) => {
+      const resp = await this.request(
+        "POST",
+        `${this.base}/v1/approvals`,
+        JSON.stringify(request),
+        signal,
+      )
+      await drain(resp)
+    })
   }
 
   async fetch(ref: ApprovalRef): Promise<ApprovalResolution | undefined> {
-    const resp = await this.send("GET", this.resolutionUrl(ref))
-    if (resp === undefined) return undefined
-    // Any non-2xx — 404 (not yet), a 3xx redirect (never followed; `redirect:
-    // "manual"` keeps the destination the pinned endpoint), a 5xx — is "no
-    // resolution yet". Drain and keep polling.
-    if (!resp.ok) {
-      await drain(resp)
-      return undefined
-    }
-    const text = await readBoundedText(resp, this.maxBytes)
-    if (text === undefined) return undefined // oversized / torn → fail closed
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(text)
-    } catch {
-      return undefined
-    }
-    const result = ApprovalResolutionSchema.safeParse(parsed)
-    return result.success ? result.data : undefined
+    // The ENTIRE operation — header fetch AND body read AND token resolution —
+    // runs under one wall-clock deadline. A service that returns headers and then
+    // stalls the body would otherwise hang here forever (the body read is the part
+    // an attacker controls): `withTimeout` aborts the shared signal, which errors
+    // the response stream so `readBoundedText`'s read rejects and we fail closed.
+    return this.withTimeout(async (signal) => {
+      const resp = await this.request("GET", this.resolutionUrl(ref), undefined, signal)
+      // Any non-2xx — 404 (not yet), a 3xx redirect (never followed; `redirect:
+      // "manual"` keeps the destination the pinned endpoint), a 5xx — is "no
+      // resolution yet". Drain and keep polling.
+      if (!resp.ok) {
+        await drain(resp)
+        return undefined
+      }
+      const text = await readBoundedText(resp, this.maxBytes)
+      if (text === undefined) return undefined // oversized / torn → fail closed
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        return undefined
+      }
+      const result = ApprovalResolutionSchema.safeParse(parsed)
+      return result.success ? result.data : undefined
+    })
   }
 
   async consume(ref: ApprovalRef): Promise<void> {
-    const resp = await this.send("DELETE", this.resolutionUrl(ref))
-    await drain(resp)
+    await this.withTimeout(async (signal) => {
+      const resp = await this.request("DELETE", this.resolutionUrl(ref), undefined, signal)
+      await drain(resp)
+    })
   }
 
   private resolutionUrl(ref: ApprovalRef): string {
@@ -233,41 +248,70 @@ export class HttpApprovalChannel implements ApprovalChannel {
   }
 
   /**
-   * Issue one request under the wall-clock timeout, with the bearer token (if
-   * configured) on the `Authorization` header and redirects disabled. Returns the
-   * `Response` or `undefined` on ANY failure (timeout, network error, a hung
-   * token resolver). Never throws, never surfaces the token.
+   * Run `fn` under one wall-clock deadline: a fresh `AbortController` is aborted
+   * after `timeoutMs` and its signal is threaded into the request `fn` issues, so
+   * both the fetch AND any body read it performs are interrupted on timeout. Any
+   * throw / abort → `undefined`. This is the seam that makes the channel tolerant
+   * by construction: every failure (timeout, network error, stalled body, hung
+   * token resolver) becomes `undefined`, so the host keeps polling and the hold
+   * times out to the conservative outcome. Never surfaces the token (no thrown
+   * `fetch` message is propagated).
    */
-  private async send(method: string, url: string, body?: string): Promise<Response | undefined> {
+  private async withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T | undefined> {
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
-      const headers = new Headers()
-      if (body !== undefined) headers.set("content-type", "application/json")
-      // Resolve the token under the same deadline so a hung resolver can't
-      // outlast the timeout. A resolution failure → no auth header → the request
-      // simply fails server-side → undefined (keep polling); the token never
-      // surfaces.
-      const token = await resolveSecret(this.token)
-      if (token !== undefined && token.length > 0) {
-        headers.set("authorization", `Bearer ${token}`)
-      }
-      return await fetch(url, {
-        method,
-        headers,
-        body,
-        redirect: "manual",
-        signal: controller.signal,
-      })
+      return await fn(controller.signal)
     } catch {
-      // Timeout or network error — tolerated. We deliberately surface NO detail
-      // (a thrown fetch message could, in principle, echo a header); the host
-      // keeps polling and the hold times out to the conservative outcome.
       return undefined
     } finally {
       clearTimeout(timer)
     }
   }
+
+  /**
+   * Issue one request with the bearer token (if configured) on the `Authorization`
+   * header and redirects disabled, under the caller's deadline `signal`. The token
+   * resolution is raced against the same signal so a hung resolver cannot outlast
+   * the timeout. Returns the `Response` (its body still unread); the caller reads
+   * or drains it under the same signal.
+   */
+  private async request(
+    method: string,
+    url: string,
+    body: string | undefined,
+    signal: AbortSignal,
+  ): Promise<Response> {
+    const headers = new Headers()
+    if (body !== undefined) headers.set("content-type", "application/json")
+    const token = await raceAbort(resolveSecret(this.token), signal)
+    if (token !== undefined && token.length > 0) {
+      headers.set("authorization", `Bearer ${token}`)
+    }
+    return fetch(url, { method, headers, body, redirect: "manual", signal })
+  }
+}
+
+/** Settle with `promise`, but reject as soon as `signal` aborts — so an async step
+ * that does not itself take an `AbortSignal` (the credential resolver) comes under
+ * the same wall-clock deadline as the fetch. Mirrors the messaging adapter's
+ * `raceAbort`. */
+function raceAbort<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) return Promise.reject(new Error("aborted"))
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(new Error("aborted"))
+    signal.addEventListener("abort", onAbort, { once: true })
+    promise.then(
+      (value) => {
+        signal.removeEventListener("abort", onAbort)
+        resolve(value)
+      },
+      (err) => {
+        signal.removeEventListener("abort", onAbort)
+        reject(err)
+      },
+    )
+  })
 }
 
 /** Drain a response body so the socket can close; ignore failures. */

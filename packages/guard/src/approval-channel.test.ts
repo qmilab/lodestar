@@ -148,6 +148,27 @@ describe("HttpApprovalChannel.fetch", () => {
     expect(await httpChannel({ timeoutMs: 40 }).fetch(REF)).toBeUndefined()
   })
 
+  test("stalled body (headers sent, body hangs) → undefined within the timeout", async () => {
+    // The server returns 200 headers, then never enqueues or closes the body.
+    // The timeout must cover the body read — not just the header fetch — or the
+    // channel hangs forever (a hostile service could pin a held tool open). The
+    // test would itself time out if the deadline didn't reach the body read.
+    service.setHandler(
+      () =>
+        new Response(
+          new ReadableStream({
+            start() {
+              /* never enqueue, never close — the body stalls */
+            },
+          }),
+          { status: 200 },
+        ),
+    )
+    const started = Date.now()
+    expect(await httpChannel({ timeoutMs: 60 }).fetch(REF)).toBeUndefined()
+    expect(Date.now() - started).toBeLessThan(2_000)
+  })
+
   test("bearer token is injected as Authorization and never returned", async () => {
     service.recorded.length = 0
     service.setHandler(() => Response.json(VALID_RESOLUTION))

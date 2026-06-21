@@ -1041,17 +1041,11 @@ export class MCPProxy {
       deadline !== undefined ? { deadline } : {},
     )
     await this.emit("approval.requested", request)
-    // Best-effort notify the channel that a hold opened (the HTTP channel POSTs
-    // the request; the file channel has no announce). A failure here must NEVER
-    // block or fail the hold — the resolution still arrives via `fetch` polling.
-    try {
-      await this.approvalChannel.announce?.(request)
-    } catch {
-      /* announce is advisory; the hold proceeds to poll regardless */
-    }
 
     // No wait configured: surface the hold immediately as a soft denial the
-    // agent re-proposes (the pre-deadline behaviour).
+    // agent re-proposes (the pre-deadline behaviour). Return BEFORE announcing —
+    // nobody will poll for a resolution, so a slow/down approval service must not
+    // delay the immediate `approval_required` (Codex review).
     if (timeoutMs <= 0) {
       return {
         result: buildPolicyDeniedResult({
@@ -1063,6 +1057,14 @@ export class MCPProxy {
         }),
       }
     }
+
+    // We will poll for a resolution. Notify the channel best-effort, **without
+    // awaiting** — `announce` is advisory (the HTTP channel POSTs the request; the
+    // file channel has no announce), so its latency or failure must never delay the
+    // first poll or eat into the approval budget. Fire-and-forget; the channel
+    // bounds the POST by its own wall-clock timeout, and `announceHold` swallows any
+    // error so nothing rejects unhandled.
+    void this.announceHold(request)
 
     const resolution = await this.waitForResolution(request, parked.id, deadlineAt)
 
@@ -1170,6 +1172,52 @@ export class MCPProxy {
     }
   }
 
+  /**
+   * Best-effort `announce` that swallows every failure — fired-and-forgotten by
+   * {@link resolveProxyHold} so an advisory notify can never block or fail the hold.
+   */
+  private async announceHold(request: ApprovalRequest): Promise<void> {
+    try {
+      await this.approvalChannel.announce?.(request)
+    } catch {
+      /* advisory — a failed/slow announce never blocks or fails the hold */
+    }
+  }
+
+  /**
+   * One `channel.fetch`, capped at the time remaining before `deadlineAt`. The
+   * channel has its OWN wall-clock timeout (`timeout_ms` for HTTP), which may be
+   * larger than the whole approval budget — e.g. a 1s `approval_timeout_ms` with
+   * the default 15s HTTP timeout. Without this cap a single slow fetch could
+   * overshoot the deadline (and the wrapped agent's `tools/call` timeout) before
+   * the loop's `remaining <= 0` check ever runs. Race the fetch against the
+   * remaining deadline; if the deadline wins, abandon the (now-irrelevant) fetch
+   * with its rejection swallowed and report "no resolution this poll" — the loop's
+   * deadline check then ends the hold conservatively (Codex review).
+   */
+  private async fetchWithinDeadline(
+    ref: ApprovalRef,
+    deadlineAt: number,
+  ): Promise<ApprovalResolution | undefined> {
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) return undefined
+    const fetchPromise = this.approvalChannel.fetch(ref)
+    // If the deadline wins the race the fetch is abandoned; make sure its eventual
+    // rejection can't surface as an unhandled rejection.
+    fetchPromise.catch(() => {})
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        fetchPromise,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), remaining)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   private async waitForResolution(
     request: ApprovalRequest,
     actionId: string,
@@ -1215,9 +1263,11 @@ export class MCPProxy {
       // Then the approval channel (the separate-process side-channel by default,
       // or a remote HTTP service; ADR-0015). Read errors / malformed / oversized
       // responses surface as `undefined` (every channel is tolerant by
-      // construction); keep polling. The returned resolution is UNTRUSTED input —
-      // the signature gate below verifies it before it can un-park anything.
-      const resolution = await this.approvalChannel.fetch(ref)
+      // construction); keep polling. The fetch is capped at the time remaining
+      // before the deadline so a slow remote channel can't overshoot the approval
+      // budget. The returned resolution is UNTRUSTED input — the signature gate
+      // below verifies it before it can un-park anything.
+      const resolution = await this.fetchWithinDeadline(ref, deadlineAt)
       const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
       // A deadline-valid channel resolution must additionally clear signature
       // verification against the operator-pinned approver keys before it can

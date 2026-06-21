@@ -120,12 +120,15 @@ interface Stub {
   recorded: StubRecord[]
   /** Set the resolution the GET route serves; until set, GET returns 404. */
   serve: (resolution: ApprovalResolution | undefined) => void
+  /** Stall every GET response by `ms` (simulates a slow approval service). */
+  setGetDelay: (ms: number) => void
   stop: () => void
 }
 
 function startStub(): Stub {
   const recorded: StubRecord[] = []
   let current: ApprovalResolution | undefined
+  let getDelayMs = 0
   const server = Bun.serve({
     port: 0,
     fetch: async (req) => {
@@ -138,6 +141,7 @@ function startStub(): Stub {
         body,
       })
       if (req.method === "GET") {
+        if (getDelayMs > 0) await delay(getDelayMs)
         return current === undefined ? new Response(null, { status: 404 }) : Response.json(current)
       }
       if (req.method === "DELETE") {
@@ -153,13 +157,24 @@ function startStub(): Stub {
     serve: (resolution) => {
       current = resolution
     },
+    setGetDelay: (ms) => {
+      getDelayMs = ms
+    },
     stop: () => server.stop(true),
   }
 }
 
 /** Build a proxy whose single tool is L4 (always held), wired to read approvals
- * over the HTTP channel at `stubBase`, verifying against the pinned operator key. */
-function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number, stubBase: string) {
+ * over the HTTP channel at `stubBase`, verifying against the pinned operator key.
+ * `channelTimeoutMs` is the per-request wall-clock cap of the HTTP channel itself
+ * (distinct from the approval budget). */
+function makeProxy(
+  logDir: string,
+  sessionId: string,
+  approvalTimeoutMs: number,
+  stubBase: string,
+  channelTimeoutMs = 5_000,
+) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = []
   const fakeCallTool = async (
     name: string,
@@ -188,7 +203,7 @@ function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number,
         endpoint: stubBase,
         token_env: "PROBE_APPROVAL_TOKEN",
         allow_http: true,
-        timeout_ms: 5_000,
+        timeout_ms: channelTimeoutMs,
         max_body_bytes: 64 * 1024,
       },
     },
@@ -243,6 +258,18 @@ async function waitForRequest(
     await delay(20)
   }
   return undefined
+}
+
+/** Poll `predicate` until true or the deadline. The proxy fires `announce`
+ * fire-and-forget (it must never block the hold), so an assertion on it waits
+ * for the POST rather than assuming it already landed. */
+async function waitFor(predicate: () => boolean, withinMs: number): Promise<boolean> {
+  const deadline = Date.now() + withinMs
+  while (Date.now() < deadline) {
+    if (predicate()) return true
+    await delay(20)
+  }
+  return predicate()
 }
 
 function signedResolution(
@@ -322,8 +349,13 @@ async function caseGrant(): Promise<string | undefined> {
       }
     }
 
-    // The proxy announced the hold (POST) and consumed the resolution (DELETE).
-    if (!stub.recorded.some((r) => r.method === "POST" && r.path === "/v1/approvals")) {
+    // The proxy announced the hold (POST, fire-and-forget) and consumed the
+    // resolution (DELETE). The announce is not awaited by the hold, so wait for it.
+    const announced = await waitFor(
+      () => stub.recorded.some((r) => r.method === "POST" && r.path === "/v1/approvals"),
+      1000,
+    )
+    if (!announced) {
       return "[grant] the proxy never POSTed the hold announcement to /v1/approvals."
     }
     if (!stub.recorded.some((r) => r.method === "DELETE")) {
@@ -437,6 +469,87 @@ async function caseLate(): Promise<string | undefined> {
   }
 }
 
+// ── Case 5: a SLOW channel respects the approval budget, not its own timeout ──
+// A held action must time out at `approval_timeout_ms`, even when the HTTP
+// channel's own `timeout_ms` is much larger and the service stalls every poll.
+// Without the per-fetch deadline cap, a single slow fetch would overshoot the
+// budget (and the wrapped agent's tools/call timeout). (Codex review.)
+async function caseSlowChannelRespectsBudget(): Promise<string | undefined> {
+  resetState()
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-http-approval-slow-"))
+  const sessionId = "probe-session-http-slow"
+  const stub = startStub()
+  stub.setGetDelay(4_000) // each poll's GET stalls far past the approval budget
+  // approval budget 500ms; channel timeout 10s (>> budget) — the cap must bite.
+  const { proxy, calls } = makeProxy(logDir, sessionId, 500, stub.base, 10_000)
+  try {
+    await proxy.start()
+    const started = Date.now()
+    const result = await proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
+    const elapsed = Date.now() - started
+
+    const kind = (result._meta as { _lodestar?: { kind?: unknown } })?._lodestar?.kind
+    if (result.isError !== true || kind !== "approval_timeout") {
+      return `[slow] expected _lodestar.kind 'approval_timeout'; got '${String(kind)}'.`
+    }
+    if (calls.length !== 0) {
+      return `[slow] downstream tool ran ${calls.length}x; a timed-out hold must not execute.`
+    }
+    // The budget is 500ms; the channel timeout is 10s and each GET stalls 4s.
+    // Bounded by the approval deadline, the hold must end well before the channel
+    // timeout — a generous ceiling (3s) that the unbounded behaviour (≥4s) fails.
+    if (elapsed >= 3_000) {
+      return `[slow] the hold took ${elapsed}ms — it overshot the 500ms approval budget toward the 10s channel timeout (the per-fetch deadline cap is not applied).`
+    }
+    return undefined
+  } finally {
+    await proxy.stop().catch(() => {})
+    stub.stop()
+    await rm(logDir, { recursive: true, force: true })
+  }
+}
+
+// ── Case 6: a no-wait hold returns immediately and does NOT announce ─────────
+// With `approval_timeout_ms === 0` the proxy returns `approval_required` at once;
+// nobody will poll, so it must not block on (or even send) the advisory announce
+// POST — a slow/down approval service can't delay the immediate denial. (Codex.)
+async function caseNoWaitDoesNotAnnounce(): Promise<string | undefined> {
+  resetState()
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-http-approval-nowait-"))
+  const sessionId = "probe-session-http-nowait"
+  const stub = startStub()
+  const { proxy, calls } = makeProxy(logDir, sessionId, 0, stub.base)
+  try {
+    await proxy.start()
+    const started = Date.now()
+    const result = await proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
+    const elapsed = Date.now() - started
+
+    const kind = (result._meta as { _lodestar?: { kind?: unknown } })?._lodestar?.kind
+    if (result.isError !== true || kind !== "approval_required") {
+      return `[no-wait] expected _lodestar.kind 'approval_required'; got '${String(kind)}'.`
+    }
+    if (calls.length !== 0) {
+      return `[no-wait] downstream tool ran ${calls.length}x; a no-wait hold must not execute.`
+    }
+    if (elapsed >= 2_000) {
+      return `[no-wait] the no-wait hold took ${elapsed}ms — it should return immediately.`
+    }
+    // The proxy must not have announced: nobody will poll, so the advisory POST is
+    // skipped entirely (the file channel has no announce either). Give any stray
+    // fire-and-forget POST a moment to land, then assert none did.
+    await delay(100)
+    if (stub.recorded.some((r) => r.method === "POST")) {
+      return "[no-wait] the proxy announced (POSTed) on the no-wait path; it should not."
+    }
+    return undefined
+  } finally {
+    await proxy.stop().catch(() => {})
+    stub.stop()
+    await rm(logDir, { recursive: true, force: true })
+  }
+}
+
 async function run(): Promise<ProbeResult> {
   const grantFail = await caseGrant()
   if (grantFail) return { passed: false, details: grantFail }
@@ -444,10 +557,14 @@ async function run(): Promise<ProbeResult> {
   if (denyFail) return { passed: false, details: denyFail }
   const lateFail = await caseLate()
   if (lateFail) return { passed: false, details: lateFail }
+  const slowFail = await caseSlowChannelRespectsBudget()
+  if (slowFail) return { passed: false, details: slowFail }
+  const noWaitFail = await caseNoWaitDoesNotAnnounce()
+  if (noWaitFail) return { passed: false, details: noWaitFail }
   return {
     passed: true,
     details:
-      "A signed grant served over the HTTP approval channel un-parked the held L4 (tool ran once; the promoted approval.granted@1 was authored by the proxy actor and carried the verified signature; seq stayed strictly monotonic; the proxy announced the hold and consumed the resolution). The operator bearer token reached the service as a header but appeared in no event envelope. A signed HTTP deny rejected the action without running the tool, and a post-deadline signed grant was refused — the hold timed out.",
+      "A signed grant served over the HTTP approval channel un-parked the held L4 (tool ran once; the promoted approval.granted@1 was authored by the proxy actor and carried the verified signature; seq stayed strictly monotonic; the proxy announced the hold and consumed the resolution). The operator bearer token reached the service as a header but appeared in no event envelope. A signed HTTP deny rejected the action without running the tool, and a post-deadline signed grant was refused — the hold timed out. A slow channel (10s timeout, 4s-stalled polls) still timed the hold out at its 500ms approval budget, and a no-wait hold returned approval_required immediately without announcing.",
   }
 }
 
