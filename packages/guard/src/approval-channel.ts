@@ -407,6 +407,14 @@ export function assertChannelEndpoint(endpoint: string, allowHttp: boolean): URL
       )}; set allow_http: true for http:// in a local/dev setup)`,
     )
   }
+  // The endpoint is a BASE the proxy appends `/v1/approvals/...` to. A query or
+  // fragment would survive into the appended URL (`…?tenant=x/v1/approvals/…`),
+  // silently breaking the route so approvals time out. Reject it at construction.
+  if (url.search !== "" || url.hash !== "") {
+    throw new Error(
+      `http approval channel: endpoint must not contain a query or fragment (got '${endpoint}')`,
+    )
+  }
   return url
 }
 
@@ -424,10 +432,20 @@ export function createApprovalChannel(
   config: ApprovalChannelConfig,
   ctx: { logRoot: string; resolveToken?: (envName: string) => SecretValue },
 ): ApprovalChannel {
-  if (config.kind === "file") return new FileApprovalChannel(ctx.logRoot)
-  const endpoint = assertChannelEndpoint(config.endpoint, config.allow_http)
+  // Re-parse through the schema so the defaulted fields (`timeout_ms`,
+  // `max_body_bytes`, `allow_http`) are always present — a config from
+  // `loadProxyConfig` already is (idempotent here), but a direct / library
+  // `new MCPProxy(literalConfig)` can omit them (the TS output type technically
+  // requires them, but a JS caller or an `as` cast reaches here without them, the
+  // same way the constructor re-checks `hasUnauthenticatedApprovalGap`). Passing an
+  // `undefined` timeout to `setTimeout` would abort every fetch immediately, and an
+  // `undefined` cap would disable the body bound. The schema is the single source of
+  // truth for the defaults, present and future.
+  const parsed = ApprovalChannelConfigSchema.parse(config)
+  if (parsed.kind === "file") return new FileApprovalChannel(ctx.logRoot)
+  const endpoint = assertChannelEndpoint(parsed.endpoint, parsed.allow_http)
   let token: SecretValue | undefined
-  if (config.token_env !== undefined) {
+  if (parsed.token_env !== undefined) {
     if (ctx.resolveToken === undefined) {
       throw new Error(
         "http approval channel: token_env is set but no token resolver was provided. The host " +
@@ -440,18 +458,18 @@ export function createApprovalChannel(
     // but reachable at runtime). A configured `token_env` MUST resolve — fail
     // closed here rather than hand the channel an undefined token it would treat
     // as "no credential" and silently issue unauthenticated requests.
-    token = ctx.resolveToken(config.token_env) as SecretValue | undefined
+    token = ctx.resolveToken(parsed.token_env) as SecretValue | undefined
     if (token === undefined) {
       throw new Error(
-        `http approval channel: token_env '${config.token_env}' is configured but its resolver returned no value — a configured credential must not silently downgrade to an unauthenticated channel.`,
+        `http approval channel: token_env '${parsed.token_env}' is configured but its resolver returned no value — a configured credential must not silently downgrade to an unauthenticated channel.`,
       )
     }
   }
   return new HttpApprovalChannel({
     endpoint,
     token,
-    timeoutMs: config.timeout_ms,
-    maxBytes: config.max_body_bytes,
+    timeoutMs: parsed.timeout_ms,
+    maxBytes: parsed.max_body_bytes,
   })
 }
 

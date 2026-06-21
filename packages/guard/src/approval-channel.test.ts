@@ -310,6 +310,12 @@ describe("assertChannelEndpoint", () => {
     expect(() => assertChannelEndpoint("file:///etc/passwd", true)).toThrow(/scheme/)
     expect(() => assertChannelEndpoint("not a url", true)).toThrow(/valid URL/)
   })
+  test("rejects an endpoint carrying a query or fragment (it would break the route)", () => {
+    expect(() => assertChannelEndpoint("https://host/api?tenant=x", false)).toThrow(
+      /query or fragment/,
+    )
+    expect(() => assertChannelEndpoint("https://host/api#frag", false)).toThrow(/query or fragment/)
+  })
 })
 
 describe("httpChannelForbidsUnsigned", () => {
@@ -369,6 +375,19 @@ describe("createApprovalChannel", () => {
         { logRoot: "/log" },
       ),
     ).toThrow(/token resolver/)
+  })
+  test("a minimal literal http config (no timeout_ms/max_body_bytes) gets working defaults", async () => {
+    service.recorded.length = 0
+    service.setHandler(() => Response.json(VALID_RESOLUTION))
+    // A direct/library construction path may omit schema-defaulted fields. The
+    // factory must apply them — otherwise an undefined timeout aborts every fetch
+    // immediately. Cast a minimal literal to the config type to simulate that.
+    const minimal = { kind: "http", endpoint: service.base, allow_http: true } as never
+    const channel = createApprovalChannel(minimal, { logRoot: "/log" })
+    expect(channel).toBeInstanceOf(HttpApprovalChannel)
+    // It actually works (the default 15s timeout, not undefined→0): a real fetch
+    // round-trips rather than aborting instantly.
+    expect(await (channel as HttpApprovalChannel).fetch(REF)).toEqual(VALID_RESOLUTION)
   })
   test("http kind whose resolver returns undefined for a configured token_env throws (fail closed)", () => {
     expect(() =>
