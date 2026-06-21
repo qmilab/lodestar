@@ -46,6 +46,7 @@ import { _resetToolsForTests } from "@qmilab/lodestar-action-kernel"
 import { type EventEnvelope, type Signature, registry } from "@qmilab/lodestar-core"
 import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
 import {
+  type ApprovalChannel,
   type ApprovalResolution,
   DownstreamConnection,
   MCPProxy,
@@ -174,6 +175,7 @@ function makeProxy(
   approvalTimeoutMs: number,
   stubBase: string,
   channelTimeoutMs = 5_000,
+  channelOverride?: ApprovalChannel,
 ) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = []
   const fakeCallTool = async (
@@ -227,6 +229,8 @@ function makeProxy(
       new NoOpUpstreamServer(tools, handler, { name: "probe", version: "0.0.0" }),
     // The proxy never reads process.env: the host injects the bearer resolver.
     resolveApprovalToken: () => BEARER_TOKEN,
+    // An injected channel (used by the rejecting-channel case) wins over config.
+    ...(channelOverride !== undefined ? { approvalChannel: channelOverride } : {}),
   })
   return { proxy, calls }
 }
@@ -552,6 +556,45 @@ async function caseNoWaitDoesNotAnnounce(): Promise<string | undefined> {
   }
 }
 
+// ── Case 7: a custom channel whose fetch REJECTS fails closed, not propagates ──
+// The built-in channels never reject (every failure → undefined), but a custom
+// `MCPProxyOverrides.approvalChannel` might reject on a transient error. The proxy
+// must treat that as "no resolution yet" and route through the normal timeout, not
+// let the rejection escape and break the held tool call. (Codex review.)
+async function caseRejectingChannelFailsClosed(): Promise<string | undefined> {
+  resetState()
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-http-approval-reject-"))
+  const sessionId = "probe-session-http-reject"
+  const stub = startStub()
+  const rejecting: ApprovalChannel = {
+    fetch: async () => {
+      throw new Error("transient channel failure")
+    },
+  }
+  const { proxy, calls } = makeProxy(logDir, sessionId, 600, stub.base, 5_000, rejecting)
+  try {
+    await proxy.start()
+    let result: Awaited<ReturnType<typeof proxy.handleCallTool>>
+    try {
+      result = await proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
+    } catch (err) {
+      return `[reject] a rejecting channel propagated out of the hold instead of failing closed: ${String(err)}`
+    }
+    const kind = (result._meta as { _lodestar?: { kind?: unknown } })?._lodestar?.kind
+    if (result.isError !== true || kind !== "approval_timeout") {
+      return `[reject] expected _lodestar.kind 'approval_timeout'; got '${String(kind)}'.`
+    }
+    if (calls.length !== 0) {
+      return `[reject] downstream tool ran ${calls.length}x; a rejecting channel must not execute.`
+    }
+    return undefined
+  } finally {
+    await proxy.stop().catch(() => {})
+    stub.stop()
+    await rm(logDir, { recursive: true, force: true })
+  }
+}
+
 async function run(): Promise<ProbeResult> {
   const grantFail = await caseGrant()
   if (grantFail) return { passed: false, details: grantFail }
@@ -563,6 +606,8 @@ async function run(): Promise<ProbeResult> {
   if (slowFail) return { passed: false, details: slowFail }
   const noWaitFail = await caseNoWaitDoesNotAnnounce()
   if (noWaitFail) return { passed: false, details: noWaitFail }
+  const rejectFail = await caseRejectingChannelFailsClosed()
+  if (rejectFail) return { passed: false, details: rejectFail }
   return {
     passed: true,
     details:

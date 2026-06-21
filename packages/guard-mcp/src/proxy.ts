@@ -1205,9 +1205,16 @@ export class MCPProxy {
    * the default 15s HTTP timeout. Without this cap a single slow fetch could
    * overshoot the deadline (and the wrapped agent's `tools/call` timeout) before
    * the loop's `remaining <= 0` check ever runs. Race the fetch against the
-   * remaining deadline; if the deadline wins, abandon the (now-irrelevant) fetch
-   * with its rejection swallowed and report "no resolution this poll" — the loop's
-   * deadline check then ends the hold conservatively (Codex review).
+   * remaining deadline; if the deadline wins, the (now-irrelevant) fetch is
+   * abandoned and we report "no resolution this poll" — the loop's deadline check
+   * then ends the hold conservatively (Codex review).
+   *
+   * Fail closed on a rejecting fetch: the built-in channels never reject (every
+   * failure → `undefined`), but a custom `MCPProxyOverrides.approvalChannel` might
+   * reject on a transient error. `.catch(() => undefined)` makes the RACED promise
+   * resolve `undefined` on rejection (not merely observe it), so a channel failure
+   * is treated as "not yet" and routes through the normal timeout/audit path rather
+   * than rejecting out of the hold (Codex review).
    */
   private async fetchWithinDeadline(
     ref: ApprovalRef,
@@ -1215,10 +1222,7 @@ export class MCPProxy {
   ): Promise<ApprovalResolution | undefined> {
     const remaining = deadlineAt - Date.now()
     if (remaining <= 0) return undefined
-    const fetchPromise = this.approvalChannel.fetch(ref)
-    // If the deadline wins the race the fetch is abandoned; make sure its eventual
-    // rejection can't surface as an unhandled rejection.
-    fetchPromise.catch(() => {})
+    const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       return await Promise.race([
