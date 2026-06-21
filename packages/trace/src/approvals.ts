@@ -5,6 +5,7 @@ import {
   APPROVAL_REQUESTED_EVENT_TYPE,
   ApprovalRequestSchema,
   type EventEnvelope,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
 } from "@qmilab/lodestar-core"
 
 /**
@@ -43,19 +44,40 @@ export interface PendingApproval {
  * `lodestar approve` CLI, or a separate write-side product).
  */
 export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
-  // request_ids the guard refused to promote because the resolution's signature
-  // did not verify against the pinned approver keys (a forged / unsigned /
-  // tampered / unpinned-signer grant or deny a local writer planted in the log
-  // or side-channel). Such an `approval.granted@1` / `approval.denied@1` is NOT a
-  // real resolution — the action stays held so an operator can still submit a
-  // valid signed grant. Excluding these keeps a forgery from dropping a
-  // genuinely-pending request out of the queue (mirrors `collectResolvedRequestIds`
-  // in the `lodestar approve` CLI).
-  const signatureRejected = new Set<string>()
+  // The guard records every out-of-band resolution it refused to promote (a
+  // forged / unsigned / tampered grant or deny whose Ed25519 signature did not
+  // verify against the pinned approver keys, planted in the log or side-channel)
+  // as a `guard.approval.signature_rejected` audit event. Such an
+  // `approval.granted@1` / `approval.denied@1` is NOT a real resolution, so it
+  // must not drop a still-held request from the queue. We exclude it *precisely*:
+  //   - `source: "log"` rejections carry `rejected_event_id` (the forged log
+  //     event's envelope id), so we exclude that one event and still honour a
+  //     genuine grant the operator submits afterwards;
+  //   - `source: "side_channel"` rejections promote no log event, so there is
+  //     nothing to exclude;
+  //   - a legacy rejection (no `source`/`rejected_event_id`) can't be tied to a
+  //     specific event, so we fall back to the conservative, ungameable
+  //     per-request exclusion (never resolve from a tainted request) — this keeps
+  //     old logs from regressing the forged-grant-masks-a-pending-request bound.
+  // The projection deliberately does NOT re-verify signatures — it has no access
+  // to the operator's pinned approver keys (the correct boundary) — so it trusts
+  // the guard's audit. Mirrors `collectResolvedRequestIds` in the approve CLI.
+  const rejectedEventIds = new Set<string>()
+  const conservativelyTaintedRequestIds = new Set<string>()
   for (const event of events) {
-    if (event.type !== "guard.approval.signature_rejected") continue
-    const requestId = (event.payload as { request_id?: unknown } | undefined)?.request_id
-    if (typeof requestId === "string" && requestId.length > 0) signatureRejected.add(requestId)
+    if (event.type !== GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE) continue
+    const payload = event.payload as
+      | { request_id?: unknown; source?: unknown; rejected_event_id?: unknown }
+      | undefined
+    const rejectedId = payload?.rejected_event_id
+    if (typeof rejectedId === "string" && rejectedId.length > 0) {
+      rejectedEventIds.add(rejectedId)
+    } else if (payload?.source === "side_channel") {
+      // promotes no log event — nothing to exclude
+    } else {
+      const rid = payload?.request_id
+      if (typeof rid === "string" && rid.length > 0) conservativelyTaintedRequestIds.add(rid)
+    }
   }
 
   const resolved = new Set<string>()
@@ -63,8 +85,12 @@ export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
     const requestId = (event.payload as { request_id?: unknown } | undefined)?.request_id
     if (typeof requestId !== "string") continue
     if (event.type === APPROVAL_GRANTED_EVENT_TYPE || event.type === APPROVAL_DENIED_EVENT_TYPE) {
-      // A grant/deny the guard signature-rejected is not terminal — skip it.
-      if (!signatureRejected.has(requestId)) resolved.add(requestId)
+      // A grant/deny the guard rejected (this specific forged event, or — for a
+      // legacy audit with no event id — any rejection for this request) is not a
+      // real resolution.
+      if (rejectedEventIds.has(event.id)) continue
+      if (conservativelyTaintedRequestIds.has(requestId)) continue
+      resolved.add(requestId)
     } else if (event.type === APPROVAL_EXPIRED_EVENT_TYPE) {
       // `approval.expired@1` is proxy-authored and always definitive.
       resolved.add(requestId)

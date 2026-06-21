@@ -1,17 +1,26 @@
 import { describe, expect, test } from "bun:test"
-import type { EventEnvelope } from "@qmilab/lodestar-core"
+import {
+  type EventEnvelope,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+} from "@qmilab/lodestar-core"
 import { pendingApprovals } from "./approvals.js"
 
 /**
  * `pendingApprovals` derives the open-hold queue from a flat event stream. The
- * load-bearing case is the forgery-recovery one: a grant/deny the guard refused
- * to promote (`guard.approval.signature_rejected`) is NOT a real resolution, so
- * the request must stay in the queue — otherwise a forged `approval.granted@1` a
- * local writer planted in the log would silently drop a still-held request, and
- * a legitimate operator could never submit a real signed grant after a forgery.
- * This mirrors `collectResolvedRequestIds` in the `lodestar approve` CLI; the
- * projection can't re-verify signatures (it has no access to the operator's
- * pinned approver keys — the correct boundary), so it trusts the guard's audit.
+ * load-bearing cases are the forgery ones: the guard refuses to promote a grant
+ * or deny whose signature does not verify against the operator-pinned approver
+ * keys and records a `guard.approval.signature_rejected` audit. The projection
+ * can't re-verify signatures (it has no access to those keys — the correct
+ * boundary), so it trusts the audit, and excludes the rejected resolution
+ * *precisely*:
+ *   - a `source: "log"` rejection names the forged event via `rejected_event_id`,
+ *     so a forged log grant is excluded by id while a genuine grant the operator
+ *     submits afterwards still resolves the request;
+ *   - a `source: "side_channel"` rejection promotes no log event, so it excludes
+ *     nothing;
+ *   - a legacy rejection (no `source`/`rejected_event_id`) falls back to the
+ *     conservative, ungameable per-request exclusion.
+ * Mirrors `collectResolvedRequestIds` in the `lodestar approve` CLI.
  */
 
 const PROJECT = "trace-approvals-test-project"
@@ -54,6 +63,47 @@ const resolutionPayload = (requestId: string, actionId: string) => ({
   at: "2026-01-01T00:01:00.000Z",
 })
 
+function grant(requestId: string, actionId: string): EventEnvelope {
+  return makeEvent("approval.granted", resolutionPayload(requestId, actionId))
+}
+
+/** A `source: "log"` rejection naming a specific forged log event. */
+function rejectLog(forged: EventEnvelope): EventEnvelope {
+  const p = forged.payload as { request_id: string; action_id: string; approver_id?: string }
+  return makeEvent(GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, {
+    request_id: p.request_id,
+    action_id: p.action_id,
+    approver_id: p.approver_id ?? "alice",
+    reason: "approval signature verification failed against the pinned approver keys",
+    at: "2026-01-01T00:02:00.000Z",
+    source: "log",
+    rejected_event_id: forged.id,
+  })
+}
+
+/** A `source: "side_channel"` rejection — no log event, so no `rejected_event_id`. */
+function rejectSideChannel(requestId: string, actionId: string): EventEnvelope {
+  return makeEvent(GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, {
+    request_id: requestId,
+    action_id: actionId,
+    approver_id: "alice",
+    reason: "approval signature verification failed against the pinned approver keys",
+    at: "2026-01-01T00:02:00.000Z",
+    source: "side_channel",
+  })
+}
+
+/** A pre-`source` legacy rejection (the shape emitted before this change). */
+function rejectLegacy(requestId: string, actionId: string): EventEnvelope {
+  return makeEvent(GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, {
+    request_id: requestId,
+    action_id: actionId,
+    approver_id: "alice",
+    reason: "approval signature verification failed against the pinned approver keys",
+    at: "2026-01-01T00:02:00.000Z",
+  })
+}
+
 describe("pendingApprovals", () => {
   test("a request with no resolution is pending", () => {
     const out = pendingApprovals([requested("req-1", "act-1", "2026-01-01T00:00:00.000Z")])
@@ -64,7 +114,7 @@ describe("pendingApprovals", () => {
   test("a genuine grant resolves the request (not pending)", () => {
     const out = pendingApprovals([
       requested("req-1", "act-1", "2026-01-01T00:00:00.000Z"),
-      makeEvent("approval.granted", resolutionPayload("req-1", "act-1")),
+      grant("req-1", "act-1"),
     ])
     expect(out).toEqual([])
   })
@@ -85,30 +135,56 @@ describe("pendingApprovals", () => {
     expect(out).toEqual([])
   })
 
-  test("a signature-rejected forged grant leaves the request pending", () => {
+  test("a rejected forged log grant leaves the request pending", () => {
+    const forged = grant("req-1", "act-1")
     const out = pendingApprovals([
       requested("req-1", "act-1", "2026-01-01T00:00:00.000Z"),
-      // A forged grant a local writer planted in the log...
-      makeEvent("approval.granted", resolutionPayload("req-1", "act-1")),
-      // ...which the guard refused to promote (signature did not verify).
-      makeEvent("guard.approval.signature_rejected", {
-        ...resolutionPayload("req-1", "act-1"),
-        reason: "approval signature verification failed against the pinned approver keys",
-      }),
+      forged, // a forged grant a local writer planted in the log...
+      rejectLog(forged), // ...which the guard refused to promote.
     ])
     expect(out.map((p) => p.request_id)).toEqual(["req-1"])
   })
 
-  test("a signature-rejected forgery against one request does not affect another genuinely resolved one", () => {
+  test("a genuine grant AFTER a rejected log forgery resolves the request (P2 fix)", () => {
+    const forged = grant("req-1", "act-1")
+    const out = pendingApprovals([
+      requested("req-1", "act-1", "2026-01-01T00:00:00.000Z"),
+      forged,
+      rejectLog(forged),
+      grant("req-1", "act-1"), // genuine grant the operator submits during recovery
+    ])
+    expect(out).toEqual([])
+  })
+
+  test("excluding the forged event by id does not exclude a different valid grant", () => {
+    const forged = grant("req-1", "act-1")
     const out = pendingApprovals([
       requested("req-1", "act-1", "2026-01-01T00:00:00.000Z"),
       requested("req-2", "act-2", "2026-01-01T00:00:05.000Z"),
-      // req-1: forged grant rejected → stays pending
-      makeEvent("approval.granted", resolutionPayload("req-1", "act-1")),
-      makeEvent("guard.approval.signature_rejected", resolutionPayload("req-1", "act-1")),
-      // req-2: genuine grant → resolved
-      makeEvent("approval.granted", resolutionPayload("req-2", "act-2")),
+      forged,
+      rejectLog(forged),
+      grant("req-2", "act-2"), // unrelated genuine grant
     ])
+    // req-1 stays pending (its only grant was the rejected forgery); req-2 resolves.
+    expect(out.map((p) => p.request_id)).toEqual(["req-1"])
+  })
+
+  test("a side-channel rejection excludes nothing; a genuine grant resolves", () => {
+    const out = pendingApprovals([
+      requested("req-1", "act-1", "2026-01-01T00:00:00.000Z"),
+      rejectSideChannel("req-1", "act-1"), // a forged .approvals file, never a log event
+      grant("req-1", "act-1"), // the genuine grant the operator then submitted
+    ])
+    expect(out).toEqual([])
+  })
+
+  test("a legacy rejection (no source/id) falls back to conservative per-request exclusion", () => {
+    const out = pendingApprovals([
+      requested("req-1", "act-1", "2026-01-01T00:00:00.000Z"),
+      grant("req-1", "act-1"), // can't tell if this is the forgery or genuine...
+      rejectLegacy("req-1", "act-1"), // ...so an old-shape rejection taints the request
+    ])
+    // No P1 regression on old logs: the request stays pending.
     expect(out.map((p) => p.request_id)).toEqual(["req-1"])
   })
 

@@ -18,6 +18,8 @@ import {
 import {
   ApprovalDeniedPayloadSchema,
   ApprovalGrantedPayloadSchema,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
 } from "@qmilab/lodestar-core"
@@ -28,6 +30,7 @@ import type {
   ApprovalRequest,
   Decision,
   EventEnvelope,
+  GuardApprovalSignatureRejectedPayload,
   Observation,
   Sensitivity,
   Signature,
@@ -996,7 +999,10 @@ export class RuntimeGate {
       if (this.resolutionVerified(logHit.doc, logHit.signature)) {
         return { outcome: outcomeFromDoc(logHit.doc), source: "log" }
       }
-      await this.emitSignatureRejected(`log:${logHit.eventId}`, logHit.doc)
+      await this.emitSignatureRejected(`log:${logHit.eventId}`, logHit.doc, {
+        source: "log",
+        rejectedEventId: logHit.eventId,
+      })
     }
     // Side-channel path: the separate-process resolver.
     const resolution = await readApprovalResolution(this.logRoot, this.config.project_id, requestId)
@@ -1013,7 +1019,9 @@ export class RuntimeGate {
           ...(resolution.signature !== undefined ? { signature: resolution.signature } : {}),
         }
       }
-      await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution)
+      await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
+        source: "side_channel",
+      })
       await deleteApprovalResolution(this.logRoot, this.config.project_id, requestId)
     }
     return undefined
@@ -1065,15 +1073,29 @@ export class RuntimeGate {
     }
   }
 
-  private async emitSignatureRejected(dedupKey: string, doc: ApprovalResolutionDoc): Promise<void> {
+  private async emitSignatureRejected(
+    dedupKey: string,
+    doc: ApprovalResolutionDoc,
+    origin: { source: "log"; rejectedEventId: string } | { source: "side_channel" },
+  ): Promise<void> {
     if (this.warnedSignatureRejections.has(dedupKey)) return
     try {
-      await this.emit("guard.approval.signature_rejected", {
+      // `source` + `rejected_event_id` let a read-side projection exclude the
+      // *specific* forged log event rather than the whole request, so a genuine
+      // grant submitted after the forgery still resolves. The id is recorded here
+      // by the gate (the trusted writer); a side-channel forgery is never promoted
+      // to a log event, so it carries no id.
+      const payload: GuardApprovalSignatureRejectedPayload = {
         request_id: doc.request_id,
         action_id: doc.action_id,
         approver_id: doc.approver_id,
         reason: "resolution failed Ed25519 verification against pinned approver keys",
         at: new Date().toISOString(),
+        source: origin.source,
+      }
+      if (origin.source === "log") payload.rejected_event_id = origin.rejectedEventId
+      await this.emit(GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, payload, {
+        schema_version: GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
       })
       this.warnedSignatureRejections.add(dedupKey)
     } catch {

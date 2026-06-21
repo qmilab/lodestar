@@ -14,7 +14,14 @@ projects it into the epistemic chain, then renders markdown.
   as `projectChain` — no I/O, read-only. Graduated here from
   `@qmilab/lodestar-viewer` (issue #138), which re-exports it unchanged so
   a consumer that only wants open holds need not pull in the viewer's HTTP
-  server.
+  server. **Forgery-aware:** a grant/deny the guard refused to promote (a
+  `guard.approval.signature_rejected` audit) is not counted as a
+  resolution; a `source: "log"` rejection names the specific forged event
+  (`rejected_event_id`) so it is excluded precisely, leaving a genuine grant
+  submitted afterwards to still resolve the request. The projection never
+  re-verifies signatures (it has no access to the operator's pinned keys —
+  the correct boundary); it trusts the guard's audit. Mirrors
+  `collectResolvedRequestIds` in the `lodestar approve` CLI.
 - `src/report.ts` — `renderReport()` turns a projection into markdown.
 - `src/load.ts` — convenience wrappers around `EventLogReader` for the
   CLI; finds project directories and the default log root.

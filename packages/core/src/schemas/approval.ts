@@ -134,3 +134,68 @@ export const APPROVAL_DENIED_EVENT_TYPE = "approval.denied" as const
 export const APPROVAL_DENIED_SCHEMA_VERSION = "1" as const
 export const APPROVAL_EXPIRED_EVENT_TYPE = "approval.expired" as const
 export const APPROVAL_EXPIRED_SCHEMA_VERSION = "1" as const
+
+/**
+ * The payload of a `guard.approval.signature_rejected@1` audit event: the guard
+ * scanned an out-of-band resolution (a grant/deny) whose Ed25519 signature did
+ * NOT verify against the operator-pinned approver keys, refused to promote it,
+ * and left the action held. A host status record, not an agent signal — the
+ * durable forensic trail of a forgery attempt (`feedArbiter: false`).
+ *
+ * `source` says which resolution source the rejected forgery came from, which
+ * is what lets a read-side projection respond *precisely* rather than tainting
+ * the whole request:
+ *   - `"log"` — a forged `approval.granted@1` / `approval.denied@1` event a local
+ *     writer appended directly to the NDJSON log. `rejected_event_id` carries
+ *     that event's envelope id, so a projection excludes *that specific forged
+ *     event* and still resolves a genuine grant the operator submits afterwards.
+ *     The id is recorded by the guard (the trusted sole writer), so a forger
+ *     cannot aim it at a genuine event: a genuine promotion's envelope id is
+ *     guard-assigned and unpredictable.
+ *   - `"side_channel"` — a forged resolution *file* in the `.approvals/`
+ *     side-channel. It is never promoted to a log event, so there is nothing in
+ *     the log to exclude; `rejected_event_id` is omitted.
+ *
+ * Versioned from birth (`"1"`). `approver_id` is the *claimed* (unauthenticated)
+ * resolver id from the forgery, recorded verbatim for forensics — it may be any
+ * string, so it is not constrained to non-empty.
+ */
+export const GuardApprovalSignatureRejectedPayloadSchema = z
+  .object({
+    request_id: z.string().min(1),
+    action_id: z.string().min(1),
+    approver_id: z.string().describe("the claimed (unauthenticated) resolver id from the forgery"),
+    reason: z.string().min(1),
+    at: TimestampSchema,
+    source: z
+      .enum(["log", "side_channel"])
+      .describe("which resolution source the rejected forgery came from"),
+    rejected_event_id: z
+      .string()
+      .min(1)
+      .optional()
+      .describe("envelope id of the rejected log event; present iff source === 'log'"),
+  })
+  .superRefine((p, ctx) => {
+    if (p.source === "log" && p.rejected_event_id === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rejected_event_id"],
+        message: "source 'log' requires rejected_event_id (the forged event's envelope id)",
+      })
+    }
+    if (p.source === "side_channel" && p.rejected_event_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rejected_event_id"],
+        message: "source 'side_channel' has no log event, so rejected_event_id must be omitted",
+      })
+    }
+  })
+export type GuardApprovalSignatureRejectedPayload = z.infer<
+  typeof GuardApprovalSignatureRejectedPayloadSchema
+>
+
+export const GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE =
+  "guard.approval.signature_rejected" as const
+export const GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION = "1" as const
