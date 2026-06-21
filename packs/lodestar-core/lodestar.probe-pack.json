@@ -26,7 +26,8 @@
     "calibration",
     "session_shipper",
     "pack_registry",
-    "probe_runner"
+    "probe_runner",
+    "public_api"
   ],
   "invariants": [
     "no_self_promotion",
@@ -69,7 +70,8 @@
     "verification_badge_trust",
     "pack_index_signature_required",
     "runner_scoped_env",
-    "runner_os_sandbox"
+    "runner_os_sandbox",
+    "public_api_surface_stable"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -275,6 +277,10 @@
     {
       "name": "autogen-tool-calls-are-governed",
       "file": "probes/autogen-tool-calls-are-governed.ts"
+    },
+    {
+      "name": "public-api-surface",
+      "file": "probes/public-api-surface.ts"
     }
   ]
 }

@@ -7,10 +7,15 @@ integrators can pin against, and which may still move.
 **The rule.** A **stable** export changes shape only with a minor version
 bump and a CHANGELOG entry — never in a patch release. An **experimental**
 export may change in any release. Everything not listed here is
-experimental by default. A `public-api-surface` probe (planned alongside
-this ledger) imports every declared-stable symbol and type-asserts its
-signature, so a breaking drift fails CI the same way any other spec
-violation does.
+experimental by default. The `public-api-surface` probe (in
+`packs/lodestar-core/`) imports every declared-stable symbol and pins its
+signature both ways — at compile time (the strict-TS `typecheck:packs`
+gate) and at runtime (each schema round-trips a valid payload and rejects
+an invalid one; each pure function is exercised for its documented
+behavior) — so a breaking drift fails CI the same way any other spec
+violation does. The one planned-but-unshipped surface below
+(`ApprovalChannel`, ADR-0015) is not yet pinned; it joins the probe when
+it lands.
 
 ## Stable
 
