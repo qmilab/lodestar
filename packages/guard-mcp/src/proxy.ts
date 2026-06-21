@@ -63,9 +63,12 @@ import {
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
 import {
+  type ApprovalChannel,
+  type ApprovalRef,
   type ApprovalResolution,
-  deleteApprovalResolution,
-  readApprovalResolution,
+  type SecretValue,
+  createApprovalChannel,
+  httpChannelForbidsUnsigned,
   resolutionToOutcome,
 } from "./approvals-channel.js"
 import {
@@ -192,6 +195,24 @@ export interface MCPProxyOverrides {
    * arbiter is single-session — pass a fresh one per proxy.
    */
   arbiter?: SentinelArbiter
+  /**
+   * Override the approval transport (ADR-0015) — *where* the hold loop reads an
+   * out-of-band resolution and how it announces a hold. Defaults to the channel
+   * built from `config.approvals.channel` (the local `.approvals/` file channel
+   * unless `{ kind: "http" }`). This is the seam a probe (or a library host)
+   * injects an in-process / stub channel through. The signature gate is unchanged
+   * and runs AFTER `fetch` regardless of channel, so a hostile channel can only
+   * delay an approval, never forge one.
+   */
+  approvalChannel?: ApprovalChannel
+  /**
+   * Resolve a `token_env` name (from `config.approvals.channel.token_env`) into the
+   * bearer secret for the HTTP approval channel. The proxy never reads
+   * `process.env` itself (invariant 9 / no host-env passthrough); the host (the
+   * CLI) injects this resolver. Only consulted when the default HTTP channel is
+   * built from config — ignored when `approvalChannel` is injected directly.
+   */
+  resolveApprovalToken?: (envName: string) => SecretValue
 }
 
 /**
@@ -228,6 +249,15 @@ export class MCPProxy {
    * leaves the proxy in its pure, pre-sentinel behaviour.
    */
   private readonly arbiter?: SentinelArbiter
+  /**
+   * The approval transport (ADR-0015): where {@link waitForResolution} reads an
+   * out-of-band resolution and how {@link resolveProxyHold} announces a hold and
+   * consumes a promoted one. The default `.approvals/` file channel, an `http`
+   * channel from config, or an injected override. The signature gate
+   * ({@link resolutionVerified}) is untouched and runs AFTER `fetch`, so this only
+   * mediates the *source*, never the forgery boundary.
+   */
+  private readonly approvalChannel: ApprovalChannel
 
   private firewall?: MemoryFirewall
   private evidenceStore?: EvidenceStore
@@ -388,6 +418,25 @@ export class MCPProxy {
     // approval be silently rejected (indistinguishable from a forgery) at verify
     // time and time out. No-op when no keys are pinned.
     assertValidApproverKeys(config.approvals?.authorized_keys ?? [])
+    // Build the approval transport (ADR-0015). An injected channel (a probe / a
+    // library host's stub) wins; otherwise build it from `config.approvals.channel`
+    // (defaulting to the local `.approvals/` file channel). An `http` channel is a
+    // remote forgery surface that only the signature gate closes, so it requires a
+    // pinned key and forbids `allow_unsigned` — re-checked here via the SAME
+    // predicate the superRefine uses (a literal-config library host bypasses the
+    // schema), so the two guards can't drift. The signature gate
+    // (`resolutionVerified`) is unchanged and runs AFTER `fetch` regardless of
+    // channel: a hostile channel can only delay an approval, never forge one.
+    if (overrides?.approvalChannel !== undefined) {
+      this.approvalChannel = overrides.approvalChannel
+    } else {
+      const httpGuard = httpChannelForbidsUnsigned(config.approvals ?? {})
+      if (!httpGuard.ok) throw new Error(`MCPProxy: ${httpGuard.reason}`)
+      this.approvalChannel = createApprovalChannel(config.approvals?.channel ?? { kind: "file" }, {
+        logRoot: this.logRoot,
+        resolveToken: overrides?.resolveApprovalToken,
+      })
+    }
     // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
     // synthesizes decisions for it) AND a `CompiledPolicy` gate whose arbitrate
     // hook consults that arbiter. Two distinct silent-non-enforcement traps, two
@@ -992,6 +1041,14 @@ export class MCPProxy {
       deadline !== undefined ? { deadline } : {},
     )
     await this.emit("approval.requested", request)
+    // Best-effort notify the channel that a hold opened (the HTTP channel POSTs
+    // the request; the file channel has no announce). A failure here must NEVER
+    // block or fail the hold — the resolution still arrives via `fetch` polling.
+    try {
+      await this.approvalChannel.announce?.(request)
+    } catch {
+      /* announce is advisory; the hold proceeds to poll regardless */
+    }
 
     // No wait configured: surface the hold immediately as a soft denial the
     // agent re-proposes (the pre-deadline behaviour).
@@ -1056,7 +1113,7 @@ export class MCPProxy {
     // single-writer mutex) is left as-is — re-emitting would duplicate it.
     if (source === "channel") {
       await this.emitCanonicalResolution(outcome, signature)
-      await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
+      await this.approvalChannel.consume?.(this.approvalRef(request.request_id, parked.id))
     }
 
     // A resolution arrived out-of-band. resolve() validates the binding.
@@ -1103,6 +1160,16 @@ export class MCPProxy {
    * timeout, never a late approval. A torn / partially-written read on either
    * source is swallowed and polling continues until the deadline.
    */
+  /** Build the {@link ApprovalRef} a channel keys a resolution by. */
+  private approvalRef(requestId: string, actionId: string): ApprovalRef {
+    return {
+      project_id: this.config.project_id,
+      session_id: this.sessionId,
+      request_id: requestId,
+      action_id: actionId,
+    }
+  }
+
   private async waitForResolution(
     request: ApprovalRequest,
     actionId: string,
@@ -1111,6 +1178,7 @@ export class MCPProxy {
     { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
   > {
     const reader = new EventLogReader(this.logRoot)
+    const ref = this.approvalRef(request.request_id, actionId)
     for (;;) {
       if (this.stopping) return undefined
       let events: EventEnvelope[] = []
@@ -1144,13 +1212,12 @@ export class MCPProxy {
           rejectedEventId: logResult.eventId,
         })
       }
-      // Then the separate-process side-channel. Read errors / malformed files
-      // surface as `undefined` (the helper is tolerant); keep polling.
-      const resolution = await readApprovalResolution(
-        this.logRoot,
-        this.config.project_id,
-        request.request_id,
-      )
+      // Then the approval channel (the separate-process side-channel by default,
+      // or a remote HTTP service; ADR-0015). Read errors / malformed / oversized
+      // responses surface as `undefined` (every channel is tolerant by
+      // construction); keep polling. The returned resolution is UNTRUSTED input —
+      // the signature gate below verifies it before it can un-park anything.
+      const resolution = await this.approvalChannel.fetch(ref)
       const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
       // A deadline-valid channel resolution must additionally clear signature
       // verification against the operator-pinned approver keys before it can
@@ -1167,7 +1234,7 @@ export class MCPProxy {
         await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
           source: "side_channel",
         })
-        await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
+        await this.approvalChannel.consume?.(ref)
       }
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return undefined
