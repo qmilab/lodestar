@@ -54,6 +54,27 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   agent. It is cumulative and never reduced by execution, so a held/retried call —
   or a low-trust filler — can't drain a later action's obligations (ADR-0003);
   guard.wrap() uses declared decisions and never touches it.
+- `src/approvals-channel.ts` — the signed `.approvals/` file side-channel
+  primitives (`ApprovalResolution{Schema}`, `read`/`delete`/`writeApprovalResolution`,
+  `approvalResolutionPath`, `resolutionToOutcome`), graduated here from `-guard-mcp`
+  by ADR-0024/0025 once the runtime gate became a second consumer.
+- `src/approval-channel.ts` — the approval **transport** seam (ADR-0015):
+  `ApprovalChannel` (`announce?` / `fetch` / `consume?`), `FileApprovalChannel`
+  (the default, wrapping the `.approvals/` primitives byte-for-byte),
+  `HttpApprovalChannel` (a config-driven remote approval service, mirroring the
+  messaging adapter's transport posture — bounded timeout + body cap, no redirect
+  following, credential redaction — replicated inline so guard takes no adapter
+  dependency), the `ApprovalChannelConfigSchema` host config + `createApprovalChannel`
+  factory, `assertChannelEndpoint` (HTTPS-only-unless-`allow_http` scheme guard), and
+  `httpChannelForbidsUnsigned` (the parse-time + construct-time cross-field guard the
+  guard-mcp config superRefine and the `MCPProxy` constructor share). **Naming
+  invariant — load-bearing:** an `ApprovalChannel` is the *untrusted transport*
+  (`fetch` returns bytes the consumer signature-verifies AFTER transport), never
+  conflatable with `ApprovalResolver` (`src/types.ts`, the *trusted in-process
+  producer*). A channel moves bytes; a resolver makes decisions. No new core schema:
+  `fetch` returns the existing guard-owned `ApprovalResolution`, `announce` carries
+  the core `ApprovalRequest`, and the channel config is host config (guard), not a
+  core wire primitive.
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is

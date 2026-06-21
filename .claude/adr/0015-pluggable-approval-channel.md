@@ -141,3 +141,42 @@ six-case forged-approval probe must keep passing unmodified.
   closed and reuses the existing hold loop.
 - **Dynamic endpoint discovery (from env of the wrapped agent, log
   content, or downstream servers)** — rejected: SSRF by construction.
+
+## Addendum (implementation, 2026-06-21)
+
+What shipped, and where it diverged from the decision above:
+
+- **Home is `@qmilab/lodestar-guard`, not `-guard-mcp`.** This ADR predates
+  ADR-0024/0025, which already moved the side-channel primitives
+  (`ApprovalResolution{Schema}`, `read`/`delete`/`writeApprovalResolution`) into
+  `@qmilab/lodestar-guard` once the runtime gate became a second consumer. The
+  `ApprovalChannel` interface (`fetch` returns a guard-owned `ApprovalResolution`)
+  must live beside them — core can't import guard, and `-guard-mcp` would be
+  circular for `runtime-core` (a third potential consumer). So
+  `approval-channel.ts` lives in **guard**, and `-guard-mcp` re-exports the names
+  unchanged for source compatibility. The `ApprovalChannelConfigSchema` config type
+  lives in guard too (host config beside the impls, not a core wire primitive) —
+  the same placement as `ApprovalsConfigSchema`/`ProxyConfigSchema`.
+- **The forged HTTP cases are a separate sibling probe, not a case added to
+  `forged-approval-cannot-execute`.** That probe's driver writes through the file
+  primitives; threading an HTTP channel into one of its cases risks exactly the
+  modification the "keep passing unmodified" rule guards against. So the HTTP
+  forgery cases (forged / tampered / replayed / late) live in a new
+  `forged-approval-via-http-channel-cannot-execute`, and `approval-via-http-channel`
+  covers grant / deny / late + the credential-never-in-log assertion. The existing
+  file-path probes pass byte-for-byte unmodified.
+- **`announce` ceiling-gating (hard requirement 3) is deferred to the CLI-wiring
+  follow-up.** v0 ships `announce` as best-effort-swallow (a failure never blocks
+  or fails the hold). The default file channel has no `announce` surface at all;
+  the HTTP `announce` POSTs the `ApprovalRequest` (request_id / action_id / reason
+  / required_authority — no payload content). The explicit sensitivity-ceiling gate
+  (ADR-0014) on that POST lands with the CLI change that resolves `token_env` and
+  wires a real config-driven run; within this slice the HTTP channel is fully
+  reachable + probe-tested via the `MCPProxyOverrides.approvalChannel` /
+  `resolveApprovalToken` seam.
+- **`runtime-core/src/gate.ts` (the third consumer) is not migrated in this slice.**
+  It still reads the file side-channel directly via the unchanged guard primitives;
+  routing it through `ApprovalChannel` for symmetry is a clean follow-up.
+- **The `public-api-surface` probe (#142) does not yet pin `ApprovalChannel`** — it
+  was authored against `main` before this landed. A small follow-up adds the
+  `ApprovalChannel` surface to that probe once both land.
