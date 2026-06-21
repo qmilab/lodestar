@@ -347,7 +347,29 @@ async function run(): Promise<ProbeResult> {
   )
   if (replayedFail) return { passed: false, details: replayedFail }
 
-  // 4. LATE — correctly signed grant dated after the deadline.
+  // 4. MISMATCHED REQUEST — validly signed by the operator for the right action
+  // but a DIFFERENT request_id. The request-id binding refuses it (the channel
+  // rejects a response not bound to the fetched ref, and the proxy's
+  // `channelOutcomeFor` enforces the same binding), so it never resolves THIS
+  // request — which would otherwise leave the real approval.requested open.
+  const mismatchedFail = await expectNotPromoted(
+    "mismatched-request",
+    (req, at) =>
+      sign(
+        {
+          request_id: "some-other-request-id",
+          action_id: req.action_id,
+          kind: "granted",
+          approver_id: APPROVER_ID,
+          at,
+        },
+        OPERATOR.privateKeyPem,
+      ),
+    { expectSignatureRejected: false },
+  )
+  if (mismatchedFail) return { passed: false, details: mismatchedFail }
+
+  // 5. LATE — correctly signed grant dated after the deadline.
   const lateFail = await expectNotPromoted(
     "late",
     (req) =>
@@ -368,7 +390,7 @@ async function run(): Promise<ProbeResult> {
   return {
     passed: true,
     details:
-      "Over the HTTP approval channel, a grant signed by an attacker key claiming the operator's id and a validly-signed-then-tampered grant were each refused with a guard.approval.signature_rejected diagnostic; a grant validly signed but bound to a different action, and a correctly-signed grant dated past the deadline, were each refused by the binding / deadline gates. In every case the held L4 stayed parked, timed out, and never ran the tool — a hostile remote channel can delay an approval but never forge one.",
+      "Over the HTTP approval channel, a grant signed by an attacker key claiming the operator's id and a validly-signed-then-tampered grant were each refused with a guard.approval.signature_rejected diagnostic; a grant validly signed but bound to a different action, one bound to a different request_id, and a correctly-signed grant dated past the deadline were each refused by the binding / deadline gates. In every case the held L4 stayed parked, timed out, and never ran the tool — a hostile remote channel can delay an approval but never forge one.",
   }
 }
 

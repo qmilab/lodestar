@@ -125,6 +125,12 @@ describe("HttpApprovalChannel.fetch", () => {
     expect(await httpChannel().fetch(REF)).toBeUndefined()
   })
 
+  test("a schema-valid resolution for a DIFFERENT request_id → undefined (binding)", async () => {
+    // A misrouted/hostile service returns a resolution bound to another request.
+    service.setHandler(() => Response.json({ ...VALID_RESOLUTION, request_id: "some-other-req" }))
+    expect(await httpChannel().fetch(REF)).toBeUndefined()
+  })
+
   test("a 3xx redirect is NOT followed → undefined, target never hit", async () => {
     service.recorded.length = 0
     service.setHandler((method, url) => {

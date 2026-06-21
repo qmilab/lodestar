@@ -1286,7 +1286,7 @@ export class MCPProxy {
       // budget. The returned resolution is UNTRUSTED input — the signature gate
       // below verifies it before it can un-park anything.
       const resolution = await this.fetchWithinDeadline(ref, deadlineAt)
-      const channelOutcome = channelOutcomeFor(resolution, actionId, deadlineAt)
+      const channelOutcome = channelOutcomeFor(resolution, request.request_id, actionId, deadlineAt)
       // A deadline-valid channel resolution must additionally clear signature
       // verification against the operator-pinned approver keys before it can
       // un-park the action. `resolution` is defined whenever `channelOutcome` is.
@@ -2004,16 +2004,21 @@ function resolutionOutcomeFor(
  * is resolver-supplied and `TimestampSchema` permits a non-UTC offset, so a
  * lexical string compare against the UTC deadline would be wrong. A resolution
  * dated after the deadline is a timeout, never a late approval — the same rule
- * the log path applies. The action-id match is defense in depth: the file is
- * already keyed by `request_id`, and `ActionKernel.resolve()` re-validates the
- * binding regardless.
+ * the log path applies. The request-id AND action-id matches are the binding at
+ * the trust boundary: a channel (file keyed by `request_id`, or a misrouted /
+ * hostile HTTP service) must not resolve THIS request with a resolution issued
+ * for a different one — even one validly signed for the same action — which would
+ * leave the real `approval.requested` open in projections. `ActionKernel.resolve()`
+ * re-validates the action binding regardless.
  */
 function channelOutcomeFor(
   resolution: ApprovalResolution | undefined,
+  requestId: string,
   actionId: string,
   deadlineAt: number,
 ): ApprovalOutcome | undefined {
   if (resolution === undefined) return undefined
+  if (resolution.request_id !== requestId) return undefined
   if (resolution.action_id !== actionId) return undefined
   const at = Date.parse(resolution.at)
   if (Number.isNaN(at) || at > deadlineAt) return undefined

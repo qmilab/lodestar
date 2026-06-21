@@ -230,7 +230,16 @@ export class HttpApprovalChannel implements ApprovalChannel {
         return undefined
       }
       const result = ApprovalResolutionSchema.safeParse(parsed)
-      return result.success ? result.data : undefined
+      if (!result.success) return undefined
+      // Bind the response to the request we fetched. A misrouted or hostile
+      // service could return a schema-valid resolution for a DIFFERENT request_id
+      // (even one validly signed for the same action) — promoting it would resolve
+      // this action under a mismatched request and leave the real `approval.requested`
+      // open in projections. The channel's contract is "a resolution for THIS ref",
+      // so reject any other (the proxy enforces the same binding at its trust
+      // boundary, covering the file channel too).
+      if (result.data.request_id !== ref.request_id) return undefined
+      return result.data
     })
   }
 
