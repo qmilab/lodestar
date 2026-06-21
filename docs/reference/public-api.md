@@ -21,6 +21,7 @@ violation does.
 | `canonicalHash` | `@qmilab/lodestar-event-log` | sha-256 hex over canonical JSON (sorted keys). The tamper-evidence primitive; `payload_hash === canonicalHash(payload)` for every unredacted envelope. |
 | `projectChain` | `@qmilab/lodestar-trace` | `projectChain(events: EventEnvelope[], opts: { session_id, project_id }): ChainProjection`. Pure, no I/O. **Tolerant projection is contractual**: unknown event types never throw — they are retained in `raw_events`. `ChainProjection` fields grow additively. Known sharp edge (documented, kept for now): `actor_ids` is a `Set<string>`, not JSON-safe — serialize via the viewer's `toWireProjection` pattern. |
 | `renderReport` | `@qmilab/lodestar-trace` | `renderReport(projection, opts?: RenderOptions): string`. The **signature** is stable; the markdown text is explicitly *not* contractual (sections may be added or reworded). Parse the projection, not the report. |
+| `pendingApprovals`, `PendingApproval` | `@qmilab/lodestar-trace` | `pendingApprovals(events: EventEnvelope[]): PendingApproval[]`. Pure, no I/O — the same family as `projectChain`. Derives the open-hold queue: every `approval.requested@1` with no matching `approval.granted@1` / `approval.denied@1` / `approval.expired@1`, oldest-first. `PendingApproval` (`{ project_id, session_id, request_id, action_id, reason, required_authority, requested_at, deadline?, status: "pending" }`) grows additively. **Read-only by construction** — surfaces *what is waiting*, never resolves it (resolution is the separate write-side surface). Re-exported unchanged from `@qmilab/lodestar-viewer` for source compatibility. |
 | `signApprovalResolution`, `verifyApprovalSignature`, `canonicalApprovalResolutionHash`, `generateApproverKeyPair`, `assertValidApproverKeys`, `ApprovalSignatureError` | `@qmilab/lodestar-policy-kernel` | Ed25519 over the canonical resolution document `{ request_id, action_id, kind, approver_id, reason?, at }` (`reason` omitted when unset). Keys: SPKI PEM public / PKCS#8 PEM private. The reject set of `verifyApprovalSignature` (unsigned, tampered hash, signer mismatch, unpinned signer, non-ed25519, bad bytes) is contractual. |
 | `buildTrace`, `toOtlpTraceJson`, `traceIdFor`, `spanIdFor`, `isoToUnixNano` | `@qmilab/lodestar-otel-exporter` | The OTLP IR. Deterministic ids (pure function of project/session/local ids — re-export is idempotent) and the redaction marker shape (`lodestar.redacted: true` + `lodestar.payload_hash`) are contractual. |
 | `ApprovalResolutionSchema` + the side-channel layout | `@qmilab/lodestar-guard-mcp` | The resolution wire shape `{ request_id, action_id, kind, approver_id, reason?, at, signature? }` and the file channel layout `<log_root>/.approvals/<project_id>/<request_id>.json` with atomic temp-file + rename writes. Any external resolver writes exactly this. |
@@ -41,10 +42,11 @@ May change in any release; pin at your own risk:
 - `loadSessionEvents`, `findProjectForSession`, `defaultLogRoot`,
   `describeEvent`, `findEventById` (`@qmilab/lodestar-trace`) — CLI
   conveniences, deliberately sharper-edged than the projection core.
-- `listSessions`, `pendingApprovals`, `readAllEvents`, `toWireProjection`,
-  `startViewer` (`@qmilab/lodestar-viewer`) — `pendingApprovals` is slated to
-  graduate into `@qmilab/lodestar-trace` (with a viewer re-export); it joins
-  the stable tier there.
+- `listSessions`, `readAllEvents`, `toWireProjection`, `startViewer`
+  (`@qmilab/lodestar-viewer`) — CLI/server conveniences over the log root.
+  (`pendingApprovals` / `PendingApproval` have graduated to
+  `@qmilab/lodestar-trace`'s stable tier; the viewer re-exports them
+  unchanged.)
 - `exportSession` options (`@qmilab/lodestar-otel-exporter`) — the CLI-shaped
   wrapper around the stable IR.
 - Everything in `@qmilab/lodestar-harness`, the firewall store interfaces,

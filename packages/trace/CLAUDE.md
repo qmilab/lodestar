@@ -8,6 +8,13 @@ projects it into the epistemic chain, then renders markdown.
 - `src/chain.ts` — `projectChain()` projects a flat event stream into
   the epistemic chain primitives (Observations, Claims, Beliefs,
   Actions, firewall transitions). Pure function. No I/O.
+- `src/approvals.ts` — `pendingApprovals(events)` derives the open-hold
+  queue (every `approval.requested@1` with no terminal resolution in the
+  log) and the `PendingApproval` type. Pure projection in the same family
+  as `projectChain` — no I/O, read-only. Graduated here from
+  `@qmilab/lodestar-viewer` (issue #138), which re-exports it unchanged so
+  a consumer that only wants open holds need not pull in the viewer's HTTP
+  server.
 - `src/report.ts` — `renderReport()` turns a projection into markdown.
 - `src/load.ts` — convenience wrappers around `EventLogReader` for the
   CLI; finds project directories and the default log root.
