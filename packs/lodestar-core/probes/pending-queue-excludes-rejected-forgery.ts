@@ -225,7 +225,8 @@ async function caseForgedStaysPending(): Promise<string | undefined> {
     await proxy.start()
     const callPromise = proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
     const request = await waitForRequest(logDir, sessionId, 500)
-    if (request === undefined) return "[forged-pending] approval.requested never appeared in the log."
+    if (request === undefined)
+      return "[forged-pending] approval.requested never appeared in the log."
 
     const forgedId = await plantForgedLogGrant(logDir, sessionId, request)
 

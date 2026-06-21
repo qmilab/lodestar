@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, type RequiredAuthority } from "@qmilab/lodestar-core"
+import {
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+  type RequiredAuthority,
+} from "@qmilab/lodestar-core"
 import {
   EventLogWriter,
   _resetEventLogStateForTests,
@@ -532,15 +535,21 @@ describe("lodestar approve — forgery recovery", () => {
         at,
       })
       // ...which the proxy rejected, naming the specific forged event.
-      await append(writer, randomUUID(), GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, "agent:test", {
-        request_id: requestId,
-        action_id: actionId,
-        approver_id: "attacker",
-        reason: "signature verification failed",
-        at,
-        source: "log",
-        rejected_event_id: forgedId,
-      })
+      await append(
+        writer,
+        randomUUID(),
+        GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+        "agent:test",
+        {
+          request_id: requestId,
+          action_id: actionId,
+          approver_id: "attacker",
+          reason: "signature verification failed",
+          at,
+          source: "log",
+          rejected_event_id: forgedId,
+        },
+      )
       // A genuine grant the operator then submitted (a different, unrejected event).
       await append(writer, randomUUID(), "approval.granted", "human:operator", {
         request_id: requestId,
