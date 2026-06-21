@@ -219,6 +219,22 @@ describe("HttpApprovalChannel.fetch", () => {
     expect(await channel.fetch(REF)).toBeUndefined()
     expect(service.recorded.length).toBe(0)
   })
+
+  test("a token resolver that returns undefined at call time fails closed", async () => {
+    service.recorded.length = 0
+    service.setHandler(() => Response.json(VALID_RESOLUTION))
+    const channel = new HttpApprovalChannel({
+      endpoint: new URL(service.base),
+      // A misbehaving host resolver (e.g. a naive `process.env[name]` lookup for an
+      // unset var) yields undefined; the channel must NOT issue an unauthenticated
+      // request for a configured credential.
+      token: (() => undefined) as unknown as () => string,
+      timeoutMs: 5_000,
+      maxBytes: 64 * 1024,
+    })
+    expect(await channel.fetch(REF)).toBeUndefined()
+    expect(service.recorded.length).toBe(0)
+  })
 })
 
 // ─── announce / consume ─────────────────────────────────────────────────────
@@ -353,5 +369,21 @@ describe("createApprovalChannel", () => {
         { logRoot: "/log" },
       ),
     ).toThrow(/token resolver/)
+  })
+  test("http kind whose resolver returns undefined for a configured token_env throws (fail closed)", () => {
+    expect(() =>
+      createApprovalChannel(
+        {
+          kind: "http",
+          endpoint: "https://approvals.example.com",
+          token_env: "UNSET_VAR",
+          allow_http: false,
+          timeout_ms: 15_000,
+          max_body_bytes: 64 * 1024,
+        },
+        // A naive env lookup for an unset variable — must not silently downgrade.
+        { logRoot: "/log", resolveToken: (() => undefined) as unknown as () => string },
+      ),
+    ).toThrow(/must not silently downgrade/)
   })
 })

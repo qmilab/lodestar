@@ -294,10 +294,11 @@ export class HttpApprovalChannel implements ApprovalChannel {
     if (body !== undefined) headers.set("content-type", "application/json")
     if (this.token !== undefined) {
       // Let a resolver failure propagate (caught by withTimeout) — never downgrade
-      // a configured channel to unauthenticated.
+      // a configured channel to unauthenticated. A resolver that returns
+      // `undefined`/empty at call time is the same failure as one that throws.
       const token = await raceAbort(resolveSecret(this.token), signal)
-      if (token.length === 0) {
-        throw new Error("approval channel: configured token_env resolved to an empty value")
+      if (token === undefined || token.length === 0) {
+        throw new Error("approval channel: configured token resolved to an empty/missing value")
       }
       headers.set("authorization", `Bearer ${token}`)
     }
@@ -373,8 +374,10 @@ async function readBoundedText(resp: Response, maxBytes: number): Promise<string
 
 /** Resolve a configured {@link SecretValue} to its string. A resolver failure
  * PROPAGATES (the caller fails the request closed rather than downgrade to
- * unauthenticated) — deliberately not swallowed, unlike a fetch error. */
-async function resolveSecret(value: SecretValue): Promise<string> {
+ * unauthenticated) — deliberately not swallowed, unlike a fetch error. The return
+ * is typed `string | undefined` because a misbehaving host resolver can yield
+ * `undefined`, which the caller treats as a failure (fail closed). */
+async function resolveSecret(value: SecretValue): Promise<string | undefined> {
   return typeof value === "string" ? value : await value()
 }
 
@@ -432,7 +435,17 @@ export function createApprovalChannel(
           "never reads process.env itself.",
       )
     }
-    token = ctx.resolveToken(config.token_env)
+    // A host may implement `resolveToken` as a naive env lookup that yields
+    // `undefined` for an unset variable (violating the `SecretValue` return type,
+    // but reachable at runtime). A configured `token_env` MUST resolve — fail
+    // closed here rather than hand the channel an undefined token it would treat
+    // as "no credential" and silently issue unauthenticated requests.
+    token = ctx.resolveToken(config.token_env) as SecretValue | undefined
+    if (token === undefined) {
+      throw new Error(
+        `http approval channel: token_env '${config.token_env}' is configured but its resolver returned no value — a configured credential must not silently downgrade to an unauthenticated channel.`,
+      )
+    }
   }
   return new HttpApprovalChannel({
     endpoint,
