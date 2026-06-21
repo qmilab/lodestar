@@ -26,7 +26,8 @@
     "calibration",
     "session_shipper",
     "pack_registry",
-    "probe_runner"
+    "probe_runner",
+    "public_api"
   ],
   "invariants": [
     "no_self_promotion",
@@ -70,6 +71,7 @@
     "pack_index_signature_required",
     "runner_scoped_env",
     "runner_os_sandbox",
+    "public_api_surface_stable",
     "approval_channel_transport",
     "approval_channel_forgery_boundary"
   ],
@@ -285,6 +287,10 @@
     {
       "name": "autogen-tool-calls-are-governed",
       "file": "probes/autogen-tool-calls-are-governed.ts"
+    },
+    {
+      "name": "public-api-surface",
+      "file": "probes/public-api-surface.ts"
     }
   ]
 }
