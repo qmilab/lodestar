@@ -19,9 +19,12 @@ The CLI entry point is `lodestar view [session-id]` (in
   native tail, so the server re-reads the session on a short interval and
   emits new envelopes; polling stops on client disconnect.
 - `src/sessions.ts` — `listSessions(logRoot)` (one summary per
-  `(project_id, session_id)`), `readAllEvents(logRoot)`, and
-  `pendingApprovals(events)` (the `approval.requested@1` queue minus
-  anything resolved in the log).
+  `(project_id, session_id)`) and `readAllEvents(logRoot)`. Also
+  re-exports `pendingApprovals` / `PendingApproval`, which graduated to
+  `@qmilab/lodestar-trace` (issue #138) — the queue projection is a pure,
+  I/O-free read in the same family as `projectChain`, so it lives next to
+  the chain projection; the viewer re-exports it unchanged for source
+  compatibility.
 - `src/wire.ts` — `toWireProjection()` maps a `ChainProjection` to a
   JSON-safe DTO. The one real conversion: `actor_ids` is a `Set` (which
   `JSON.stringify` turns into `{}`), so it becomes an array. `raw_events`

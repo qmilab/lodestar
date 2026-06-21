@@ -6,8 +6,9 @@
  * Action → Outcome → Revision), then renders a markdown trust report.
  *
  * The CLI entry point is `lodestar report <session-id>`. The library
- * surface (`projectChain`, `renderReport`) is exported for callers that
- * want to render reports in their own pipelines.
+ * surface (`projectChain`, `pendingApprovals`, `renderReport`) is
+ * exported for callers that want to render reports — or read the
+ * pending-approval queue — in their own pipelines.
  */
 
 export { projectChain } from "./chain.js"
@@ -18,6 +19,9 @@ export type {
   FirewallTransition,
   ProjectedAction,
 } from "./chain.js"
+
+export { pendingApprovals } from "./approvals.js"
+export type { PendingApproval } from "./approvals.js"
 
 export { renderReport } from "./report.js"
 export type { RenderOptions } from "./report.js"

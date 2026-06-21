@@ -160,6 +160,10 @@
       "file": "probes/forged-approval-cannot-execute.ts"
     },
     {
+      "name": "pending-queue-excludes-rejected-forgery",
+      "file": "probes/pending-queue-excludes-rejected-forgery.ts"
+    },
+    {
       "name": "proxy-hold-carries-rule-authority",
       "file": "probes/proxy-hold-carries-rule-authority.ts"
     },

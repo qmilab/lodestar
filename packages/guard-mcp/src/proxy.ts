@@ -18,6 +18,8 @@ import {
 import {
   ApprovalDeniedPayloadSchema,
   ApprovalGrantedPayloadSchema,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
 } from "@qmilab/lodestar-core"
@@ -29,6 +31,7 @@ import type {
   ApprovalRequest,
   Decision,
   EventEnvelope,
+  GuardApprovalSignatureRejectedPayload,
   Observation,
   Reversibility,
   Signature,
@@ -1136,7 +1139,10 @@ export class MCPProxy {
         if (this.resolutionVerified(logResult.doc, logResult.signature)) {
           return { outcome: logResult.outcome, source: "log" }
         }
-        await this.emitSignatureRejected(`log:${logResult.eventId}`, logResult.doc)
+        await this.emitSignatureRejected(`log:${logResult.eventId}`, logResult.doc, {
+          source: "log",
+          rejectedEventId: logResult.eventId,
+        })
       }
       // Then the separate-process side-channel. Read errors / malformed files
       // surface as `undefined` (the helper is tolerant); keep polling.
@@ -1158,7 +1164,9 @@ export class MCPProxy {
         // spent file so it is not re-read + re-verified every poll (a planted file
         // would otherwise be a per-poll crypto-amplification sink). A legitimate
         // later resolution arrives as a fresh file and is verified normally.
-        await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution)
+        await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
+          source: "side_channel",
+        })
         await deleteApprovalResolution(this.logRoot, this.config.project_id, request.request_id)
       }
       const remaining = deadlineAt - Date.now()
@@ -1212,20 +1220,28 @@ export class MCPProxy {
   private async emitSignatureRejected(
     dedupKey: string,
     res: { request_id: string; action_id: string; approver_id: string },
+    origin: { source: "log"; rejectedEventId: string } | { source: "side_channel" },
   ): Promise<void> {
     if (this.warnedSignatureRejections.has(dedupKey)) return
     try {
-      await this.emit(
-        "guard.approval.signature_rejected",
-        {
-          request_id: res.request_id,
-          action_id: res.action_id,
-          approver_id: res.approver_id,
-          reason: "approval signature verification failed against the pinned approver keys",
-          at: new Date().toISOString(),
-        },
-        { feedArbiter: false },
-      )
+      // `source` + `rejected_event_id` let a read-side projection exclude the
+      // *specific* forged log event rather than tainting the whole request, so a
+      // genuine grant submitted after the forgery still resolves it. The id is
+      // recorded here by the proxy (the trusted sole writer); a side-channel
+      // forgery is never promoted to a log event, so it carries no id.
+      const payload: GuardApprovalSignatureRejectedPayload = {
+        request_id: res.request_id,
+        action_id: res.action_id,
+        approver_id: res.approver_id,
+        reason: "approval signature verification failed against the pinned approver keys",
+        at: new Date().toISOString(),
+        source: origin.source,
+      }
+      if (origin.source === "log") payload.rejected_event_id = origin.rejectedEventId
+      await this.emit(GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE, payload, {
+        feedArbiter: false,
+        schema_version: GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
+      })
       this.warnedSignatureRejections.add(dedupKey)
     } catch {
       // best-effort — leave unmarked so a later poll can retry the audit

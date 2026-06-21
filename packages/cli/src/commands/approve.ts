@@ -9,6 +9,7 @@ import {
   type ApprovalRequest,
   ApprovalRequestSchema,
   type EventEnvelope,
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
   type ResourceScope,
   ResourceScopeSchema,
   type Sensitivity,
@@ -523,40 +524,74 @@ function collectRequests(events: EventEnvelope[]): Map<string, ApprovalRequest> 
 }
 
 /**
- * request_ids the proxy flagged with `guard.approval.signature_rejected` — a
- * grant/deny event it refused to promote because the signature did not verify
- * against the pinned approver keys (a forged event a local writer planted in the
- * log or side-channel). Such a `approval.granted@1` / `approval.denied@1` is NOT a
- * real resolution and must not make the CLI report the request as already
- * resolved, or a legitimate operator could never submit a real signed grant after
- * a forgery (the request would look settled and the proxy would time out).
+ * The exclusions to apply for grant/deny events the proxy refused to promote
+ * (`guard.approval.signature_rejected` — a forgery whose signature did not verify
+ * against the pinned approver keys, planted in the log or side-channel). Such a
+ * `approval.granted@1` / `approval.denied@1` is NOT a real resolution and must not
+ * make the CLI report the request as already settled, or a legitimate operator
+ * could never submit a real signed grant after a forgery (the request would look
+ * resolved and the proxy would time out). Mirrors the trace `pendingApprovals`
+ * projection exactly (the canonical read side):
+ *   - a `source: "log"` rejection names the forged event via `rejected_event_id`,
+ *     so we exclude *that specific event* and still honour a genuine grant the
+ *     operator submits afterwards;
+ *   - a `source: "side_channel"` rejection promotes no log event → excludes nothing;
+ *   - a legacy rejection (pre-`source`) names no event → conservative per-request
+ *     exclusion (the ungameable fallback; no regression on old logs).
  */
-function signatureRejectedRequestIds(events: EventEnvelope[]): Set<string> {
-  const out = new Set<string>()
+interface ApprovalRejectionIndex {
+  rejectedEventIds: Set<string>
+  conservativelyTaintedRequestIds: Set<string>
+}
+
+function rejectionIndex(events: EventEnvelope[]): ApprovalRejectionIndex {
+  const rejectedEventIds = new Set<string>()
+  const conservativelyTaintedRequestIds = new Set<string>()
   for (const e of events) {
-    if (e.type !== "guard.approval.signature_rejected") continue
-    const id = (e.payload as { request_id?: unknown }).request_id
-    if (typeof id === "string" && id.length > 0) out.add(id)
+    if (e.type !== GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE) continue
+    const p = e.payload as
+      | { request_id?: unknown; source?: unknown; rejected_event_id?: unknown }
+      | undefined
+    const rejectedId = p?.rejected_event_id
+    if (typeof rejectedId === "string" && rejectedId.length > 0) {
+      rejectedEventIds.add(rejectedId)
+    } else if (p?.source === "side_channel") {
+      // promotes no log event — nothing to exclude
+    } else {
+      const rid = p?.request_id
+      if (typeof rid === "string" && rid.length > 0) conservativelyTaintedRequestIds.add(rid)
+    }
   }
-  return out
+  return { rejectedEventIds, conservativelyTaintedRequestIds }
+}
+
+/** Whether a grant/deny event is a genuine resolution (not a rejected forgery). */
+function isGenuineResolution(
+  event: EventEnvelope,
+  requestId: string,
+  index: ApprovalRejectionIndex,
+): boolean {
+  return (
+    !index.rejectedEventIds.has(event.id) && !index.conservativelyTaintedRequestIds.has(requestId)
+  )
 }
 
 /**
  * request_ids that already carry a *genuine* terminal event. A grant/deny only
- * counts when the request was not signature-rejected (a forgery the proxy
- * refused); `approval.expired@1` is proxy-authored and always definitive (a
- * timed-out hold the agent re-proposes). A request that was forged-then-rejected
- * but not yet timed out stays actionable so an operator can still grant it.
+ * counts when the guard did not reject that specific event (a forgery it refused);
+ * `approval.expired@1` is proxy-authored and always definitive (a timed-out hold
+ * the agent re-proposes). A request that was forged-then-rejected but not yet
+ * resolved stays actionable so an operator can still grant it.
  */
 function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
-  const rejected = signatureRejectedRequestIds(events)
+  const index = rejectionIndex(events)
   const out = new Set<string>()
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
-      if (p.success && !rejected.has(p.data.request_id)) out.add(p.data.request_id)
+      if (p.success && isGenuineResolution(e, p.data.request_id, index)) out.add(p.data.request_id)
     } else if (e.type === "approval.expired") {
       const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
       if (p.success) out.add(p.data.request_id)
@@ -574,14 +609,17 @@ function existingResolution(
   events: EventEnvelope[],
   requestId: string,
 ): { verdict: "granted" | "denied" | "expired"; approver?: string } | undefined {
-  const rejected = signatureRejectedRequestIds(events).has(requestId)
+  const index = rejectionIndex(events)
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
-      if (rejected) continue
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
-      if (p.success && p.data.request_id === requestId) {
+      if (
+        p.success &&
+        p.data.request_id === requestId &&
+        isGenuineResolution(e, requestId, index)
+      ) {
         return {
           verdict: e.type === "approval.granted" ? "granted" : "denied",
           approver: p.data.approver_id,

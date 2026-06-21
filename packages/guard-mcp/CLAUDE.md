@@ -174,11 +174,17 @@ Cognitive Core. The resulting event log is renderable by
      a sibling of the NDJSON log under one `log_root`, so a local writer who can
      forge a side-channel file can equally append a forged `approval.granted@1` to
      the log; both are gated (a rejected side-channel file is deleted, a rejected
-     log event is skipped by event id). Pinning a key REQUIRES a valid signature
-     even with `allow_unsigned` set; the pure legacy/dev mode is *only* no-keys +
-     explicit `allow_unsigned`, which short-circuits to accept exactly as before
-     P3. A bad pinned PEM fails loudly at construction. See the
-     `forged-approval-cannot-execute` probe (six cases, incl. the log-path bypass).
+     log event is skipped by event id). The `guard.approval.signature_rejected`
+     diagnostic carries `source` (`"log"` / `"side_channel"`) and, for a log-path
+     forgery, the `rejected_event_id` of the specific forged event — so a read-side
+     projection (`pendingApprovals`) excludes *that event* rather than tainting the
+     whole request, letting a genuine grant submitted after a forgery still resolve
+     the queue while a forgery never masks a held request. Pinning a key REQUIRES a
+     valid signature even with `allow_unsigned` set; the pure legacy/dev mode is
+     *only* no-keys + explicit `allow_unsigned`, which short-circuits to accept
+     exactly as before P3. A bad pinned PEM fails loudly at construction. See the
+     `forged-approval-cannot-execute` probe (incl. the log-path bypass) and the
+     `pending-queue-excludes-rejected-forgery` probe (the read-side companion).
      This is what keeps the separate-process resolver safe without cross-process
      file locking — see the `approval-via-side-channel` probe (sole-writer seq
      integrity is one of its assertions).

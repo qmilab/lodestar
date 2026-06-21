@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto"
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import type { RequiredAuthority } from "@qmilab/lodestar-core"
+import {
+  GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+  type RequiredAuthority,
+} from "@qmilab/lodestar-core"
 import {
   EventLogWriter,
   _resetEventLogStateForTests,
@@ -484,6 +487,96 @@ describe("lodestar approve — forgery recovery", () => {
       expect(code).toBe(0)
       expect(out).toContain(requestId)
       expect(out).not.toContain("No pending approvals")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  // The per-resolution exclusion (P2): a `source: "log"` rejection names the
+  // forged event via `rejected_event_id`, so a genuine grant submitted AFTER the
+  // forgery is recognised as a real resolution — the request resolves rather than
+  // staying conservatively pending forever.
+  async function append(
+    writer: EventLogWriter,
+    id: string,
+    type: string,
+    actorId: string,
+    payload: unknown,
+  ): Promise<void> {
+    await writer.append({
+      id,
+      type,
+      schema_version: "1",
+      project_id: PROJECT,
+      session_id: SESSION,
+      actor_id: actorId,
+      timestamp: new Date().toISOString(),
+      causal_parent_ids: [],
+      payload,
+      payload_hash: canonicalHash(payload),
+      versions: { schema_registry_version: "0.1.0" },
+    })
+  }
+
+  test("a genuine grant after a rejected forged log grant resolves the request", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-recover-id-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      const writer = new EventLogWriter(logRoot)
+      const at = new Date().toISOString()
+
+      // A forged grant a local writer appended to the log...
+      const forgedId = randomUUID()
+      await append(writer, forgedId, "approval.granted", "attacker", {
+        request_id: requestId,
+        action_id: actionId,
+        approver_id: "attacker",
+        at,
+      })
+      // ...which the proxy rejected, naming the specific forged event.
+      await append(
+        writer,
+        randomUUID(),
+        GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
+        "agent:test",
+        {
+          request_id: requestId,
+          action_id: actionId,
+          approver_id: "attacker",
+          reason: "signature verification failed",
+          at,
+          source: "log",
+          rejected_event_id: forgedId,
+        },
+      )
+      // A genuine grant the operator then submitted (a different, unrejected event).
+      await append(writer, randomUUID(), "approval.granted", "human:operator", {
+        request_id: requestId,
+        action_id: actionId,
+        approver_id: "human:operator",
+        at,
+      })
+
+      // list: the genuine grant resolves it — no longer pending (the P2 fix).
+      const listed = await runApprove(["list", "--project", PROJECT, "--log-root", logRoot])
+      expect(listed.code).toBe(0)
+      expect(listed.out).not.toContain(requestId)
+
+      // grant: reports the genuine resolution rather than re-granting.
+      const granted = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "human:operator",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(granted.code).toBe(0)
+      expect(granted.out).toContain("already granted")
+      expect(granted.out).toContain("human:operator")
     } finally {
       await rm(logRoot, { recursive: true, force: true })
     }
