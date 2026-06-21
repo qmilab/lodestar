@@ -43,15 +43,31 @@ export interface PendingApproval {
  * `lodestar approve` CLI, or a separate write-side product).
  */
 export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
+  // request_ids the guard refused to promote because the resolution's signature
+  // did not verify against the pinned approver keys (a forged / unsigned /
+  // tampered / unpinned-signer grant or deny a local writer planted in the log
+  // or side-channel). Such an `approval.granted@1` / `approval.denied@1` is NOT a
+  // real resolution — the action stays held so an operator can still submit a
+  // valid signed grant. Excluding these keeps a forgery from dropping a
+  // genuinely-pending request out of the queue (mirrors `collectResolvedRequestIds`
+  // in the `lodestar approve` CLI).
+  const signatureRejected = new Set<string>()
+  for (const event of events) {
+    if (event.type !== "guard.approval.signature_rejected") continue
+    const requestId = (event.payload as { request_id?: unknown } | undefined)?.request_id
+    if (typeof requestId === "string" && requestId.length > 0) signatureRejected.add(requestId)
+  }
+
   const resolved = new Set<string>()
   for (const event of events) {
-    if (
-      event.type === APPROVAL_GRANTED_EVENT_TYPE ||
-      event.type === APPROVAL_DENIED_EVENT_TYPE ||
-      event.type === APPROVAL_EXPIRED_EVENT_TYPE
-    ) {
-      const requestId = (event.payload as { request_id?: unknown } | undefined)?.request_id
-      if (typeof requestId === "string") resolved.add(requestId)
+    const requestId = (event.payload as { request_id?: unknown } | undefined)?.request_id
+    if (typeof requestId !== "string") continue
+    if (event.type === APPROVAL_GRANTED_EVENT_TYPE || event.type === APPROVAL_DENIED_EVENT_TYPE) {
+      // A grant/deny the guard signature-rejected is not terminal — skip it.
+      if (!signatureRejected.has(requestId)) resolved.add(requestId)
+    } else if (event.type === APPROVAL_EXPIRED_EVENT_TYPE) {
+      // `approval.expired@1` is proxy-authored and always definitive.
+      resolved.add(requestId)
     }
   }
 
