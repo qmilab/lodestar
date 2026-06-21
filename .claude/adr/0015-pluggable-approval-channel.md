@@ -165,15 +165,20 @@ What shipped, and where it diverged from the decision above:
   `forged-approval-via-http-channel-cannot-execute`, and `approval-via-http-channel`
   covers grant / deny / late + the credential-never-in-log assertion. The existing
   file-path probes pass byte-for-byte unmodified.
-- **`announce` ceiling-gating (hard requirement 3) is deferred to the CLI-wiring
-  follow-up.** v0 ships `announce` as best-effort-swallow (a failure never blocks
-  or fails the hold). The default file channel has no `announce` surface at all;
-  the HTTP `announce` POSTs the `ApprovalRequest` (request_id / action_id / reason
-  / required_authority — no payload content). The explicit sensitivity-ceiling gate
-  (ADR-0014) on that POST lands with the CLI change that resolves `token_env` and
-  wires a real config-driven run; within this slice the HTTP channel is fully
-  reachable + probe-tested via the `MCPProxyOverrides.approvalChannel` /
-  `resolveApprovalToken` seam.
+- **`token_env` CLI wiring landed in this PR; `announce` ceiling-gating is still
+  deferred.** `lodestar guard mcp-proxy` now resolves an HTTP channel's
+  `approvals.channel.token_env` from the environment and injects
+  `MCPProxyOverrides.resolveApprovalToken` (secrets stay in `process.env`, never the
+  config file — the same discipline as `persistence.connection_string_env`); a
+  `token_env` naming an unset var fails loudly at startup. (Surfaced by Codex review:
+  a schema-valid `token_env` config would otherwise throw in the proxy constructor.)
+  The channel **fails closed** if a configured token can't be resolved at request
+  time — it never downgrades to an unauthenticated request. Still deferred: the
+  explicit sensitivity-ceiling gate (ADR-0014, hard requirement 3) on the `announce`
+  POST. v0 ships `announce` as fire-and-forget best-effort (a failure never blocks
+  or fails the hold); the default file channel has no `announce` surface at all, and
+  the HTTP `announce` carries only an `ApprovalRequest` (request_id / action_id /
+  reason / required_authority — no payload content).
 - **`runtime-core/src/gate.ts` (the third consumer) is not migrated in this slice.**
   It still reads the file side-channel directly via the unchanged guard primitives;
   routing it through `ApprovalChannel` for symmetry is a clean follow-up.
