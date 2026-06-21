@@ -1115,7 +1115,8 @@ export class MCPProxy {
     // single-writer mutex) is left as-is — re-emitting would duplicate it.
     if (source === "channel") {
       await this.emitCanonicalResolution(outcome, signature)
-      await this.approvalChannel.consume?.(this.approvalRef(request.request_id, parked.id))
+      // Fire-and-forget cleanup — must not delay executing the now-approved action.
+      this.consumeResolution(this.approvalRef(request.request_id, parked.id))
     }
 
     // A resolution arrived out-of-band. resolve() validates the binding.
@@ -1182,6 +1183,19 @@ export class MCPProxy {
     } catch {
       /* advisory — a failed/slow announce never blocks or fails the hold */
     }
+  }
+
+  /**
+   * Best-effort `consume` (delete a spent / rejected resolution), **fire-and-forget**.
+   * Cleanup must never block the hold: a stalled remote DELETE would otherwise eat
+   * the approval budget at the rejection site, or delay executing an approved
+   * action at the promotion site. The channel bounds the request by its own
+   * wall-clock timeout; we never await it and swallow any error. A forged
+   * resolution re-fetched before its DELETE lands is harmless — the signature gate
+   * refuses it again and its `guard.approval.signature_rejected` audit is deduped.
+   */
+  private consumeResolution(ref: ApprovalRef): void {
+    void Promise.resolve(this.approvalChannel.consume?.(ref)).catch(() => {})
   }
 
   /**
@@ -1280,11 +1294,13 @@ export class MCPProxy {
         // once (the diagnostic is the durable forensic record) and DELETE the
         // spent file so it is not re-read + re-verified every poll (a planted file
         // would otherwise be a per-poll crypto-amplification sink). A legitimate
-        // later resolution arrives as a fresh file and is verified normally.
+        // later resolution arrives as a fresh file and is verified normally. The
+        // delete is fire-and-forget so a stalled remote DELETE can't eat the
+        // approval budget; the dedup above keeps a not-yet-deleted re-read cheap.
         await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
           source: "side_channel",
         })
-        await this.approvalChannel.consume?.(ref)
+        this.consumeResolution(ref)
       }
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return undefined

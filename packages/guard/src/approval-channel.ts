@@ -275,6 +275,14 @@ export class HttpApprovalChannel implements ApprovalChannel {
    * resolution is raced against the same signal so a hung resolver cannot outlast
    * the timeout. Returns the `Response` (its body still unread); the caller reads
    * or drains it under the same signal.
+   *
+   * **Fail closed on a configured credential.** When `token_env` was configured
+   * (`this.token !== undefined`) the request MUST carry the credential: if the
+   * resolver throws (a missing env var, a secret store down) or yields an empty
+   * value, this throws rather than silently issuing an UNAUTHENTICATED request —
+   * `withTimeout` turns that into `undefined` (the hold keeps polling and times
+   * out), the secure-by-default direction. A channel with no `token` configured
+   * issues no `Authorization` header, as intended.
    */
   private async request(
     method: string,
@@ -284,8 +292,13 @@ export class HttpApprovalChannel implements ApprovalChannel {
   ): Promise<Response> {
     const headers = new Headers()
     if (body !== undefined) headers.set("content-type", "application/json")
-    const token = await raceAbort(resolveSecret(this.token), signal)
-    if (token !== undefined && token.length > 0) {
+    if (this.token !== undefined) {
+      // Let a resolver failure propagate (caught by withTimeout) — never downgrade
+      // a configured channel to unauthenticated.
+      const token = await raceAbort(resolveSecret(this.token), signal)
+      if (token.length === 0) {
+        throw new Error("approval channel: configured token_env resolved to an empty value")
+      }
       headers.set("authorization", `Bearer ${token}`)
     }
     return fetch(url, { method, headers, body, redirect: "manual", signal })
@@ -358,15 +371,11 @@ async function readBoundedText(resp: Response, maxBytes: number): Promise<string
   return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString("utf8")
 }
 
-/** Resolve a {@link SecretValue} to its string, or `undefined` if unset/failed. */
-async function resolveSecret(value: SecretValue | undefined): Promise<string | undefined> {
-  if (value === undefined) return undefined
-  if (typeof value === "string") return value
-  try {
-    return await value()
-  } catch {
-    return undefined
-  }
+/** Resolve a configured {@link SecretValue} to its string. A resolver failure
+ * PROPAGATES (the caller fails the request closed rather than downgrade to
+ * unauthenticated) — deliberately not swallowed, unlike a fetch error. */
+async function resolveSecret(value: SecretValue): Promise<string> {
+  return typeof value === "string" ? value : await value()
 }
 
 // ── Endpoint scheme guard ────────────────────────────────────────────────────

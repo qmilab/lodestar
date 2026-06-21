@@ -189,6 +189,36 @@ describe("HttpApprovalChannel.fetch", () => {
     await channel.fetch(REF)
     expect(service.recorded.at(-1)?.authorization).toBe("Bearer resolved-async-token")
   })
+
+  test("a configured token that FAILS to resolve fails closed — no unauthenticated request", async () => {
+    service.recorded.length = 0
+    service.setHandler(() => Response.json(VALID_RESOLUTION))
+    const channel = new HttpApprovalChannel({
+      endpoint: new URL(service.base),
+      token: () => {
+        throw new Error("secret store unavailable")
+      },
+      timeoutMs: 5_000,
+      maxBytes: 64 * 1024,
+    })
+    // The fetch must NOT be issued unauthenticated: it fails closed to undefined
+    // and the server records no request at all.
+    expect(await channel.fetch(REF)).toBeUndefined()
+    expect(service.recorded.length).toBe(0)
+  })
+
+  test("a configured token that resolves EMPTY fails closed", async () => {
+    service.recorded.length = 0
+    service.setHandler(() => Response.json(VALID_RESOLUTION))
+    const channel = new HttpApprovalChannel({
+      endpoint: new URL(service.base),
+      token: () => "",
+      timeoutMs: 5_000,
+      maxBytes: 64 * 1024,
+    })
+    expect(await channel.fetch(REF)).toBeUndefined()
+    expect(service.recorded.length).toBe(0)
+  })
 })
 
 // ─── announce / consume ─────────────────────────────────────────────────────

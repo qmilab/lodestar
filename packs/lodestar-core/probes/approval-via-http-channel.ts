@@ -358,7 +358,9 @@ async function caseGrant(): Promise<string | undefined> {
     if (!announced) {
       return "[grant] the proxy never POSTed the hold announcement to /v1/approvals."
     }
-    if (!stub.recorded.some((r) => r.method === "DELETE")) {
+    // consume() is fire-and-forget too (cleanup must not delay execution), so wait.
+    const consumed = await waitFor(() => stub.recorded.some((r) => r.method === "DELETE"), 1000)
+    if (!consumed) {
       return "[grant] the proxy never DELETEd (consumed) the promoted resolution."
     }
 
