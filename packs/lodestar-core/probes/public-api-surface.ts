@@ -54,6 +54,9 @@ import {
   FIREWALL_EVENT_SCHEMA_VERSION,
   type FirewallAuditPayload,
   FirewallAuditPayloadSchema,
+  FirewallBeliefAdoptedPayloadSchema,
+  FirewallBeliefTransitionedPayloadSchema,
+  FirewallClaimAcceptedPayloadSchema,
   FirewallLifecycleAxisSchema,
   GitPackSourceSchema,
   LocalPackSourceSchema,
@@ -478,6 +481,39 @@ await check("core: FirewallAuditPayloadSchema rejects an unknown kind + a missin
     "claim.accepted with no claim_id accepted",
   )
 })
+await check(
+  "core: the three per-kind firewall payload schemas each accept their kind + reject a sibling",
+  () => {
+    // The ledger declares each per-kind member schema stable, not just the
+    // union — pin them directly so a rename/removal fails this probe.
+    expect(
+      FirewallClaimAcceptedPayloadSchema.safeParse(validClaimAccepted).success,
+      "claim.accepted member schema rejected its own payload",
+    )
+    expect(
+      FirewallBeliefAdoptedPayloadSchema.safeParse(validBeliefAdopted).success,
+      "belief.adopted member schema rejected its own payload",
+    )
+    expect(
+      FirewallBeliefTransitionedPayloadSchema.safeParse(validBeliefTransitioned).success,
+      "belief.transitioned member schema rejected its own payload",
+    )
+    // Each member is kind-specific (a literal discriminant), so a sibling
+    // kind's payload is rejected — proves they are not interchangeable aliases.
+    expect(
+      !FirewallClaimAcceptedPayloadSchema.safeParse(validBeliefAdopted).success,
+      "claim.accepted member schema accepted a belief.adopted payload",
+    )
+    expect(
+      !FirewallBeliefAdoptedPayloadSchema.safeParse(validBeliefTransitioned).success,
+      "belief.adopted member schema accepted a belief.transitioned payload",
+    )
+    expect(
+      !FirewallBeliefTransitionedPayloadSchema.safeParse(validClaimAccepted).success,
+      "belief.transitioned member schema accepted a claim.accepted payload",
+    )
+  },
+)
 await check("core: FirewallLifecycleAxisSchema pins the four-axis enum", () => {
   for (const axis of ["truth_status", "retrieval_status", "security_status", "freshness_status"]) {
     expect(FirewallLifecycleAxisSchema.safeParse(axis).success, `valid axis rejected: ${axis}`)
