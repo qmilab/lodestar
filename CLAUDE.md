@@ -324,9 +324,22 @@ names and pins each one twice — a compile-time signature assertion that fails 
 strict-TS `typecheck:packs` gate on drift, and a runtime behavioral check (each
 schema round-trips a valid payload and rejects an invalid one; each pure function
 is exercised for determinism / the log layout / the signed-resolution reject set /
-the OTLP IR shape). The one planned-but-unshipped surface, `ApprovalChannel`
-(ADR-0015 / #134), is intentionally not yet pinned; it joins the probe when it
-lands. No package behavior changed — the probe is new spec). The other
+the OTLP IR shape). It also pins the surfaces that landed after it was first
+written — the declarative action-policy document family (#135), the trust-pack
+registry wire shapes (#136), the now-shipped `ApprovalChannel` transport seam
+(ADR-0015 / #134/#145), and the **`firewall.*@1` audit-event contract**
+(`FirewallAuditPayloadSchema` — a `kind`-discriminated union — plus the three
+two-segment event-type constants + `FIREWALL_EVENT_SCHEMA_VERSION` +
+`firewallEventType`, #137 / ADR-0029). That last one is the answer to "stabilize
+a firewall read interface **or** emit firewall events": the firewall is observed
+through its **already-flowing events** — the producer `auditSink` →
+`guard.wrap()` / MCP-proxy / runtime-gate → log → `-trace` projection — graduated
+to a stable, versioned (`"1"`) wire shape in `@qmilab/lodestar-core` (a
+**structural supertype** of the firewall's internal `FirewallAuditEvent`, so
+`-memory-firewall` is unchanged), keeping "every read-side surface is a pure
+projection over `EventEnvelope[]`" true for the firewall too; the
+`ClaimStore`/`BeliefStore`/`EvidenceStore` interfaces stay experimental **by
+design**. No package behavior changed — the probe is new spec). The other
 four live in the first non-core
 pack `packs/coding-agent-safety/`: `prompt-injection-cross-tool`,
 `tool-poisoning-cross-session`, `confidence-drift`, and the Batch 5
