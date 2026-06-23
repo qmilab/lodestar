@@ -22,9 +22,10 @@
  *      exactly once.
  *
  * (Later cases I–P harden the timeout-0 / concurrent-resume / malformed-callback /
- * forged-log edges from PR-review rounds; case Q pins that out-of-band resolutions
- * flow through the pluggable `ApprovalChannel` — ADR-0015 — with both the default
- * file channel, A–P, and an http channel, Q, resolving a held action.)
+ * forged-log edges from PR-review rounds; cases Q–R pin that out-of-band
+ * resolutions flow through the pluggable `ApprovalChannel` — ADR-0015 — with both
+ * the default file channel, A–P, and an http channel, Q, resolving a held action,
+ * and that a slow channel still times the hold out at the approval budget, R.)
  *
  * No Python needed, so these invariants run on every probe pass. The real
  * Python LangGraph loop is exercised by the runtime-gated
@@ -314,6 +315,8 @@ interface ApprovalStub {
   recorded: { method: string; authorization: string | null }[]
   /** Set the resolution GET serves; until set, GET returns 404. */
   serve: (resolution: ApprovalResolution | undefined) => void
+  /** Stall every GET response by `ms` (simulates a slow approval service). */
+  setGetDelay: (ms: number) => void
   stop: () => void
 }
 
@@ -322,11 +325,13 @@ interface ApprovalStub {
 function startApprovalStub(): ApprovalStub {
   const recorded: { method: string; authorization: string | null }[] = []
   let current: ApprovalResolution | undefined
+  let getDelayMs = 0
   const server = Bun.serve({
     port: 0,
-    fetch: (req) => {
+    fetch: async (req) => {
       recorded.push({ method: req.method, authorization: req.headers.get("authorization") })
       if (req.method === "GET") {
+        if (getDelayMs > 0) await delay(getDelayMs)
         return current === undefined ? new Response(null, { status: 404 }) : Response.json(current)
       }
       if (req.method === "DELETE") {
@@ -341,6 +346,9 @@ function startApprovalStub(): ApprovalStub {
     recorded,
     serve: (resolution) => {
       current = resolution
+    },
+    setGetDelay: (ms) => {
+      getDelayMs = ms
     },
     stop: () => server.stop(true),
   }
@@ -1068,6 +1076,68 @@ async function run(): Promise<ProbeResult> {
       )
       const serialized = JSON.stringify(await new EventLogReader(logRoot).readAll(PROJECT_ID))
       check("Q: the bearer token never entered the event log", !serialized.includes(BEARER_TOKEN))
+      await h.gate.stop()
+    }
+
+    // ── R: a slow http channel respects the approval budget, not its own timeout ──
+    // The hold must expire at `approval_timeout_ms` even when the channel's own
+    // `timeout_ms` is far larger and the service stalls every GET. Without the
+    // per-fetch deadline cap (`fetchWithinDeadline`), a single slow fetch would
+    // deliver a before-deadline grant LATE and execute an already-expired hold
+    // (Codex P1). Mirrors the proxy's `caseSlowChannelRespectsBudget`.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      stub.setGetDelay(4_000) // each GET stalls far past the 500ms approval budget
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-slow",
+        approvalTimeoutMs: 500, // budget 500ms; channel timeout 10s (>> budget)
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          allow_http: true,
+          timeout_ms: 10_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      // A correctly-signed grant is available, but every GET stalls 4s past the budget.
+      stub.serve(
+        signedGrantResolution(
+          String(held.action_id),
+          String(held.request_id),
+          approver.privateKeyPem,
+        ),
+      )
+      const started = Date.now()
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 3_000)
+      const elapsed = Date.now() - started
+      check(
+        "R: a slow channel times out at the approval budget (not its 10s timeout)",
+        resumed.phase === "rejected" && resumed.kind === "approval_timeout",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "R: the body never ran on a timed-out hold",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      // Bounded by the 500ms deadline, the hold must end well before the 10s channel
+      // timeout / 4s GET stall — a generous 3s ceiling the unbounded behaviour fails.
+      check(
+        "R: the hold ended near the budget, not the channel timeout",
+        elapsed < 3_000,
+        `${elapsed}ms`,
+      )
       await h.gate.stop()
     }
   } finally {

@@ -1034,6 +1034,36 @@ export class RuntimeGate {
     void Promise.resolve(this.approvalChannel.consume?.(ref)).catch(() => {})
   }
 
+  /** One `channel.fetch`, capped at the time remaining before `deadlineAt` (when
+   *  set). The channel has its OWN wall-clock timeout (`timeout_ms` for HTTP) that
+   *  may dwarf the whole approval budget; without this cap a single slow / stalled
+   *  fetch would overshoot the deadline before the resume loop's deadline check
+   *  runs, executing an expired hold on a before-deadline grant. Race the fetch
+   *  against the remaining budget; if the deadline wins, abandon the (now
+   *  irrelevant) fetch and report "no resolution this poll" — the loop then expires
+   *  the hold conservatively. A rejecting custom channel resolves to `undefined`
+   *  (fail closed). Mirrors the proxy's `fetchWithinDeadline`. */
+  private async fetchWithinDeadline(
+    ref: ApprovalRef,
+    deadlineAt: number | undefined,
+  ): Promise<ApprovalResolution | undefined> {
+    const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
+    if (deadlineAt === undefined) return fetchPromise
+    const remaining = deadlineAt - Date.now()
+    if (remaining <= 0) return undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        fetchPromise,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), remaining)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   /** Scan the durable log + the signed side-channel for a *verified* resolution
    *  bound to this request/action, deadline-gated. A forged / unsigned / tampered
    *  resolution is recorded once and (for the side-channel) deleted; polling
@@ -1067,15 +1097,16 @@ export class RuntimeGate {
     // Channel path: the separate-process resolver, read through the pluggable
     // ApprovalChannel (ADR-0015). The default file channel reads the same
     // `.approvals/` bytes as before; an http channel reads a remote service. The
-    // built-in channels never reject (every failure → undefined), but a custom
-    // injected channel might — fail closed (treat a throw as "no resolution yet";
-    // the hold times out to the conservative outcome).
-    let resolution: ApprovalResolution | undefined
-    try {
-      resolution = await this.approvalChannel.fetch(this.approvalRef(requestId, actionId))
-    } catch {
-      resolution = undefined
-    }
+    // fetch is CAPPED at the remaining deadline (`fetchWithinDeadline`): the HTTP
+    // channel's own `timeout_ms` can dwarf a small `approval_timeout_ms`, and an
+    // uncapped slow fetch would block past the deadline and then promote a
+    // before-deadline grant LATE — executing an already-expired hold. A fetch that
+    // outlasts the deadline (or a rejecting custom channel) yields `undefined`, so
+    // the loop's deadline check expires the hold conservatively.
+    const resolution = await this.fetchWithinDeadline(
+      this.approvalRef(requestId, actionId),
+      deadlineAt,
+    )
     if (resolution !== undefined && resolution.action_id === actionId) {
       if (!withinDeadline(resolution.at, deadlineAt)) {
         // A resolution dated after the deadline is a timeout, never a late
