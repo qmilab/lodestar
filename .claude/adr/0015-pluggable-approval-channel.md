@@ -185,3 +185,46 @@ What shipped, and where it diverged from the decision above:
 - **The `public-api-surface` probe (#142) does not yet pin `ApprovalChannel`** — it
   was authored against `main` before this landed. A small follow-up adds the
   `ApprovalChannel` surface to that probe once both land.
+
+## Addendum 2 (the three deferred follow-ups, resolved 2026-06-23)
+
+All three clean follow-ups the first addendum deferred have now landed:
+
+- **The `announce` POST is sensitivity-ceiling gated (hard requirement 3).** An
+  `http` channel config carries `announce_sensitivity_ceiling` (default `internal`,
+  the locked v0.2 default the shipper / otel-exporter already share). The proxy
+  applies the gate in `announceHold`: a hold whose action content sensitivity
+  (`contentSensitivityForAction(parked.contract.data_sensitivity)`) outranks the
+  ceiling is NOT announced — the remote service never learns it opened — and the
+  withholding is recorded as a verifiable `guard.approval.announce_withheld`
+  commitment (the same "redaction is a commitment, not an error" posture as the
+  shipper / otel exporter). The gate lives in the **consumer** (the proxy), which
+  alone holds the parked action's sensitivity; the `ApprovalChannel.announce`
+  interface is unchanged (it carries only an `ApprovalRequest`, no payload content),
+  so the freshly-stabilised seam does not move. `announce` is advisory, so
+  withholding changes only a hold's *visibility*, never its outcome (the agent still
+  gets the normal hold result; a same-filesystem resolver or a direct GET still
+  resolves it). Pinned by a new case in `approval-via-http-channel`.
+- **`runtime-core/src/gate.ts` now routes through `ApprovalChannel`** — the third
+  consumer is migrated for symmetry with the proxy. `RuntimeGateConfig.approvals`
+  grows the optional `channel` (+ the shared `httpChannelForbidsUnsigned` guard at
+  parse-time and construct-time), and `RuntimeGateOverrides` grows `approvalChannel`
+  / `resolveApprovalToken` — all mirroring the proxy. `checkResolution` reads via
+  `channel.fetch(ref)` and consumes via `channel.consume?(ref)` (fire-and-forget)
+  instead of the raw `readApprovalResolution` / `deleteApprovalResolution`
+  primitives; the Ed25519 signature + deadline + action-id gates are unchanged and
+  still run **after** `fetch`, in the consumer. The default file channel is
+  byte-for-byte identical (the A–P cases of `runtime-gate-enforces-two-phase` pass
+  unmodified through the `FileApprovalChannel` seam); a new case Q drives a config
+  `http` channel end-to-end (signed grant over the wire, GET fetch + DELETE consume,
+  bearer-never-in-log). The `lodestar runtime gate` CLI resolves the channel's
+  `token_env` exactly as `guard mcp-proxy` does.
+- **The `public-api-surface` probe pins `ApprovalChannel`** — `ApprovalChannel`,
+  `FileApprovalChannel`, `HttpApprovalChannel`, `createApprovalChannel`,
+  `ApprovalChannelConfigSchema`, and `httpChannelForbidsUnsigned` are imported and
+  pinned (compile-time signatures + runtime config round-trip / guard behaviour).
+  The stale "not yet pinned" note is removed from `docs/reference/public-api.md`.
+
+Still genuinely future work, not part of this slice: the runtime gate does not yet
+*announce* holds (it has no announce path to gate — its hook resolves via `resume`
+polling), so `announce` egress remains proxy-only.

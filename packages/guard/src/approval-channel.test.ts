@@ -362,6 +362,7 @@ describe("createApprovalChannel", () => {
         allow_http: false,
         timeout_ms: 15_000,
         max_body_bytes: 64 * 1024,
+        announce_sensitivity_ceiling: "internal",
       },
       { logRoot: "/log", resolveToken: () => "tok" },
     )
@@ -377,6 +378,7 @@ describe("createApprovalChannel", () => {
           allow_http: false,
           timeout_ms: 15_000,
           max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
         },
         { logRoot: "/log" },
       ),
@@ -405,6 +407,7 @@ describe("createApprovalChannel", () => {
           allow_http: false,
           timeout_ms: 15_000,
           max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
         },
         // A naive env lookup for an unset variable — must not silently downgrade.
         { logRoot: "/log", resolveToken: (() => undefined) as unknown as () => string },

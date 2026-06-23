@@ -37,19 +37,22 @@ import type {
 } from "@qmilab/lodestar-core"
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
+  type ApprovalChannel,
+  type ApprovalRef,
   type ApprovalResolution,
   type ApprovalResolutionDoc,
   ApprovalSignatureError,
   type CompiledPolicy,
   type PolicyEvaluation,
+  type SecretValue,
   type SentinelArbiter,
   alwaysHoldsChecker,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
-  deleteApprovalResolution,
+  createApprovalChannel,
   holdEvaluationForParkedAction,
+  httpChannelForbidsUnsigned,
   openApprovalRequest,
-  readApprovalResolution,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
 import {
@@ -105,6 +108,13 @@ export interface RuntimeGateOverrides {
   stores?: { claims: ClaimStore; beliefs: BeliefStore; evidence: EvidenceStore }
   /** Override the precondition checker. Default: `alwaysHoldsChecker`. */
   preconditionChecker?: PreconditionChecker
+  /** Inject the approval transport directly (a probe / library stub), instead of
+   *  building it from `config.approvals.channel` (ADR-0015). Wins over config. */
+  approvalChannel?: ApprovalChannel
+  /** Resolve an http channel's `token_env` to its bearer token. The gate never
+   *  reads `process.env` — the host (the CLI) resolves the env var and injects this,
+   *  the same discipline as the proxy's `resolveApprovalToken`. */
+  resolveApprovalToken?: (envName: string) => SecretValue
 }
 
 interface Capture {
@@ -133,6 +143,15 @@ export class RuntimeGate {
   private readonly preconditionChecker: PreconditionChecker
   private readonly arbiter?: SentinelArbiter
   private readonly injectedStores?: RuntimeGateOverrides["stores"]
+  /**
+   * The approval **transport** (ADR-0015): where {@link checkResolution} reads an
+   * out-of-band resolution and how it consumes a promoted/rejected one. The default
+   * `.approvals/` file channel (byte-for-byte the prior behaviour), an `http`
+   * channel from `config.approvals.channel`, or an injected override. The signature
+   * gate ({@link resolutionVerified}) is untouched and runs AFTER `fetch`, so this
+   * mediates only the *source*, never the forgery boundary.
+   */
+  private readonly approvalChannel: ApprovalChannel
 
   private writer?: EventLogWriter
   private firewall?: MemoryFirewall
@@ -226,6 +245,26 @@ export class RuntimeGate {
       )
     }
     assertValidApproverKeys(config.approvals?.authorized_keys ?? [])
+
+    // The approval transport (ADR-0015), built exactly as the MCP proxy does: an
+    // injected channel (a probe / library stub) wins; otherwise build it from
+    // `config.approvals.channel`, defaulting to the local `.approvals/` file
+    // channel. An `http` channel is a remote forgery surface that only the
+    // signature gate closes — require a pinned key and forbid `allow_unsigned`,
+    // re-checked here with the SAME predicate the schema superRefine uses (a literal
+    // config bypasses the schema). The signature gate (`resolutionVerified`) is
+    // unchanged and runs AFTER `fetch`: a hostile channel can only delay an
+    // approval, never forge one.
+    if (overrides?.approvalChannel !== undefined) {
+      this.approvalChannel = overrides.approvalChannel
+    } else {
+      const httpGuard = httpChannelForbidsUnsigned(config.approvals ?? {})
+      if (!httpGuard.ok) throw new Error(`RuntimeGate: ${httpGuard.reason}`)
+      this.approvalChannel = createApprovalChannel(config.approvals?.channel ?? { kind: "file" }, {
+        logRoot: this.logRoot,
+        resolveToken: overrides?.resolveApprovalToken,
+      })
+    }
 
     // Sentinel enforcement needs BOTH an arbiter to run them AND a CompiledPolicy
     // gate whose arbitrate hook consults it — the same four guards the proxy uses.
@@ -691,7 +730,10 @@ export class RuntimeGate {
       if (resolution !== undefined) {
         if (resolution.source === "channel") {
           await this.emitCanonicalResolution(resolution.outcome, resolution.signature)
-          await deleteApprovalResolution(this.logRoot, this.config.project_id, requestId)
+          // Consume the promoted resolution best-effort (fire-and-forget): a slow
+          // remote DELETE must not delay executing the now-approved action, and
+          // exactly-once keys on the durable terminal event, not the file's absence.
+          this.consumeResolution(this.approvalRef(requestId, msg.action_id))
         }
         const resolved = kernel.resolve(parked, resolution.outcome)
         if (resolved.phase !== "approved") {
@@ -974,6 +1016,24 @@ export class RuntimeGate {
 
   // ── Hold resolution ──────────────────────────────────────────────────────
 
+  /** Build the {@link ApprovalRef} a channel keys a resolution by. */
+  private approvalRef(requestId: string, actionId: string): ApprovalRef {
+    return {
+      project_id: this.config.project_id,
+      session_id: this.sessionId,
+      request_id: requestId,
+      action_id: actionId,
+    }
+  }
+
+  /** Best-effort `consume` (delete a spent / rejected resolution), fire-and-forget.
+   *  Cleanup must never block or delay hold resolution; the channel bounds the
+   *  request by its own wall-clock timeout, and any error is swallowed. Mirrors the
+   *  proxy's `consumeResolution`. */
+  private consumeResolution(ref: ApprovalRef): void {
+    void Promise.resolve(this.approvalChannel.consume?.(ref)).catch(() => {})
+  }
+
   /** Scan the durable log + the signed side-channel for a *verified* resolution
    *  bound to this request/action, deadline-gated. A forged / unsigned / tampered
    *  resolution is recorded once and (for the side-channel) deleted; polling
@@ -1004,8 +1064,18 @@ export class RuntimeGate {
         rejectedEventId: logHit.eventId,
       })
     }
-    // Side-channel path: the separate-process resolver.
-    const resolution = await readApprovalResolution(this.logRoot, this.config.project_id, requestId)
+    // Channel path: the separate-process resolver, read through the pluggable
+    // ApprovalChannel (ADR-0015). The default file channel reads the same
+    // `.approvals/` bytes as before; an http channel reads a remote service. The
+    // built-in channels never reject (every failure → undefined), but a custom
+    // injected channel might — fail closed (treat a throw as "no resolution yet";
+    // the hold times out to the conservative outcome).
+    let resolution: ApprovalResolution | undefined
+    try {
+      resolution = await this.approvalChannel.fetch(this.approvalRef(requestId, actionId))
+    } catch {
+      resolution = undefined
+    }
     if (resolution !== undefined && resolution.action_id === actionId) {
       if (!withinDeadline(resolution.at, deadlineAt)) {
         // A resolution dated after the deadline is a timeout, never a late
@@ -1022,7 +1092,10 @@ export class RuntimeGate {
       await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
         source: "side_channel",
       })
-      await deleteApprovalResolution(this.logRoot, this.config.project_id, requestId)
+      // Consume the spent forgery best-effort (fire-and-forget): a re-fetch before
+      // the DELETE lands is harmless — the signature gate refuses it again and the
+      // diagnostic is deduped, exactly the proxy's posture.
+      this.consumeResolution(this.approvalRef(requestId, actionId))
     }
     return undefined
   }

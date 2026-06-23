@@ -13,9 +13,7 @@ signature both ways — at compile time (the strict-TS `typecheck:packs`
 gate) and at runtime (each schema round-trips a valid payload and rejects
 an invalid one; each pure function is exercised for its documented
 behavior) — so a breaking drift fails CI the same way any other spec
-violation does. One stable surface is not yet pinned by the probe —
-`ApprovalChannel` (ADR-0015), which landed after the probe was written; a
-follow-up adds it.
+violation does. Every surface in the table below is pinned.
 
 ## Stable
 

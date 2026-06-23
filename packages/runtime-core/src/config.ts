@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises"
 import { ResourceScopeSchema } from "@qmilab/lodestar-core"
+import { ApprovalChannelConfigSchema, httpChannelForbidsUnsigned } from "@qmilab/lodestar-guard"
 import { z } from "zod"
 
 /**
@@ -83,6 +84,18 @@ export type AuthorizedApprover = z.infer<typeof AuthorizedApproverSchema>
 export const ApprovalsConfigSchema = z.object({
   authorized_keys: z.array(AuthorizedApproverSchema).default([]),
   allow_unsigned: z.boolean().default(false),
+  /**
+   * Where the gate reads an out-of-band resolution from (ADR-0015) — the same
+   * pluggable transport seam the MCP proxy uses. Omitted → the local signed
+   * `.approvals/` file side-channel (today's behaviour, byte-for-byte; the gate
+   * coalesces an absent channel to `{ kind: "file" }`). `{ kind: "http", endpoint,
+   * … }` points the hold loop at a remote approval service. The signature gate
+   * (`authorized_keys`) is unchanged and runs AFTER transport regardless of
+   * channel, so the channel can only delay an approval, never forge one. An `http`
+   * channel additionally requires a pinned key and forbids `allow_unsigned` (the
+   * superRefine below). See {@link ApprovalChannelConfigSchema}.
+   */
+  channel: ApprovalChannelConfigSchema.optional(),
 })
 export type ApprovalsConfig = z.infer<typeof ApprovalsConfigSchema>
 
@@ -181,6 +194,14 @@ export const RuntimeGateConfigSchema = z
         message:
           "`approval_timeout_ms > 0` lets the gate promote an out-of-band approval whose `approver_id` is unauthenticated. Pin at least one `approvals.authorized_keys` entry so resolutions are Ed25519-verified, or set `approvals.allow_unsigned: true` to explicitly accept unsigned resolutions (a trusted local / development setup only).",
       })
+    }
+    // An `http` approval channel is a remote forgery surface that only the signature
+    // gate closes, so it must be signature-verified — re-checked with the SAME
+    // predicate the MCP proxy's schema + constructor share, so the two consumers
+    // can't drift.
+    const httpGuard = httpChannelForbidsUnsigned(config.approvals ?? {})
+    if (!httpGuard.ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["approvals"], message: httpGuard.reason })
     }
   })
 export type RuntimeGateConfig = z.infer<typeof RuntimeGateConfigSchema>

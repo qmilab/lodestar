@@ -20,9 +20,9 @@
  *     signed-resolution reject set, the OTLP IR shape).
  *
  * Scope: the **## Stable** table plus the shipped **first-release** surfaces
- * (`lodestar.session_ship@1`). The one planned-but-unshipped surface,
- * `ApprovalChannel` (ADR-0015 / #134), is intentionally NOT pinned here yet — it
- * does not exist on `main`. When #134 lands, add its import + pins to this probe.
+ * (`lodestar.session_ship@1`). The approval **transport** seam `ApprovalChannel`
+ * (ADR-0015 / #134) is pinned below — it landed after the probe was first written
+ * and joined the Stable table; this probe is its executable mirror.
  *
  * Assertions (per surface): the symbol imports, its signature matches the
  * ledger, and — for schemas — a valid payload parses and an invalid one is
@@ -47,9 +47,17 @@ import {
 } from "@qmilab/lodestar-core"
 import { EventLogReader, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
+  type ApprovalChannel,
+  type ApprovalChannelConfig,
+  ApprovalChannelConfigSchema,
   ApprovalResolutionSchema,
+  FileApprovalChannel,
+  type HttpApprovalChannel,
+  type SecretValue,
   approvalResolutionPath,
   approvalsChannelDir,
+  createApprovalChannel,
+  httpChannelForbidsUnsigned,
 } from "@qmilab/lodestar-guard-mcp"
 import {
   buildTrace,
@@ -122,6 +130,32 @@ pinType<
 pinType<(keys: ReadonlyArray<{ actor_id: string; public_key: string }>) => void>(
   assertValidApproverKeys,
 )
+
+// @qmilab/lodestar-guard (re-exported from -guard-mcp) — the approval transport
+// seam (ADR-0015). `createApprovalChannel` is the documented public constructor;
+// `FileApprovalChannel` / `HttpApprovalChannel` are its `ApprovalChannel` outputs.
+pinType<
+  (
+    config: ApprovalChannelConfig,
+    ctx: { logRoot: string; resolveToken?: (envName: string) => SecretValue },
+  ) => ApprovalChannel
+>(createApprovalChannel)
+pinType<new (logRoot: string) => ApprovalChannel>(FileApprovalChannel)
+pinType<
+  (approvals: {
+    channel?: { kind?: string }
+    authorized_keys?: ReadonlyArray<unknown>
+    allow_unsigned?: boolean
+  }) => { ok: true } | { ok: false; reason: string }
+>(httpChannelForbidsUnsigned)
+// Both classes are `ApprovalChannel` implementations (asserted at the type level,
+// so a drift in `fetch` / `announce` / `consume` fails `typecheck:packs`). The
+// `ApprovalChannel` interface itself is pinned by these assignments referencing it.
+const _fileIsChannel: ApprovalChannel = new FileApprovalChannel("/x")
+void _fileIsChannel
+type HttpIsChannel = InstanceType<typeof HttpApprovalChannel> extends ApprovalChannel ? true : false
+const _httpIsChannel: HttpIsChannel = true
+void _httpIsChannel
 
 // ─── runtime checks ───────────────────────────────────────────────────────
 
@@ -443,6 +477,72 @@ await check(
     )
   },
 )
+
+// ── @qmilab/lodestar-guard: the ApprovalChannel transport seam (ADR-0015) ──
+await check(
+  "guard: ApprovalChannelConfigSchema round-trips file + http, rejects the invalid",
+  () => {
+    const file = ApprovalChannelConfigSchema.safeParse({ kind: "file" })
+    expect(file.success && file.data.kind === "file", "file channel config rejected")
+    const http = ApprovalChannelConfigSchema.safeParse({
+      kind: "http",
+      endpoint: "https://approvals.example/",
+    })
+    expect(
+      http.success,
+      `valid http channel config rejected: ${JSON.stringify(http.error?.issues)}`,
+    )
+    if (http.success && http.data.kind === "http") {
+      // The documented defaults are applied (egress ceiling, timeout, body cap).
+      expect(
+        http.data.announce_sensitivity_ceiling === "internal",
+        "announce ceiling default drifted",
+      )
+      expect(typeof http.data.timeout_ms === "number", "http timeout default missing")
+      expect(typeof http.data.max_body_bytes === "number", "http body-cap default missing")
+    }
+    // The discriminated union is closed, and an http endpoint must be a valid URL.
+    expect(
+      !ApprovalChannelConfigSchema.safeParse({ kind: "smtp", endpoint: "x" }).success,
+      "an unknown channel kind was accepted",
+    )
+    expect(
+      !ApprovalChannelConfigSchema.safeParse({ kind: "http", endpoint: "not a url" }).success,
+      "an http channel accepted a non-URL endpoint",
+    )
+  },
+)
+await check("guard: httpChannelForbidsUnsigned closes the unsigned-remote hole", () => {
+  // The file channel is always allowed (its unsigned local mode is the documented escape).
+  expect(httpChannelForbidsUnsigned({ channel: { kind: "file" } }).ok, "file channel flagged")
+  // An http channel with no pinned key, or with allow_unsigned, is unrepresentable.
+  expect(
+    !httpChannelForbidsUnsigned({ channel: { kind: "http" }, authorized_keys: [] }).ok,
+    "http channel with no pinned key accepted",
+  )
+  expect(
+    !httpChannelForbidsUnsigned({
+      channel: { kind: "http" },
+      authorized_keys: [{}],
+      allow_unsigned: true,
+    }).ok,
+    "http channel with allow_unsigned accepted",
+  )
+  // An http channel with a pinned key and no allow_unsigned is allowed.
+  expect(
+    httpChannelForbidsUnsigned({ channel: { kind: "http" }, authorized_keys: [{}] }).ok,
+    "http channel with a pinned key rejected",
+  )
+})
+await check("guard: createApprovalChannel builds the file channel as an ApprovalChannel", () => {
+  const channel: ApprovalChannel = createApprovalChannel({ kind: "file" }, { logRoot: "/tmp/x" })
+  expect(typeof channel.fetch === "function", "file channel exposes no fetch()")
+  // `consume` is optional on the interface but present on the file channel; `announce`
+  // is absent (the file channel has no notify surface) — both documented.
+  expect(typeof channel.consume === "function", "file channel exposes no consume()")
+  expect(channel.announce === undefined, "file channel unexpectedly grew an announce()")
+})
+
 await check("policy-kernel: assertValidApproverKeys validates pinned SPKI keys", () => {
   const { publicKeyPem } = generateApproverKeyPair()
   assertValidApproverKeys([{ actor_id: "operator", public_key: publicKeyPem }])

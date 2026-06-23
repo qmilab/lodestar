@@ -33,8 +33,16 @@
  * 4. LATE — a signed `granted` whose approver `at` is after the deadline is NOT
  *    promoted (offset-safe numeric gate); the hold times out, the tool never runs.
  *
- * The companion `forged-approval-via-http-channel-cannot-execute` pins that a
- * hostile HTTP service cannot mint / tamper / replay a grant.
+ * 5. ANNOUNCE CEILING — `announce` is egress (ADR-0014 hard requirement 3): a hold
+ *    whose action content sensitivity outranks the channel's `announce_sensitivity_ceiling`
+ *    (default `internal`) is resolved normally but NOT broadcast — no POST lands, a
+ *    verifiable `guard.approval.announce_withheld` commitment is recorded instead,
+ *    and the GET/fetch + execution proceed. Visibility is gated, never the outcome.
+ *
+ * (Plus three robustness cases from Codex review: a slow channel respects the
+ * approval budget, a no-wait hold does not announce, and a rejecting custom channel
+ * fails closed.) The companion `forged-approval-via-http-channel-cannot-execute`
+ * pins that a hostile HTTP service cannot mint / tamper / replay a grant.
  */
 
 import { mkdtemp, rm } from "node:fs/promises"
@@ -176,6 +184,7 @@ function makeProxy(
   stubBase: string,
   channelTimeoutMs = 5_000,
   channelOverride?: ApprovalChannel,
+  defaultSensitivity: ProxyConfig["default_sensitivity"] = "internal",
 ) {
   const calls: Array<{ name: string; args: Record<string, unknown> }> = []
   const fakeCallTool = async (
@@ -191,7 +200,7 @@ function makeProxy(
     session_id: sessionId,
     log_root: logDir,
     default_scope: { level: "project", identifier: PROJECT_ID },
-    default_sensitivity: "internal",
+    default_sensitivity: defaultSensitivity,
     auto_approve_ceiling: 3,
     approval_timeout_ms: approvalTimeoutMs,
     // An HTTP channel is signature-verified (the pinned key); allow_unsigned is
@@ -207,6 +216,7 @@ function makeProxy(
         allow_http: true,
         timeout_ms: channelTimeoutMs,
         max_body_bytes: 64 * 1024,
+        announce_sensitivity_ceiling: "internal",
       },
     },
     downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
@@ -603,6 +613,79 @@ async function caseRejectingChannelFailsClosed(): Promise<string | undefined> {
   }
 }
 
+// ── Case 8: an above-ceiling hold grants but does NOT announce (egress gate) ──
+// ADR-0014 hard requirement 3 / ADR-0015: `announce` is egress, gated by the same
+// locked sensitivity ceiling the shipper / otel-exporter apply. A `secret`-
+// sensitivity held action (above the default `internal` announce ceiling) resolves
+// exactly as normal — the signed grant still un-parks it and the tool runs once —
+// but its existence is NOT broadcast to the remote service: no POST lands, and the
+// proxy records a verifiable `guard.approval.announce_withheld` commitment instead.
+// The gate touches visibility, never the outcome (GET/fetch + execution proceed).
+async function caseAnnounceCeilingWithholds(): Promise<string | undefined> {
+  resetState()
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-http-approval-ceiling-"))
+  const sessionId = "probe-session-http-ceiling"
+  const stub = startStub()
+  // `secret` default sensitivity → the held action's contract data_sensitivity is
+  // `secret`, above the channel's default `internal` announce ceiling.
+  const { proxy, calls } = makeProxy(
+    logDir,
+    sessionId,
+    15_000,
+    stub.base,
+    5_000,
+    undefined,
+    "secret",
+  )
+  try {
+    await proxy.start()
+    const callPromise = proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
+
+    const request = await waitForRequest(logDir, sessionId, 2000)
+    if (request === undefined) return "[ceiling] approval.requested never appeared in the log."
+
+    stub.serve(signedResolution(request, "granted", new Date().toISOString()))
+
+    const result = await callPromise
+    if (result.isError === true) {
+      const kind = (result._meta as { _lodestar?: { kind?: unknown } })?._lodestar?.kind
+      return `[ceiling] a signed grant for an above-ceiling hold errored (kind '${String(kind)}'); the egress gate must change visibility, never the outcome.`
+    }
+    if (calls.length !== 1) {
+      return `[ceiling] downstream tool ran ${calls.length}x; expected exactly 1 — the ceiling gates announce, not execution.`
+    }
+
+    await proxy.stop()
+    // The hold resolved, but the advisory announce was withheld: no POST landed.
+    // Give any stray fire-and-forget POST a moment to arrive, then assert none did.
+    await delay(150)
+    if (stub.recorded.some((r) => r.method === "POST")) {
+      return "[ceiling] the proxy POSTed an announce for a secret-sensitivity hold above the internal ceiling."
+    }
+    // A GET (fetch) must still have happened — the ceiling gates announce only, not
+    // the resolution read that un-parked the action.
+    if (!stub.recorded.some((r) => r.method === "GET")) {
+      return "[ceiling] the proxy never fetched (GET) the resolution; the ceiling must gate announce only."
+    }
+
+    const withheld = (await sessionEvents(logDir, sessionId)).find(
+      (e) => e.type === "guard.approval.announce_withheld",
+    )
+    if (withheld === undefined) {
+      return "[ceiling] no guard.approval.announce_withheld marker recorded for the withheld announce."
+    }
+    const p = withheld.payload as { sensitivity?: unknown; ceiling?: unknown }
+    if (p.sensitivity !== "secret" || p.ceiling !== "internal") {
+      return `[ceiling] withheld marker carried sensitivity='${String(p.sensitivity)}' ceiling='${String(p.ceiling)}'; expected secret / internal.`
+    }
+    return undefined
+  } finally {
+    await proxy.stop().catch(() => {})
+    stub.stop()
+    await rm(logDir, { recursive: true, force: true })
+  }
+}
+
 async function run(): Promise<ProbeResult> {
   const grantFail = await caseGrant()
   if (grantFail) return { passed: false, details: grantFail }
@@ -616,10 +699,12 @@ async function run(): Promise<ProbeResult> {
   if (noWaitFail) return { passed: false, details: noWaitFail }
   const rejectFail = await caseRejectingChannelFailsClosed()
   if (rejectFail) return { passed: false, details: rejectFail }
+  const ceilingFail = await caseAnnounceCeilingWithholds()
+  if (ceilingFail) return { passed: false, details: ceilingFail }
   return {
     passed: true,
     details:
-      "A signed grant served over the HTTP approval channel un-parked the held L4 (tool ran once; the promoted approval.granted@1 was authored by the proxy actor and carried the verified signature; seq stayed strictly monotonic; the proxy announced the hold and consumed the resolution). The operator bearer token reached the service as a header but appeared in no event envelope. A signed HTTP deny rejected the action without running the tool, and a post-deadline signed grant was refused — the hold timed out. A slow channel (10s timeout, 4s-stalled polls) still timed the hold out at its 500ms approval budget, and a no-wait hold returned approval_required immediately without announcing.",
+      "A signed grant served over the HTTP approval channel un-parked the held L4 (tool ran once; the promoted approval.granted@1 was authored by the proxy actor and carried the verified signature; seq stayed strictly monotonic; the proxy announced the hold and consumed the resolution). The operator bearer token reached the service as a header but appeared in no event envelope. A signed HTTP deny rejected the action without running the tool, and a post-deadline signed grant was refused — the hold timed out. A slow channel (10s timeout, 4s-stalled polls) still timed the hold out at its 500ms approval budget, and a no-wait hold returned approval_required immediately without announcing. An above-ceiling (secret) hold still resolved via a signed grant but its announce was withheld (no POST; a guard.approval.announce_withheld commitment recorded) — the egress ceiling gates visibility, never the outcome.",
   }
 }
 

@@ -21,6 +21,11 @@
  *   H. Parallel in-flight calls are correlated to the right action and ingested
  *      exactly once.
  *
+ * (Later cases I–P harden the timeout-0 / concurrent-resume / malformed-callback /
+ * forged-log edges from PR-review rounds; case Q pins that out-of-band resolutions
+ * flow through the pluggable `ApprovalChannel` — ADR-0015 — with both the default
+ * file channel, A–P, and an http channel, Q, resolving a held action.)
+ *
  * No Python needed, so these invariants run on every probe pass. The real
  * Python LangGraph loop is exercised by the runtime-gated
  * `langgraph-tool-calls-are-governed` probe.
@@ -37,7 +42,7 @@ import {
   signApprovalResolution,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard"
-import type { ApprovalResolution } from "@qmilab/lodestar-guard"
+import type { ApprovalChannelConfig, ApprovalResolution } from "@qmilab/lodestar-guard"
 import { FIRST_PARTY_SENTINELS } from "@qmilab/lodestar-harness"
 import {
   RuntimeGate,
@@ -53,6 +58,7 @@ interface ProbeResult {
 
 const PROJECT_ID = "runtime-gate-probe"
 const APPROVER_ID = "approver-1"
+const BEARER_TOKEN = "probe-runtime-approval-bearer-must-not-leak"
 
 // A tool body the in-TS hook runs when the gate remotes a `run_tool` back. Each
 // call is recorded so a check can assert exactly-once / no-run-before-approval.
@@ -197,6 +203,7 @@ async function buildHarness(opts: {
   >
   approverPublicKey?: string
   allowUnsigned?: boolean
+  approvalChannelConfig?: ApprovalChannelConfig
   toolExecTimeoutMs?: number
   bodies: Record<string, ToolBody>
   malformedTools?: string[]
@@ -227,13 +234,18 @@ async function buildHarness(opts: {
         },
       ]),
     ),
-    ...(opts.approverPublicKey !== undefined || opts.allowUnsigned !== undefined
+    ...(opts.approverPublicKey !== undefined ||
+    opts.allowUnsigned !== undefined ||
+    opts.approvalChannelConfig !== undefined
       ? {
           approvals: {
             ...(opts.approverPublicKey !== undefined
               ? { authorized_keys: [{ actor_id: APPROVER_ID, public_key: opts.approverPublicKey }] }
               : {}),
             ...(opts.allowUnsigned !== undefined ? { allow_unsigned: opts.allowUnsigned } : {}),
+            ...(opts.approvalChannelConfig !== undefined
+              ? { channel: opts.approvalChannelConfig }
+              : {}),
           },
         }
       : {}),
@@ -275,6 +287,63 @@ async function writeSignedGrant(
   const signature = signApprovalResolution(doc, privateKeyPem)
   const resolution: ApprovalResolution = { ...doc, signature }
   await writeApprovalResolution(logRoot, PROJECT_ID, resolution)
+}
+
+/** Sign a grant resolution to serve over the http approval-channel stub (case Q).
+ *  Unlike {@link writeSignedGrant} it RETURNS the resolution (the stub serves it
+ *  over HTTP) rather than writing it to the `.approvals/` file side-channel. */
+function signedGrantResolution(
+  actionId: string,
+  requestId: string,
+  privateKeyPem: string,
+): ApprovalResolution {
+  const doc = {
+    request_id: requestId,
+    action_id: actionId,
+    kind: "granted" as const,
+    approver_id: APPROVER_ID,
+    at: new Date().toISOString(),
+  }
+  return { ...doc, signature: signApprovalResolution(doc, privateKeyPem) }
+}
+
+interface ApprovalStub {
+  base: string
+  /** Method + Authorization header of every request, to assert fetch/consume +
+   *  that the bearer reached the service. */
+  recorded: { method: string; authorization: string | null }[]
+  /** Set the resolution GET serves; until set, GET returns 404. */
+  serve: (resolution: ApprovalResolution | undefined) => void
+  stop: () => void
+}
+
+/** In-process signed-approval-service stub for the runtime gate's http channel:
+ *  GET serves the current resolution (404 until set), DELETE consumes it. */
+function startApprovalStub(): ApprovalStub {
+  const recorded: { method: string; authorization: string | null }[] = []
+  let current: ApprovalResolution | undefined
+  const server = Bun.serve({
+    port: 0,
+    fetch: (req) => {
+      recorded.push({ method: req.method, authorization: req.headers.get("authorization") })
+      if (req.method === "GET") {
+        return current === undefined ? new Response(null, { status: 404 }) : Response.json(current)
+      }
+      if (req.method === "DELETE") {
+        current = undefined
+        return new Response(null, { status: 204 })
+      }
+      return new Response(null, { status: 202 })
+    },
+  })
+  return {
+    base: `http://127.0.0.1:${server.port}`,
+    recorded,
+    serve: (resolution) => {
+      current = resolution
+    },
+    stop: () => server.stop(true),
+  }
 }
 
 /** Append a raw (attacker-authored) event directly to the sibling NDJSON log —
@@ -920,6 +989,85 @@ async function run(): Promise<ProbeResult> {
         h.hook.bodyRuns.length === 1,
         `${h.hook.bodyRuns.length} run(s)`,
       )
+      await h.gate.stop()
+    }
+
+    // ── Q: holds resolve through the pluggable http ApprovalChannel (ADR-0015) ──
+    // The gate now reads an out-of-band resolution through an ApprovalChannel
+    // instead of the raw `.approvals/` file primitive (the file path, exercised by
+    // A–P, is byte-for-byte preserved through the FileApprovalChannel seam). Drive
+    // the REAL gate with a CONFIG http channel against an in-process stub: a signed
+    // grant served over HTTP un-parks the held L4 (body runs once), the gate GETs
+    // (fetch) then DELETEs (consume), and the operator bearer token reaches the
+    // service but never the event log. The signature gate is unchanged and runs
+    // AFTER fetch, so the channel only mediates the source.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-channel",
+        approvalTimeoutMs: 15_000,
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          token_env: "PROBE_RUNTIME_APPROVAL_TOKEN",
+          allow_http: true,
+          timeout_ms: 5_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        // The gate never reads process.env: the host injects the bearer resolver.
+        overrides: { resolveApprovalToken: () => BEARER_TOKEN },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      check(
+        "Q: L4 held over the http channel",
+        held.phase === "pending_approval",
+        String(held.phase),
+      )
+      stub.serve(
+        signedGrantResolution(
+          String(held.action_id),
+          String(held.request_id),
+          approver.privateKeyPem,
+        ),
+      )
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 5_000)
+      check(
+        "Q: a signed http grant un-parked the held action",
+        resumed.phase === "completed",
+        String(resumed.phase),
+      )
+      check(
+        "Q: body ran exactly once",
+        h.hook.bodyRuns.length === 1,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      check(
+        "Q: the gate fetched (GET) the resolution over the channel",
+        stub.recorded.some((r) => r.method === "GET"),
+      )
+      // consume() is fire-and-forget (it must not delay execution) — poll for it.
+      let consumed = false
+      for (let i = 0; i < 50 && !consumed; i++) {
+        consumed = stub.recorded.some((r) => r.method === "DELETE")
+        if (!consumed) await delay(20)
+      }
+      check("Q: the gate consumed (DELETE) the promoted resolution", consumed)
+      check(
+        "Q: the operator bearer token reached the service",
+        stub.recorded.some((r) => r.authorization === `Bearer ${BEARER_TOKEN}`),
+      )
+      const serialized = JSON.stringify(await new EventLogReader(logRoot).readAll(PROJECT_ID))
+      check("Q: the bearer token never entered the event log", !serialized.includes(BEARER_TOKEN))
       await h.gate.stop()
     }
   } finally {
