@@ -18,10 +18,13 @@ import {
 import {
   ApprovalDeniedPayloadSchema,
   ApprovalGrantedPayloadSchema,
+  FIREWALL_EVENT_SCHEMA_VERSION,
+  FirewallAuditPayloadSchema,
   GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
   GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
+  firewallEventType,
 } from "@qmilab/lodestar-core"
 import type {
   Action,
@@ -340,15 +343,19 @@ export class RuntimeGate {
     this.evidenceStore = evidence
     const worldModel = new InMemoryWorldModel()
     this.firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
+      // Validate + stamp the stable wire contract (ADR-0029, #137): the
+      // firewall.*@1 payload is owned by `@qmilab/lodestar-core`. Feeding
+      // the arbiter is preserved (a `belief.adopted` populates
+      // `observedBeliefIds`), so no `feedArbiter: false`.
+      const payload = FirewallAuditPayloadSchema.parse(event)
       const causal_parent_ids =
         "causal_parent_ids" in event && event.causal_parent_ids
           ? event.causal_parent_ids
           : undefined
-      await this.emit(
-        `firewall.${event.kind}`,
-        event,
-        causal_parent_ids ? { causal_parent_ids } : undefined,
-      )
+      await this.emit(firewallEventType(payload.kind), payload, {
+        schema_version: FIREWALL_EVENT_SCHEMA_VERSION,
+        ...(causal_parent_ids ? { causal_parent_ids } : {}),
+      })
     })
     const linker = new RuntimeAwareEvidenceLinker(evidence, beliefs)
     const explanations = new ExplanationGenerator(this.config.actor_id)

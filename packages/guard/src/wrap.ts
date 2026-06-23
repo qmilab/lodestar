@@ -18,11 +18,14 @@ import {
   type ActionContract,
   type ApprovalRequest,
   DecisionSchema,
+  FIREWALL_EVENT_SCHEMA_VERSION,
+  FirewallAuditPayloadSchema,
   type Observation,
   type Reversibility,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
   type Sensitivity,
+  firewallEventType,
 } from "@qmilab/lodestar-core"
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
@@ -317,16 +320,19 @@ export async function runGuarded<T>(
   }
 
   const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
+    // Validate + stamp the stable wire contract (ADR-0029, #137): the
+    // firewall.*@1 payload is owned by `@qmilab/lodestar-core`, so a host
+    // parses the producer's audit event before appending it.
+    const payload = FirewallAuditPayloadSchema.parse(event)
     // Honour `causal_parent_ids` when the firewall audit event carries
     // it — reflection-driven transitions cite the `reflection.completed`
     // event id this way (design doc Q4).
     const causal_parent_ids =
       "causal_parent_ids" in event && event.causal_parent_ids ? event.causal_parent_ids : undefined
-    await emit(
-      `firewall.${event.kind}`,
-      event,
-      causal_parent_ids ? { causal_parent_ids } : undefined,
-    )
+    await emit(firewallEventType(payload.kind), payload, {
+      schema_version: FIREWALL_EVENT_SCHEMA_VERSION,
+      ...(causal_parent_ids ? { causal_parent_ids } : {}),
+    })
   })
   // Evidence linking is the one Cognitive-Core seam guard exposes: a
   // caller can inject a custom linker (document-aware, MCP-aware,

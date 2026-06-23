@@ -111,10 +111,14 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    `guard.session.failed`, and `guard.sentinel.failed` — the best-effort
    record written when the arbiter feed throws; see invariant 6), plus the core
    `approval.*` wire events the hold path emits (`approval.requested@1`,
-   `approval.granted@1`, `approval.denied@1`, `approval.expired@1`) and the
+   `approval.granted@1`, `approval.denied@1`, `approval.expired@1`), the
    `sentinel.alerted@1` events the arbiter surfaces (stamped with the canonical
    `SENTINEL_ALERTED_SCHEMA_VERSION` + the sentinel `actorId`, matching the harness
-   alert sink) — all already defined in `@qmilab/lodestar-core`, none new.
+   alert sink), and the `firewall.*@1` audit events the firewall's `auditSink`
+   emits (`firewall.claim.accepted` / `firewall.belief.adopted` /
+   `firewall.belief.transitioned`, `FirewallAuditPayloadSchema`-parsed + stamped
+   `FIREWALL_EVENT_SCHEMA_VERSION`, ADR-0029) — all already defined in
+   `@qmilab/lodestar-core`, none new.
 5. **A hold needs a resolver — no silent default.** The three-valued gate's
    third outcome is `hold`: a held action is parked at `pending_approval` and
    `callTool` resolves it through `GuardConfig.approval_resolver` (open an
