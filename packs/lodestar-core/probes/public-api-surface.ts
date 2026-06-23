@@ -26,6 +26,10 @@
  * declarative **action-policy document** family (`PolicySchema` & co., #135) is
  * pinned below too — the wire format external policy authors / distributors build
  * against, document-shape only (the verdict semantics stay the engine's contract).
+ * The trust-pack registry wire shapes (#136) — the `lodestar.probe-pack.json`
+ * manifest, the immutable `PackSourceRef`, the `lodestar.pack-index.json` discovery
+ * index, and the `badges/*.badge.json` verification badge — are pinned below as well;
+ * wire-shape only (the verify-on-load crypto stays `@qmilab/lodestar-core/crypto`).
  *
  * Assertions (per surface): the symbol imports, its signature matches the
  * ledger, and — for schemas — a valid payload parses and an invalid one is
@@ -44,6 +48,36 @@ import {
   CalibrationComputedPayloadSchema,
   type EventEnvelope,
   EventEnvelopeSchema,
+  GitPackSourceSchema,
+  LocalPackSourceSchema,
+  NpmPackSourceSchema,
+  PACK_BADGES_DIRNAME,
+  PACK_BADGE_FILE_SUFFIX,
+  PACK_BADGE_SPEC_VERSION,
+  PACK_INDEX_FILENAME,
+  PACK_INDEX_SPEC_VERSION,
+  PROBE_PACK_MANIFEST_FILENAME,
+  PROBE_PACK_SPEC_VERSION,
+  type PackBadge,
+  type PackBadgeKind,
+  PackBadgeKindSchema,
+  PackBadgeSchema,
+  type PackBadgeSubject,
+  PackBadgeSubjectSchema,
+  type PackContentDigest,
+  PackContentDigestSchema,
+  type PackFileDigest,
+  PackFileDigestSchema,
+  type PackIndex,
+  type PackIndexBadgeSummary,
+  PackIndexBadgeSummarySchema,
+  type PackIndexEntry,
+  PackIndexEntrySchema,
+  type PackIndexPublisherKey,
+  PackIndexPublisherKeySchema,
+  PackIndexSchema,
+  type PackSourceRef,
+  PackSourceRefSchema,
   type Policy,
   type PolicyEffect,
   PolicyEffectSchema,
@@ -52,13 +86,26 @@ import {
   type PolicyRule,
   PolicyRuleSchema,
   PolicySchema,
+  type ProbeEntry,
+  ProbeEntrySchema,
+  type ProbePackManifest,
+  ProbePackManifestSchema,
+  type ProbePackSourceType,
+  ProbePackSourceTypeSchema,
+  type ProbeResultsBadge,
+  ProbeResultsBadgeSchema,
   type RequiredAuthority,
   RequiredAuthoritySchema,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
+  type SecurityScanBadge,
+  SecurityScanBadgeSchema,
   SentinelAlertPayloadSchema,
+  type SentinelEntry,
+  SentinelEntrySchema,
   SentinelSeveritySchema,
   SentinelSubjectSchema,
+  type UnsignedPackBadge,
 } from "@qmilab/lodestar-core"
 import { EventLogReader, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
@@ -525,6 +572,334 @@ await check("core: PolicySchema enforces the signed_by ↔ signature.signer_id b
   const { signature: _s, signed_by: _sb, ...draft } = validPolicy
   expect(PolicySchema.safeParse(draft).success, "a clean unsigned draft was rejected")
 })
+
+// ── @qmilab/lodestar-core: the lodestar.probe-pack.json manifest ──────────
+const validManifest = {
+  name: "example-pack",
+  version: "1.0.0",
+  spec_version: "1",
+  source_type: "npm",
+  description: "an example pack",
+  coverage_areas: ["prompt-injection"],
+  invariants: ["no-self-promote"],
+  probes: [{ name: "example-probe", file: "probes/example.ts" }],
+  sentinels: [{ id: "low-confidence-action" }],
+  author_id: "pack-author",
+  content_digest: {
+    algorithm: "sha256",
+    files: [{ path: "probes/example.ts", sha256: "a".repeat(64) }],
+  },
+  signature: {
+    signer_id: "pack-author",
+    payload_hash: "b".repeat(64),
+    algorithm: "ed25519",
+    signature: "ZmFrZQ==",
+    at: "2026-01-01T00:00:00.000Z",
+  },
+}
+await check("core: ProbePackManifestSchema round-trips a signed manifest + exposes fields", () => {
+  const parsed = ProbePackManifestSchema.safeParse(validManifest)
+  expect(parsed.success, `valid manifest rejected: ${JSON.stringify(parsed.error?.issues)}`)
+  const manifest: ProbePackManifest = parsed.data
+  const name: string = manifest.name
+  const version: string = manifest.version
+  const sourceType: ProbePackSourceType = manifest.source_type
+  void [name, version, sourceType]
+
+  const probe = manifest.probes[0]
+  expect(probe !== undefined, "manifest dropped its probe entry")
+  const entry: ProbeEntry = probe
+  expect(
+    entry.name === "example-probe" && entry.file === "probes/example.ts",
+    "probe entry drifted",
+  )
+
+  const sentinel = manifest.sentinels?.[0]
+  expect(sentinel !== undefined, "manifest dropped its sentinel entry")
+  const sentinelEntry: SentinelEntry = sentinel
+  expect(sentinelEntry.id === "low-confidence-action", "sentinel entry drifted")
+
+  // content_digest is part of the canonical (signed) document — its per-file shape
+  // is what binds the probe bytes.
+  const digest: PackContentDigest | undefined = manifest.content_digest
+  expect(digest?.algorithm === "sha256", "content_digest algorithm drifted")
+  const fileDigest: PackFileDigest | undefined = digest?.files[0]
+  expect(fileDigest?.sha256.length === 64, "content_digest per-file sha256 not round-tripped")
+  expect(manifest.signature?.algorithm === "ed25519", "signature envelope drifted")
+})
+await check("core: ProbePackManifestSchema pins spec_version + requires ≥1 probe", () => {
+  expect(
+    !ProbePackManifestSchema.safeParse({ ...validManifest, spec_version: "2" }).success,
+    "an unknown manifest spec_version was accepted",
+  )
+  expect(
+    !ProbePackManifestSchema.safeParse({ ...validManifest, probes: [] }).success,
+    "a manifest with no probes was accepted",
+  )
+})
+await check("core: ProbeEntrySchema rejects an absolute probe file path", () => {
+  expect(
+    ProbeEntrySchema.safeParse({ name: "p", file: "probes/p.ts" }).success,
+    "a valid relative probe file was rejected",
+  )
+  expect(
+    !ProbeEntrySchema.safeParse({ name: "p", file: "/etc/passwd" }).success,
+    "an absolute (POSIX) probe file was accepted",
+  )
+  expect(
+    !ProbeEntrySchema.safeParse({ name: "p", file: "C:\\evil.ts" }).success,
+    "a drive-letter probe file was accepted",
+  )
+})
+await check("core: SentinelEntry / PackFileDigest / source-type sub-shapes hold", () => {
+  expect(
+    SentinelEntrySchema.safeParse({ id: "anomalous-tool-sequence" }).success,
+    "valid sentinel id rejected",
+  )
+  expect(
+    !SentinelEntrySchema.safeParse({ id: "Not Kebab" }).success,
+    "non-kebab sentinel id accepted",
+  )
+  expect(
+    PackFileDigestSchema.safeParse({ path: "probes/x.ts", sha256: "0".repeat(64) }).success,
+    "valid file digest rejected",
+  )
+  expect(
+    !PackFileDigestSchema.safeParse({ path: "probes/x.ts", sha256: "nothex" }).success,
+    "a non-sha256 file digest was accepted",
+  )
+  expect(
+    PackContentDigestSchema.safeParse(validManifest.content_digest).success,
+    "valid content digest rejected",
+  )
+  for (const t of ["local", "npm", "git"] as const) {
+    const source: ProbePackSourceType = t
+    expect(ProbePackSourceTypeSchema.safeParse(source).success, `valid source_type '${t}' rejected`)
+  }
+  expect(!ProbePackSourceTypeSchema.safeParse("ftp").success, "an unknown source_type was accepted")
+  expect(PROBE_PACK_SPEC_VERSION === "1", "PROBE_PACK_SPEC_VERSION drifted")
+  expect(
+    PROBE_PACK_MANIFEST_FILENAME === "lodestar.probe-pack.json",
+    "PROBE_PACK_MANIFEST_FILENAME drifted",
+  )
+})
+
+// ── @qmilab/lodestar-core: the immutable PackSourceRef ─────────────────────
+await check("core: PackSourceRef pins immutability — npm exact version + git full SHA", () => {
+  const npm = NpmPackSourceSchema.safeParse({
+    type: "npm",
+    package: "@scope/example-pack",
+    version: "1.0.0",
+    integrity: "sha512-AAAA",
+  })
+  expect(npm.success, `valid npm source rejected: ${JSON.stringify(npm.error?.issues)}`)
+  // a range / dist-tag is not an immutable artifact — rejected
+  expect(
+    !NpmPackSourceSchema.safeParse({
+      type: "npm",
+      package: "example-pack",
+      version: "^1.0.0",
+      integrity: "sha512-AAAA",
+    }).success,
+    "an npm version range was accepted (not immutable)",
+  )
+  expect(
+    !NpmPackSourceSchema.safeParse({
+      type: "npm",
+      package: "example-pack",
+      version: "latest",
+      integrity: "sha512-AAAA",
+    }).success,
+    "an npm dist-tag 'latest' was accepted (not immutable)",
+  )
+  const git = GitPackSourceSchema.safeParse({
+    type: "git",
+    url: "https://example.test/pack.git",
+    commit: "a".repeat(40),
+  })
+  expect(git.success, `valid git source rejected: ${JSON.stringify(git.error?.issues)}`)
+  // a mutable ref (branch / short SHA) is rejected
+  expect(
+    !GitPackSourceSchema.safeParse({
+      type: "git",
+      url: "https://example.test/pack.git",
+      commit: "main",
+    }).success,
+    "a git branch ref was accepted (not immutable)",
+  )
+  expect(
+    !GitPackSourceSchema.safeParse({
+      type: "git",
+      url: "https://example.test/pack.git",
+      commit: "a".repeat(7),
+    }).success,
+    "a short git SHA was accepted (not immutable)",
+  )
+  // the discriminated union routes by `type`; local is the no-fetch case
+  expect(
+    LocalPackSourceSchema.safeParse({ type: "local", path: "./pack" }).success,
+    "valid local source rejected",
+  )
+  const ref: PackSourceRef = PackSourceRefSchema.parse({ type: "local", path: "./pack" })
+  expect(ref.type === "local", "PackSourceRef did not discriminate by type")
+})
+
+// ── @qmilab/lodestar-core: the lodestar.pack-index.json discovery index ────
+const validIndex = {
+  index_version: "1",
+  description: "example discovery index",
+  packs: [
+    {
+      name: "example-pack",
+      version: "1.0.0",
+      source: {
+        type: "npm",
+        package: "@scope/example-pack",
+        version: "1.0.0",
+        integrity: "sha512-AAAA",
+      },
+      author_id: "pack-author",
+      description: "an example pack",
+      coverage_areas: ["prompt-injection"],
+      invariants: ["no-self-promote"],
+      badges: [{ kind: "probe_results", attester_id: "scanner-co" }],
+    },
+  ],
+  publisher_id: "index-publisher",
+  generated_at: "2026-01-01T00:00:00.000Z",
+  signature: {
+    signer_id: "index-publisher",
+    payload_hash: "c".repeat(64),
+    algorithm: "ed25519",
+    signature: "ZmFrZQ==",
+    at: "2026-01-01T00:00:00.000Z",
+  },
+}
+await check(
+  "core: PackIndexSchema round-trips a signed index + the entry resolves a PackSourceRef",
+  () => {
+    const parsed = PackIndexSchema.safeParse(validIndex)
+    expect(parsed.success, `valid index rejected: ${JSON.stringify(parsed.error?.issues)}`)
+    const index: PackIndex = parsed.data
+    const entry = index.packs[0]
+    expect(entry !== undefined, "index dropped its entry")
+    const listing: PackIndexEntry = entry
+    expect(listing.name === "example-pack", "index entry name drifted")
+    // the entry's source is the same immutable PackSourceRef `pack add` consumes
+    const source: PackSourceRef = listing.source
+    expect(source.type === "npm", "index entry source is not a PackSourceRef")
+    const badge = listing.badges?.[0]
+    expect(badge !== undefined, "index dropped its advisory badge summary")
+    const summary: PackIndexBadgeSummary = badge
+    expect(summary.kind === "probe_results", "advisory badge summary drifted")
+  },
+)
+await check("core: PackIndexSchema pins index_version + its sub-shapes", () => {
+  expect(
+    !PackIndexSchema.safeParse({ ...validIndex, index_version: "2" }).success,
+    "an unknown index_version was accepted",
+  )
+  // the entry's free-form taxonomy defaults to [] (searchable, additive)
+  const entry = PackIndexEntrySchema.parse({
+    name: "p",
+    version: "1.0.0",
+    source: { type: "local", path: "./p" },
+  })
+  expect(
+    Array.isArray(entry.coverage_areas) && entry.coverage_areas.length === 0,
+    "entry taxonomy default drifted",
+  )
+  expect(
+    PackIndexBadgeSummarySchema.safeParse({ kind: "security_scan", attester_id: "x" }).success,
+    "valid badge summary rejected",
+  )
+  // the index-publisher key is the third trust root the consumer pins
+  const key: PackIndexPublisherKey = PackIndexPublisherKeySchema.parse({
+    publisher_id: "index-publisher",
+    public_key: "-----BEGIN PUBLIC KEY-----\nx\n-----END PUBLIC KEY-----",
+  })
+  expect(key.publisher_id === "index-publisher", "index publisher key drifted")
+  expect(PACK_INDEX_SPEC_VERSION === "1", "PACK_INDEX_SPEC_VERSION drifted")
+  expect(PACK_INDEX_FILENAME === "lodestar.pack-index.json", "PACK_INDEX_FILENAME drifted")
+})
+
+// ── @qmilab/lodestar-core: verification badges (badges/*.badge.json) ───────
+const validProbeResultsBadge = {
+  badge_version: "1",
+  kind: "probe_results",
+  subject: { pack: "example-pack", version: "1.0.0", manifest_hash: "d".repeat(64) },
+  attester_id: "scanner-co",
+  issued_at: "2026-01-01T00:00:00.000Z",
+  result: { ok: true, total: 10, passed: 10, failed: 0, harness_version: "0.4.0" },
+  signature: {
+    signer_id: "scanner-co",
+    payload_hash: "e".repeat(64),
+    algorithm: "ed25519",
+    signature: "ZmFrZQ==",
+    at: "2026-01-01T00:00:00.000Z",
+  },
+}
+const validSecurityScanBadge = {
+  badge_version: "1",
+  kind: "security_scan",
+  subject: { pack: "example-pack", version: "1.0.0", manifest_hash: "d".repeat(64) },
+  attester_id: "scanner-co",
+  issued_at: "2026-01-01T00:00:00.000Z",
+  result: { status: "clean", findings_count: 0 },
+  signature: {
+    signer_id: "scanner-co",
+    payload_hash: "f".repeat(64),
+    algorithm: "ed25519",
+    signature: "ZmFrZQ==",
+    at: "2026-01-01T00:00:00.000Z",
+  },
+}
+await check("core: PackBadgeSchema round-trips both kinds, discriminated by kind", () => {
+  const pr = ProbeResultsBadgeSchema.safeParse(validProbeResultsBadge)
+  expect(pr.success, `probe_results badge rejected: ${JSON.stringify(pr.error?.issues)}`)
+  const prBadge: ProbeResultsBadge = pr.data
+  expect(prBadge.result.ok === true && prBadge.result.total === 10, "probe_results body drifted")
+
+  const sc = SecurityScanBadgeSchema.safeParse(validSecurityScanBadge)
+  expect(sc.success, `security_scan badge rejected: ${JSON.stringify(sc.error?.issues)}`)
+  const scBadge: SecurityScanBadge = sc.data
+  expect(scBadge.result.status === "clean", "security_scan body drifted")
+
+  // the union discriminates by `kind`; the subject binds the badge to exact bytes
+  const badge: PackBadge = PackBadgeSchema.parse(validProbeResultsBadge)
+  const kind: PackBadgeKind = badge.kind
+  expect(kind === "probe_results", "PackBadge did not discriminate by kind")
+  const subject: PackBadgeSubject = badge.subject
+  expect(subject.manifest_hash.length === 64, "badge subject manifest_hash not round-tripped")
+})
+await check(
+  "core: a badge is REQUIRED-signed; unsigned/bad subject/bad version is rejected",
+  () => {
+    // a badge is by definition signed — an unsigned file is malformed, not a loose badge
+    const { signature: _sig, ...unsigned } = validProbeResultsBadge
+    expect(!PackBadgeSchema.safeParse(unsigned).success, "an unsigned badge was accepted")
+    // `UnsignedPackBadge` is the pre-signing view (the canonical-hash input) — derived
+    // from a parsed badge so its discriminant `kind` is the literal the union needs.
+    const { signature: _omit, ...preSign } = ProbeResultsBadgeSchema.parse(validProbeResultsBadge)
+    const unsignedView: UnsignedPackBadge = preSign
+    void unsignedView
+    // a non-hex subject manifest_hash is rejected (the mis-attach binding is 64-hex)
+    expect(
+      !PackBadgeSubjectSchema.safeParse({ pack: "p", version: "1.0.0", manifest_hash: "short" })
+        .success,
+      "a non-hex manifest_hash was accepted",
+    )
+    expect(
+      !PackBadgeSchema.safeParse({ ...validProbeResultsBadge, badge_version: "2" }).success,
+      "an unknown badge_version was accepted",
+    )
+    expect(PackBadgeKindSchema.safeParse("probe_results").success, "valid badge kind rejected")
+    expect(!PackBadgeKindSchema.safeParse("trust_me").success, "an unknown badge kind was accepted")
+    expect(PACK_BADGE_SPEC_VERSION === "1", "PACK_BADGE_SPEC_VERSION drifted")
+    expect(PACK_BADGES_DIRNAME === "badges", "PACK_BADGES_DIRNAME drifted")
+    expect(PACK_BADGE_FILE_SUFFIX === ".badge.json", "PACK_BADGE_FILE_SUFFIX drifted")
+  },
+)
 
 // ── @qmilab/lodestar-event-log: canonicalHash + EventLogReader layout ─────
 await check("event-log: canonicalHash is key-order-independent and 64 hex chars", () => {
