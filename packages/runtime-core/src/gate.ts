@@ -195,6 +195,14 @@ export class RuntimeGate {
   /** Dedup for signature-rejected diagnostics, so a persistent bad file/event is
    *  logged once across polls. */
   private readonly warnedSignatureRejections = new Set<string>()
+  /** In-flight approval-channel fetches, keyed by `request_id:action_id`. A fetch
+   *  that outlives a short poll's budget keeps running in the channel until its own
+   *  `timeout_ms`; reusing it for the next poll (rather than starting another) caps
+   *  concurrent fetches to one per hold, so a hook that short-polls repeatedly can't
+   *  pile up abandoned GETs/sockets against the approval service (Codex P2). A GET is
+   *  idempotent (it reads, never consumes), so reuse is safe; the entry self-clears
+   *  when the fetch settles. */
+  private readonly inflightFetches = new Map<string, Promise<ApprovalResolution | undefined>>()
   /** Per-action serialisation tail. Two concurrent `resume` messages for the same
    *  held action would otherwise both pass the terminal-event check before either
    *  appends `action.completed`, and both reach `executeAction` — double-running a
@@ -1067,13 +1075,27 @@ export class RuntimeGate {
     ref: ApprovalRef,
     budgetMs: number,
   ): Promise<ApprovalResolution | undefined> {
-    const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
-    if (!Number.isFinite(budgetMs)) return fetchPromise
+    // Reuse a single in-flight fetch per hold: one that outlived an earlier short
+    // poll's budget is still running in the channel (until its own `timeout_ms`), so
+    // the next poll racing a NEW fetch would pile up abandoned GETs/sockets against
+    // the service (Codex P2). A GET is idempotent, so sharing the pending one is safe.
+    const key = `${ref.request_id}:${ref.action_id}`
+    let inflight = this.inflightFetches.get(key)
+    if (inflight === undefined) {
+      const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
+      this.inflightFetches.set(key, fetchPromise)
+      // Self-clear on settle (identity-guarded so a newer fetch's entry survives).
+      void fetchPromise.finally(() => {
+        if (this.inflightFetches.get(key) === fetchPromise) this.inflightFetches.delete(key)
+      })
+      inflight = fetchPromise
+    }
+    if (!Number.isFinite(budgetMs)) return inflight
     if (budgetMs <= 0) return undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       return await Promise.race([
-        fetchPromise,
+        inflight,
         new Promise<undefined>((resolve) => {
           timer = setTimeout(() => resolve(undefined), budgetMs)
         }),

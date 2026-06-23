@@ -22,11 +22,12 @@
  *      exactly once.
  *
  * (Later cases I–P harden the timeout-0 / concurrent-resume / malformed-callback /
- * forged-log edges from PR-review rounds; cases Q–S pin that out-of-band
+ * forged-log edges from PR-review rounds; cases Q–T pin that out-of-band
  * resolutions flow through the pluggable `ApprovalChannel` — ADR-0015 — with both
  * the default file channel, A–P, and an http channel, Q, resolving a held action,
- * that a slow channel still times the hold out at the approval budget, R, and that
- * a short-poll resume respects its wait window rather than the channel timeout, S.)
+ * that a slow channel still times the hold out at the approval budget, R, that a
+ * short-poll resume respects its wait window rather than the channel timeout, S,
+ * and that repeated short polls reuse one in-flight fetch rather than piling up, T.)
  *
  * No Python needed, so these invariants run on every probe pass. The real
  * Python LangGraph loop is exercised by the runtime-gated
@@ -1187,6 +1188,60 @@ async function run(): Promise<ProbeResult> {
       )
       check(
         "S: the body never ran (the hold is still pending)",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── T: repeated short polls reuse one in-flight channel fetch (no pile-up) ──
+    // A fetch that outlives a short poll's budget keeps running in the channel until
+    // its own `timeout_ms`. Without dedup, a hook short-polling repeatedly would
+    // accumulate abandoned GETs/sockets against the service (Codex P2). Five rapid
+    // short-poll resumes against a 4s-stalled stub must reuse the SINGLE in-flight
+    // fetch — the stub should see ~1 GET, not five.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      stub.setGetDelay(4_000) // every GET stalls far past the whole burst of short polls
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-dedup",
+        approvalTimeoutMs: 60_000, // deadline far — only the wait windows bound each fetch
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          allow_http: true,
+          timeout_ms: 10_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      // Five short-poll resumes back-to-back; each times out at ~50ms reusing the
+      // single in-flight fetch the first one started (still stalling at 4s).
+      for (let i = 0; i < 5; i++) {
+        const r = await h.hook.resume(String(held.action_id), String(held.request_id), 50)
+        if (r.phase !== "pending_approval") {
+          check(`T: short poll ${i} stayed pending`, false, `${r.phase}/${r.kind}`)
+          break
+        }
+      }
+      const gets = stub.recorded.filter((r) => r.method === "GET").length
+      check(
+        "T: five rapid short polls reused one in-flight fetch (no GET pile-up)",
+        gets <= 2,
+        `${gets} GET(s) for 5 polls`,
+      )
+      check(
+        "T: the body never ran (the hold is still pending)",
         h.hook.bodyRuns.length === 0,
         `${h.hook.bodyRuns.length} run(s)`,
       )
