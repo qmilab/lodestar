@@ -94,6 +94,12 @@ export const RUNTIME_DECISION_SYNTHESIS_ACTOR = "lodestar-runtime-synthesis"
 /** How often a `resume(wait_ms)` re-reads the log/side-channel while block-polling. */
 const RESOLUTION_POLL_INTERVAL_MS = 50
 
+/** Floor on a single poll's channel-fetch budget — one poll interval's worth — so a
+ *  fast channel (incl. the default file channel on a `wait_ms: 0` resume) still gets
+ *  one fair fetch attempt even when the resume wait window is zero. Never lets the
+ *  fetch exceed the approval deadline (the budget is min'd against it). */
+const MIN_CHANNEL_FETCH_BUDGET_MS = RESOLUTION_POLL_INTERVAL_MS
+
 /** Optional dependency injection — the CLI supplies the compiled gate, arbiter,
  *  and Postgres stores; probes substitute fakes. */
 export interface RuntimeGateOverrides {
@@ -726,7 +732,19 @@ export class RuntimeGate {
           request_id: requestId,
         }
       }
-      const resolution = await this.checkResolution(requestId, msg.action_id, deadlineAt)
+      // Cap this poll's channel fetch by the SMALLER of the remaining approval
+      // deadline and the remaining resume wait window, so a stalled channel cannot
+      // make a short-poll / non-blocking resume hang to the channel's own timeout
+      // (Codex P2). A small floor still guarantees one fair fetch attempt per poll,
+      // so a fast channel — including the default file channel on a `wait_ms: 0`
+      // resume — is always read; the floor never exceeds the deadline.
+      const fetchBudgetMs = channelFetchBudgetMs(deadlineAt, startedAt, waitMs)
+      const resolution = await this.checkResolution(
+        requestId,
+        msg.action_id,
+        deadlineAt,
+        fetchBudgetMs,
+      )
       if (resolution !== undefined) {
         if (resolution.source === "channel") {
           await this.emitCanonicalResolution(resolution.outcome, resolution.signature)
@@ -1034,29 +1052,30 @@ export class RuntimeGate {
     void Promise.resolve(this.approvalChannel.consume?.(ref)).catch(() => {})
   }
 
-  /** One `channel.fetch`, capped at the time remaining before `deadlineAt` (when
-   *  set). The channel has its OWN wall-clock timeout (`timeout_ms` for HTTP) that
-   *  may dwarf the whole approval budget; without this cap a single slow / stalled
-   *  fetch would overshoot the deadline before the resume loop's deadline check
-   *  runs, executing an expired hold on a before-deadline grant. Race the fetch
-   *  against the remaining budget; if the deadline wins, abandon the (now
-   *  irrelevant) fetch and report "no resolution this poll" — the loop then expires
-   *  the hold conservatively. A rejecting custom channel resolves to `undefined`
-   *  (fail closed). Mirrors the proxy's `fetchWithinDeadline`. */
-  private async fetchWithinDeadline(
+  /** One `channel.fetch`, capped at `budgetMs` (already the min of the remaining
+   *  approval deadline and the remaining resume wait window — see
+   *  {@link channelFetchBudgetMs}). The channel has its OWN wall-clock timeout
+   *  (`timeout_ms` for HTTP, default 15s) that can dwarf BOTH the approval deadline
+   *  AND a short `resume(wait_ms)`; without this cap a single stalled fetch would
+   *  (a) overshoot the deadline and execute a before-deadline grant late, and (b)
+   *  hang a short-poll / non-blocking resume to the channel timeout. Race the fetch
+   *  against the budget; if the budget wins, abandon the (now irrelevant) fetch and
+   *  report "no resolution this poll" — the loop then expires or re-polls. A
+   *  rejecting custom channel resolves to `undefined` (fail closed). `Infinity`
+   *  means no bound (no deadline and an unbounded wait). */
+  private async fetchWithinBudget(
     ref: ApprovalRef,
-    deadlineAt: number | undefined,
+    budgetMs: number,
   ): Promise<ApprovalResolution | undefined> {
     const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
-    if (deadlineAt === undefined) return fetchPromise
-    const remaining = deadlineAt - Date.now()
-    if (remaining <= 0) return undefined
+    if (!Number.isFinite(budgetMs)) return fetchPromise
+    if (budgetMs <= 0) return undefined
     let timer: ReturnType<typeof setTimeout> | undefined
     try {
       return await Promise.race([
         fetchPromise,
         new Promise<undefined>((resolve) => {
-          timer = setTimeout(() => resolve(undefined), remaining)
+          timer = setTimeout(() => resolve(undefined), budgetMs)
         }),
       ])
     } finally {
@@ -1072,6 +1091,7 @@ export class RuntimeGate {
     requestId: string,
     actionId: string,
     deadlineAt: number | undefined,
+    fetchBudgetMs: number,
   ): Promise<
     { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
   > {
@@ -1097,15 +1117,15 @@ export class RuntimeGate {
     // Channel path: the separate-process resolver, read through the pluggable
     // ApprovalChannel (ADR-0015). The default file channel reads the same
     // `.approvals/` bytes as before; an http channel reads a remote service. The
-    // fetch is CAPPED at the remaining deadline (`fetchWithinDeadline`): the HTTP
-    // channel's own `timeout_ms` can dwarf a small `approval_timeout_ms`, and an
-    // uncapped slow fetch would block past the deadline and then promote a
-    // before-deadline grant LATE — executing an already-expired hold. A fetch that
-    // outlasts the deadline (or a rejecting custom channel) yields `undefined`, so
-    // the loop's deadline check expires the hold conservatively.
-    const resolution = await this.fetchWithinDeadline(
+    // fetch is CAPPED at `fetchBudgetMs` (the min of the remaining deadline and the
+    // resume wait window): the HTTP channel's own `timeout_ms` can dwarf both, and
+    // an uncapped slow fetch would (a) overshoot the deadline and execute a
+    // before-deadline grant LATE, and (b) hang a short-poll resume. A fetch that
+    // outlasts the budget (or a rejecting custom channel) yields `undefined`, so the
+    // loop expires or re-polls.
+    const resolution = await this.fetchWithinBudget(
       this.approvalRef(requestId, actionId),
-      deadlineAt,
+      fetchBudgetMs,
     )
     if (resolution !== undefined && resolution.action_id === actionId) {
       if (!withinDeadline(resolution.at, deadlineAt)) {
@@ -1425,6 +1445,29 @@ export class RuntimeGate {
 // ── module-level helpers ─────────────────────────────────────────────────────
 
 const passthroughArgsSchema = z.record(z.unknown())
+
+/**
+ * The wall-clock budget for one poll's channel fetch: the SMALLER of the time left
+ * before the approval deadline and the time left in the resume wait window, floored
+ * to {@link MIN_CHANNEL_FETCH_BUDGET_MS} so a fast channel always gets one fair
+ * attempt (the floor is itself capped by the deadline, so it can never overshoot).
+ * `Infinity` when there is neither a deadline nor a wait bound. This keeps a stalled
+ * channel from (a) executing a before-deadline grant late and (b) hanging a
+ * short-poll / non-blocking resume to the channel's own timeout.
+ */
+function channelFetchBudgetMs(
+  deadlineAt: number | undefined,
+  startedAt: number,
+  waitMs: number,
+): number {
+  const now = Date.now()
+  const deadlineRemaining = deadlineAt !== undefined ? deadlineAt - now : Number.POSITIVE_INFINITY
+  const waitRemaining = startedAt + waitMs - now
+  return Math.max(
+    0,
+    Math.min(deadlineRemaining, Math.max(waitRemaining, MIN_CHANNEL_FETCH_BUDGET_MS)),
+  )
+}
 
 /**
  * Namespace a hook's tool name into a registry-valid `runtime.<sanitised>` name

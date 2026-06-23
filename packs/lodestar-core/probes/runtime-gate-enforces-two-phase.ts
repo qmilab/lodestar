@@ -22,10 +22,11 @@
  *      exactly once.
  *
  * (Later cases I–P harden the timeout-0 / concurrent-resume / malformed-callback /
- * forged-log edges from PR-review rounds; cases Q–R pin that out-of-band
+ * forged-log edges from PR-review rounds; cases Q–S pin that out-of-band
  * resolutions flow through the pluggable `ApprovalChannel` — ADR-0015 — with both
  * the default file channel, A–P, and an http channel, Q, resolving a held action,
- * and that a slow channel still times the hold out at the approval budget, R.)
+ * that a slow channel still times the hold out at the approval budget, R, and that
+ * a short-poll resume respects its wait window rather than the channel timeout, S.)
  *
  * No Python needed, so these invariants run on every probe pass. The real
  * Python LangGraph loop is exercised by the runtime-gated
@@ -1137,6 +1138,57 @@ async function run(): Promise<ProbeResult> {
         "R: the hold ended near the budget, not the channel timeout",
         elapsed < 3_000,
         `${elapsed}ms`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── S: a short-poll resume respects its wait window, not the channel timeout ──
+    // With the deadline FAR away (60s) but the hook asking for a short poll
+    // (`wait_ms` 300ms), a stalled channel must not make the resume hang to the
+    // channel's own 10s timeout — the fetch is bounded by min(deadline, wait window)
+    // (Codex P2). The resume returns `pending_approval` promptly; the hook re-polls.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      stub.setGetDelay(4_000) // every GET stalls far past the 300ms wait window
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-shortpoll",
+        approvalTimeoutMs: 60_000, // deadline FAR away — only the wait window should bound the fetch
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          allow_http: true,
+          timeout_ms: 10_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      const started = Date.now()
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 300)
+      const elapsed = Date.now() - started
+      check(
+        "S: a short-poll resume returns pending (not resolved/timed-out) — deadline still far",
+        resumed.phase === "pending_approval",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "S: the resume respected its ~300ms wait window, not the 10s channel timeout",
+        elapsed < 2_000,
+        `${elapsed}ms`,
+      )
+      check(
+        "S: the body never ran (the hold is still pending)",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
       )
       await h.gate.stop()
     }
