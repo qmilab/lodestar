@@ -20,6 +20,9 @@ export type {
   ProjectedAction,
 } from "./chain.js"
 
+export { toWireProjection } from "./wire.js"
+export type { WireProjection } from "./wire.js"
+
 export { pendingApprovals } from "./approvals.js"
 export type { PendingApproval } from "./approvals.js"
 

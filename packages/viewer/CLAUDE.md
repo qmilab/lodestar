@@ -25,11 +25,15 @@ The CLI entry point is `lodestar view [session-id]` (in
   I/O-free read in the same family as `projectChain`, so it lives next to
   the chain projection; the viewer re-exports it unchanged for source
   compatibility.
-- `src/wire.ts` — `toWireProjection()` maps a `ChainProjection` to a
-  JSON-safe DTO. The one real conversion: `actor_ids` is a `Set` (which
-  `JSON.stringify` turns into `{}`), so it becomes an array. `raw_events`
-  is dropped — the `/events` endpoint and the SSE stream carry raw
-  envelopes.
+- `src/wire.ts` — re-exports `toWireProjection` / `WireProjection`, which
+  graduated to `@qmilab/lodestar-trace` (issue #139) — a pure `Set → array`
+  serialization of a `ChainProjection` in the same family as `projectChain`,
+  so a consumer that only wants to JSON-serialize a projection need not pull
+  in this package's HTTP server. The server still imports it from here; the
+  viewer re-exports it unchanged for source compatibility. (The conversion:
+  `actor_ids` is a `Set`, which `JSON.stringify` turns into `{}`, so it
+  becomes an array; the heavy `raw_events` is dropped — the `/events`
+  endpoint and the SSE stream carry raw envelopes.)
 - `src/public/` — the SPA: `index.html`, `app.css`, `app.js`. Plain
   HTML/CSS/vanilla JS, **no build step**. Served via `Bun.file()` relative
   to `import.meta.dir`, so it resolves under `src/` when run from source

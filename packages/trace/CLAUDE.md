@@ -8,6 +8,15 @@ projects it into the epistemic chain, then renders markdown.
 - `src/chain.ts` — `projectChain()` projects a flat event stream into
   the epistemic chain primitives (Observations, Claims, Beliefs,
   Actions, firewall transitions). Pure function. No I/O.
+- `src/wire.ts` — `toWireProjection(projection)` is the JSON-safe
+  serialization of a `ChainProjection` (and the `WireProjection` type):
+  `actor_ids` (`Set<string>`) becomes an array — the one non-JSON-safe
+  field — and the heavy verbatim `raw_events` is dropped. Pure, no I/O, in
+  the same family as `projectChain`. Graduated here from
+  `@qmilab/lodestar-viewer` (issue #139), which re-exports it unchanged so a
+  consumer that only wants to JSON-serialize a projection need not pull in
+  the viewer's HTTP server (Elysia). It is the serializer the stable
+  `projectChain` contract points integrators at.
 - `src/approvals.ts` — `pendingApprovals(events)` derives the open-hold
   queue (every `approval.requested@1` with no terminal resolution in the
   log) and the `PendingApproval` type. Pure projection in the same family

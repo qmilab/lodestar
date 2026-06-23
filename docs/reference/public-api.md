@@ -22,7 +22,8 @@ violation does. Every surface in the table below is pinned.
 | `EventEnvelope`, `EventEnvelopeSchema` | `@qmilab/lodestar-core` | The envelope: `id`, `seq`, `type`, `schema_version`, `project_id`, `session_id`, `actor_id`, `timestamp`, `logical_clock`, `causal_parent_ids`, `payload_hash`, `payload`, `versions`, `signature?`. Additive growth only; payload shapes are versioned per event type via `schema_version`. |
 | `EventLogReader` | `@qmilab/lodestar-event-log` | `new EventLogReader(rootDir)`; `readAll(projectId): Promise<EventEnvelope[]>` (seq order); `readSession(projectId, sessionId): Promise<EventEnvelope[]>` (logical-clock order). Log layout `<root>/<project_id>/YYYY-MM-DD.ndjson` is part of the contract. |
 | `canonicalHash` | `@qmilab/lodestar-event-log` | sha-256 hex over canonical JSON (sorted keys). The tamper-evidence primitive; `payload_hash === canonicalHash(payload)` for every unredacted envelope. |
-| `projectChain` | `@qmilab/lodestar-trace` | `projectChain(events: EventEnvelope[], opts: { session_id, project_id }): ChainProjection`. Pure, no I/O. **Tolerant projection is contractual**: unknown event types never throw — they are retained in `raw_events`. `ChainProjection` fields grow additively. Known sharp edge (documented, kept for now): `actor_ids` is a `Set<string>`, not JSON-safe — serialize via the viewer's `toWireProjection` pattern. |
+| `projectChain` | `@qmilab/lodestar-trace` | `projectChain(events: EventEnvelope[], opts: { session_id, project_id }): ChainProjection`. Pure, no I/O. **Tolerant projection is contractual**: unknown event types never throw — they are retained in `raw_events`. `ChainProjection` fields grow additively. Known sharp edge (documented, kept for now): `actor_ids` is a `Set<string>`, not JSON-safe — serialize via `toWireProjection` (`@qmilab/lodestar-trace`, the row below). |
+| `toWireProjection`, `WireProjection` | `@qmilab/lodestar-trace` | `toWireProjection(projection: ChainProjection): WireProjection`. Pure, no I/O — the JSON-safe serialization of a `ChainProjection` (the companion the `projectChain` row points at). Converts the one non-JSON-safe field, `actor_ids` (`Set<string> → string[]`), and drops the heavy verbatim `raw_events` (`WireProjection = Omit<ChainProjection, "actor_ids" \| "raw_events"> & { actor_ids: string[] }`). Grows additively with `ChainProjection`. Re-exported unchanged from `@qmilab/lodestar-viewer` for source compatibility. |
 | `renderReport` | `@qmilab/lodestar-trace` | `renderReport(projection, opts?: RenderOptions): string`. The **signature** is stable; the markdown text is explicitly *not* contractual (sections may be added or reworded). Parse the projection, not the report. |
 | `pendingApprovals`, `PendingApproval` | `@qmilab/lodestar-trace` | `pendingApprovals(events: EventEnvelope[]): PendingApproval[]`. Pure, no I/O — the same family as `projectChain`. Derives the open-hold queue: every `approval.requested@1` with no matching `approval.granted@1` / `approval.denied@1` / `approval.expired@1`, oldest-first. `PendingApproval` (`{ project_id, session_id, request_id, action_id, reason, required_authority, requested_at, deadline?, status: "pending" }`) grows additively. **Read-only by construction** — surfaces *what is waiting*, never resolves it (resolution is the separate write-side surface). Re-exported unchanged from `@qmilab/lodestar-viewer` for source compatibility. |
 | `signApprovalResolution`, `verifyApprovalSignature`, `canonicalApprovalResolutionHash`, `generateApproverKeyPair`, `assertValidApproverKeys`, `ApprovalSignatureError` | `@qmilab/lodestar-policy-kernel` | Ed25519 over the canonical resolution document `{ request_id, action_id, kind, approver_id, reason?, at }` (`reason` omitted when unset). Keys: SPKI PEM public / PKCS#8 PEM private. The reject set of `verifyApprovalSignature` (unsigned, tampered hash, signer mismatch, unpinned signer, non-ed25519, bad bytes) is contractual. |
@@ -45,11 +46,11 @@ May change in any release; pin at your own risk:
 - `loadSessionEvents`, `findProjectForSession`, `defaultLogRoot`,
   `describeEvent`, `findEventById` (`@qmilab/lodestar-trace`) — CLI
   conveniences, deliberately sharper-edged than the projection core.
-- `listSessions`, `readAllEvents`, `toWireProjection`, `startViewer`
+- `listSessions`, `readAllEvents`, `startViewer`
   (`@qmilab/lodestar-viewer`) — CLI/server conveniences over the log root.
-  (`pendingApprovals` / `PendingApproval` have graduated to
-  `@qmilab/lodestar-trace`'s stable tier; the viewer re-exports them
-  unchanged.)
+  (`pendingApprovals` / `PendingApproval` and `toWireProjection` /
+  `WireProjection` have graduated to `@qmilab/lodestar-trace`'s stable tier;
+  the viewer re-exports them unchanged.)
 - `exportSession` options (`@qmilab/lodestar-otel-exporter`) — the CLI-shaped
   wrapper around the stable IR.
 - Everything in `@qmilab/lodestar-harness`, the firewall store interfaces,

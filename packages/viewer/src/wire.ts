@@ -1,22 +1,8 @@
-import type { ChainProjection } from "@qmilab/lodestar-trace"
-
-/**
- * JSON-safe view of a {@link ChainProjection}.
- *
- * `projectChain()` returns `actor_ids` as a `Set<string>`, which
- * `JSON.stringify` serialises to `{}`. The wire DTO converts it to an
- * array. `raw_events` is dropped here — the viewer fetches raw envelopes
- * through the dedicated `/events` endpoint (and the live SSE stream), so
- * the chain payload stays small even for long sessions.
- */
-export interface WireProjection extends Omit<ChainProjection, "actor_ids" | "raw_events"> {
-  actor_ids: string[]
-}
-
-/**
- * Map a {@link ChainProjection} to its JSON-safe wire shape. Pure.
- */
-export function toWireProjection(projection: ChainProjection): WireProjection {
-  const { actor_ids, raw_events: _raw_events, ...rest } = projection
-  return { ...rest, actor_ids: [...actor_ids] }
-}
+// `toWireProjection` + `WireProjection` graduated to @qmilab/lodestar-trace
+// (issue #139) — a pure `Set → array` serialization in the same family as
+// `projectChain`, the serializer the stable `projectChain` contract points at,
+// so a consumer that only wants to JSON-serialize a projection need not depend
+// on the viewer's HTTP server. Re-exported here unchanged for source
+// compatibility (the server still imports it from here).
+export { toWireProjection } from "@qmilab/lodestar-trace"
+export type { WireProjection } from "@qmilab/lodestar-trace"
