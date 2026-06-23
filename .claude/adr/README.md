@@ -336,3 +336,17 @@ The options we rejected, each with a one-line reason.
   **pending-publisher** registration per project (npm-bootstrap analogue), documented
   in the workflow header. CI `*-runtime` jobs install the local client first.
   **Status: Accepted.**
+- [ADR-0029](0029-firewall-observability-via-events.md) — Memory-firewall
+  observability via stable **events**, not a stable store interface (#137, the
+  last child of epic #140). The `firewall.*@1` audit events already flowed
+  (firewall `auditSink` → the three hosts → the log → the `-trace` projection);
+  this gives them the stability contract — the wire shape graduates to `-core`
+  (`FirewallAuditPayloadSchema`, a `kind`-discriminated union + the three
+  two-segment event-type constants + `FIREWALL_EVENT_SCHEMA_VERSION "1"`), a
+  **structural supertype** of the firewall's richer internal producer type (so
+  `-memory-firewall` is unchanged), and the emitters validate + stamp `"1"` at
+  the boundary (`"0.1.0" → "1"`; type strings kept verbatim). The store
+  interfaces stay experimental **by design** — they are mutable read+write, so
+  integrators read the firewall through the events, not the store, keeping the
+  ledger's pure-projection promise true for it. Pinned in `public-api-surface`.
+  **Status: Accepted.**

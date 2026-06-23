@@ -52,6 +52,9 @@ export * from "./schemas/pack-index.js"
 // Sentinels (Batch 4) — the sentinel.alerted@1 alert wire format
 export * from "./schemas/sentinel.js"
 
+// Memory firewall — the firewall.*@1 audit-event wire format (ADR-0029, #137)
+export * from "./schemas/firewall.js"
+
 // Action policy (Policy Kernel) — the Policy / PolicyRule document wire format
 export * from "./schemas/policy.js"
 

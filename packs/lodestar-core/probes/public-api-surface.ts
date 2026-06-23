@@ -48,6 +48,16 @@ import {
   CalibrationComputedPayloadSchema,
   type EventEnvelope,
   EventEnvelopeSchema,
+  FIREWALL_BELIEF_ADOPTED_EVENT_TYPE,
+  FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
+  FIREWALL_CLAIM_ACCEPTED_EVENT_TYPE,
+  FIREWALL_EVENT_SCHEMA_VERSION,
+  type FirewallAuditPayload,
+  FirewallAuditPayloadSchema,
+  FirewallBeliefAdoptedPayloadSchema,
+  FirewallBeliefTransitionedPayloadSchema,
+  FirewallClaimAcceptedPayloadSchema,
+  FirewallLifecycleAxisSchema,
   GitPackSourceSchema,
   LocalPackSourceSchema,
   NpmPackSourceSchema,
@@ -106,6 +116,7 @@ import {
   SentinelSeveritySchema,
   SentinelSubjectSchema,
   type UnsignedPackBadge,
+  firewallEventType,
 } from "@qmilab/lodestar-core"
 import { EventLogReader, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
@@ -401,6 +412,142 @@ await check("core: sentinel.alerted@1 type + version constants are stable litera
   const eventType: "sentinel.alerted" = SENTINEL_ALERTED_EVENT_TYPE
   const version: "1" = SENTINEL_ALERTED_SCHEMA_VERSION
   expect(eventType === "sentinel.alerted", `event type drifted: ${eventType}`)
+  expect(version === "1", `schema version drifted: ${version}`)
+})
+
+// ── @qmilab/lodestar-core: firewall.*@1 (ADR-0029, #137) ──────────────────
+// The firewall is observable through its already-flowing audit events, not a
+// stable store interface. Pin the discriminated payload, the axis enum, the
+// kind→type mapping, and the type/version constants.
+const validClaimAccepted = {
+  kind: "claim.accepted",
+  claim_id: "claim-1",
+  at: "2026-01-01T00:00:00.000Z",
+  by_actor_id: "agent-1",
+}
+const validBeliefAdopted = {
+  kind: "belief.adopted",
+  belief_id: "belief-1",
+  claim_id: "claim-1",
+  evidence_id: "ev-1",
+  rationale_id: "exp-1",
+  by_authority: "user_confirmation",
+  at: "2026-01-01T00:00:00.000Z",
+  by_actor_id: "agent-1",
+}
+const validBeliefTransitioned = {
+  kind: "belief.transitioned",
+  belief_id: "belief-1",
+  axis: "truth_status",
+  from_value: "unverified",
+  to_value: "supported",
+  by_authority: "probe_verification",
+  rationale_id: "exp-2",
+  at: "2026-01-01T00:00:00.000Z",
+  by_actor_id: "agent-1",
+}
+await check(
+  "core: FirewallAuditPayloadSchema round-trips all three kinds + exposes documented fields",
+  () => {
+    const accepted = FirewallAuditPayloadSchema.safeParse(validClaimAccepted)
+    expect(accepted.success, `claim.accepted rejected: ${JSON.stringify(accepted.error?.issues)}`)
+    const adopted = FirewallAuditPayloadSchema.safeParse(validBeliefAdopted)
+    expect(adopted.success, `belief.adopted rejected: ${JSON.stringify(adopted.error?.issues)}`)
+    const transitioned = FirewallAuditPayloadSchema.safeParse(validBeliefTransitioned)
+    expect(
+      transitioned.success,
+      `belief.transitioned rejected: ${JSON.stringify(transitioned.error?.issues)}`,
+    )
+    // Discriminant narrows the union; pin a documented field off the adopted arm.
+    if (adopted.success && adopted.data.kind === "belief.adopted") {
+      const payload: FirewallAuditPayload = adopted.data
+      const beliefId: string = adopted.data.belief_id
+      const evidenceId: string = adopted.data.evidence_id
+      const authority: string = adopted.data.by_authority
+      void [payload, beliefId, evidenceId, authority]
+    }
+  },
+)
+await check("core: FirewallAuditPayloadSchema rejects an unknown kind + a missing field", () => {
+  expect(
+    !FirewallAuditPayloadSchema.safeParse({ ...validClaimAccepted, kind: "belief.deleted" })
+      .success,
+    "unknown firewall kind accepted",
+  )
+  const { claim_id: _omit, ...missingClaimId } = validClaimAccepted
+  void _omit
+  expect(
+    !FirewallAuditPayloadSchema.safeParse(missingClaimId).success,
+    "claim.accepted with no claim_id accepted",
+  )
+})
+await check(
+  "core: the three per-kind firewall payload schemas each accept their kind + reject a sibling",
+  () => {
+    // The ledger declares each per-kind member schema stable, not just the
+    // union — pin them directly so a rename/removal fails this probe.
+    expect(
+      FirewallClaimAcceptedPayloadSchema.safeParse(validClaimAccepted).success,
+      "claim.accepted member schema rejected its own payload",
+    )
+    expect(
+      FirewallBeliefAdoptedPayloadSchema.safeParse(validBeliefAdopted).success,
+      "belief.adopted member schema rejected its own payload",
+    )
+    expect(
+      FirewallBeliefTransitionedPayloadSchema.safeParse(validBeliefTransitioned).success,
+      "belief.transitioned member schema rejected its own payload",
+    )
+    // Each member is kind-specific (a literal discriminant), so a sibling
+    // kind's payload is rejected — proves they are not interchangeable aliases.
+    expect(
+      !FirewallClaimAcceptedPayloadSchema.safeParse(validBeliefAdopted).success,
+      "claim.accepted member schema accepted a belief.adopted payload",
+    )
+    expect(
+      !FirewallBeliefAdoptedPayloadSchema.safeParse(validBeliefTransitioned).success,
+      "belief.adopted member schema accepted a belief.transitioned payload",
+    )
+    expect(
+      !FirewallBeliefTransitionedPayloadSchema.safeParse(validClaimAccepted).success,
+      "belief.transitioned member schema accepted a claim.accepted payload",
+    )
+  },
+)
+await check("core: FirewallLifecycleAxisSchema pins the four-axis enum", () => {
+  for (const axis of ["truth_status", "retrieval_status", "security_status", "freshness_status"]) {
+    expect(FirewallLifecycleAxisSchema.safeParse(axis).success, `valid axis rejected: ${axis}`)
+  }
+  expect(
+    !FirewallLifecycleAxisSchema.safeParse("confidence").success,
+    "non-axis value accepted by the axis enum",
+  )
+})
+await check("core: firewallEventType maps each kind to its stable two-segment type", () => {
+  expect(
+    firewallEventType("claim.accepted") === FIREWALL_CLAIM_ACCEPTED_EVENT_TYPE,
+    "claim.accepted type drifted",
+  )
+  expect(
+    firewallEventType("belief.adopted") === FIREWALL_BELIEF_ADOPTED_EVENT_TYPE,
+    "belief.adopted type drifted",
+  )
+  expect(
+    firewallEventType("belief.transitioned") === FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
+    "belief.transitioned type drifted",
+  )
+})
+await check("core: firewall.*@1 type + version constants are stable literals", () => {
+  const claimAccepted: "firewall.claim.accepted" = FIREWALL_CLAIM_ACCEPTED_EVENT_TYPE
+  const beliefAdopted: "firewall.belief.adopted" = FIREWALL_BELIEF_ADOPTED_EVENT_TYPE
+  const beliefTransitioned: "firewall.belief.transitioned" = FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE
+  const version: "1" = FIREWALL_EVENT_SCHEMA_VERSION
+  expect(claimAccepted === "firewall.claim.accepted", `type drifted: ${claimAccepted}`)
+  expect(beliefAdopted === "firewall.belief.adopted", `type drifted: ${beliefAdopted}`)
+  expect(
+    beliefTransitioned === "firewall.belief.transitioned",
+    `type drifted: ${beliefTransitioned}`,
+  )
   expect(version === "1", `schema version drifted: ${version}`)
 })
 
