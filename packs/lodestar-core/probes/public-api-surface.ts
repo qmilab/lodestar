@@ -79,9 +79,11 @@ import {
   type ChainProjection,
   type PendingApproval,
   type RenderOptions,
+  type WireProjection,
   pendingApprovals,
   projectChain,
   renderReport,
+  toWireProjection,
 } from "@qmilab/lodestar-trace"
 
 // ─── compile-time signature pins ──────────────────────────────────────────
@@ -110,6 +112,7 @@ pinType<
 >(projectChain)
 pinType<(projection: ChainProjection, opts?: RenderOptions) => string>(renderReport)
 pinType<(events: EventEnvelope[]) => PendingApproval[]>(pendingApprovals)
+pinType<(projection: ChainProjection) => WireProjection>(toWireProjection)
 
 // @qmilab/lodestar-otel-exporter — deterministic ids + the OTLP IR
 pinType<(projectId: string, sessionId: string) => string>(traceIdFor)
@@ -417,6 +420,39 @@ await check("trace: pendingApprovals derives the open-hold queue, read-only", ()
   expect(p?.status === "pending", "pending approval status is not 'pending'")
   expect(p?.request_id === "r1" && p?.action_id === "a1", "pending approval did not carry ids")
 })
+await check(
+  "trace: toWireProjection makes a ChainProjection JSON-safe (Set→array, raw_events dropped), purely",
+  () => {
+    const event = EventEnvelopeSchema.parse({ ...validEnvelope, type: "some.unknown.type@9" })
+    const projection = projectChain([event], {
+      session_id: validEnvelope.session_id,
+      project_id: validEnvelope.project_id,
+    })
+    // preconditions: the two fields the serializer exists to fix are present
+    expect(projection.actor_ids instanceof Set, "precondition: projectChain actor_ids is not a Set")
+    expect(projection.raw_events.length === 1, "precondition: raw_events not populated")
+
+    const wire: WireProjection = toWireProjection(projection)
+    expect(Array.isArray(wire.actor_ids), "wire actor_ids is not an array")
+    expect(
+      wire.actor_ids.includes(validEnvelope.actor_id),
+      "wire actor_ids dropped the projected actor",
+    )
+    expect(!("raw_events" in wire), "wire projection retained the heavy raw_events")
+
+    // pure: the source projection is not mutated
+    expect(projection.actor_ids instanceof Set, "toWireProjection mutated its input's actor_ids")
+    expect(projection.raw_events.length === 1, "toWireProjection mutated its input's raw_events")
+
+    // JSON-safe: actor_ids round-trips as a populated array, not the `{}` a Set yields
+    const roundTripped = JSON.parse(JSON.stringify(wire)) as { actor_ids: unknown }
+    expect(
+      Array.isArray(roundTripped.actor_ids) &&
+        roundTripped.actor_ids.length === wire.actor_ids.length,
+      "actor_ids did not survive JSON round-trip as an array",
+    )
+  },
+)
 
 // ── @qmilab/lodestar-otel-exporter: deterministic ids + the OTLP IR ───────
 await check("otel: traceIdFor is deterministic and 32 hex chars", () => {
