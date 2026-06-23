@@ -22,6 +22,8 @@ import {
   GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
+  contentSensitivityForAction,
+  isAboveCeiling,
 } from "@qmilab/lodestar-core"
 import type {
   Action,
@@ -34,6 +36,7 @@ import type {
   GuardApprovalSignatureRejectedPayload,
   Observation,
   Reversibility,
+  Sensitivity,
   Signature,
 } from "@qmilab/lodestar-core"
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
@@ -258,6 +261,15 @@ export class MCPProxy {
    * mediates the *source*, never the forgery boundary.
    */
   private readonly approvalChannel: ApprovalChannel
+  /**
+   * Egress ceiling for the advisory `announce` POST (ADR-0014 hard requirement 3,
+   * ADR-0015). A hold whose action content sensitivity outranks this is not
+   * announced — the same locked sensitivity ceiling the shipper / otel-exporter
+   * apply, here on the proxy's one outbound approval-channel egress. Read from an
+   * `http` channel's `announce_sensitivity_ceiling` (default `internal`); the file
+   * channel has no `announce`, and an injected channel defaults to `internal`.
+   */
+  private readonly announceCeiling: Sensitivity
 
   private firewall?: MemoryFirewall
   private evidenceStore?: EvidenceStore
@@ -437,6 +449,20 @@ export class MCPProxy {
         resolveToken: overrides?.resolveApprovalToken,
       })
     }
+    // The announce egress ceiling rides the http channel config (the only channel
+    // with an `announce` egress); the file channel + an injected channel fall back
+    // to the locked `internal` default. The gate itself is applied by the proxy in
+    // `announceHold` — only the consumer holds the parked action's sensitivity.
+    const channelConfig = config.approvals?.channel
+    // Coalesce the schema default: a config from `loadProxyConfig` carries the
+    // defaulted `announce_sensitivity_ceiling`, but a direct `new MCPProxy(literal)`
+    // can omit it (the same reason `createApprovalChannel` re-parses). A missing
+    // ceiling must mean the locked `internal` default, NOT "unknown" — an unknown
+    // value ranks above every level and would silently announce everything.
+    this.announceCeiling =
+      channelConfig?.kind === "http"
+        ? (channelConfig.announce_sensitivity_ceiling ?? "internal")
+        : "internal"
     // Sentinel enforcement needs BOTH an injected arbiter (the proxy feeds it and
     // synthesizes decisions for it) AND a `CompiledPolicy` gate whose arbitrate
     // hook consults that arbiter. Two distinct silent-non-enforcement traps, two
@@ -1064,7 +1090,7 @@ export class MCPProxy {
     // first poll or eat into the approval budget. Fire-and-forget; the channel
     // bounds the POST by its own wall-clock timeout, and `announceHold` swallows any
     // error so nothing rejects unhandled.
-    void this.announceHold(request)
+    void this.announceHold(request, parked)
 
     const resolution = await this.waitForResolution(request, parked.id, deadlineAt)
 
@@ -1176,8 +1202,37 @@ export class MCPProxy {
   /**
    * Best-effort `announce` that swallows every failure — fired-and-forgotten by
    * {@link resolveProxyHold} so an advisory notify can never block or fail the hold.
+   *
+   * Egress-gated (ADR-0014 hard requirement 3, ADR-0015): a hold whose action
+   * content sensitivity outranks {@link announceCeiling} is NOT broadcast — the
+   * remote approval service never learns that hold opened. This is the same locked
+   * sensitivity ceiling the shipper / otel-exporter apply, on the proxy's one
+   * outbound approval-channel egress. `announce` is advisory, so withholding only
+   * changes a hold's *visibility*, never its outcome (the agent still gets the
+   * normal hold result; a same-filesystem resolver / a direct GET still resolves
+   * it). The withholding is recorded as a verifiable commitment — a best-effort
+   * `guard.approval.announce_withheld` marker — never silently dropped.
    */
-  private async announceHold(request: ApprovalRequest): Promise<void> {
+  private async announceHold(request: ApprovalRequest, parked: Action): Promise<void> {
+    const sensitivity = contentSensitivityForAction(parked.contract.data_sensitivity)
+    if (isAboveCeiling(sensitivity, this.announceCeiling)) {
+      try {
+        await this.emit(
+          "guard.approval.announce_withheld",
+          {
+            request_id: request.request_id,
+            action_id: request.action_id,
+            sensitivity,
+            ceiling: this.announceCeiling,
+            at: new Date().toISOString(),
+          },
+          { feedArbiter: false },
+        )
+      } catch {
+        /* advisory audit — its failure never blocks or fails the hold */
+      }
+      return
+    }
     try {
       await this.approvalChannel.announce?.(request)
     } catch {

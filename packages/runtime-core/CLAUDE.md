@@ -65,11 +65,18 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    the kernel's execute phase, reached only after the gate (and any hold) clears.
    The remoted execute is keyed by action id; the durable terminal event makes it
    exactly-once, so a duplicate resume / retried RPC never double-executes.
-4. **Holds are durable and fail-closed.** Hold state lives in the durable log +
-   the signed `.approvals/` side-channel, keyed by action/request id. Any gate
-   instance reconstructs a hold (and its deadline) from the log; a late or
-   post-deadline resolution can never un-park it; an out-of-band resolution must
-   verify against the operator-pinned approver key before it promotes.
+4. **Holds are durable and fail-closed.** Hold state lives in the durable log + an
+   out-of-band resolution read through an `ApprovalChannel` (ADR-0015) — the default
+   `FileApprovalChannel` over the signed `.approvals/` side-channel (byte-for-byte as
+   before), or an `http` channel from `config.approvals.channel`. Any gate instance
+   reconstructs a hold (and its deadline) from the log; a late or post-deadline
+   resolution can never un-park it; an out-of-band resolution must verify against the
+   operator-pinned approver key before it promotes. The channel mediates only the
+   *source*: the signature + deadline + action-id gates are unchanged and run AFTER
+   `channel.fetch`, in the gate, so a hostile channel can only delay an approval. An
+   `http` channel requires a pinned key and forbids `allow_unsigned`
+   (`httpChannelForbidsUnsigned`, shared parse-time + construct-time with the proxy);
+   the CLI resolves its `token_env` and the gate never reads `process.env`.
 5. **Honest scope (ADR-0004).** Governance over declared actions, not OS
    containment. Raw I/O outside the tool abstraction is out of scope — state it,
    don't pretend to capture it. Pair with network/filesystem controls.

@@ -171,7 +171,13 @@ Cognitive Core. The resulting event log is renderable by
      approval, never forge one; the log path is not channel-mediated.** An HTTP
      channel requires a pinned approver key and forbids `allow_unsigned`
      (`httpChannelForbidsUnsigned`, shared by the schema superRefine and the
-     constructor). The `lodestar approve` CLI write side (`writeApprovalResolution`)
+     constructor). **The advisory `announce` POST is egress-gated (ADR-0014 hard
+     requirement 3 / ADR-0015 §2):** a hold whose action content sensitivity outranks
+     the channel's `announce_sensitivity_ceiling` (default `internal`) is NOT
+     broadcast — `announceHold` records a verifiable `guard.approval.announce_withheld`
+     marker instead of POSTing, the same locked sensitivity ceiling the shipper /
+     otel-exporter apply. Since `announce` is advisory, this changes only a hold's
+     *visibility*, never its outcome (fetch + execution proceed). The `lodestar approve` CLI write side (`writeApprovalResolution`)
      is deliberately NOT part of the channel — a channel is consumer-side transport. The CLI never appends
      the log (cross-process `seq`/`logical_clock` would collide — the writer's
      counters are process-local), so the proxy **promotes** it: emits the

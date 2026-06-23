@@ -21,6 +21,14 @@
  *   H. Parallel in-flight calls are correlated to the right action and ingested
  *      exactly once.
  *
+ * (Later cases I–P harden the timeout-0 / concurrent-resume / malformed-callback /
+ * forged-log edges from PR-review rounds; cases Q–U pin the pluggable
+ * `ApprovalChannel` — ADR-0015: the default file channel, A–P, and an http channel,
+ * Q, resolve a held action; a slow channel still times the hold out at the approval
+ * budget, R; a short-poll resume respects its wait window rather than the channel
+ * timeout, S; repeated short polls reuse one in-flight fetch rather than piling up,
+ * T; and a channel resolution bound to a DIFFERENT request is not promoted, U.)
+ *
  * No Python needed, so these invariants run on every probe pass. The real
  * Python LangGraph loop is exercised by the runtime-gated
  * `langgraph-tool-calls-are-governed` probe.
@@ -37,7 +45,11 @@ import {
   signApprovalResolution,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard"
-import type { ApprovalResolution } from "@qmilab/lodestar-guard"
+import type {
+  ApprovalChannel,
+  ApprovalChannelConfig,
+  ApprovalResolution,
+} from "@qmilab/lodestar-guard"
 import { FIRST_PARTY_SENTINELS } from "@qmilab/lodestar-harness"
 import {
   RuntimeGate,
@@ -53,6 +65,7 @@ interface ProbeResult {
 
 const PROJECT_ID = "runtime-gate-probe"
 const APPROVER_ID = "approver-1"
+const BEARER_TOKEN = "probe-runtime-approval-bearer-must-not-leak"
 
 // A tool body the in-TS hook runs when the gate remotes a `run_tool` back. Each
 // call is recorded so a check can assert exactly-once / no-run-before-approval.
@@ -197,6 +210,7 @@ async function buildHarness(opts: {
   >
   approverPublicKey?: string
   allowUnsigned?: boolean
+  approvalChannelConfig?: ApprovalChannelConfig
   toolExecTimeoutMs?: number
   bodies: Record<string, ToolBody>
   malformedTools?: string[]
@@ -227,13 +241,18 @@ async function buildHarness(opts: {
         },
       ]),
     ),
-    ...(opts.approverPublicKey !== undefined || opts.allowUnsigned !== undefined
+    ...(opts.approverPublicKey !== undefined ||
+    opts.allowUnsigned !== undefined ||
+    opts.approvalChannelConfig !== undefined
       ? {
           approvals: {
             ...(opts.approverPublicKey !== undefined
               ? { authorized_keys: [{ actor_id: APPROVER_ID, public_key: opts.approverPublicKey }] }
               : {}),
             ...(opts.allowUnsigned !== undefined ? { allow_unsigned: opts.allowUnsigned } : {}),
+            ...(opts.approvalChannelConfig !== undefined
+              ? { channel: opts.approvalChannelConfig }
+              : {}),
           },
         }
       : {}),
@@ -275,6 +294,70 @@ async function writeSignedGrant(
   const signature = signApprovalResolution(doc, privateKeyPem)
   const resolution: ApprovalResolution = { ...doc, signature }
   await writeApprovalResolution(logRoot, PROJECT_ID, resolution)
+}
+
+/** Sign a grant resolution to serve over the http approval-channel stub (case Q).
+ *  Unlike {@link writeSignedGrant} it RETURNS the resolution (the stub serves it
+ *  over HTTP) rather than writing it to the `.approvals/` file side-channel. */
+function signedGrantResolution(
+  actionId: string,
+  requestId: string,
+  privateKeyPem: string,
+): ApprovalResolution {
+  const doc = {
+    request_id: requestId,
+    action_id: actionId,
+    kind: "granted" as const,
+    approver_id: APPROVER_ID,
+    at: new Date().toISOString(),
+  }
+  return { ...doc, signature: signApprovalResolution(doc, privateKeyPem) }
+}
+
+interface ApprovalStub {
+  base: string
+  /** Method + Authorization header of every request, to assert fetch/consume +
+   *  that the bearer reached the service. */
+  recorded: { method: string; authorization: string | null }[]
+  /** Set the resolution GET serves; until set, GET returns 404. */
+  serve: (resolution: ApprovalResolution | undefined) => void
+  /** Stall every GET response by `ms` (simulates a slow approval service). */
+  setGetDelay: (ms: number) => void
+  stop: () => void
+}
+
+/** In-process signed-approval-service stub for the runtime gate's http channel:
+ *  GET serves the current resolution (404 until set), DELETE consumes it. */
+function startApprovalStub(): ApprovalStub {
+  const recorded: { method: string; authorization: string | null }[] = []
+  let current: ApprovalResolution | undefined
+  let getDelayMs = 0
+  const server = Bun.serve({
+    port: 0,
+    fetch: async (req) => {
+      recorded.push({ method: req.method, authorization: req.headers.get("authorization") })
+      if (req.method === "GET") {
+        if (getDelayMs > 0) await delay(getDelayMs)
+        return current === undefined ? new Response(null, { status: 404 }) : Response.json(current)
+      }
+      if (req.method === "DELETE") {
+        current = undefined
+        return new Response(null, { status: 204 })
+      }
+      return new Response(null, { status: 202 })
+    },
+  })
+  return {
+    base: `http://127.0.0.1:${server.port}`,
+    recorded,
+    serve: (resolution) => {
+      current = resolution
+    },
+    setGetDelay: (ms) => {
+      getDelayMs = ms
+    },
+    stop: () => server.stop(true),
+  }
 }
 
 /** Append a raw (attacker-authored) event directly to the sibling NDJSON log —
@@ -919,6 +1002,310 @@ async function run(): Promise<ProbeResult> {
         "P: the genuine grant un-parked and ran the body once",
         h.hook.bodyRuns.length === 1,
         `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── Q: holds resolve through the pluggable http ApprovalChannel (ADR-0015) ──
+    // The gate now reads an out-of-band resolution through an ApprovalChannel
+    // instead of the raw `.approvals/` file primitive (the file path, exercised by
+    // A–P, is byte-for-byte preserved through the FileApprovalChannel seam). Drive
+    // the REAL gate with a CONFIG http channel against an in-process stub: a signed
+    // grant served over HTTP un-parks the held L4 (body runs once), the gate GETs
+    // (fetch) then DELETEs (consume), and the operator bearer token reaches the
+    // service but never the event log. The signature gate is unchanged and runs
+    // AFTER fetch, so the channel only mediates the source.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-channel",
+        approvalTimeoutMs: 15_000,
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          token_env: "PROBE_RUNTIME_APPROVAL_TOKEN",
+          allow_http: true,
+          timeout_ms: 5_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        // The gate never reads process.env: the host injects the bearer resolver.
+        overrides: { resolveApprovalToken: () => BEARER_TOKEN },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      check(
+        "Q: L4 held over the http channel",
+        held.phase === "pending_approval",
+        String(held.phase),
+      )
+      stub.serve(
+        signedGrantResolution(
+          String(held.action_id),
+          String(held.request_id),
+          approver.privateKeyPem,
+        ),
+      )
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 5_000)
+      check(
+        "Q: a signed http grant un-parked the held action",
+        resumed.phase === "completed",
+        String(resumed.phase),
+      )
+      check(
+        "Q: body ran exactly once",
+        h.hook.bodyRuns.length === 1,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      check(
+        "Q: the gate fetched (GET) the resolution over the channel",
+        stub.recorded.some((r) => r.method === "GET"),
+      )
+      // consume() is fire-and-forget (it must not delay execution) — poll for it.
+      let consumed = false
+      for (let i = 0; i < 50 && !consumed; i++) {
+        consumed = stub.recorded.some((r) => r.method === "DELETE")
+        if (!consumed) await delay(20)
+      }
+      check("Q: the gate consumed (DELETE) the promoted resolution", consumed)
+      check(
+        "Q: the operator bearer token reached the service",
+        stub.recorded.some((r) => r.authorization === `Bearer ${BEARER_TOKEN}`),
+      )
+      const serialized = JSON.stringify(await new EventLogReader(logRoot).readAll(PROJECT_ID))
+      check("Q: the bearer token never entered the event log", !serialized.includes(BEARER_TOKEN))
+      await h.gate.stop()
+    }
+
+    // ── R: a slow http channel respects the approval budget, not its own timeout ──
+    // The hold must expire at `approval_timeout_ms` even when the channel's own
+    // `timeout_ms` is far larger and the service stalls every GET. Without the
+    // per-fetch deadline cap (`fetchWithinDeadline`), a single slow fetch would
+    // deliver a before-deadline grant LATE and execute an already-expired hold
+    // (Codex P1). Mirrors the proxy's `caseSlowChannelRespectsBudget`.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      stub.setGetDelay(4_000) // each GET stalls far past the 500ms approval budget
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-slow",
+        approvalTimeoutMs: 500, // budget 500ms; channel timeout 10s (>> budget)
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          allow_http: true,
+          timeout_ms: 10_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      // A correctly-signed grant is available, but every GET stalls 4s past the budget.
+      stub.serve(
+        signedGrantResolution(
+          String(held.action_id),
+          String(held.request_id),
+          approver.privateKeyPem,
+        ),
+      )
+      const started = Date.now()
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 3_000)
+      const elapsed = Date.now() - started
+      check(
+        "R: a slow channel times out at the approval budget (not its 10s timeout)",
+        resumed.phase === "rejected" && resumed.kind === "approval_timeout",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "R: the body never ran on a timed-out hold",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      // Bounded by the 500ms deadline, the hold must end well before the 10s channel
+      // timeout / 4s GET stall — a generous 3s ceiling the unbounded behaviour fails.
+      check(
+        "R: the hold ended near the budget, not the channel timeout",
+        elapsed < 3_000,
+        `${elapsed}ms`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── S: a short-poll resume respects its wait window, not the channel timeout ──
+    // With the deadline FAR away (60s) but the hook asking for a short poll
+    // (`wait_ms` 300ms), a stalled channel must not make the resume hang to the
+    // channel's own 10s timeout — the fetch is bounded by min(deadline, wait window)
+    // (Codex P2). The resume returns `pending_approval` promptly; the hook re-polls.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      stub.setGetDelay(4_000) // every GET stalls far past the 300ms wait window
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-shortpoll",
+        approvalTimeoutMs: 60_000, // deadline FAR away — only the wait window should bound the fetch
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          allow_http: true,
+          timeout_ms: 10_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      const started = Date.now()
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 300)
+      const elapsed = Date.now() - started
+      check(
+        "S: a short-poll resume returns pending (not resolved/timed-out) — deadline still far",
+        resumed.phase === "pending_approval",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "S: the resume respected its ~300ms wait window, not the 10s channel timeout",
+        elapsed < 2_000,
+        `${elapsed}ms`,
+      )
+      check(
+        "S: the body never ran (the hold is still pending)",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── T: repeated short polls reuse one in-flight channel fetch (no pile-up) ──
+    // A fetch that outlives a short poll's budget keeps running in the channel until
+    // its own `timeout_ms`. Without dedup, a hook short-polling repeatedly would
+    // accumulate abandoned GETs/sockets against the service (Codex P2). Five rapid
+    // short-poll resumes against a 4s-stalled stub must reuse the SINGLE in-flight
+    // fetch — the stub should see ~1 GET, not five.
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      const stub = startApprovalStub()
+      cleanups.push(async () => stub.stop())
+      stub.setGetDelay(4_000) // every GET stalls far past the whole burst of short polls
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-http-dedup",
+        approvalTimeoutMs: 60_000, // deadline far — only the wait windows bound each fetch
+        approverPublicKey: approver.publicKeyPem,
+        approvalChannelConfig: {
+          kind: "http",
+          endpoint: stub.base,
+          allow_http: true,
+          timeout_ms: 10_000,
+          max_body_bytes: 64 * 1024,
+          announce_sensitivity_ceiling: "internal",
+        },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "via-http" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      // Five short-poll resumes back-to-back; each times out at ~50ms reusing the
+      // single in-flight fetch the first one started (still stalling at 4s).
+      for (let i = 0; i < 5; i++) {
+        const r = await h.hook.resume(String(held.action_id), String(held.request_id), 50)
+        if (r.phase !== "pending_approval") {
+          check(`T: short poll ${i} stayed pending`, false, `${r.phase}/${r.kind}`)
+          break
+        }
+      }
+      const gets = stub.recorded.filter((r) => r.method === "GET").length
+      check(
+        "T: five rapid short polls reused one in-flight fetch (no GET pile-up)",
+        gets <= 2,
+        `${gets} GET(s) for 5 polls`,
+      )
+      check(
+        "T: the body never ran (the hold is still pending)",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── U: a channel resolution for a DIFFERENT request is not promoted (untrusted) ──
+    // ApprovalChannel is untrusted transport (ADR-0015): the consumer must bind the
+    // fetched resolution to THIS request, not just this action. A custom channel that
+    // returns a validly-signed grant for the same action but a different request_id
+    // must NOT un-park the hold — it times out, and no approval.granted is emitted.
+    // (Codex P2; mirrors the proxy's `channelOutcomeFor` binding both ids.)
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      // Binds the CORRECT action_id (from the ref) but a WRONG request_id, signed by
+      // the pinned operator key — so the signature is valid for its own mis-bound
+      // doc, and ONLY the consumer's request_id binding can reject it.
+      const wrongRequestChannel: ApprovalChannel = {
+        fetch: async (ref) => {
+          const doc = {
+            request_id: `wrong-${ref.request_id}`,
+            action_id: ref.action_id,
+            kind: "granted" as const,
+            approver_id: APPROVER_ID,
+            at: new Date().toISOString(),
+          }
+          return { ...doc, signature: signApprovalResolution(doc, approver.privateKeyPem) }
+        },
+      }
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-wrong-request",
+        approvalTimeoutMs: 500,
+        approverPublicKey: approver.publicKeyPem,
+        overrides: { approvalChannel: wrongRequestChannel },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "should-not-run" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 2_000)
+      check(
+        "U: a channel grant for a different request_id is NOT promoted — hold times out",
+        resumed.phase === "rejected" && resumed.kind === "approval_timeout",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "U: the body never ran on the mis-bound resolution",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      const types = (
+        await new EventLogReader(logRoot).readSession(PROJECT_ID, "sess-wrong-request")
+      ).map((e) => e.type)
+      check(
+        "U: no approval.granted was emitted for a mis-bound resolution",
+        !types.includes("approval.granted"),
+        types.join(", "),
       )
       await h.gate.stop()
     }

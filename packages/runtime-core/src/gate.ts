@@ -37,19 +37,22 @@ import type {
 } from "@qmilab/lodestar-core"
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
+  type ApprovalChannel,
+  type ApprovalRef,
   type ApprovalResolution,
   type ApprovalResolutionDoc,
   ApprovalSignatureError,
   type CompiledPolicy,
   type PolicyEvaluation,
+  type SecretValue,
   type SentinelArbiter,
   alwaysHoldsChecker,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
-  deleteApprovalResolution,
+  createApprovalChannel,
   holdEvaluationForParkedAction,
+  httpChannelForbidsUnsigned,
   openApprovalRequest,
-  readApprovalResolution,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
 import {
@@ -91,6 +94,12 @@ export const RUNTIME_DECISION_SYNTHESIS_ACTOR = "lodestar-runtime-synthesis"
 /** How often a `resume(wait_ms)` re-reads the log/side-channel while block-polling. */
 const RESOLUTION_POLL_INTERVAL_MS = 50
 
+/** Floor on a single poll's channel-fetch budget — one poll interval's worth — so a
+ *  fast channel (incl. the default file channel on a `wait_ms: 0` resume) still gets
+ *  one fair fetch attempt even when the resume wait window is zero. Never lets the
+ *  fetch exceed the approval deadline (the budget is min'd against it). */
+const MIN_CHANNEL_FETCH_BUDGET_MS = RESOLUTION_POLL_INTERVAL_MS
+
 /** Optional dependency injection — the CLI supplies the compiled gate, arbiter,
  *  and Postgres stores; probes substitute fakes. */
 export interface RuntimeGateOverrides {
@@ -105,6 +114,13 @@ export interface RuntimeGateOverrides {
   stores?: { claims: ClaimStore; beliefs: BeliefStore; evidence: EvidenceStore }
   /** Override the precondition checker. Default: `alwaysHoldsChecker`. */
   preconditionChecker?: PreconditionChecker
+  /** Inject the approval transport directly (a probe / library stub), instead of
+   *  building it from `config.approvals.channel` (ADR-0015). Wins over config. */
+  approvalChannel?: ApprovalChannel
+  /** Resolve an http channel's `token_env` to its bearer token. The gate never
+   *  reads `process.env` — the host (the CLI) resolves the env var and injects this,
+   *  the same discipline as the proxy's `resolveApprovalToken`. */
+  resolveApprovalToken?: (envName: string) => SecretValue
 }
 
 interface Capture {
@@ -133,6 +149,15 @@ export class RuntimeGate {
   private readonly preconditionChecker: PreconditionChecker
   private readonly arbiter?: SentinelArbiter
   private readonly injectedStores?: RuntimeGateOverrides["stores"]
+  /**
+   * The approval **transport** (ADR-0015): where {@link checkResolution} reads an
+   * out-of-band resolution and how it consumes a promoted/rejected one. The default
+   * `.approvals/` file channel (byte-for-byte the prior behaviour), an `http`
+   * channel from `config.approvals.channel`, or an injected override. The signature
+   * gate ({@link resolutionVerified}) is untouched and runs AFTER `fetch`, so this
+   * mediates only the *source*, never the forgery boundary.
+   */
+  private readonly approvalChannel: ApprovalChannel
 
   private writer?: EventLogWriter
   private firewall?: MemoryFirewall
@@ -170,6 +195,14 @@ export class RuntimeGate {
   /** Dedup for signature-rejected diagnostics, so a persistent bad file/event is
    *  logged once across polls. */
   private readonly warnedSignatureRejections = new Set<string>()
+  /** In-flight approval-channel fetches, keyed by `request_id:action_id`. A fetch
+   *  that outlives a short poll's budget keeps running in the channel until its own
+   *  `timeout_ms`; reusing it for the next poll (rather than starting another) caps
+   *  concurrent fetches to one per hold, so a hook that short-polls repeatedly can't
+   *  pile up abandoned GETs/sockets against the approval service (Codex P2). A GET is
+   *  idempotent (it reads, never consumes), so reuse is safe; the entry self-clears
+   *  when the fetch settles. */
+  private readonly inflightFetches = new Map<string, Promise<ApprovalResolution | undefined>>()
   /** Per-action serialisation tail. Two concurrent `resume` messages for the same
    *  held action would otherwise both pass the terminal-event check before either
    *  appends `action.completed`, and both reach `executeAction` — double-running a
@@ -226,6 +259,26 @@ export class RuntimeGate {
       )
     }
     assertValidApproverKeys(config.approvals?.authorized_keys ?? [])
+
+    // The approval transport (ADR-0015), built exactly as the MCP proxy does: an
+    // injected channel (a probe / library stub) wins; otherwise build it from
+    // `config.approvals.channel`, defaulting to the local `.approvals/` file
+    // channel. An `http` channel is a remote forgery surface that only the
+    // signature gate closes — require a pinned key and forbid `allow_unsigned`,
+    // re-checked here with the SAME predicate the schema superRefine uses (a literal
+    // config bypasses the schema). The signature gate (`resolutionVerified`) is
+    // unchanged and runs AFTER `fetch`: a hostile channel can only delay an
+    // approval, never forge one.
+    if (overrides?.approvalChannel !== undefined) {
+      this.approvalChannel = overrides.approvalChannel
+    } else {
+      const httpGuard = httpChannelForbidsUnsigned(config.approvals ?? {})
+      if (!httpGuard.ok) throw new Error(`RuntimeGate: ${httpGuard.reason}`)
+      this.approvalChannel = createApprovalChannel(config.approvals?.channel ?? { kind: "file" }, {
+        logRoot: this.logRoot,
+        resolveToken: overrides?.resolveApprovalToken,
+      })
+    }
 
     // Sentinel enforcement needs BOTH an arbiter to run them AND a CompiledPolicy
     // gate whose arbitrate hook consults it — the same four guards the proxy uses.
@@ -687,11 +740,26 @@ export class RuntimeGate {
           request_id: requestId,
         }
       }
-      const resolution = await this.checkResolution(requestId, msg.action_id, deadlineAt)
+      // Cap this poll's channel fetch by the SMALLER of the remaining approval
+      // deadline and the remaining resume wait window, so a stalled channel cannot
+      // make a short-poll / non-blocking resume hang to the channel's own timeout
+      // (Codex P2). A small floor still guarantees one fair fetch attempt per poll,
+      // so a fast channel — including the default file channel on a `wait_ms: 0`
+      // resume — is always read; the floor never exceeds the deadline.
+      const fetchBudgetMs = channelFetchBudgetMs(deadlineAt, startedAt, waitMs)
+      const resolution = await this.checkResolution(
+        requestId,
+        msg.action_id,
+        deadlineAt,
+        fetchBudgetMs,
+      )
       if (resolution !== undefined) {
         if (resolution.source === "channel") {
           await this.emitCanonicalResolution(resolution.outcome, resolution.signature)
-          await deleteApprovalResolution(this.logRoot, this.config.project_id, requestId)
+          // Consume the promoted resolution best-effort (fire-and-forget): a slow
+          // remote DELETE must not delay executing the now-approved action, and
+          // exactly-once keys on the durable terminal event, not the file's absence.
+          this.consumeResolution(this.approvalRef(requestId, msg.action_id))
         }
         const resolved = kernel.resolve(parked, resolution.outcome)
         if (resolved.phase !== "approved") {
@@ -974,6 +1042,69 @@ export class RuntimeGate {
 
   // ── Hold resolution ──────────────────────────────────────────────────────
 
+  /** Build the {@link ApprovalRef} a channel keys a resolution by. */
+  private approvalRef(requestId: string, actionId: string): ApprovalRef {
+    return {
+      project_id: this.config.project_id,
+      session_id: this.sessionId,
+      request_id: requestId,
+      action_id: actionId,
+    }
+  }
+
+  /** Best-effort `consume` (delete a spent / rejected resolution), fire-and-forget.
+   *  Cleanup must never block or delay hold resolution; the channel bounds the
+   *  request by its own wall-clock timeout, and any error is swallowed. Mirrors the
+   *  proxy's `consumeResolution`. */
+  private consumeResolution(ref: ApprovalRef): void {
+    void Promise.resolve(this.approvalChannel.consume?.(ref)).catch(() => {})
+  }
+
+  /** One `channel.fetch`, capped at `budgetMs` (already the min of the remaining
+   *  approval deadline and the remaining resume wait window — see
+   *  {@link channelFetchBudgetMs}). The channel has its OWN wall-clock timeout
+   *  (`timeout_ms` for HTTP, default 15s) that can dwarf BOTH the approval deadline
+   *  AND a short `resume(wait_ms)`; without this cap a single stalled fetch would
+   *  (a) overshoot the deadline and execute a before-deadline grant late, and (b)
+   *  hang a short-poll / non-blocking resume to the channel timeout. Race the fetch
+   *  against the budget; if the budget wins, abandon the (now irrelevant) fetch and
+   *  report "no resolution this poll" — the loop then expires or re-polls. A
+   *  rejecting custom channel resolves to `undefined` (fail closed). `Infinity`
+   *  means no bound (no deadline and an unbounded wait). */
+  private async fetchWithinBudget(
+    ref: ApprovalRef,
+    budgetMs: number,
+  ): Promise<ApprovalResolution | undefined> {
+    // Reuse a single in-flight fetch per hold: one that outlived an earlier short
+    // poll's budget is still running in the channel (until its own `timeout_ms`), so
+    // the next poll racing a NEW fetch would pile up abandoned GETs/sockets against
+    // the service (Codex P2). A GET is idempotent, so sharing the pending one is safe.
+    const key = `${ref.request_id}:${ref.action_id}`
+    let inflight = this.inflightFetches.get(key)
+    if (inflight === undefined) {
+      const fetchPromise = Promise.resolve(this.approvalChannel.fetch(ref)).catch(() => undefined)
+      this.inflightFetches.set(key, fetchPromise)
+      // Self-clear on settle (identity-guarded so a newer fetch's entry survives).
+      void fetchPromise.finally(() => {
+        if (this.inflightFetches.get(key) === fetchPromise) this.inflightFetches.delete(key)
+      })
+      inflight = fetchPromise
+    }
+    if (!Number.isFinite(budgetMs)) return inflight
+    if (budgetMs <= 0) return undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      return await Promise.race([
+        inflight,
+        new Promise<undefined>((resolve) => {
+          timer = setTimeout(() => resolve(undefined), budgetMs)
+        }),
+      ])
+    } finally {
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }
+
   /** Scan the durable log + the signed side-channel for a *verified* resolution
    *  bound to this request/action, deadline-gated. A forged / unsigned / tampered
    *  resolution is recorded once and (for the side-channel) deleted; polling
@@ -982,6 +1113,7 @@ export class RuntimeGate {
     requestId: string,
     actionId: string,
     deadlineAt: number | undefined,
+    fetchBudgetMs: number,
   ): Promise<
     { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
   > {
@@ -1004,9 +1136,30 @@ export class RuntimeGate {
         rejectedEventId: logHit.eventId,
       })
     }
-    // Side-channel path: the separate-process resolver.
-    const resolution = await readApprovalResolution(this.logRoot, this.config.project_id, requestId)
-    if (resolution !== undefined && resolution.action_id === actionId) {
+    // Channel path: the separate-process resolver, read through the pluggable
+    // ApprovalChannel (ADR-0015). The default file channel reads the same
+    // `.approvals/` bytes as before; an http channel reads a remote service. The
+    // fetch is CAPPED at `fetchBudgetMs` (the min of the remaining deadline and the
+    // resume wait window): the HTTP channel's own `timeout_ms` can dwarf both, and
+    // an uncapped slow fetch would (a) overshoot the deadline and execute a
+    // before-deadline grant LATE, and (b) hang a short-poll resume. A fetch that
+    // outlasts the budget (or a rejecting custom channel) yields `undefined`, so the
+    // loop expires or re-polls.
+    const resolution = await this.fetchWithinBudget(
+      this.approvalRef(requestId, actionId),
+      fetchBudgetMs,
+    )
+    // Bind the fetched resolution to BOTH this request AND this action. The channel
+    // is untrusted transport (ADR-0015): the HTTP channel binds request_id at the
+    // transport, but the file channel and any custom/injected channel do not — so
+    // the consumer must, or a channel could replay a (validly signed) resolution for
+    // a DIFFERENT request on the same action into this hold. Mirrors the proxy's
+    // `channelOutcomeFor` (both ids), not just action_id.
+    if (
+      resolution !== undefined &&
+      resolution.request_id === requestId &&
+      resolution.action_id === actionId
+    ) {
       if (!withinDeadline(resolution.at, deadlineAt)) {
         // A resolution dated after the deadline is a timeout, never a late
         // approval — leave it; the deadline branch in handleResume will expire.
@@ -1022,7 +1175,10 @@ export class RuntimeGate {
       await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
         source: "side_channel",
       })
-      await deleteApprovalResolution(this.logRoot, this.config.project_id, requestId)
+      // Consume the spent forgery best-effort (fire-and-forget): a re-fetch before
+      // the DELETE lands is harmless — the signature gate refuses it again and the
+      // diagnostic is deduped, exactly the proxy's posture.
+      this.consumeResolution(this.approvalRef(requestId, actionId))
     }
     return undefined
   }
@@ -1321,6 +1477,29 @@ export class RuntimeGate {
 // ── module-level helpers ─────────────────────────────────────────────────────
 
 const passthroughArgsSchema = z.record(z.unknown())
+
+/**
+ * The wall-clock budget for one poll's channel fetch: the SMALLER of the time left
+ * before the approval deadline and the time left in the resume wait window, floored
+ * to {@link MIN_CHANNEL_FETCH_BUDGET_MS} so a fast channel always gets one fair
+ * attempt (the floor is itself capped by the deadline, so it can never overshoot).
+ * `Infinity` when there is neither a deadline nor a wait bound. This keeps a stalled
+ * channel from (a) executing a before-deadline grant late and (b) hanging a
+ * short-poll / non-blocking resume to the channel's own timeout.
+ */
+function channelFetchBudgetMs(
+  deadlineAt: number | undefined,
+  startedAt: number,
+  waitMs: number,
+): number {
+  const now = Date.now()
+  const deadlineRemaining = deadlineAt !== undefined ? deadlineAt - now : Number.POSITIVE_INFINITY
+  const waitRemaining = startedAt + waitMs - now
+  return Math.max(
+    0,
+    Math.min(deadlineRemaining, Math.max(waitRemaining, MIN_CHANNEL_FETCH_BUDGET_MS)),
+  )
+}
 
 /**
  * Namespace a hook's tool name into a registry-valid `runtime.<sanitised>` name

@@ -64,7 +64,9 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   `HttpApprovalChannel` (a config-driven remote approval service, mirroring the
   messaging adapter's transport posture — bounded timeout + body cap, no redirect
   following, credential redaction — replicated inline so guard takes no adapter
-  dependency), the `ApprovalChannelConfigSchema` host config + `createApprovalChannel`
+  dependency), the `ApprovalChannelConfigSchema` host config (the `http` variant
+  carries `announce_sensitivity_ceiling`, default `internal` — the egress ceiling a
+  consumer applies to the advisory `announce`, ADR-0015 §2) + `createApprovalChannel`
   factory, `assertChannelEndpoint` (HTTPS-only-unless-`allow_http` scheme guard), and
   `httpChannelForbidsUnsigned` (the parse-time + construct-time cross-field guard the
   guard-mcp config superRefine and the `MCPProxy` constructor share). **Naming

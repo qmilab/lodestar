@@ -104,6 +104,27 @@ export async function runtimeGateCommand(argv: string[]): Promise<number> {
     }
   }
 
+  // Resolve the HTTP approval channel's bearer token from its named env var
+  // (ADR-0015), exactly as `guard mcp-proxy`: secrets stay in the environment,
+  // never in the config file. The gate never reads `process.env` itself; the CLI
+  // (the process owner) injects a resolver. Validate here — alongside the policy
+  // compile, BEFORE opening any database connection — so a `token_env` naming an
+  // unset var fails fast and never leaks a store the persistence block would open.
+  let resolveApprovalToken: RuntimeGateOverrides["resolveApprovalToken"] | undefined
+  const approvalChannel = config.approvals?.channel
+  if (approvalChannel?.kind === "http" && approvalChannel.token_env !== undefined) {
+    const envName = approvalChannel.token_env
+    const token = process.env[envName]
+    if (token === undefined || token === "") {
+      process.stderr.write(
+        `[runtime-gate] approvals.channel.token_env is '${envName}' but that env var is not set\n`,
+      )
+      return 1
+    }
+    resolveApprovalToken = () => token
+    process.stderr.write(`[runtime-gate] approval channel http (bearer from $${envName})\n`)
+  }
+
   // Resolve persistence into injected stores; the CLI owns the connection.
   let storeOverride: RuntimeGateOverrides["stores"] | undefined
   let closeStores: (() => Promise<void>) | undefined
@@ -144,6 +165,7 @@ export async function runtimeGateCommand(argv: string[]): Promise<number> {
   if (storeOverride !== undefined) overrides.stores = storeOverride
   if (policyOverride !== undefined) overrides.policyGate = policyOverride
   if (arbiterOverride !== undefined) overrides.arbiter = arbiterOverride
+  if (resolveApprovalToken !== undefined) overrides.resolveApprovalToken = resolveApprovalToken
 
   let gate: RuntimeGate
   try {

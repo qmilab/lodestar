@@ -1,4 +1,4 @@
-import type { ApprovalRequest } from "@qmilab/lodestar-core"
+import { type ApprovalRequest, SensitivitySchema } from "@qmilab/lodestar-core"
 import { z } from "zod"
 import {
   type ApprovalResolution,
@@ -118,6 +118,14 @@ export const ApprovalChannelConfigSchema = z
           .int()
           .positive()
           .default(64 * 1024),
+        announce_sensitivity_ceiling: SensitivitySchema.default("internal").describe(
+          "egress ceiling for the advisory `announce` POST (ADR-0014 hard requirement 3). " +
+            "A hold whose action content sensitivity outranks this ceiling is NOT announced — " +
+            "the remote service never learns it opened. Default `internal`, matching the shipper " +
+            "/ otel-exporter locked v0.2 default. `announce` is advisory, so withholding it only " +
+            "changes a hold's visibility, never its outcome; the gate is applied by the consumer " +
+            "(the proxy), which alone holds the action's sensitivity.",
+        ),
       })
       .strict(),
   ])
