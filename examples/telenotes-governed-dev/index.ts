@@ -30,7 +30,12 @@ import {
   InMemoryWorldModel,
   registerBuiltInExtractors,
 } from "@qmilab/lodestar-cognitive-core"
-import type { Observation } from "@qmilab/lodestar-core"
+import {
+  FIREWALL_EVENT_SCHEMA_VERSION,
+  FirewallAuditPayloadSchema,
+  type Observation,
+  firewallEventType,
+} from "@qmilab/lodestar-core"
 import { EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
   InMemoryBeliefStore,
@@ -48,16 +53,22 @@ const LOG_DIR = resolve(PROJECT_ROOT, ".lodestar", "events")
 
 const writer = new EventLogWriter(LOG_DIR)
 
-async function emit(type: string, payload: unknown): Promise<void> {
+async function emit(
+  type: string,
+  payload: unknown,
+  options?: { schema_version?: string; causal_parent_ids?: string[] },
+): Promise<void> {
   await writer.append({
     id: randomUUID(),
     type,
-    schema_version: "0.1.0",
+    // Most events ride the session schema version; a governance event with its
+    // own versioned wire format (e.g. `firewall.*@1`) overrides it.
+    schema_version: options?.schema_version ?? "0.1.0",
     project_id: PROJECT_ID,
     session_id: SESSION_ID,
     actor_id: ACTOR_ID,
     timestamp: new Date().toISOString(),
-    causal_parent_ids: [],
+    causal_parent_ids: options?.causal_parent_ids ?? [],
     payload,
     payload_hash: canonicalHash(payload),
     versions: { schema_registry_version: "0.1.0" },
@@ -109,7 +120,15 @@ const beliefs = new InMemoryBeliefStore()
 const evidence = new InMemoryEvidenceStore()
 const worldModel = new InMemoryWorldModel()
 const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
-  await emit(`firewall.${event.kind}`, event)
+  // Validate + stamp the stable wire contract (ADR-0029), matching the
+  // production emitters (guard.wrap() / MCP proxy / runtime gate).
+  const payload = FirewallAuditPayloadSchema.parse(event)
+  const causal_parent_ids =
+    "causal_parent_ids" in event && event.causal_parent_ids ? event.causal_parent_ids : undefined
+  await emit(firewallEventType(payload.kind), payload, {
+    schema_version: FIREWALL_EVENT_SCHEMA_VERSION,
+    ...(causal_parent_ids ? { causal_parent_ids } : {}),
+  })
 })
 const linker = new EvidenceLinker(evidence, beliefs)
 const explanations = new ExplanationGenerator("agent-demo")
