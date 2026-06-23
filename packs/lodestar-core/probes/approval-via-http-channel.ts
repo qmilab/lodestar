@@ -297,7 +297,11 @@ async function caseGrant(): Promise<string | undefined> {
   const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-http-approval-grant-"))
   const sessionId = "probe-session-http-grant"
   const stub = startStub()
-  const { proxy, calls } = makeProxy(logDir, sessionId, 3000, stub.base)
+  // Generous approval-timeout CEILING (not the actual wait): the resolution is
+  // served promptly, so the case resolves in ~one poll. The large ceiling only
+  // removes a deadline race — under heavy load (e.g. a concurrent build) a 3s
+  // budget could elapse before the served resolution is fetched + promoted.
+  const { proxy, calls } = makeProxy(logDir, sessionId, 15_000, stub.base)
   try {
     await proxy.start()
     const callPromise = proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
@@ -390,7 +394,11 @@ async function caseDeny(): Promise<string | undefined> {
   const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-http-approval-deny-"))
   const sessionId = "probe-session-http-deny"
   const stub = startStub()
-  const { proxy, calls } = makeProxy(logDir, sessionId, 3000, stub.base)
+  // Generous approval-timeout CEILING (not the actual wait): the resolution is
+  // served promptly, so the case resolves in ~one poll. The large ceiling only
+  // removes a deadline race — under heavy load (e.g. a concurrent build) a 3s
+  // budget could elapse before the served resolution is fetched + promoted.
+  const { proxy, calls } = makeProxy(logDir, sessionId, 15_000, stub.base)
   try {
     await proxy.start()
     const callPromise = proxy.handleCallTool({ name: LODESTAR_TOOL_NAME, arguments: {} })
