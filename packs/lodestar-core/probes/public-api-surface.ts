@@ -22,7 +22,10 @@
  * Scope: the **## Stable** table plus the shipped **first-release** surfaces
  * (`lodestar.session_ship@1`). The approval **transport** seam `ApprovalChannel`
  * (ADR-0015 / #134) is pinned below — it landed after the probe was first written
- * and joined the Stable table; this probe is its executable mirror.
+ * and joined the Stable table; this probe is its executable mirror. The
+ * declarative **action-policy document** family (`PolicySchema` & co., #135) is
+ * pinned below too — the wire format external policy authors / distributors build
+ * against, document-shape only (the verdict semantics stay the engine's contract).
  *
  * Assertions (per surface): the symbol imports, its signature matches the
  * ledger, and — for schemas — a valid payload parses and an invalid one is
@@ -34,11 +37,23 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
+  type ApprovalRequirement,
+  ApprovalRequirementSchema,
   CALIBRATION_COMPUTED_EVENT_TYPE,
   CALIBRATION_COMPUTED_SCHEMA_VERSION,
   CalibrationComputedPayloadSchema,
   type EventEnvelope,
   EventEnvelopeSchema,
+  type Policy,
+  type PolicyEffect,
+  PolicyEffectSchema,
+  type PolicyMatch,
+  PolicyMatchSchema,
+  type PolicyRule,
+  PolicyRuleSchema,
+  PolicySchema,
+  type RequiredAuthority,
+  RequiredAuthoritySchema,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
   SentinelAlertPayloadSchema,
@@ -340,6 +355,175 @@ await check("core: sentinel.alerted@1 type + version constants are stable litera
   const version: "1" = SENTINEL_ALERTED_SCHEMA_VERSION
   expect(eventType === "sentinel.alerted", `event type drifted: ${eventType}`)
   expect(version === "1", `schema version drifted: ${version}`)
+})
+
+// ── @qmilab/lodestar-core: the declarative action-policy document ─────────
+const validPolicy = {
+  id: "policy-egress",
+  version: "1.0.0",
+  rules: [
+    {
+      match: {
+        tool: "git.*",
+        max_blast_radius: "project",
+        reversibility: ["reversible", "compensable"],
+        required_level_lte: 3,
+      },
+      effect: "allow",
+      reason: "in-project git up to L3 is allowed",
+    },
+    {
+      match: { tool: "http.request" },
+      effect: "require_approval",
+      approval: {
+        required_authority: { min_trust_baseline: 0.9, sensitivity_clearance: "secret" },
+      },
+      reason: "external HTTP egress requires sign-off",
+    },
+    { match: {}, effect: "deny", reason: "structural deny default, made explicit" },
+  ],
+  signature: {
+    signer_id: "operator",
+    payload_hash: canonicalHash({ id: "policy-egress", version: "1.0.0", rules: [] }),
+    algorithm: "ed25519",
+    signature: "ZmFrZS1zaWduYXR1cmU=",
+    at: "2026-01-01T00:00:00.000Z",
+  },
+  signed_by: "operator",
+}
+await check("core: PolicySchema round-trips a signed document + exposes documented fields", () => {
+  const parsed = PolicySchema.safeParse(validPolicy)
+  expect(parsed.success, `valid policy rejected: ${JSON.stringify(parsed.error?.issues)}`)
+  const policy: Policy = parsed.data
+  const id: string = policy.id
+  const version: string = policy.version
+  const rules: PolicyRule[] = policy.rules
+  const signer: string | undefined = policy.signed_by
+  void [id, version, signer]
+  expect(rules.length === 3, `expected 3 rules, got ${rules.length}`)
+
+  // the require_approval rule carries its authority; reading each field pins the
+  // { match, effect, approval?, reason } shape at compile time too.
+  const rule = rules[1]
+  expect(rule !== undefined, "rule[1] missing from the round-trip")
+  const match: PolicyMatch = rule.match
+  const effect: PolicyEffect = rule.effect
+  const reason: string = rule.reason
+  const approval: ApprovalRequirement | undefined = rule.approval
+  void [match, reason]
+  expect(effect === "require_approval", "rule[1] effect not round-tripped")
+  const authority: RequiredAuthority | undefined = approval?.required_authority
+  expect(authority?.min_trust_baseline === 0.9, "required_authority not round-tripped")
+  expect(authority?.sensitivity_clearance === "secret", "sensitivity_clearance not round-tripped")
+  // the signed-policy envelope round-trips with its documented fields
+  expect(policy.signature?.algorithm === "ed25519", "signature envelope algorithm drifted")
+  expect(policy.signature?.signer_id === "operator", "signature envelope signer_id drifted")
+})
+await check("core: PolicyEffectSchema pins the wire effect enum", () => {
+  for (const e of ["allow", "deny", "require_approval"] as const) {
+    const effect: PolicyEffect = e
+    expect(PolicyEffectSchema.safeParse(effect).success, `valid effect '${e}' rejected`)
+  }
+  // `hold` is the engine's runtime verdict, not a wire effect — it must not leak in.
+  expect(
+    !PolicyEffectSchema.safeParse("hold").success,
+    "the runtime verdict 'hold' leaked into the wire effect enum",
+  )
+})
+await check("core: PolicyRuleSchema accepts approval only on a require_approval rule", () => {
+  const ok = PolicyRuleSchema.safeParse({
+    match: { tool: "http.*" },
+    effect: "require_approval",
+    approval: { required_authority: {} },
+    reason: "needs sign-off",
+  })
+  expect(
+    ok.success,
+    `require_approval rule with approval rejected: ${JSON.stringify(ok.error?.issues)}`,
+  )
+  const bad = PolicyRuleSchema.safeParse({
+    match: { tool: "http.*" },
+    effect: "allow",
+    approval: { required_authority: {} },
+    reason: "an allow rule cannot carry approval authority",
+  })
+  expect(!bad.success, "approval was accepted on a non-require_approval rule")
+})
+await check("core: ApprovalRequirementSchema wraps an optional, bounded required_authority", () => {
+  const withAuthority = ApprovalRequirementSchema.safeParse({
+    required_authority: { min_trust_baseline: 0.8 },
+  })
+  expect(withAuthority.success, "approval requirement with authority rejected")
+  // an empty approval object is valid — "any configured resolver may approve".
+  const empty: ApprovalRequirement = ApprovalRequirementSchema.parse({})
+  void empty
+  expect(
+    !ApprovalRequirementSchema.safeParse({ required_authority: { min_trust_baseline: 2 } }).success,
+    "approval requirement passed an out-of-range trust baseline",
+  )
+})
+await check(
+  "core: PolicyMatchSchema is all-AND with an empty-match wildcard, bounded to the trust ladder",
+  () => {
+    const empty: PolicyMatch = PolicyMatchSchema.parse({})
+    void empty // an empty match is the documented wildcard
+    expect(
+      PolicyMatchSchema.safeParse({ required_level_lte: 4 }).success,
+      "a valid trust-level bound was rejected",
+    )
+    expect(
+      !PolicyMatchSchema.safeParse({ required_level_lte: 6 }).success,
+      "a trust level above the 0–5 ladder was accepted",
+    )
+    expect(
+      !PolicyMatchSchema.safeParse({ reversibility: ["sometimes"] }).success,
+      "an unknown reversibility was accepted",
+    )
+    expect(
+      !PolicyMatchSchema.safeParse({ max_blast_radius: "galaxy" }).success,
+      "an unknown blast radius was accepted",
+    )
+  },
+)
+await check("core: RequiredAuthoritySchema pins the approver-constraint shape", () => {
+  const parsed = RequiredAuthoritySchema.safeParse({
+    min_trust_baseline: 0.5,
+    sensitivity_clearance: "confidential",
+  })
+  expect(parsed.success, `valid authority rejected: ${JSON.stringify(parsed.error?.issues)}`)
+  const authority: RequiredAuthority = parsed.data
+  void authority
+  expect(RequiredAuthoritySchema.safeParse({}).success, "empty authority (any resolver) rejected")
+  expect(
+    !RequiredAuthoritySchema.safeParse({ min_trust_baseline: 1.5 }).success,
+    "an out-of-range trust baseline was accepted",
+  )
+  expect(
+    !RequiredAuthoritySchema.safeParse({ sensitivity_clearance: "ultra" }).success,
+    "an unknown clearance was accepted",
+  )
+})
+await check("core: PolicySchema enforces the signed_by ↔ signature.signer_id binding", () => {
+  // signature present but signed_by missing → rejected
+  const { signed_by: _drop, ...noSignedBy } = validPolicy
+  expect(
+    !PolicySchema.safeParse(noSignedBy).success,
+    "a signed policy with no signed_by was accepted",
+  )
+  // signed_by present but ≠ signature.signer_id → rejected
+  expect(
+    !PolicySchema.safeParse({ ...validPolicy, signed_by: "someone-else" }).success,
+    "a signed_by that disagrees with signer_id was accepted",
+  )
+  // signed_by present on an unsigned draft → rejected
+  const { signature: _sig, ...unsignedWithSignedBy } = validPolicy
+  expect(
+    !PolicySchema.safeParse(unsignedWithSignedBy).success,
+    "signed_by on an unsigned draft was accepted",
+  )
+  // a clean unsigned draft (neither field) parses
+  const { signature: _s, signed_by: _sb, ...draft } = validPolicy
+  expect(PolicySchema.safeParse(draft).success, "a clean unsigned draft was rejected")
 })
 
 // ── @qmilab/lodestar-event-log: canonicalHash + EventLogReader layout ─────
