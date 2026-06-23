@@ -1149,7 +1149,17 @@ export class RuntimeGate {
       this.approvalRef(requestId, actionId),
       fetchBudgetMs,
     )
-    if (resolution !== undefined && resolution.action_id === actionId) {
+    // Bind the fetched resolution to BOTH this request AND this action. The channel
+    // is untrusted transport (ADR-0015): the HTTP channel binds request_id at the
+    // transport, but the file channel and any custom/injected channel do not — so
+    // the consumer must, or a channel could replay a (validly signed) resolution for
+    // a DIFFERENT request on the same action into this hold. Mirrors the proxy's
+    // `channelOutcomeFor` (both ids), not just action_id.
+    if (
+      resolution !== undefined &&
+      resolution.request_id === requestId &&
+      resolution.action_id === actionId
+    ) {
       if (!withinDeadline(resolution.at, deadlineAt)) {
         // A resolution dated after the deadline is a timeout, never a late
         // approval — leave it; the deadline branch in handleResume will expire.

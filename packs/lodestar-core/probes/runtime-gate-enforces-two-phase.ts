@@ -22,12 +22,12 @@
  *      exactly once.
  *
  * (Later cases I–P harden the timeout-0 / concurrent-resume / malformed-callback /
- * forged-log edges from PR-review rounds; cases Q–T pin that out-of-band
- * resolutions flow through the pluggable `ApprovalChannel` — ADR-0015 — with both
- * the default file channel, A–P, and an http channel, Q, resolving a held action,
- * that a slow channel still times the hold out at the approval budget, R, that a
- * short-poll resume respects its wait window rather than the channel timeout, S,
- * and that repeated short polls reuse one in-flight fetch rather than piling up, T.)
+ * forged-log edges from PR-review rounds; cases Q–U pin the pluggable
+ * `ApprovalChannel` — ADR-0015: the default file channel, A–P, and an http channel,
+ * Q, resolve a held action; a slow channel still times the hold out at the approval
+ * budget, R; a short-poll resume respects its wait window rather than the channel
+ * timeout, S; repeated short polls reuse one in-flight fetch rather than piling up,
+ * T; and a channel resolution bound to a DIFFERENT request is not promoted, U.)
  *
  * No Python needed, so these invariants run on every probe pass. The real
  * Python LangGraph loop is exercised by the runtime-gated
@@ -45,7 +45,11 @@ import {
   signApprovalResolution,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard"
-import type { ApprovalChannelConfig, ApprovalResolution } from "@qmilab/lodestar-guard"
+import type {
+  ApprovalChannel,
+  ApprovalChannelConfig,
+  ApprovalResolution,
+} from "@qmilab/lodestar-guard"
 import { FIRST_PARTY_SENTINELS } from "@qmilab/lodestar-harness"
 import {
   RuntimeGate,
@@ -1244,6 +1248,64 @@ async function run(): Promise<ProbeResult> {
         "T: the body never ran (the hold is still pending)",
         h.hook.bodyRuns.length === 0,
         `${h.hook.bodyRuns.length} run(s)`,
+      )
+      await h.gate.stop()
+    }
+
+    // ── U: a channel resolution for a DIFFERENT request is not promoted (untrusted) ──
+    // ApprovalChannel is untrusted transport (ADR-0015): the consumer must bind the
+    // fetched resolution to THIS request, not just this action. A custom channel that
+    // returns a validly-signed grant for the same action but a different request_id
+    // must NOT un-park the hold — it times out, and no approval.granted is emitted.
+    // (Codex P2; mirrors the proxy's `channelOutcomeFor` binding both ids.)
+    {
+      const logRoot = await tempLogRoot()
+      cleanups.push(() => rm(logRoot, { recursive: true, force: true }))
+      // Binds the CORRECT action_id (from the ref) but a WRONG request_id, signed by
+      // the pinned operator key — so the signature is valid for its own mis-bound
+      // doc, and ONLY the consumer's request_id binding can reject it.
+      const wrongRequestChannel: ApprovalChannel = {
+        fetch: async (ref) => {
+          const doc = {
+            request_id: `wrong-${ref.request_id}`,
+            action_id: ref.action_id,
+            kind: "granted" as const,
+            approver_id: APPROVER_ID,
+            at: new Date().toISOString(),
+          }
+          return { ...doc, signature: signApprovalResolution(doc, approver.privateKeyPem) }
+        },
+      }
+      const h = await buildHarness({
+        logRoot,
+        sessionId: "sess-wrong-request",
+        approvalTimeoutMs: 500,
+        approverPublicKey: approver.publicKeyPem,
+        overrides: { approvalChannel: wrongRequestChannel },
+        toolDefaults: { deploy: { required_trust_level: 4, reversibility: "irreversible" } },
+        bodies: { deploy: () => ({ output: { deployed: "should-not-run" } }) },
+      })
+      cleanups.push(() => h.gate.stop())
+      await h.hook.register("deploy")
+      const held = await h.hook.govern("deploy", {})
+      const resumed = await h.hook.resume(String(held.action_id), String(held.request_id), 2_000)
+      check(
+        "U: a channel grant for a different request_id is NOT promoted — hold times out",
+        resumed.phase === "rejected" && resumed.kind === "approval_timeout",
+        `${resumed.phase}/${resumed.kind}`,
+      )
+      check(
+        "U: the body never ran on the mis-bound resolution",
+        h.hook.bodyRuns.length === 0,
+        `${h.hook.bodyRuns.length} run(s)`,
+      )
+      const types = (
+        await new EventLogReader(logRoot).readSession(PROJECT_ID, "sess-wrong-request")
+      ).map((e) => e.type)
+      check(
+        "U: no approval.granted was emitted for a mis-bound resolution",
+        !types.includes("approval.granted"),
+        types.join(", "),
       )
       await h.gate.stop()
     }
