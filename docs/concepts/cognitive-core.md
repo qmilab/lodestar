@@ -18,9 +18,11 @@ Observation → Claim → Evidence → Belief
 ```
 
 These are the first four links of the [epistemic chain](epistemic-chain.md) — the
-part the Cognitive Core owns. (The chain continues into Decision → Action →
-Outcome → Revision, which bring in the planner, the
-[Action Kernel](trust-ladder.md), and the [Memory Firewall](memory-firewall.md).)
+ingestion pipeline the Cognitive Core runs. (The chain continues into Decision →
+Action → Outcome → Revision, which bring in the planner, the
+[Action Kernel](trust-ladder.md), and the [Memory Firewall](memory-firewall.md).
+The Core ingests what the agent saw; *deciding* what to do with the result is the
+planner's job.)
 
 ## The pipeline in plain words
 
@@ -58,8 +60,8 @@ crossed the line from **read** to **believed**.
 
 ## What it deliberately does not do
 
-The Cognitive Core decides what to *attempt*; it does not make decisions or push
-buttons. Belief storage and lifecycle transitions live in the
+The Cognitive Core builds up the agent's beliefs from what it observed; it does not
+make decisions or push buttons. Belief storage and lifecycle transitions live in the
 [Memory Firewall](memory-firewall.md); the trust ladder and approvals live in the
 [Policy Kernel](policy-kernel.md). The Core's job ends when an observation has been
 honestly ingested into the agent's epistemic state.
