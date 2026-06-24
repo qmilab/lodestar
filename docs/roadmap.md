@@ -410,6 +410,28 @@ Work past the v1 line, tracked here as it lands:
   A net-new package name needs a one-time manual bootstrap publish before
   trusted publishing can attach, then CI drives every subsequent release.
 
+- **Cognitive-core belief enrichment (durable-memory harvest)** — 🔭 queued, not yet
+  scheduled (epic #154). The belief layer's machinery (evidence sets, the four lifecycle
+  axes, supersession, calibration) is in place, but the **enrichment that populates it
+  from a multi-observation chain is unbuilt**: the evidence linker's cross-belief join is
+  a code-flagged v0.2 placeholder (`evidence-linker.ts:61-76`), so a belief is never
+  corroborated, contradicted, or superseded from an observation chain, and v0 reflection
+  only *cascades* pre-existing contradictions rather than deriving them. Surfaced by a
+  downstream consumer (Asterism) harvesting belief-grade, human-reviewable durable memory
+  via the low-level `CognitiveCore.ingest` primitives, but it benefits **every** consumer
+  with structured observations. Recommended order: **A** the evidence-linker claim-store
+  JOIN (highest value, no `packages/core` schema change — `EvidenceItem` already carries
+  `relation: contradicts` + `independence_group`; the linker records evidence items only,
+  leaving prior-belief transitions to reflection) → **D** an ADR locking the
+  **belief→durable-lesson** mapping (the `WorldModel` stays the current-state store) plus a
+  read-side **harvest projection** in `-trace` (end-of-run supported + superseded beliefs →
+  review-ready candidates, mirroring `pendingApprovals`) → **B** a propose-only reflection
+  DERIVE rule (same subject+relation, different object → propose contradicted/superseded).
+  A consumer's own tool-result extractor is consumer-owned (out of scope); an LLM-driven
+  generic extractor is medium-term behind an explicit opt-in seam (never a built-in).
+  Near-term cognitive-core mini-batch weight, ahead of the v1.5 adapter queue but not a
+  rush. Design lock for the mapping: ADR-0031.
+
 ## Next — interop & contributor-hygiene track
 
 External integrators are starting to build on the read side and the approval
