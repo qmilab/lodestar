@@ -458,6 +458,72 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
     })
   }
 
+  // ── Scenario G: a firewall-invalidated/isolated peer must NOT lend evidence ──
+  //    (the "quarantine is one-way" invariant must hold through the join).
+  const GPRED = { subject: "/lock", relation: "holds", object: "key" }
+  {
+    // G3 (positive control): an untouched clean peer DOES lend exactly one item.
+    const sCtl = sc("lifecycle-clean")
+    await ingest(core, sCtl, OBS_SCHEMA, GPRED, "probe.obs")
+    const rCtl = await ingest(core, sCtl, DOC_SCHEMA, { path: "/lock.md", ...GPRED }, "fs.read")
+    const evCtl = rCtl.beliefs[0]
+      ? (await stores.evidence.forClaim(rCtl.beliefs[0].claim_id))[0]
+      : undefined
+    checks.push({
+      name: `[${label}] G3 (control): a clean, valid peer lends exactly one cross-belief item`,
+      pass: !!evCtl && crossItemsOf(evCtl.items).length === 1,
+      detail: evCtl ? `cross-belief items=${crossItemsOf(evCtl.items).length}` : "no evidence set",
+    })
+
+    // G1: a QUARANTINED peer (security_status) must not lend — same setup, peer isolated.
+    const sQ = sc("lifecycle-quarantined")
+    const rQ = await ingest(core, sQ, OBS_SCHEMA, GPRED, "probe.obs")
+    const pQ = rQ.beliefs[0]
+    if (pQ) {
+      await stores.beliefs.transition({
+        belief_id: pQ.id,
+        axis: "security_status",
+        from_value: "clean",
+        to_value: "quarantined",
+        by_actor_id: "probe-actor",
+        rationale_id: crypto.randomUUID(),
+      })
+    }
+    const rQDoc = await ingest(core, sQ, DOC_SCHEMA, { path: "/lock.md", ...GPRED }, "fs.read")
+    const evQ = rQDoc.claims[0]
+      ? (await stores.evidence.forClaim(rQDoc.claims[0].id))[0]
+      : undefined
+    checks.push({
+      name: `[${label}] G1: a quarantined peer lends NO cross-belief evidence (quarantine is one-way)`,
+      pass: !!evQ && crossItemsOf(evQ.items).length === 0,
+      detail: evQ ? `cross-belief items=${crossItemsOf(evQ.items).length}` : "no evidence set",
+    })
+
+    // G2: a CONTRADICTED peer (truth_status) must not lend either.
+    const sC = sc("lifecycle-contradicted")
+    const rC = await ingest(core, sC, OBS_SCHEMA, GPRED, "probe.obs")
+    const pC = rC.beliefs[0]
+    if (pC) {
+      await stores.beliefs.transition({
+        belief_id: pC.id,
+        axis: "truth_status",
+        from_value: "supported",
+        to_value: "contradicted",
+        by_actor_id: "probe-actor",
+        rationale_id: crypto.randomUUID(),
+      })
+    }
+    const rCDoc = await ingest(core, sC, DOC_SCHEMA, { path: "/lock.md", ...GPRED }, "fs.read")
+    const evC = rCDoc.claims[0]
+      ? (await stores.evidence.forClaim(rCDoc.claims[0].id))[0]
+      : undefined
+    checks.push({
+      name: `[${label}] G2: a contradicted peer lends NO cross-belief evidence`,
+      pass: !!evC && crossItemsOf(evC.items).length === 0,
+      detail: evC ? `cross-belief items=${crossItemsOf(evC.items).length}` : "no evidence set",
+    })
+  }
+
   return checks
 }
 

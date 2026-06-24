@@ -1,4 +1,4 @@
-import type { Claim, EvidenceItem, EvidenceSet, Observation } from "@qmilab/lodestar-core"
+import type { Belief, Claim, EvidenceItem, EvidenceSet, Observation } from "@qmilab/lodestar-core"
 import { stableStringify } from "@qmilab/lodestar-core"
 import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 import { predicateKey } from "@qmilab/lodestar-memory-firewall"
@@ -40,6 +40,32 @@ const QUALITY_RANK: EvidenceItem["quality"][] = [
   "external_document",
   "synthetic_probe",
 ]
+
+/**
+ * Whether a prior belief is still lifecycle-valid enough to lend cross-belief
+ * evidence to a new claim.
+ *
+ * The Memory Firewall isolates or invalidates beliefs through its lifecycle
+ * axes; the join must honour that, or a quarantined / invalidated memory could
+ * lend support to a NEW belief and reach future retrieval despite the gates
+ * that block the original — the firewall's "quarantine is one-way" invariant
+ * leaking through a side channel. So a peer is eligible only if it is:
+ *   - `security_status: "clean"` — never `suspicious` / `quarantined` / `malicious`;
+ *   - not `contradicted` / `superseded` — an invalidated belief lends nothing;
+ *   - not `freshness_status: "expired"` — a dead belief lends nothing.
+ * `unverified` peers ARE kept (two `external_document` beliefs corroborate each
+ * other without promoting — the Parallax case); `stale` is kept (aging, not
+ * invalid); `retrieval_status` is NOT gated (`restricted` is the default
+ * adopted state, so gating it would exclude every freshly-adopted peer).
+ */
+function isEligibleJoinPeer(belief: Belief): boolean {
+  return (
+    belief.security_status === "clean" &&
+    belief.truth_status !== "contradicted" &&
+    belief.truth_status !== "superseded" &&
+    belief.freshness_status !== "expired"
+  )
+}
 
 /**
  * The EvidenceLinker constructs an EvidenceSet for a newly extracted Claim.
@@ -96,9 +122,10 @@ export class EvidenceLinker implements EvidenceLinkerLike {
    * Cross-belief join (#157, ADR-0032).
    *
    * For a claim with a `structured_predicate`, walk the prior beliefs in
-   * the same scope back to their claims (`belief.claim_id → ClaimStore`) and
-   * emit a cross-belief evidence item for every belief whose claim shares
-   * this claim's `(subject, relation)`:
+   * the same scope back to their claims (`belief.claim_id → ClaimStore`),
+   * skip any the firewall has invalidated or isolated (see
+   * {@link isEligibleJoinPeer}), and emit a cross-belief evidence item for
+   * every remaining belief whose claim shares this claim's `(subject, relation)`:
    *   - same `object`      → `supports`  (independent corroboration)
    *   - different `object`  → `contradicts`
    *
@@ -132,6 +159,7 @@ export class EvidenceLinker implements EvidenceLinkerLike {
     const candidates = await this.beliefs.list({ scope: claim.scope })
     for (const belief of candidates) {
       if (belief.claim_id === claim.id) continue // never join a claim against itself
+      if (!isEligibleJoinPeer(belief)) continue // exclude firewall-invalidated / isolated beliefs
       const priorClaim = await this.claims.get(belief.claim_id)
       const priorPred = priorClaim?.structured_predicate
       if (!priorPred) continue // prior claim has no predicate to join on
