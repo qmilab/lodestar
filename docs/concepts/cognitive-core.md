@@ -1,6 +1,6 @@
 ---
 title: "The Cognitive Core"
-description: "The engine that turns what an agent saw into evidence-backed beliefs you can audit — and (planned) harvests the durable lessons for a human to keep as memory."
+description: "The engine that turns what an agent saw into evidence-backed beliefs you can audit — and harvests the durable lessons for a human to keep as memory."
 ---
 
 # The Cognitive Core
@@ -66,17 +66,16 @@ make decisions or push buttons. Belief storage and lifecycle transitions live in
 [Policy Kernel](policy-kernel.md). The Core's job ends when an observation has been
 honestly ingested into the agent's epistemic state.
 
-## Harvesting durable memory (planned)
+## Harvesting durable memory
 
-> **Status — planned.** The harvest projection described here is on the roadmap
-> (epic [#154](https://github.com/qmilab/lodestar/issues/154)) and **not yet
-> shipped**. The design decision below is locked; the implementation lands as its
-> own release.
+> **Status — shipped.** `harvestCandidates` lives in `@qmilab/lodestar-trace`
+> (epic [#154](https://github.com/qmilab/lodestar/issues/154) item D; design lock
+> ADR-0031, candidacy gate ADR-0033).
 
-Today each belief is judged largely on its own. The natural next step is to
-**harvest** the keeper-worthy beliefs at the end of a run as candidate **durable
-memories** — lessons worth carrying into the *next* run — and hand them to a human
-to review before anything is kept.
+Each belief is judged largely on its own. The harvest projection takes the next
+step: it **harvests** the keeper-worthy beliefs at the end of a run as candidate
+**durable memories** — lessons worth carrying into the *next* run — and hands them
+to a human to review before anything is kept.
 
 ### A projection, not a new store
 
@@ -116,11 +115,18 @@ promotes its own memories unsupervised — exactly the
 [no-self-promotion](memory-firewall.md#no-self-promotion) guarantee, extended to
 durable memory: memory you can trust *because you can see why it is there*.
 
+And the guarantee holds at the queue itself: a belief the firewall **quarantined**
+(poisoned) or **hard-demoted** (blocked from retrieval) never appears as a keeper
+candidate, even if its truth status reached *supported* — so a poisoned memory
+can't ride into the next run by way of the human's "Keep" click. Whether a
+*supported, clean* lesson is worth keeping (vs. a stale or state-shaped one) stays
+the reviewer's call; the projection surfaces honest evidence, it doesn't pre-judge.
+
 ## In one sentence
 
 The Cognitive Core is how an agent turns what it saw into evidence-backed beliefs
-you can audit; the (planned) harvest projection reads those beliefs at the end of a
-run and offers the durable lessons up for a human to save.
+you can audit; the harvest projection reads those beliefs at the end of a run and
+offers the durable lessons up for a human to save.
 
 ## Related
 

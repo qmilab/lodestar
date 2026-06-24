@@ -11,11 +11,11 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Seventy-one probes pass under
+resolved for future versions.) Seventy-two probes pass under
 strict TypeScript (two need a Postgres test database; one needs a Python
 + LangGraph runtime; one needs a Python + CrewAI runtime; one needs a
 Python + AutoGen runtime — see below).
-Sixty-seven live in the first-party pack
+Sixty-eight live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -33,7 +33,26 @@ same-`(subject, relation)` / different-`object` match records a
 `external_document` beliefs still cannot promote each other (Parallax
 holds), and the prior belief is never mutated — quality-inheritance, runs
 in-memory always + against Postgres when `LODESTAR_TEST_DATABASE_URL` is
-set; ADR-0032), and fourteen Policy Kernel probes —
+set; ADR-0032), one cognitive-core harvest-projection probe
+(`harvest-projection-surfaces-durable-lessons` — the #154 item-D
+belief→lesson harvest: the new pure read-side projection
+`harvestCandidates(events)` in `@qmilab/lodestar-trace` surfaces a run's
+end-of-run **supported** beliefs + **superseded-with-history** chains as
+advisory `MemoryCandidate`s, each carrying its claim + evidence + provenance.
+Over a real on-disk NDJSON log it pins five invariants — a genuine supported
+lesson surfaces with its evidence; the headline **no-launder** (a poisoned
+`quarantined` or hard-demoted `blocked` belief that nonetheless reached
+`supported` appears nowhere, not even as history — the no-self-promotion
+guarantee extended to the human Keep queue); lifecycle is **reconstructed**
+from `belief.adopted` + `firewall.belief.transitioned` (adopted-unverified
+then promoted-supported counts; adopted-supported then quarantined does not);
+**supersession** is the successor's newest-first audit trail, never a separate
+candidate; and the projection is **read-only** (log bytes + input array
+untouched). Candidacy gate = `truth_status:supported` ∧ `security_status:clean`
+∧ `retrieval_status ∈ {normal,restricted}`, the security-relevant subset of
+`DEFAULT_CONTEXT_POLICY`; freshness/sensitivity/scope are surfaced not gated;
+no `packages/core` schema change, no new event; ADR-0031 mapping + ADR-0033
+candidacy gate), and fourteen Policy Kernel probes —
 the three-valued gate, the trust-ladder floor, the approval lifecycle,
 signature verification, the arbitrate hook, and the host wiring — the
 `guard.wrap()` approval-resolver seam, the MCP-proxy deadline/timeout
@@ -583,7 +602,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Seventy-one probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Seventy-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 

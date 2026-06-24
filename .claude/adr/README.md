@@ -388,3 +388,16 @@ The options we rejected, each with a one-line reason.
   normalized) "higher `aggregateStrength`" to the **promotion-outcome flip**; the
   corroboration-aware *scalar* is deferred to #158. Linker stays pure (prior belief never
   transitioned — that is reflection's job, child B). **Status: Accepted.**
+- [ADR-0033](0033-harvest-projection-candidacy-gate.md) — The harvest projection's
+  candidacy gate (epic #154 child D, the implementation of ADR-0031). `harvestCandidates`
+  in `-trace` surfaces a belief as a keeper candidate only when its **reconstructed
+  current** state is `truth_status: supported` **and** `security_status: clean` **and**
+  `retrieval_status` ∈ {`normal`, `restricted`} — the security-relevant subset of
+  `DEFAULT_CONTEXT_POLICY`, so a quarantined / hard-demoted belief cannot launder past the
+  firewall into the human Keep queue (no-self-promotion, extended to durable memory).
+  Freshness / sensitivity / scope / confidence are **surfaced, not gated** (the reviewer's
+  call; the shipper owns the egress sensitivity ceiling). Supersession is surfaced as the
+  successor's newest-first `supersedes` history, never a separate candidate; lifecycle state
+  is replayed from `belief.adopted` + `firewall.belief.transitioned`, not snapshot-read. No
+  `packages/core` schema change, no new event. Locked by the
+  `harvest-projection-surfaces-durable-lessons` probe. **Status: Accepted.**

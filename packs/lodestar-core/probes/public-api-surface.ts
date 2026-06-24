@@ -150,9 +150,12 @@ import {
 import { ShipManifestSchema, ShipRecordSchema } from "@qmilab/lodestar-ship"
 import {
   type ChainProjection,
+  type MemoryCandidate,
   type PendingApproval,
   type RenderOptions,
+  type SupersededLesson,
   type WireProjection,
+  harvestCandidates,
   pendingApprovals,
   projectChain,
   renderReport,
@@ -185,6 +188,12 @@ pinType<
 >(projectChain)
 pinType<(projection: ChainProjection, opts?: RenderOptions) => string>(renderReport)
 pinType<(events: EventEnvelope[]) => PendingApproval[]>(pendingApprovals)
+pinType<
+  (
+    events: EventEnvelope[],
+    filter?: { session_id?: string; project_id?: string },
+  ) => MemoryCandidate[]
+>(harvestCandidates)
 pinType<(projection: ChainProjection) => WireProjection>(toWireProjection)
 
 // @qmilab/lodestar-otel-exporter — deterministic ids + the OTLP IR
@@ -1126,6 +1135,44 @@ await check("trace: pendingApprovals derives the open-hold queue, read-only", ()
   expect(p?.status === "pending", "pending approval status is not 'pending'")
   expect(p?.request_id === "r1" && p?.action_id === "a1", "pending approval did not carry ids")
 })
+await check(
+  "trace: harvestCandidates surfaces a supported belief, excludes a quarantined one (read-only)",
+  () => {
+    const supportedBelief = {
+      id: "b-keep",
+      claim_id: "c-keep",
+      confidence: 0.95,
+      calibration_class: "k",
+      scope: { level: "project", identifier: "p" },
+      sensitivity: "internal",
+      authority: "observed",
+      truth_status: "supported",
+      retrieval_status: "normal",
+      security_status: "clean",
+      freshness_status: "fresh",
+      observed_at: "2026-01-01T00:00:00.000Z",
+    }
+    const quarantined = { ...supportedBelief, id: "b-drop", security_status: "quarantined" }
+    const adopt = (id: string, payload: unknown) =>
+      EventEnvelopeSchema.parse({
+        ...validEnvelope,
+        id,
+        type: "belief.adopted",
+        payload_hash: canonicalHash(payload),
+        payload,
+      })
+    const candidates: MemoryCandidate[] = harvestCandidates([
+      adopt("e-keep", supportedBelief),
+      adopt("e-drop", quarantined),
+    ])
+    expect(candidates.length === 1, `expected 1 candidate, got ${candidates.length}`)
+    const c = candidates[0]
+    expect(c?.status === "candidate", "harvest candidate status is not 'candidate'")
+    expect(c?.belief.id === "b-keep", "harvest surfaced the wrong (or quarantined) belief")
+    const history: SupersededLesson[] = c?.supersedes ?? []
+    expect(Array.isArray(history), "MemoryCandidate.supersedes is not an array")
+  },
+)
 await check(
   "trace: toWireProjection makes a ChainProjection JSON-safe (Set→array, raw_events dropped), purely",
   () => {
