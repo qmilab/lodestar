@@ -42,17 +42,16 @@
 import {
   type ClaimExtractor,
   CognitiveCore,
-  EvidenceLinker,
   DocAwareEvidenceLinker,
+  EvidenceLinker,
   ExplanationGenerator,
   InMemoryWorldModel,
-  registerExtractor,
   lookupExtractor,
+  registerExtractor,
 } from "@qmilab/lodestar-cognitive-core"
 import type { Belief, Claim, EvidenceItem, Observation, ResourceScope } from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import {
-  aggregateStrength,
   type BeliefStore,
   type ClaimStore,
   type EvidenceStore,
@@ -60,6 +59,7 @@ import {
   InMemoryClaimStore,
   InMemoryEvidenceStore,
   MemoryFirewall,
+  aggregateStrength,
   predicateKey,
 } from "@qmilab/lodestar-memory-firewall"
 import { createPostgresStores } from "@qmilab/lodestar-memory-firewall/postgres"
@@ -147,7 +147,12 @@ interface Suite {
 
 function buildSuite(stores: Stores): Suite {
   const worldModel = new InMemoryWorldModel()
-  const firewall = new MemoryFirewall(stores.claims, stores.beliefs, stores.evidence, async () => {})
+  const firewall = new MemoryFirewall(
+    stores.claims,
+    stores.beliefs,
+    stores.evidence,
+    async () => {},
+  )
   const linker = new DocAwareEvidenceLinker(stores.evidence, stores.beliefs, stores.claims)
   const explanations = new ExplanationGenerator("probe-actor")
   const core = new CognitiveCore(firewall, linker, explanations, worldModel)
@@ -171,7 +176,11 @@ async function ingest(
     schema,
     payload,
     source: { tool, invocation_id: crypto.randomUUID(), captured_at: new Date().toISOString() },
-    context: { session_id: `sess-${sc.identifier}`, project_id: sc.identifier, actor_id: "probe-actor" },
+    context: {
+      session_id: `sess-${sc.identifier}`,
+      project_id: sc.identifier,
+      actor_id: "probe-actor",
+    },
     trust: "validated",
     sensitivity: "internal",
   }
@@ -193,7 +202,8 @@ function crossItemsOf(items: EvidenceItem[]): EvidenceItem[] {
 }
 
 function distinctGroups(items: EvidenceItem[]): number {
-  return new Set(items.filter((i) => i.relation === "supports").map((i) => i.independence_group)).size
+  return new Set(items.filter((i) => i.relation === "supports").map((i) => i.independence_group))
+    .size
 }
 
 // ── The scenario suite (run against each backend) ────────────────────────────
@@ -211,7 +221,13 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
     const r1 = await ingest(core, s, OBS_SCHEMA, { ...PREDICATE, object: "auth" }, "probe.obs")
     const b1 = r1.beliefs[0]
     const before = b1 ? snapshot(b1) : undefined
-    const r2 = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "auth" }, "fs.read")
+    const r2 = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "auth" },
+      "fs.read",
+    )
     const b2 = r2.beliefs[0]
     const b1After = b1 ? await stores.beliefs.get(b1.id) : undefined
     const ev2 = b2 ? (await stores.evidence.forClaim(b2.claim_id))[0] : undefined
@@ -248,7 +264,13 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
   // ── Scenario B: the same lone external_document claim ALONE stays unverified ──
   {
     const s = sc("alone")
-    const r = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "auth" }, "fs.read")
+    const r = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "auth" },
+      "fs.read",
+    )
     const b = r.beliefs[0]
     checks.push({
       name: `[${label}] B (AC#1 baseline): lone external_document claim stays unverified (proves the flip is corroboration)`,
@@ -260,9 +282,21 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
   // ── Scenario C: two external_document beliefs do not promote (AC#3) ──
   {
     const s = sc("parallax")
-    const r1 = await ingest(core, s, DOC_SCHEMA, { path: "/README.md", ...PREDICATE, object: "auth" }, "fs.read")
+    const r1 = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/README.md", ...PREDICATE, object: "auth" },
+      "fs.read",
+    )
     const b1 = r1.beliefs[0]
-    const r2 = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "auth" }, "fs.read")
+    const r2 = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "auth" },
+      "fs.read",
+    )
     const b2 = r2.beliefs[0]
     const ev2 = b2 ? (await stores.evidence.forClaim(b2.claim_id))[0] : undefined
     checks.push({
@@ -272,9 +306,17 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
     })
     checks.push({
       name: `[${label}] C: the join DID run (cross-belief supports item present, inherited external_document)`,
-      pass: !!ev2 && crossItemsOf(ev2.items).some((i) => i.relation === "supports" && i.quality === "external_document"),
+      pass:
+        !!ev2 &&
+        crossItemsOf(ev2.items).some(
+          (i) => i.relation === "supports" && i.quality === "external_document",
+        ),
       detail: ev2
-        ? `cross items: ${crossItemsOf(ev2.items).map((i) => `${i.relation}/${i.quality}`).join(", ") || "(none)"}`
+        ? `cross items: ${
+            crossItemsOf(ev2.items)
+              .map((i) => `${i.relation}/${i.quality}`)
+              .join(", ") || "(none)"
+          }`
         : "no evidence set",
     })
   }
@@ -286,7 +328,13 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
     const b1 = r1.beliefs[0]
     const before = b1 ? snapshot(b1) : undefined
     // same (subject, relation), DIFFERENT object → contradiction
-    const r2 = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "none" }, "fs.read")
+    const r2 = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "none" },
+      "fs.read",
+    )
     const docClaim = r2.claims[0]
     const ev2 = docClaim ? (await stores.evidence.forClaim(docClaim.id))[0] : undefined
     const b1After = b1 ? await stores.beliefs.get(b1.id) : undefined
@@ -308,7 +356,10 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
     checks.push({
       name: `[${label}] D (AC#4): prior belief not mutated by the contradiction`,
       pass: !!before && !!b1After && snapshot(b1After) === before,
-      detail: before && b1After && snapshot(b1After) === before ? "prior belief unchanged" : "prior belief changed",
+      detail:
+        before && b1After && snapshot(b1After) === before
+          ? "prior belief unchanged"
+          : "prior belief changed",
     })
   }
 
@@ -316,8 +367,20 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
   {
     const s = sc("nopred")
     // A predicated peer that WOULD match, plus a no-predicate prior belief.
-    await ingest(core, s, OBS_SCHEMA, { subject: "/pay", relation: "needs", object: "key" }, "probe.obs")
-    const rN = await ingest(core, s, NOPRED_SCHEMA, { note: "a claim with no predicate" }, "probe.obs")
+    await ingest(
+      core,
+      s,
+      OBS_SCHEMA,
+      { subject: "/pay", relation: "needs", object: "key" },
+      "probe.obs",
+    )
+    const rN = await ingest(
+      core,
+      s,
+      NOPRED_SCHEMA,
+      { note: "a claim with no predicate" },
+      "probe.obs",
+    )
     const nClaim = rN.claims[0]
     const evN = nClaim ? (await stores.evidence.forClaim(nClaim.id))[0] : undefined
 
@@ -332,13 +395,21 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
     // (b) a PRIOR belief whose claim has no predicate is excluded as a peer:
     //     a new predicated claim matching the predicated peer sees exactly 1
     //     cross item (the peer), not the no-predicate belief.
-    const rD = await ingest(core, s, DOC_SCHEMA, { path: "/pay.md", subject: "/pay", relation: "needs", object: "key" }, "fs.read")
+    const rD = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/pay.md", subject: "/pay", relation: "needs", object: "key" },
+      "fs.read",
+    )
     const dBelief = rD.beliefs[0]
     const evD = dBelief ? (await stores.evidence.forClaim(dBelief.claim_id))[0] : undefined
     checks.push({
       name: `[${label}] E(b): a prior no-predicate belief is excluded as a join peer`,
       pass: !!evD && crossItemsOf(evD.items).length === 1,
-      detail: evD ? `cross-belief items=${crossItemsOf(evD.items).length} (expected 1: the predicated peer only)` : "no evidence set",
+      detail: evD
+        ? `cross-belief items=${crossItemsOf(evD.items).length} (expected 1: the predicated peer only)`
+        : "no evidence set",
     })
   }
 
@@ -349,8 +420,16 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
       id: crypto.randomUUID(),
       schema: OBS_SCHEMA,
       payload: { subject: "/x", relation: "is", object: "y" },
-      source: { tool: "probe.obs", invocation_id: crypto.randomUUID(), captured_at: new Date().toISOString() },
-      context: { session_id: `sess-${s.identifier}`, project_id: s.identifier, actor_id: "probe-actor" },
+      source: {
+        tool: "probe.obs",
+        invocation_id: crypto.randomUUID(),
+        captured_at: new Date().toISOString(),
+      },
+      context: {
+        session_id: `sess-${s.identifier}`,
+        project_id: s.identifier,
+        actor_id: "probe-actor",
+      },
       trust: "validated",
       sensitivity: "internal",
     }
@@ -433,7 +512,11 @@ async function main(): Promise<{ passed: boolean; checks: Check[]; notes: string
     await pg.ensureSchema()
     try {
       checks.push(
-        ...(await runSuite({ claims: pg.claims, beliefs: pg.beliefs, evidence: pg.evidence }, "postgres", runId)),
+        ...(await runSuite(
+          { claims: pg.claims, beliefs: pg.beliefs, evidence: pg.evidence },
+          "postgres",
+          runId,
+        )),
       )
       notes.push("Postgres store-parity leg ran against LODESTAR_TEST_DATABASE_URL.")
     } finally {
