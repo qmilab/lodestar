@@ -362,3 +362,15 @@ The options we rejected, each with a one-line reason.
   type-only and erased. A module-graph test (`channel.test.ts`) enforces the subset,
   names any offender, and can't pass vacuously. The `.` barrel is unchanged (the
   subpath is the alternative, not a move). **Status: Accepted.**
+- [ADR-0031](0031-belief-lesson-mapping-and-harvest-projection.md) — Beliefs map to
+  durable **lessons**, not current world-state (#154, epic — cognitive-core belief
+  enrichment). The `WorldModel` stays the current-state store; the belief machinery
+  (evidence, `truth_status`, **supersession `superseded_by`**, calibration) is the
+  lesson substrate, so a durable-memory consumer harvests the **belief** stream, not a
+  KV. Adds a read-side **harvest projection** in `@qmilab/lodestar-trace` — a pure
+  projection over `EventEnvelope[]` surfacing end-of-run **supported** + **superseded-
+  with-history** beliefs (with evidence + provenance) as **review-ready memory
+  candidates**, mirroring the `pendingApprovals` graduation, **advisory / human-review
+  gated, never auto-promoted**. No `packages/core` schema change, no new event (a read,
+  not new state). Ships independently of epic children A (linker join) / B (reflection
+  derive rule). **Status: Accepted.**
