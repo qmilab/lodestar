@@ -374,3 +374,17 @@ The options we rejected, each with a one-line reason.
   gated, never auto-promoted**. No `packages/core` schema change, no new event (a read,
   not new state). Ships independently of epic children A (linker join) / B (reflection
   derive rule). **Status: Accepted.**
+- [ADR-0032](0032-evidence-linker-cross-belief-join.md) — Evidence-linker cross-belief
+  join (#157, epic #154 child A): fill the `evidence-linker.ts:61-76` placeholder so a
+  new claim is **corroborated** / **contradicted** by prior beliefs. Walk
+  `belief.claim_id → ClaimStore` for the prior predicate and read the prior belief's
+  `EvidenceSet` (already-held `EvidenceStore`) so the cross-belief item **inherits** the
+  corroborator's strongest quality + `independence_group` — making every AC fall out with
+  **no `aggregateStrength` change and no gate change** (two `external_document` beliefs
+  stay blocked; a stronger independent source flips `unverified → supported`; a same-source
+  re-read dedups). Shared `predicateKey` extracted from `retrieval.ts`; the join lives in a
+  `protected crossBeliefItems()` all four linker bodies call (the three -aware subclasses
+  **override** `linkForClaim`, strict-insert `EvidenceStore.put`). **AC#1 reframed** from the (unsatisfiable, because
+  normalized) "higher `aggregateStrength`" to the **promotion-outcome flip**; the
+  corroboration-aware *scalar* is deferred to #158. Linker stays pure (prior belief never
+  transitioned — that is reflection's job, child B). **Status: Accepted.**
