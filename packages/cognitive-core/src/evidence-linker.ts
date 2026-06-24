@@ -56,21 +56,30 @@ const QUALITY_RANK: EvidenceItem["quality"][] = [
  *   - `retrieval_status` is `restricted` or `normal` — the two in-play states.
  *     This **excludes** `blocked` (a sentinel/policy hard-demote), `hidden`, and
  *     `privileged_only`, so an explicitly-suppressed or access-restricted belief
- *     can't launder its evidence into a freshly-adopted (planner-retrievable) one.
+ *     can't launder its evidence into a freshly-adopted (planner-retrievable) one;
+ *   - confidence `≥ 0.5`, OR `user_asserted` / `policy_asserted` authority — the
+ *     same uncertainty gate retrieval applies: an uncertain belief does not lend,
+ *     but a human/policy assertion does even when its confidence is low.
  * `unverified` peers ARE kept (two `external_document` beliefs corroborate each
- * other without promoting — the Parallax case); `stale` is kept (aging, not
- * invalid). `restricted` must stay eligible — it is the default adopted state,
- * so gating it out would exclude every freshly-adopted peer. The retrieval check
- * is an allowlist (fail-closed: a future retrieval state is excluded until
- * reviewed), matching the firewall's bias-to-stricter posture.
+ * other without promoting — the Parallax case; they carry high confidence ≈ 0.95,
+ * not uncertainty); `stale` is kept (aging, not invalid). `restricted` must stay
+ * eligible — it is the default adopted state, so gating it out would exclude every
+ * freshly-adopted peer. The retrieval check is an allowlist (fail-closed: a future
+ * retrieval state is excluded until reviewed), matching the firewall's
+ * bias-to-stricter posture. Together these mirror the full candidate filter
+ * `GatedRetrieval` applies (scope + sensitivity are gated at the `beliefs.list`
+ * call in {@link EvidenceLinker.crossBeliefItems}).
  */
 function isEligibleJoinPeer(belief: Belief): boolean {
+  const isAssertedAuthority =
+    belief.authority === "user_asserted" || belief.authority === "policy_asserted"
   return (
     belief.security_status === "clean" &&
     belief.truth_status !== "contradicted" &&
     belief.truth_status !== "superseded" &&
     belief.freshness_status !== "expired" &&
-    (belief.retrieval_status === "restricted" || belief.retrieval_status === "normal")
+    (belief.retrieval_status === "restricted" || belief.retrieval_status === "normal") &&
+    (belief.confidence >= 0.5 || isAssertedAuthority)
   )
 }
 

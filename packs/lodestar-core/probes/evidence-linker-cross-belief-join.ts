@@ -52,8 +52,10 @@ import {
 } from "@qmilab/lodestar-cognitive-core"
 import type {
   Belief,
+  BeliefAuthority,
   Claim,
   EvidenceItem,
+  EvidenceSet,
   Observation,
   ResourceScope,
   Sensitivity,
@@ -619,6 +621,97 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
       name: `[${label}] I (review P1b): a higher-sensitivity (secret) peer lends NO evidence to a lower-sensitivity (internal) claim`,
       pass: !!evInt && crossItemsOf(evInt.items).length === 0,
       detail: evInt ? `cross-belief items=${crossItemsOf(evInt.items).length}` : "no evidence set",
+    })
+  }
+
+  // ── Scenario J (#157 review): the join mirrors retrieval's uncertainty gate ──
+  //    An uncertain peer (confidence < 0.5) does NOT lend — unless it carries
+  //    user/policy authority, which retrieval surfaces even when uncertain.
+  const JPRED = { subject: "/conf", relation: "is", object: "v" }
+  // Seed a peer belief directly so confidence is controllable (ingest always
+  // adopts at ~0.95). Its claim + a direct_observation evidence set are seeded
+  // too, so the only thing keeping it from lending is the uncertainty gate.
+  async function seedPeer(s: ResourceScope, confidence: number, authority: BeliefAuthority) {
+    const claim: Claim = {
+      id: crypto.randomUUID(),
+      statement: "seeded peer claim",
+      structured_predicate: JPRED,
+      source_observation_ids: [crypto.randomUUID()],
+      extraction_method: "llm",
+      extracted_by: "probe-actor",
+      status: "extracted",
+      scope: s,
+      sensitivity: "internal",
+      authors: ["probe-actor"],
+      created_at: new Date().toISOString(),
+    }
+    await stores.claims.put(claim)
+    const ev: EvidenceSet = {
+      id: crypto.randomUUID(),
+      claim_id: claim.id,
+      items: [
+        {
+          source_id: crypto.randomUUID(),
+          relation: "supports",
+          quality: "direct_observation",
+          independence_group: "obs:seed",
+          freshness: "fresh",
+        },
+      ],
+      assessed_by: "probe-actor",
+      assessed_at: new Date().toISOString(),
+    }
+    await stores.evidence.put(ev)
+    const belief: Belief = {
+      id: crypto.randomUUID(),
+      claim_id: claim.id,
+      confidence,
+      calibration_class: "probe",
+      scope: s,
+      sensitivity: "internal",
+      authority,
+      truth_status: "unverified",
+      retrieval_status: "restricted",
+      security_status: "clean",
+      freshness_status: "fresh",
+      observed_at: new Date().toISOString(),
+    }
+    await stores.beliefs.put(belief)
+  }
+  async function crossItemsAgainstSeed(name: string): Promise<number> {
+    const rDoc = await ingest(core, sc(name), DOC_SCHEMA, { path: "/conf.md", ...JPRED }, "fs.read")
+    const ev = rDoc.claims[0] ? (await stores.evidence.forClaim(rDoc.claims[0].id))[0] : undefined
+    return ev ? crossItemsOf(ev.items).length : -1
+  }
+  {
+    // J1: an uncertain (confidence 0.3) observed peer must NOT lend.
+    const sU = sc("uncertain")
+    await seedPeer(sU, 0.3, "observed")
+    const j1 = await crossItemsAgainstSeed("uncertain")
+    checks.push({
+      name: `[${label}] J1: an uncertain (confidence < 0.5) peer lends NO cross-belief evidence`,
+      pass: j1 === 0,
+      detail: `cross-belief items=${j1}`,
+    })
+
+    // J2 (control): a confident (0.6) peer with the same seed DOES lend.
+    const sCon = sc("confident")
+    await seedPeer(sCon, 0.6, "observed")
+    const j2 = await crossItemsAgainstSeed("confident")
+    checks.push({
+      name: `[${label}] J2 (control): a confident (≥ 0.5) peer lends one cross-belief item`,
+      pass: j2 === 1,
+      detail: `cross-belief items=${j2}`,
+    })
+
+    // J3: an uncertain but `user_asserted` peer DOES lend (authority overrides).
+    const sAss = sc("asserted-uncertain")
+    await seedPeer(sAss, 0.3, "user_asserted")
+    const j3 = await crossItemsAgainstSeed("asserted-uncertain")
+    checks.push({
+      name: `[${label}] J3: an uncertain but user_asserted peer still lends (authority overrides uncertainty)`,
+      pass: j3 === 1,
+      detail: `cross-belief items=${j3}`,
     })
   }
 
