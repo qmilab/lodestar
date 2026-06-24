@@ -128,11 +128,13 @@ export class EvidenceLinker implements EvidenceLinkerLike {
   /**
    * Cross-belief join (#157, ADR-0032).
    *
-   * For a claim with a `structured_predicate`, walk the prior beliefs in
-   * the same scope back to their claims (`belief.claim_id → ClaimStore`),
-   * skip any the firewall has invalidated or isolated (see
-   * {@link isEligibleJoinPeer}), and emit a cross-belief evidence item for
-   * every remaining belief whose claim shares this claim's `(subject, relation)`:
+   * For a claim with a `structured_predicate`, walk the prior beliefs in the
+   * same scope and **at or below the claim's sensitivity ceiling** (the same
+   * `max_sensitivity` gate `GatedRetrieval` applies) back to their claims
+   * (`belief.claim_id → ClaimStore`), skip any the firewall has invalidated or
+   * isolated (see {@link isEligibleJoinPeer}), and emit a cross-belief evidence
+   * item for every remaining belief whose claim shares this claim's
+   * `(subject, relation)`:
    *   - same `object`      → `supports`  (independent corroboration)
    *   - different `object`  → `contradicts`
    *
@@ -163,7 +165,15 @@ export class EvidenceLinker implements EvidenceLinkerLike {
     const newObject = stableStringify(pred.object)
     const items: EvidenceItem[] = []
 
-    const candidates = await this.beliefs.list({ scope: claim.scope })
+    // Constrain peers to the new claim's sensitivity ceiling — the same gate
+    // `GatedRetrieval` applies — so a higher-sensitivity (e.g. `secret`) belief
+    // cannot lend support or contradiction to a lower-sensitivity claim and
+    // thereby promote, block, or otherwise signal protected state through it
+    // (#157 review).
+    const candidates = await this.beliefs.list({
+      scope: claim.scope,
+      max_sensitivity: claim.sensitivity,
+    })
     for (const belief of candidates) {
       if (belief.claim_id === claim.id) continue // never join a claim against itself
       if (!isEligibleJoinPeer(belief)) continue // exclude firewall-invalidated / isolated beliefs

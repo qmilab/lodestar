@@ -50,7 +50,14 @@ import {
   lookupExtractor,
   registerExtractor,
 } from "@qmilab/lodestar-cognitive-core"
-import type { Belief, Claim, EvidenceItem, Observation, ResourceScope } from "@qmilab/lodestar-core"
+import type {
+  Belief,
+  Claim,
+  EvidenceItem,
+  Observation,
+  ResourceScope,
+  Sensitivity,
+} from "@qmilab/lodestar-core"
 import { registry } from "@qmilab/lodestar-core"
 import {
   type BeliefStore,
@@ -172,6 +179,7 @@ async function ingest(
   schema: string,
   payload: Record<string, unknown>,
   tool: string,
+  sensitivity: Sensitivity = "internal",
 ) {
   const observation: Observation = {
     id: crypto.randomUUID(),
@@ -184,7 +192,7 @@ async function ingest(
       actor_id: "probe-actor",
     },
     trust: "validated",
-    sensitivity: "internal",
+    sensitivity,
   }
   return core.ingest({
     observation,
@@ -193,7 +201,7 @@ async function ingest(
       project_id: sc.identifier,
       session_id: `sess-${sc.identifier}`,
       default_scope: sc,
-      default_sensitivity: "internal",
+      default_sensitivity: sensitivity,
     },
   })
 }
@@ -565,6 +573,52 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
       name: `[${label}] G5: a 'privileged_only' peer lends NO cross-belief evidence`,
       pass: privCross === 0,
       detail: `cross-belief items=${privCross}`,
+    })
+  }
+
+  // ── Scenario I (#157 review P1b): the join honours the sensitivity ceiling ──
+  //    A higher-sensitivity peer must not lend support/contradiction to a
+  //    lower-sensitivity claim (the same `max_sensitivity` gate retrieval uses).
+  const IPRED = { subject: "/api", relation: "needs", object: "tok" }
+  {
+    // I-control: an `internal` peer DOES lend to an `internal` claim.
+    const sOk = sc("sensitivity-equal")
+    await ingest(core, sOk, OBS_SCHEMA, IPRED, "probe.obs", "internal")
+    const rOk = await ingest(
+      core,
+      sOk,
+      DOC_SCHEMA,
+      { path: "/api.md", ...IPRED },
+      "fs.read",
+      "internal",
+    )
+    const evOk = rOk.beliefs[0]
+      ? (await stores.evidence.forClaim(rOk.beliefs[0].claim_id))[0]
+      : undefined
+    checks.push({
+      name: `[${label}] I-control: a same-sensitivity peer lends one cross-belief item`,
+      pass: !!evOk && crossItemsOf(evOk.items).length === 1,
+      detail: evOk ? `cross-belief items=${crossItemsOf(evOk.items).length}` : "no evidence set",
+    })
+
+    // I-ceiling: a `secret` peer must NOT lend to an `internal` claim.
+    const sCeil = sc("sensitivity-ceiling")
+    await ingest(core, sCeil, OBS_SCHEMA, IPRED, "probe.obs", "secret")
+    const rInt = await ingest(
+      core,
+      sCeil,
+      DOC_SCHEMA,
+      { path: "/api.md", ...IPRED },
+      "fs.read",
+      "internal",
+    )
+    const evInt = rInt.claims[0]
+      ? (await stores.evidence.forClaim(rInt.claims[0].id))[0]
+      : undefined
+    checks.push({
+      name: `[${label}] I (review P1b): a higher-sensitivity (secret) peer lends NO evidence to a lower-sensitivity (internal) claim`,
+      pass: !!evInt && crossItemsOf(evInt.items).length === 0,
+      detail: evInt ? `cross-belief items=${crossItemsOf(evInt.items).length}` : "no evidence set",
     })
   }
 
