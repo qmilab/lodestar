@@ -46,6 +46,7 @@ import {
   EvidenceLinker,
   ExplanationGenerator,
   InMemoryWorldModel,
+  type WorldModel,
   lookupExtractor,
   registerExtractor,
 } from "@qmilab/lodestar-cognitive-core"
@@ -142,6 +143,7 @@ interface Stores {
 interface Suite {
   core: CognitiveCore
   baseLinker: EvidenceLinker
+  worldModel: WorldModel
   stores: Stores
 }
 
@@ -157,7 +159,7 @@ function buildSuite(stores: Stores): Suite {
   const explanations = new ExplanationGenerator("probe-actor")
   const core = new CognitiveCore(firewall, linker, explanations, worldModel)
   const baseLinker = new EvidenceLinker(stores.evidence, stores.beliefs, stores.claims)
-  return { core, baseLinker, stores }
+  return { core, baseLinker, worldModel, stores }
 }
 
 function scope(id: string): ResourceScope {
@@ -211,7 +213,7 @@ function distinctGroups(items: EvidenceItem[]): number {
 const PREDICATE = { subject: "/charge", relation: "requires" } as const
 
 async function runSuite(stores: Stores, label: string, runId: string): Promise<Check[]> {
-  const { core, baseLinker } = buildSuite(stores)
+  const { core, baseLinker, worldModel } = buildSuite(stores)
   const checks: Check[] = []
   const sc = (name: string) => scope(`${name}-${label}-${runId}`)
 
@@ -360,6 +362,14 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
         before && b1After && snapshot(b1After) === before
           ? "prior belief unchanged"
           : "prior belief changed",
+    })
+    // #157 review (P2#1): the rejected, net-contradicted claim must NOT overwrite
+    // the world model — observed state stays at the held value ("auth"), not "none".
+    const wm = await worldModel.get(`${PREDICATE.subject}.${PREDICATE.relation}`, s)
+    checks.push({
+      name: `[${label}] D (review P2#1): a net-contradicted claim does not overwrite the world model`,
+      pass: wm?.value === "auth",
+      detail: `world model ${PREDICATE.subject}.${PREDICATE.relation} = ${JSON.stringify(wm?.value)} (expected "auth")`,
     })
   }
 
@@ -521,6 +531,40 @@ async function runSuite(stores: Stores, label: string, runId: string): Promise<C
       name: `[${label}] G2: a contradicted peer lends NO cross-belief evidence`,
       pass: !!evC && crossItemsOf(evC.items).length === 0,
       detail: evC ? `cross-belief items=${crossItemsOf(evC.items).length}` : "no evidence set",
+    })
+
+    // G4 + G5 (#157 review P2#2): a hard-demoted / access-restricted peer
+    // (retrieval_status `blocked` / `privileged_only`) must not lend either —
+    // only `restricted` / `normal` are eligible.
+    async function retrievalDemotedCrossItems(name: string, toValue: string): Promise<number> {
+      const sR = sc(name)
+      const rP = await ingest(core, sR, OBS_SCHEMA, GPRED, "probe.obs")
+      const pR = rP.beliefs[0]
+      if (pR) {
+        await stores.beliefs.transition({
+          belief_id: pR.id,
+          axis: "retrieval_status",
+          from_value: "restricted",
+          to_value: toValue,
+          by_actor_id: "probe-actor",
+          rationale_id: crypto.randomUUID(),
+        })
+      }
+      const rDoc = await ingest(core, sR, DOC_SCHEMA, { path: "/lock.md", ...GPRED }, "fs.read")
+      const ev = rDoc.claims[0] ? (await stores.evidence.forClaim(rDoc.claims[0].id))[0] : undefined
+      return ev ? crossItemsOf(ev.items).length : -1
+    }
+    const blockedCross = await retrievalDemotedCrossItems("lifecycle-blocked", "blocked")
+    checks.push({
+      name: `[${label}] G4: a 'blocked' (hard-demoted) peer lends NO cross-belief evidence`,
+      pass: blockedCross === 0,
+      detail: `cross-belief items=${blockedCross}`,
+    })
+    const privCross = await retrievalDemotedCrossItems("lifecycle-privileged", "privileged_only")
+    checks.push({
+      name: `[${label}] G5: a 'privileged_only' peer lends NO cross-belief evidence`,
+      pass: privCross === 0,
+      detail: `cross-belief items=${privCross}`,
     })
   }
 

@@ -82,6 +82,11 @@ export class CognitiveCore {
 
     // 4-5. Build evidence and propose belief adoption
     const beliefsAdopted: Belief[] = []
+    // Claims whose evidence nets positive — the only ones that may update the
+    // world model (step 6). A claim the cross-belief join nets NEGATIVE (it
+    // contradicts a held belief) is refused as a belief here; it must not then
+    // silently overwrite observed state with the losing value (#157 review).
+    const worldModelEligibleClaimIds = new Set<string>()
     for (const claim of claimsAccepted) {
       const evidence = await this.evidenceLinker.linkForClaim({
         claim,
@@ -90,7 +95,8 @@ export class CognitiveCore {
       })
 
       const strength = aggregateStrength(evidence)
-      if (strength <= 0) continue // no evidence to adopt on; claim stays at 'extracted'
+      if (strength <= 0) continue // no (or net-contradicting) evidence: stays 'extracted'
+      worldModelEligibleClaimIds.add(claim.id)
 
       // Strong evidence (>= 0.7) earns an immediate 'supported' adoption
       // under the 'auto_observation' transition authority. Weaker evidence
@@ -169,6 +175,11 @@ export class CognitiveCore {
     const worldModelUpdates: string[] = []
     for (const claim of claimsAccepted) {
       if (!claim.structured_predicate) continue
+      // Skip claims whose evidence did not net positive — in particular a claim
+      // the cross-belief join found to contradict a held belief, which we
+      // already refused to adopt above. Propagating its value would let a
+      // rejected claim overwrite observed state (#157 review).
+      if (!worldModelEligibleClaimIds.has(claim.id)) continue
       const key = `${claim.structured_predicate.subject}.${claim.structured_predicate.relation}`
       await this.worldModel.set({
         key,

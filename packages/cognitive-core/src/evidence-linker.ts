@@ -52,18 +52,25 @@ const QUALITY_RANK: EvidenceItem["quality"][] = [
  * leaking through a side channel. So a peer is eligible only if it is:
  *   - `security_status: "clean"` — never `suspicious` / `quarantined` / `malicious`;
  *   - not `contradicted` / `superseded` — an invalidated belief lends nothing;
- *   - not `freshness_status: "expired"` — a dead belief lends nothing.
+ *   - not `freshness_status: "expired"` — a dead belief lends nothing;
+ *   - `retrieval_status` is `restricted` or `normal` — the two in-play states.
+ *     This **excludes** `blocked` (a sentinel/policy hard-demote), `hidden`, and
+ *     `privileged_only`, so an explicitly-suppressed or access-restricted belief
+ *     can't launder its evidence into a freshly-adopted (planner-retrievable) one.
  * `unverified` peers ARE kept (two `external_document` beliefs corroborate each
  * other without promoting — the Parallax case); `stale` is kept (aging, not
- * invalid); `retrieval_status` is NOT gated (`restricted` is the default
- * adopted state, so gating it would exclude every freshly-adopted peer).
+ * invalid). `restricted` must stay eligible — it is the default adopted state,
+ * so gating it out would exclude every freshly-adopted peer. The retrieval check
+ * is an allowlist (fail-closed: a future retrieval state is excluded until
+ * reviewed), matching the firewall's bias-to-stricter posture.
  */
 function isEligibleJoinPeer(belief: Belief): boolean {
   return (
     belief.security_status === "clean" &&
     belief.truth_status !== "contradicted" &&
     belief.truth_status !== "superseded" &&
-    belief.freshness_status !== "expired"
+    belief.freshness_status !== "expired" &&
+    (belief.retrieval_status === "restricted" || belief.retrieval_status === "normal")
   )
 }
 
