@@ -47,6 +47,7 @@ nav:
   - Use cases: use-cases.md
   - Concepts:
       - The epistemic chain: concepts/epistemic-chain.md
+      - The Cognitive Core: concepts/cognitive-core.md
       - Reading isn't believing: concepts/reading-isnt-believing.md
       - The memory firewall: concepts/memory-firewall.md
       - The trust ladder: concepts/trust-ladder.md
