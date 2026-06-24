@@ -255,8 +255,8 @@ async function runHost(armed: boolean, logRoot: string): Promise<RunCapture> {
       approval_resolver: grantingResolver,
       ...(compiled.arbiter ? { arbiter: compiled.arbiter } : {}),
       cognitive: {
-        evidenceLinkerFactory: ({ evidence, beliefs }) =>
-          new DocAwareEvidenceLinker(evidence, beliefs),
+        evidenceLinkerFactory: ({ evidence, beliefs, claims }) =>
+          new DocAwareEvidenceLinker(evidence, beliefs, claims),
       },
     },
   )

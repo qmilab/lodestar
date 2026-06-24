@@ -231,7 +231,8 @@ const { result, session_id } = await run({
   precondition_checker: alwaysHoldsChecker,
   // The seam: attach document-aware evidence linking for this session.
   cognitive: {
-    evidenceLinkerFactory: ({ evidence, beliefs }) => new DocAwareEvidenceLinker(evidence, beliefs),
+    evidenceLinkerFactory: ({ evidence, beliefs, claims }) =>
+      new DocAwareEvidenceLinker(evidence, beliefs, claims),
   },
 })
 

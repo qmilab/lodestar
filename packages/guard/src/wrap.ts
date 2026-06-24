@@ -340,8 +340,8 @@ export async function runGuarded<T>(
   // receives this session's stores so the linker persists into the same
   // evidence store the firewall reads. Defaults to the built-in linker.
   const linker = config.cognitive?.evidenceLinkerFactory
-    ? config.cognitive.evidenceLinkerFactory({ evidence, beliefs })
-    : new EvidenceLinker(evidence, beliefs)
+    ? config.cognitive.evidenceLinkerFactory({ evidence, beliefs, claims })
+    : new EvidenceLinker(evidence, beliefs, claims)
   const explanations = new ExplanationGenerator(config.actor_id)
   const cognitive = new CognitiveCore(firewall, linker, explanations, worldModel)
 

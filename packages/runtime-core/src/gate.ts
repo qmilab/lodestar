@@ -357,7 +357,7 @@ export class RuntimeGate {
         ...(causal_parent_ids ? { causal_parent_ids } : {}),
       })
     })
-    const linker = new RuntimeAwareEvidenceLinker(evidence, beliefs)
+    const linker = new RuntimeAwareEvidenceLinker(evidence, beliefs, claims)
     const explanations = new ExplanationGenerator(this.config.actor_id)
     this.cognitive = new CognitiveCore(this.firewall, linker, explanations, worldModel)
     this.kernel = new ActionKernel(

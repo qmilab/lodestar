@@ -128,6 +128,7 @@ export interface GuardConfig {
     evidenceLinkerFactory?: (deps: {
       evidence: EvidenceStore
       beliefs: BeliefStore
+      claims: ClaimStore
     }) => EvidenceLinkerLike
   }
 

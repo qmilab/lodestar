@@ -1,5 +1,5 @@
 import type { EvidenceItem, EvidenceSet, Observation } from "@qmilab/lodestar-core"
-import type { BeliefStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
+import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 import { EvidenceLinker, type LinkForClaimInput } from "./evidence-linker.js"
 
 /** An observation is "documentation" if its schema is in this namespace. */
@@ -41,8 +41,9 @@ export class DocAwareEvidenceLinker extends EvidenceLinker {
   constructor(
     private readonly evidenceStore: EvidenceStore,
     beliefs: BeliefStore,
+    claims: ClaimStore,
   ) {
-    super(evidenceStore, beliefs)
+    super(evidenceStore, beliefs, claims)
   }
 
   override async linkForClaim(input: LinkForClaimInput): Promise<EvidenceSet> {
@@ -74,6 +75,10 @@ export class DocAwareEvidenceLinker extends EvidenceLinker {
         notes: isDoc && path ? `from ${path}` : `from ${obs.schema}`,
       }
     })
+
+    // Same cross-belief join the base linker runs (#157): corroboration /
+    // contradiction from prior beliefs sharing this claim's (subject, relation).
+    items.push(...(await this.crossBeliefItems(input.claim)))
 
     const evidenceSet: EvidenceSet = {
       id: crypto.randomUUID(),

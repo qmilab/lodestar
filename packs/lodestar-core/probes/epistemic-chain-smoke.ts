@@ -55,7 +55,7 @@ async function run(): Promise<ProbeResult> {
   const evidence = new InMemoryEvidenceStore()
   const worldModel = new InMemoryWorldModel()
   const firewall = new MemoryFirewall(claims, beliefs, evidence, async () => {})
-  const linker = new EvidenceLinker(evidence, beliefs)
+  const linker = new EvidenceLinker(evidence, beliefs, claims)
   const explanations = new ExplanationGenerator("probe-actor")
 
   const core = new CognitiveCore(firewall, linker, explanations, worldModel)

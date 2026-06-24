@@ -289,6 +289,10 @@
       "file": "probes/autogen-tool-calls-are-governed.ts"
     },
     {
+      "name": "evidence-linker-cross-belief-join",
+      "file": "probes/evidence-linker-cross-belief-join.ts"
+    },
+    {
       "name": "public-api-surface",
       "file": "probes/public-api-surface.ts"
     }
