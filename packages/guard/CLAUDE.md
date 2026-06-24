@@ -77,6 +77,20 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   `fetch` returns the existing guard-owned `ApprovalResolution`, `announce` carries
   the core `ApprovalRequest`, and the channel config is host config (guard), not a
   core wire primitive.
+- `src/channel.ts` — the re-export-only barrel behind the **writer-free**
+  `@qmilab/lodestar-guard/approval-channel` subpath (ADR-0030). `export *`s from both
+  `./approval-channel.js` (the transport seam) and `./approvals-channel.js` (the
+  signed-resolution reader) so an UNTRUSTED transport consumer (an external
+  integrator, a relay / read-side consumer, an integration test) imports the channel
+  client + reader WITHOUT evaluating the `.` barrel — which re-exports `wrap()` and
+  so drags the write-side runtime (action-kernel, memory-firewall, cognitive-core,
+  harness). The subpath's transitive runtime graph is `{ @qmilab/lodestar-core, zod,
+  node:* }`; the lone action-kernel edge is type-only and erased. **Invariant
+  (enforced by `src/channel.test.ts`):** never add a runtime import to `channel.ts`'s
+  graph that reaches the write side, and never turn the type-only `ApprovalOutcome`
+  import in `approvals-channel.ts` into a runtime one — the test statically walks the
+  graph and fails, naming the offender. The `.` barrel still re-exports the same
+  channel symbols (the subpath is the alternative, not a move).
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is

@@ -350,3 +350,15 @@ The options we rejected, each with a one-line reason.
   integrators read the firewall through the events, not the store, keeping the
   ledger's pure-projection promise true for it. Pinned in `public-api-surface`.
   **Status: Accepted.**
+- [ADR-0030](0030-guard-approval-channel-writer-free-subpath.md) — A writer-free
+  `@qmilab/lodestar-guard/approval-channel` subpath (#152, a child of epic #140).
+  The `.` barrel re-exports `wrap()` next to the channel symbols, so any import
+  drags the write-side runtime (action-kernel, memory-firewall, cognitive-core,
+  harness) — wrong for an UNTRUSTED transport's audience (ADR-0015). A new
+  re-export-only `src/channel.ts` (`export *` from both the transport seam and the
+  signed-resolution reader) behind a 4-condition subpath export (the
+  `-memory-firewall/postgres` precedent) gives a writer-free import whose transitive
+  runtime graph is `{ -core, zod, node:* }` — the lone action-kernel edge is
+  type-only and erased. A module-graph test (`channel.test.ts`) enforces the subset,
+  names any offender, and can't pass vacuously. The `.` barrel is unchanged (the
+  subpath is the alternative, not a move). **Status: Accepted.**
