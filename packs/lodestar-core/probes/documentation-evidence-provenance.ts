@@ -134,8 +134,8 @@ async function runScenario(useSeam: boolean, logRoot: string): Promise<ScenarioR
     precondition_checker: alwaysHoldsChecker,
     cognitive: useSeam
       ? {
-          evidenceLinkerFactory: ({ evidence, beliefs }) =>
-            new DocAwareEvidenceLinker(evidence, beliefs),
+          evidenceLinkerFactory: ({ evidence, beliefs, claims }) =>
+            new DocAwareEvidenceLinker(evidence, beliefs, claims),
         }
       : undefined,
   })

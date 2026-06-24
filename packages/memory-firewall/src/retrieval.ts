@@ -226,8 +226,14 @@ export class GatedRetrieval {
  * which a delimiter-based `subject + sep + relation` cannot, since the
  * Predicate schema allows the delimiter byte to appear in either
  * component (memory adapters import free-form text).
+ *
+ * Exported as the single source of truth for the (subject, relation)
+ * join: the contradiction-routing path here and the evidence-linker's
+ * cross-belief join (`@qmilab/lodestar-cognitive-core`, #157) both use it
+ * so the two joins cannot drift. Not part of the stable public-API ledger
+ * — an internal-ish primitive shared across the firewall boundary.
  */
-function predicateKey(subject: string, relation: string): string {
+export function predicateKey(subject: string, relation: string): string {
   return JSON.stringify([subject, relation])
 }
 

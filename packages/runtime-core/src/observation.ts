@@ -13,7 +13,7 @@ import {
   type Observation,
   registry,
 } from "@qmilab/lodestar-core"
-import type { BeliefStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
+import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 import { z } from "zod"
 
 /**
@@ -139,8 +139,9 @@ export class RuntimeAwareEvidenceLinker extends EvidenceLinker {
   constructor(
     private readonly evidenceStore: EvidenceStore,
     beliefs: BeliefStore,
+    claims: ClaimStore,
   ) {
-    super(evidenceStore, beliefs)
+    super(evidenceStore, beliefs, claims)
   }
 
   override async linkForClaim(input: {
@@ -168,6 +169,8 @@ export class RuntimeAwareEvidenceLinker extends EvidenceLinker {
       freshness: "fresh",
       notes: `runtime.${relation === RUNTIME_EXTERNAL_DOCUMENT_RELATION ? "external_document" : "tool_invocation"} from ${obs.schema}`,
     }))
+    // Same cross-belief join the base linker runs (#157).
+    items.push(...(await this.crossBeliefItems(input.claim)))
     const evidenceSet: EvidenceSet = {
       id: randomUUID(),
       claim_id: input.claim.id,

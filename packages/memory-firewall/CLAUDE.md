@@ -24,7 +24,7 @@ This package governs the lifecycle of claims and beliefs. It is the gate between
 
    Design choices:
    - **(subject, relation) join, not subject-only.** Contradiction is meaningful when two beliefs assert different objects for the same proposition (`branch.current = main` vs `branch.current = release/foo`). Subject-only would lump unrelated relations together.
-   - **Collision-free composite key.** Encoded as `JSON.stringify([subject, relation])`, not a delimiter-joined string — the Predicate schema allows free-form strings, so a delimiter byte can appear in either component (e.g. via mem0 / Letta / Zep imports of arbitrary user text).
+   - **Collision-free composite key.** Encoded as `JSON.stringify([subject, relation])`, not a delimiter-joined string — the Predicate schema allows free-form strings, so a delimiter byte can appear in either component (e.g. via mem0 / Letta / Zep imports of arbitrary user text). This is the exported `predicateKey` helper, now **shared** with the cognitive-core evidence linker's cross-belief join (#157, ADR-0032) so the two `(subject, relation)` joins cannot drift. It is an internal-ish primitive, deliberately **not** on the stable `public-api-surface` ledger.
    - **Same acceptance gates as `retrieve()`.** Freshness and uncertainty post-filters apply BEFORE predicate keys are extracted from the accepted set, and apply again to contradicted candidates. A stale supported belief that wouldn't actually be in the planner's context cannot drag in contradictions for itself; a stale contradiction cannot surface either.
    - **Claims without `structured_predicate` are excluded.** They cannot be subject-joined; the channel surfaces only what we can prove related.
 

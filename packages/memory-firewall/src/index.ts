@@ -5,6 +5,7 @@ export {
 
 export {
   GatedRetrieval,
+  predicateKey,
   type RetrievalQuery,
   type RetrievalResult,
   type BeliefRejection,

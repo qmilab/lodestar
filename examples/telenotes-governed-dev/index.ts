@@ -130,7 +130,7 @@ const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => 
     ...(causal_parent_ids ? { causal_parent_ids } : {}),
   })
 })
-const linker = new EvidenceLinker(evidence, beliefs)
+const linker = new EvidenceLinker(evidence, beliefs, claims)
 const explanations = new ExplanationGenerator("agent-demo")
 const cognitive = new CognitiveCore(firewall, linker, explanations, worldModel)
 registerBuiltInExtractors()

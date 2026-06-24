@@ -602,7 +602,7 @@ export class MCPProxy {
         ...(causal_parent_ids ? { causal_parent_ids } : {}),
       })
     })
-    const linker = new MCPAwareEvidenceLinker(evidence, beliefs)
+    const linker = new MCPAwareEvidenceLinker(evidence, beliefs, claims)
     const explanations = new ExplanationGenerator(this.config.actor_id)
     this.cognitive = new CognitiveCore(this.firewall, linker, explanations, worldModel)
 
