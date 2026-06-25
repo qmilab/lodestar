@@ -401,3 +401,19 @@ The options we rejected, each with a one-line reason.
   is replayed from `belief.adopted` + `firewall.belief.transitioned`, not snapshot-read. No
   `packages/core` schema change, no new event. Locked by the
   `harvest-projection-surfaces-durable-lessons` probe. **Status: Accepted.**
+- [ADR-0034](0034-reflection-derive-supersession-rule.md) — The reflection DERIVE rule
+  (epic #154 child B, on top of ADR-0032). A third reflection rule that *derives* a
+  contradiction from live belief state — two `supported` beliefs in one scope sharing a
+  claim's `(subject, relation)` but asserting different `object`s — and **proposes** a
+  `belief_supersession` (older `superseded_by` newer). **Propose-only, enforced at the run
+  loop:** `run()` surfaces but never applies it even under `apply: true` (a derived conflict
+  is a human-adjudicated hypothesis); a reviewer drives the existing `markSuperseded` path
+  via `applyProposal`. Supersession-only output (detects contradiction, proposes the
+  actionable resolution — not a raw `contradicted` that would pick a loser). Reuses the
+  evidence-linker's exported `isEligibleJoinPeer` + shared `predicateKey`/`stableStringify`
+  narrowed to `truth_status: supported`; pairs only **equal-sensitivity** beliefs (stricter
+  than the linker's `≤` ceiling — the output names both beliefs to a human, and the higher
+  belief can itself be the window trigger). Single-fire on the later belief's
+  `belief.adopted` event; no authenticity gate needed (reads from the governed store, only
+  proposes). No `packages/core` schema change. Locked by
+  `reflection-derives-supersession-from-conflict`. **Status: Accepted.**

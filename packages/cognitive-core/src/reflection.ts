@@ -1,4 +1,5 @@
 import type {
+  Belief,
   EventEnvelope,
   Explanation,
   ReflectionCompletedPayload,
@@ -9,6 +10,7 @@ import type {
 import {
   REFLECTION_COMPLETED_EVENT_TYPE,
   REFLECTION_COMPLETED_SCHEMA_VERSION,
+  stableStringify,
 } from "@qmilab/lodestar-core"
 import type { EventLogReader } from "@qmilab/lodestar-event-log"
 import type {
@@ -18,6 +20,8 @@ import type {
   LifecycleAxis,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
+import { predicateKey } from "@qmilab/lodestar-memory-firewall"
+import { isEligibleJoinPeer } from "./evidence-linker.js"
 import type { ExplanationGenerator } from "./explanation.js"
 
 /**
@@ -42,7 +46,7 @@ import type { ExplanationGenerator } from "./explanation.js"
  *   `reflection-cannot-promote-to-normal-alone` enforces that
  *   structurally.
  *
- * v0 scope: rule-based. Two rules are implemented:
+ * v0 scope: rule-based. Three rules are implemented:
  *
  *   1. **Contradicted-belief cascade.** A belief that transitioned to
  *      `truth_status: contradicted` is searched against past
@@ -51,7 +55,26 @@ import type { ExplanationGenerator } from "./explanation.js"
  *      a `decision_dependency_flagged` proposal. Applying the proposal
  *      emits a `Revision` event with `target_type: "decision"`.
  *
- *   2. **`no_op` for completeness.** When no other proposal fires for
+ *   2. **Derived supersession (epic #154 child B).** Two `supported`
+ *      beliefs in the same scope that share a claim's
+ *      `structured_predicate.(subject, relation)` but assert different
+ *      `object`s are a *derived contradiction* no sentinel/firewall has
+ *      flagged. Reflection proposes a `belief_supersession` — the older
+ *      belief `superseded_by` the newer (recency is the one signal the
+ *      rule has; the world most often moved). The contradiction is the
+ *      detection condition; supersession is the proposed resolution.
+ *      **Propose-only, never auto-applied:** `run()` surfaces the
+ *      proposal but does NOT apply it even under `apply: true` — a
+ *      derived conflict is a hypothesis a human adjudicates (which
+ *      belief is wrong, or whether the world simply changed). A
+ *      reviewer applies it explicitly via the public `applyProposal`
+ *      (the `markSuperseded` path already exists). The rule reuses the
+ *      evidence-linker's `isEligibleJoinPeer` gate + the shared
+ *      `predicateKey`, so an invalidated / isolated / over-sensitivity
+ *      belief never triggers a spurious supersession. It needs the
+ *      belief + claim stores; a dry-run pass without them is a no-op.
+ *
+ *   3. **`no_op` for completeness.** When no other proposal fires for
  *      a contradicted belief, an explicit `no_op` is emitted so the
  *      audit chain distinguishes "looked and did nothing" from
  *      "did not look."
@@ -153,6 +176,16 @@ export interface RunResult {
 export interface AppliedSummary {
   belief_transitions: number
   belief_supersessions: number
+  /**
+   * Derived-supersession proposals the DERIVE rule (epic #154 child B)
+   * surfaced this pass. These are **propose-only** — counted here but
+   * never auto-applied by `run()` (so `belief_supersessions`, the
+   * *applied* count, does not include them). A reviewer applies one
+   * explicitly via `applyProposal` after adjudicating the conflict.
+   * Reported regardless of the `apply` flag, since the proposals are
+   * surfaced in `payload.proposals` either way.
+   */
+  belief_supersessions_proposed: number
   claim_promotions: number
   decision_flags: number
   no_ops: number
@@ -190,6 +223,7 @@ export class Reflection {
     const emptyApplied: AppliedSummary = {
       belief_transitions: 0,
       belief_supersessions: 0,
+      belief_supersessions_proposed: 0,
       claim_promotions: 0,
       decision_flags: 0,
       no_ops: 0,
@@ -229,6 +263,16 @@ export class Reflection {
     // reading reflection.completed need every causally relevant
     // event_id to reconstruct why each proposal fired.
     for (const id of cascade.additional_observed_event_ids) observedIds.add(id)
+
+    // Rule 2 — derived supersession (epic #154 child B). Reads live
+    // belief + claim state to find two supported beliefs that conflict
+    // on (subject, relation). Its proposals are PROPOSE-ONLY: tracked
+    // here by reference so the apply loop below skips them even under
+    // apply:true (a derived conflict is a human-adjudicated hypothesis).
+    const derived = await this.detectDerivedSupersessions(events, window)
+    proposals.push(...derived.proposals)
+    for (const id of derived.additional_observed_event_ids) observedIds.add(id)
+    const proposeOnly = new Set<ReflectionProposal>(derived.proposals)
     const observed = Array.from(observedIds)
 
     if (proposals.length === 0) {
@@ -275,6 +319,9 @@ export class Reflection {
     const applied: AppliedSummary = {
       belief_transitions: 0,
       belief_supersessions: 0,
+      // Surfaced regardless of the apply flag — the proposals are in
+      // payload.proposals either way; the apply loop never commits them.
+      belief_supersessions_proposed: proposeOnly.size,
       claim_promotions: 0,
       decision_flags: 0,
       no_ops: 0,
@@ -284,6 +331,10 @@ export class Reflection {
 
     if (input.apply !== false) {
       for (const proposal of proposals) {
+        // Derived supersessions are propose-only — never auto-applied,
+        // even under apply:true. A reviewer applies one explicitly via
+        // the public applyProposal() after adjudicating the conflict.
+        if (proposeOnly.has(proposal)) continue
         try {
           const outcome = await this.applyProposal(proposal, reflection_event_id)
           if (outcome === "skipped_no_emitter") {
@@ -400,6 +451,153 @@ export class Reflection {
         proposals.push({
           kind: "no_op",
           subject: { kind: "belief", id: belief_id },
+          rationale_id: rationale.id,
+        })
+      }
+    }
+
+    return { proposals, additional_observed_event_ids: Array.from(additional) }
+  }
+
+  // ── Rule: derived supersession (epic #154 child B) ────────────────────────
+
+  /**
+   * Detect a *derived* contradiction — two `supported` beliefs in the same
+   * scope that share a claim's `structured_predicate.(subject, relation)` but
+   * assert different `object`s — and propose a `belief_supersession` (the older
+   * belief `superseded_by` the newer). Unlike the cascade rule (which reacts to
+   * a `belief.transitioned → contradicted` event the firewall/sentinel already
+   * recorded), this rule *derives* the conflict from live belief state, so a
+   * pure-ingest chain that never tripped a sentinel can still surface a lesson.
+   *
+   * **Firing & idempotence.** A conflict fires once, in the pass whose window
+   * contains the *later* belief's adoption event (`belief.adopted` /
+   * `firewall.belief.adopted`) — mirroring the cascade's "contradiction in the
+   * window" gate. Repeated passes over an unchanged log re-propose nothing
+   * (the adoption event is no longer in the window). A consumer's single
+   * end-of-run pass sees every adoption in one window, so every conflict
+   * surfaces at once.
+   *
+   * **Full gate reuse.** Peers are pulled with the same `scope` +
+   * `max_sensitivity: trigger.sensitivity` ceiling the evidence-linker join and
+   * `GatedRetrieval` apply, then filtered through the **shared**
+   * {@link isEligibleJoinPeer} (clean security, not contradicted/superseded/
+   * expired, retrievable, confident-or-asserted) **narrowed to
+   * `truth_status === "supported"`** — so an invalidated, isolated, hard-demoted,
+   * or over-sensitivity belief never triggers a spurious supersession, and the
+   * `(subject, relation)` key + object comparison are the same `predicateKey` /
+   * `stableStringify` the linker uses (single source, no drift). One step
+   * **stricter** than the linker: peers must be **equal** sensitivity (not just
+   * `≤` the ceiling), because the proposal names both beliefs to a human and the
+   * higher belief can itself be the window trigger — see the inline note.
+   *
+   * **Propose-only.** The returned proposals are surfaced in
+   * `payload.proposals` but `run()` never applies them — a derived conflict is
+   * a hypothesis a human adjudicates (world changed → supersession, or genuine
+   * disagreement → mark one contradicted). The `markSuperseded` apply path
+   * already exists; a reviewer drives it via `applyProposal`.
+   *
+   * Returns no proposals when the belief/claim stores are absent (a dry-run
+   * inspection pass) rather than erroring.
+   */
+  private async detectDerivedSupersessions(
+    history: EventEnvelope[],
+    window: EventEnvelope[],
+  ): Promise<{ proposals: ReflectionProposal[]; additional_observed_event_ids: string[] }> {
+    const beliefs = this.inputs.beliefs
+    const claims = this.inputs.claims
+    if (!beliefs || !claims) return { proposals: [], additional_observed_event_ids: [] }
+
+    // belief_id → its FIRST adoption event id, across the full history.
+    // `history` is seq-sorted (gatherEvents sorts), so first-write-wins is the
+    // lowest-seq adoption. Lets a conflicting peer that predates the window
+    // still appear in observed_event_ids, like collectDecisions.
+    const firstAdoptionIdByBelief = new Map<string, string>()
+    for (const e of history) {
+      const id = extractAdoptedBeliefId(e)
+      if (id && !firstAdoptionIdByBelief.has(id)) firstAdoptionIdByBelief.set(id, e.id)
+    }
+
+    // Trigger beliefs: those whose FIRST adoption event lands in THIS window.
+    // Keying on the *first* (not any) adoption event preserves single-fire when
+    // a host emits BOTH the bare `belief.adopted` and the `firewall.belief.adopted`
+    // twin for one adoption and the two straddle a cursor boundary — the later
+    // twin, arriving in a subsequent window, is NOT a fresh trigger, so the same
+    // supersession is not re-proposed (codex round 2). The cursor advances
+    // monotonically, so a belief's first adoption falls in exactly one window →
+    // exactly one fire. Orienting older→newer below makes the proposal identical
+    // whichever of the pair was the trigger.
+    const windowEventIds = new Set(window.map((e) => e.id))
+    const triggerIds = new Set<string>()
+    for (const [beliefId, eventId] of firstAdoptionIdByBelief) {
+      if (windowEventIds.has(eventId)) triggerIds.add(beliefId)
+    }
+    if (triggerIds.size === 0) return { proposals: [], additional_observed_event_ids: [] }
+
+    const proposals: ReflectionProposal[] = []
+    const additional = new Set<string>()
+    // Dedup by oriented (older, newer) pair so both-in-window conflicts and
+    // a >2-way disagreement do not double-propose the same supersession.
+    const seenPairs = new Set<string>()
+
+    for (const triggerId of triggerIds) {
+      const trigger = await beliefs.get(triggerId)
+      if (!trigger || trigger.truth_status !== "supported" || !isEligibleJoinPeer(trigger)) continue
+      const triggerClaim = await claims.get(trigger.claim_id)
+      const triggerPred = triggerClaim?.structured_predicate
+      if (!triggerPred) continue
+      const key = predicateKey(triggerPred.subject, triggerPred.relation)
+      const triggerObject = stableStringify(triggerPred.object)
+
+      const candidates = await beliefs.list({
+        scope: trigger.scope,
+        max_sensitivity: trigger.sensitivity,
+      })
+      for (const peer of candidates) {
+        if (peer.id === trigger.id) continue
+        if (peer.truth_status !== "supported" || !isEligibleJoinPeer(peer)) continue
+        // Pair only EQUAL-sensitivity beliefs — stricter than the linker's
+        // `≤ ceiling`. The derive rule's output is a human-facing proposal
+        // that NAMES both beliefs (and their objects, via the rationale), so
+        // a cross-compartment pairing would leak in whichever direction the
+        // higher belief sits: a secret peer surfaced under an internal trigger
+        // (`max_sensitivity` already blocks this), AND — because the secret
+        // belief can itself be the trigger — an internal peer surfaced under a
+        // secret trigger (which `max_sensitivity` does NOT block). Equal-only
+        // closes both. The `max_sensitivity` list filter stays as a cheap
+        // pre-cut of strictly-higher peers.
+        if (peer.sensitivity !== trigger.sensitivity) continue
+        const peerClaim = await claims.get(peer.claim_id)
+        const peerPred = peerClaim?.structured_predicate
+        if (!peerPred) continue
+        if (predicateKey(peerPred.subject, peerPred.relation) !== key) continue
+        // Same object → corroboration, not a conflict. Only a DIFFERENT
+        // object for the same (subject, relation) is a derived contradiction.
+        if (stableStringify(peerPred.object) === triggerObject) continue
+
+        const [older, newer] = orderByRecency(trigger, peer)
+        const pairKey = `${older.id}::${newer.id}`
+        if (seenPairs.has(pairKey)) continue
+        seenPairs.add(pairKey)
+
+        const olderEvent = firstAdoptionIdByBelief.get(older.id)
+        if (olderEvent) additional.add(olderEvent)
+        const newerEvent = firstAdoptionIdByBelief.get(newer.id)
+        if (newerEvent) additional.add(newerEvent)
+
+        const rationale = this.inputs.explanations.build({
+          subject_type: "belief_revision",
+          subject_id: older.id,
+          audience: "audit",
+          summary: `Beliefs ${older.id.slice(0, 8)} and ${newer.id.slice(0, 8)} assert different objects for (${triggerPred.subject}, ${triggerPred.relation})`,
+          full_text: `Reflection derived a contradiction: supported belief ${older.id} (observed ${older.observed_at}) and supported belief ${newer.id} (observed ${newer.observed_at}) both describe (${triggerPred.subject}, ${triggerPred.relation}) in the same scope, but assert different objects. The newer belief is proposed as the successor; the older is proposed superseded (superseded_by → the newer). This is a PROPOSAL only — reflection never auto-applies a derived supersession. A reviewer confirms whether the world changed (accept the supersession) or the two genuinely contradict (mark one contradicted instead) before the firewall commits anything.`,
+          claims_used: [older.claim_id, newer.claim_id],
+          evidence_used: [],
+        })
+        proposals.push({
+          kind: "belief_supersession",
+          old_belief_id: older.id,
+          new_belief_id: newer.id,
           rationale_id: rationale.id,
         })
       }
@@ -727,4 +925,49 @@ function extractContradictionTransition(
   if (typeof payload.belief_id !== "string") return null
   if (typeof payload.from_value !== "string") return null
   return { belief_id: payload.belief_id, from_value: payload.from_value }
+}
+
+/**
+ * The belief id named by a belief-adoption event. Two real shapes flow on the
+ * log and the DERIVE rule must read both:
+ *  - the **bare `belief.adopted`** a host emits (guard `runGuarded`, the MCP
+ *    proxy, the runtime gate) carries the **full `Belief` object** as its
+ *    payload, so the belief id is `payload.id`;
+ *  - the **`firewall.belief.adopted`** audit twin (and synthetic probe streams)
+ *    carries `payload.belief_id`.
+ * Reading `belief_id ?? id` accepts either, so the rule fires for a consumer
+ * stream that carries only the bare form (e.g. a host wiring `CognitiveCore`
+ * without the firewall audit twin) as well as a full guard/proxy/runtime log.
+ * Same dual-form tolerance `extractContradictionTransition` applies to
+ * transitions. A mis-read id is harmless: the rule then `beliefs.get(id)`s it
+ * and skips a miss.
+ */
+function extractAdoptedBeliefId(event: EventEnvelope): string | null {
+  if (event.type !== "belief.adopted" && event.type !== "firewall.belief.adopted") return null
+  const payload = event.payload as { belief_id?: unknown; id?: unknown } | undefined
+  if (!payload) return null
+  const id = payload.belief_id ?? payload.id
+  return typeof id === "string" ? id : null
+}
+
+/**
+ * Order two beliefs older → newer for the derived-supersession proposal.
+ * Primary key `observed_at` compared by *instant* (not lexically — a
+ * `TimestampSchema` value may carry a UTC offset that sorts differently as a
+ * string than as a moment), then `last_verified_at`, then belief id so the
+ * order is total and deterministic even when the timestamps tie.
+ */
+function orderByRecency(a: Belief, b: Belief): [Belief, Belief] {
+  const ao = instantOf(a.observed_at)
+  const bo = instantOf(b.observed_at)
+  if (ao !== bo) return ao < bo ? [a, b] : [b, a]
+  const av = a.last_verified_at ? instantOf(a.last_verified_at) : ao
+  const bv = b.last_verified_at ? instantOf(b.last_verified_at) : bo
+  if (av !== bv) return av < bv ? [a, b] : [b, a]
+  return a.id < b.id ? [a, b] : [b, a]
+}
+
+function instantOf(ts: string): number {
+  const t = Date.parse(ts)
+  return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t
 }

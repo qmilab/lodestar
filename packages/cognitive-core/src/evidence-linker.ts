@@ -69,8 +69,15 @@ const QUALITY_RANK: EvidenceItem["quality"][] = [
  * bias-to-stricter posture. Together these mirror the full candidate filter
  * `GatedRetrieval` applies (scope + sensitivity are gated at the `beliefs.list`
  * call in {@link EvidenceLinker.crossBeliefItems}).
+ *
+ * Exported so the reflection DERIVE rule (epic #154 child B) reuses the **same**
+ * peer-eligibility gate it uses here — single source, no drift, the same stance
+ * as the shared `predicateKey`. The DERIVE rule narrows further to
+ * `truth_status === "supported"` (it derives supersession from two supported
+ * beliefs; the linker keeps `unverified` peers for the Parallax corroboration
+ * case, which the derive rule does not).
  */
-function isEligibleJoinPeer(belief: Belief): boolean {
+export function isEligibleJoinPeer(belief: Belief): boolean {
   const isAssertedAuthority =
     belief.authority === "user_asserted" || belief.authority === "policy_asserted"
   return (
