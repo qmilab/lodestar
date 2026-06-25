@@ -193,7 +193,7 @@ export function harvestCandidates(
 
   // Stable, oldest-first review order across all sessions.
   candidates.sort((a, b) => {
-    const byTime = a.belief.observed_at.localeCompare(b.belief.observed_at)
+    const byTime = compareInstant(a.belief.observed_at, b.belief.observed_at)
     return byTime !== 0 ? byTime : a.belief.id.localeCompare(b.belief.id)
   })
   return candidates
@@ -379,10 +379,23 @@ function collectHistory(
     for (const pred of predecessorsOf.get(id) ?? []) queue.push(pred)
   }
   out.sort((a, b) => {
-    const byTime = b.belief.observed_at.localeCompare(a.belief.observed_at)
+    const byTime = compareInstant(b.belief.observed_at, a.belief.observed_at)
     return byTime !== 0 ? byTime : a.belief.id.localeCompare(b.belief.id)
   })
   return out
+}
+
+/**
+ * Order two ISO-8601 timestamps by the **instant** they denote, not lexically —
+ * `TimestampSchema` accepts offset-bearing forms (`…+05:00`) whose string order
+ * differs from their instant order. Falls back to a lexical compare only if a
+ * value is unparseable (never, for schema-valid input).
+ */
+function compareInstant(a: string, b: string): number {
+  const ta = Date.parse(a)
+  const tb = Date.parse(b)
+  if (Number.isNaN(ta) || Number.isNaN(tb)) return a.localeCompare(b)
+  return ta - tb
 }
 
 /**

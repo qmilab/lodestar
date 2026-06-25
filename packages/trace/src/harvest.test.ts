@@ -300,6 +300,16 @@ describe("harvestCandidates", () => {
     expect(harvestCandidates(events).map((c) => c.belief.id)).toEqual(["early", "mid", "late"])
   })
 
+  test("orders by instant, not lexically, for offset-bearing timestamps", () => {
+    // earlier instant (00:00Z) but lexically-later string than 01:00Z.
+    const events = log(
+      adopt(belief("offset", "c1", { observed_at: "2026-01-01T05:00:00.000+05:00" })),
+      adopt(belief("utc", "c2", { observed_at: "2026-01-01T01:00:00.000Z" })),
+    )
+    // By instant: offset (00:00Z) precedes utc (01:00Z). Lexical order would flip them.
+    expect(harvestCandidates(events).map((c) => c.belief.id)).toEqual(["offset", "utc"])
+  })
+
   test("a belief with no claim/evidence in the log still surfaces (graceful)", () => {
     const out = harvestCandidates(adopt(belief("b1", "missing-claim")))
     expect(out).toHaveLength(1)
