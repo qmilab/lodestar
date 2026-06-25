@@ -51,8 +51,11 @@ projects it into the epistemic chain, then renders markdown.
   `claim.extracted` / `evidence.assessed` can't overwrite an authenticated belief's
   provenance) — and a transition is honoured only with the canonical type + that
   schema stamp + a strict payload (so no forged `security_status → clean`
-  clearance). The security gate applies to supersession **history** too: a
-  quarantined / hard-demoted predecessor is kept out of `supersedes`.
+  clearance). Authentication is **per-session** (the projection processes each
+  `(project_id, session_id)` independently), so a firewall audit from one session
+  can't authenticate a record from another over a project-wide list. The security
+  gate applies to supersession **history** too: a quarantined / hard-demoted
+  predecessor is kept out of `supersedes`.
   **Candidacy gate (ADR-0033):** current `truth_status: supported` **and**
   `security_status: clean` **and** `retrieval_status` ∈ {`normal`, `restricted`}
   — the security-relevant subset of `DEFAULT_CONTEXT_POLICY`, so a quarantined /

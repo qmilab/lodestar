@@ -100,6 +100,13 @@ so the rule is not wholesale — but the security-relevant subset of it applies.
      `security_status → clean` clearance. A bare `belief.transitioned` or a
      `kind`-tagged agent emit is **not** trusted.
 
+   Authentication is **per-session**: the projection processes each
+   `(project_id, session_id)` independently, so a firewall audit from one session
+   can never authenticate a `belief.adopted` record from another (a later session
+   could otherwise `ctx.emit` a clean record reusing a known prior `belief_id`, and
+   the prior session's genuine audit would satisfy the id check). Per-session maps
+   also keep claim/evidence content from bleeding across sessions.
+
    (A pure projection still cannot defend against direct log-file tampering — that
    is the signing boundary every projection shares, exactly as `pendingApprovals`
    trusts the guard's audit. This closes the *in-process* forgery paths a governed

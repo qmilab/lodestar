@@ -341,6 +341,17 @@ describe("harvestCandidates", () => {
     expect(harvestCandidates(events)).toEqual([])
   })
 
+  test("a firewall audit from another session cannot authenticate a forged record", () => {
+    // Session A genuinely adopts b1 (audit present). Session B forges a clean
+    // belief.adopted reusing b1's id+claim, with NO audit of its own. Processing
+    // is per-session, so A's audit cannot authenticate B's record.
+    const sessionA = adopt(belief("b1", "c1")) // record + audit, session A
+    const sessionB = { ...adoptRecord(belief("b1", "c1")), session_id: "session-B" }
+    const out = harvestCandidates([...sessionA, sessionB])
+    // Only the genuine session-A belief surfaces; the session-B forgery does not.
+    expect(out.map((c) => `${c.session_id}:${c.belief.id}`)).toEqual([`${SESSION}:b1`])
+  })
+
   test("an adoption record whose claim_id does not match the audit is not harvested", () => {
     // The firewall audit authenticates belief b1 adopted from claim c1; the
     // record claims a different claim_id (a forged/partial record). Rejected.

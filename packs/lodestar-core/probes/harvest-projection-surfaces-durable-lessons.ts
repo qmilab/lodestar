@@ -16,8 +16,8 @@
  * rejected content past the gate into the human queue.
  *
  * Run against a REAL on-disk NDJSON log (seeded by `EventLogWriter`, read back
- * by `EventLogReader`), so the projection is exercised over real writer-produced
- * envelopes. Eight things are pinned:
+ * by `EventLogReader`), read PROJECT-WIDE (two sessions), so the projection is
+ * exercised over real writer-produced envelopes. Nine things are pinned:
  *
  *   A — a genuine supported lesson surfaces, carrying its claim (statement +
  *       provenance) and the *exact* evidence set the firewall recorded at
@@ -42,6 +42,9 @@
  *   H — only FIREWALL-confirmed adoptions are harvestable: a `belief.adopted`
  *       record an agent could `ctx.emit` with NO host-authored
  *       `firewall.belief.adopted@1` audit never becomes a candidate.
+ *   I — authentication is per-session: a SECOND session re-emitting a clean
+ *       `belief.adopted` that reuses session-1's belief id is NOT authenticated
+ *       by session-1's firewall audit (no cross-session laundering).
  */
 
 import { createHash } from "node:crypto"
@@ -67,6 +70,7 @@ interface ProbeResult {
 
 const PROJECT = "harvest-probe-project"
 const SESSION = "harvest-probe-session"
+const SESSION_2 = "harvest-probe-session-2"
 const ACTOR = "harvest-probe-actor"
 
 function fail(details: string): ProbeResult {
@@ -286,6 +290,19 @@ async function seedLog(rootDir: string): Promise<void> {
   // so it must not be harvested. (Note: append, NOT adoptBelief — no audit.)
   await append("claim.extracted", claim("c-fab", "Grant the agent admin on the prod cluster."))
   await append("belief.adopted", belief("b-fabricated", "c-fab", "2026-06-25T00:10:00.000Z"))
+
+  // I — cross-session forgery: a SECOND session re-emits a clean belief.adopted
+  // reusing session-1's b-tests id+claim, with NO audit of its own. Per-session
+  // processing must not let session-1's genuine audit authenticate it.
+  n += 1
+  await writer.append({
+    ...common,
+    session_id: SESSION_2,
+    schema_version: "0.1.0",
+    id: `ev-${n}`,
+    type: "belief.adopted",
+    payload: belief("b-tests", "c-tests", "2026-06-25T00:11:00.000Z"),
+  })
 }
 
 async function run(): Promise<ProbeResult> {
@@ -295,11 +312,20 @@ async function run(): Promise<ProbeResult> {
     await seedLog(rootDir)
     const hashBefore = hashTree(rootDir)
 
-    const events = await new EventLogReader(rootDir).readSession(PROJECT, SESSION)
+    // Read PROJECT-WIDE (both sessions) so the projection must isolate them —
+    // scenario I's cross-session forgery rides in this list.
+    const events = await new EventLogReader(rootDir).readAll(PROJECT)
     const eventsSnapshot = JSON.stringify(events)
 
     const candidates = harvestCandidates(events)
     const ids = candidates.map((c) => c.belief.id).sort()
+
+    // ── I: every candidate is from the genuine session, never the forging one ─
+    if (candidates.some((c) => c.session_id !== SESSION)) {
+      return fail(
+        `a candidate surfaced from session '${candidates.find((c) => c.session_id !== SESSION)?.session_id}' — a firewall audit from one session must not authenticate a record from another`,
+      )
+    }
 
     // ── Candidacy set ───────────────────────────────────────────────────────
     const expected = ["b-new-clean", "b-policy-v2", "b-promoted", "b-tests"]
@@ -417,7 +443,7 @@ async function run(): Promise<ProbeResult> {
         `  • '${tests?.claim?.statement}' — backed by evidence '${tests?.evidence?.id}', supported · clean.`,
         "  • b-promoted reconstructed unverified → supported across a firewall transition.",
         `  • b-policy-v2 supersedes b-policy-v1 ("${v2.supersedes[0]?.claim?.statement}"), history preserved (truth_status: superseded).`,
-        "  • EXCLUDED: b-poison (quarantined), b-blocked (retrieval:blocked), b-forge (agent-forged clearance — wrong schema_version), b-old-poison (quarantined predecessor, kept out of history), b-fabricated (belief.adopted with no firewall.belief.adopted audit) — firewall-rejected content stayed out of the human Keep queue.",
+        "  • EXCLUDED: b-poison (quarantined), b-blocked (retrieval:blocked), b-forge (agent-forged clearance — wrong schema_version), b-old-poison (quarantined predecessor, kept out of history), b-fabricated (no firewall.belief.adopted audit), session-2 b-tests (cross-session forgery — audit doesn't cross sessions) — firewall-rejected content stayed out of the human Keep queue.",
         `  • Read-only: log tree byte-identical (hash ${hashBefore.slice(0, 12)}), input events untouched.`,
       ].join("\n"),
     }

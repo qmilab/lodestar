@@ -84,6 +84,13 @@ import {
  *    agent cannot emit a fake `security_status → clean` transition to launder a
  *    belief the firewall genuinely quarantined.
  *
+ * Authentication is **per-session**: the projection processes each
+ * `(project_id, session_id)` independently, so a firewall audit from one session
+ * can never authenticate a `belief.adopted` record from another (a later session
+ * could otherwise `ctx.emit` a clean record reusing a known prior `belief_id`, and
+ * the prior session's genuine audit would satisfy the id check). Per-session maps
+ * also keep claim/evidence content from bleeding across sessions.
+ *
  * (A pure projection still cannot defend against direct log-file tampering — that
  * is the signing boundary every projection shares, exactly as `pendingApprovals`
  * trusts the guard's audit. What this closes are the *in-process* forgery paths a
@@ -164,11 +171,47 @@ export function harvestCandidates(
     if (filter?.project_id && e.project_id !== filter.project_id) return false
     return true
   })
+
+  // Process each (project_id, session_id) independently. Authentication must
+  // never cross a session boundary: a firewall adoption audit from one session
+  // must not authenticate a `belief.adopted` record from another (a later
+  // session could `ctx.emit` a clean record reusing a known prior belief_id, and
+  // the prior session's genuine audit would otherwise satisfy the check). Per-
+  // session maps also keep claim/evidence content from bleeding across sessions.
+  const bySession = new Map<string, EventEnvelope[]>()
+  for (const event of filtered) {
+    const key = `${event.project_id} ${event.session_id}`
+    const group = bySession.get(key)
+    if (group) group.push(event)
+    else bySession.set(key, [event])
+  }
+
+  const candidates: MemoryCandidate[] = []
+  for (const group of bySession.values()) {
+    candidates.push(...harvestSession(group))
+  }
+
+  // Stable, oldest-first review order across all sessions.
+  candidates.sort((a, b) => {
+    const byTime = a.belief.observed_at.localeCompare(b.belief.observed_at)
+    return byTime !== 0 ? byTime : a.belief.id.localeCompare(b.belief.id)
+  })
+  return candidates
+}
+
+/**
+ * Harvest one session's candidates. `events` all share a single
+ * `(project_id, session_id)`, so every id-keyed map below is session-scoped and
+ * authentication cannot cross a session boundary. Returns the session's
+ * candidates unsorted (the caller applies the global order).
+ */
+function harvestSession(events: EventEnvelope[]): MemoryCandidate[] {
   // Replay in logical-clock order so adoption precedes its transitions.
-  filtered.sort((a, b) => a.logical_clock - b.logical_clock)
+  const ordered = [...events].sort((a, b) => a.logical_clock - b.logical_clock)
+  const project_id = ordered[0]?.project_id ?? ""
+  const session_id = ordered[0]?.session_id ?? ""
 
   const adopted = new Map<string, Belief>()
-  const origin = new Map<string, { project_id: string; session_id: string }>()
   // belief_id → the firewall's host-authored adoption record (`firewall.belief.adopted@1`).
   // It carries the `claim_id` + `evidence_id` that actually cleared the gate, so it
   // both authenticates the belief (an agent's `ctx.emit` can't stamp the firewall
@@ -178,19 +221,13 @@ export function harvestCandidates(
   const evidenceById = new Map<string, EvidenceSet>()
   const transitions: BeliefTransition[] = []
 
-  for (const event of filtered) {
+  for (const event of ordered) {
     const { type } = event
     if (type === "belief.adopted") {
       const parsed = BeliefSchema.safeParse(event.payload)
       // First-wins: the adoption record is set once; a later forged re-emit for
       // the same id cannot overwrite a genuine adoption's content.
-      if (parsed.success && !adopted.has(parsed.data.id)) {
-        adopted.set(parsed.data.id, parsed.data)
-        origin.set(parsed.data.id, {
-          project_id: event.project_id,
-          session_id: event.session_id,
-        })
-      }
+      if (parsed.success && !adopted.has(parsed.data.id)) adopted.set(parsed.data.id, parsed.data)
       continue
     }
     if (
@@ -267,11 +304,9 @@ export function harvestCandidates(
   const candidates: MemoryCandidate[] = []
   for (const [id, belief] of reconstructed) {
     if (!isHarvestable(belief)) continue
-    const o = origin.get(id)
-    if (!o) continue // a harvestable belief always came from a belief.adopted event
     const item: MemoryCandidate = {
-      project_id: o.project_id,
-      session_id: o.session_id,
+      project_id,
+      session_id,
       belief,
       supersedes: collectHistory(id, predecessorsOf, reconstructed, claims),
       status: "candidate",
@@ -285,11 +320,6 @@ export function harvestCandidates(
     if (evidence) item.evidence = evidence
     candidates.push(item)
   }
-
-  candidates.sort((a, b) => {
-    const byTime = a.belief.observed_at.localeCompare(b.belief.observed_at)
-    return byTime !== 0 ? byTime : a.belief.id.localeCompare(b.belief.id)
-  })
   return candidates
 }
 
