@@ -1153,17 +1153,43 @@ await check(
       observed_at: "2026-01-01T00:00:00.000Z",
     }
     const quarantined = { ...supportedBelief, id: "b-drop", security_status: "quarantined" }
-    const adopt = (id: string, payload: unknown) =>
+    const event = (
+      id: string,
+      type: string,
+      payload: unknown,
+      schemaVersion = validEnvelope.schema_version,
+    ) =>
       EventEnvelopeSchema.parse({
         ...validEnvelope,
         id,
-        type: "belief.adopted",
+        type,
+        schema_version: schemaVersion,
         payload_hash: canonicalHash(payload),
         payload,
       })
+    // A genuine adoption = the full belief.adopted record + the host-authored
+    // firewall.belief.adopted@1 audit that authenticates it cleared the gate.
+    const adopt = (id: string, belief: { id: string; claim_id: string }) => [
+      event(`${id}-record`, "belief.adopted", belief),
+      event(
+        `${id}-audit`,
+        FIREWALL_BELIEF_ADOPTED_EVENT_TYPE,
+        {
+          kind: "belief.adopted",
+          belief_id: belief.id,
+          claim_id: belief.claim_id,
+          evidence_id: `ev-${belief.id}`,
+          rationale_id: `exp-${belief.id}`,
+          by_authority: "promotion",
+          at: "2026-01-01T00:00:00.000Z",
+          by_actor_id: validEnvelope.actor_id,
+        },
+        FIREWALL_EVENT_SCHEMA_VERSION,
+      ),
+    ]
     const candidates: MemoryCandidate[] = harvestCandidates([
-      adopt("e-keep", supportedBelief),
-      adopt("e-drop", quarantined),
+      ...adopt("e-keep", supportedBelief),
+      ...adopt("e-drop", quarantined),
     ])
     expect(candidates.length === 1, `expected 1 candidate, got ${candidates.length}`)
     const c = candidates[0]

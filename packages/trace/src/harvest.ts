@@ -6,8 +6,10 @@ import {
   type EventEnvelope,
   type EvidenceSet,
   EvidenceSetSchema,
+  FIREWALL_BELIEF_ADOPTED_EVENT_TYPE,
   FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
   FIREWALL_EVENT_SCHEMA_VERSION,
+  FirewallBeliefAdoptedPayloadSchema,
   FirewallBeliefTransitionedPayloadSchema,
   type RetrievalStatus,
 } from "@qmilab/lodestar-core"
@@ -59,17 +61,29 @@ import {
  * and one adopted `supported` then quarantined *is not* — the reconstruction
  * replays the transitions in logical-clock order.
  *
- * Reconstruction trusts only **firewall-authored** transitions ({@link
- * readBeliefTransition}): the canonical `firewall.belief.transitioned` type
- * stamped with `schema_version === FIREWALL_EVENT_SCHEMA_VERSION` and a payload
- * that strictly validates. That stamp is the load-bearing one — a governed
- * agent's raw `ctx.emit` writes to the same log but is pinned to the session
- * schema version and cannot forge the firewall's, so an agent cannot emit a fake
- * `security_status → clean` transition to launder a belief the firewall genuinely
- * quarantined. (A pure projection cannot defend against direct log tampering or a
- * wholesale forged `belief.adopted` — that is the log-integrity / signing
- * boundary every projection shares, exactly as `pendingApprovals` trusts the
- * guard's audit; what this closes is the *easy* forge-a-clearance path.)
+ * Both the belief's **adoption** and its lifecycle **transitions** are trusted
+ * only when **firewall-authored**, because a governed agent's raw `ctx.emit`
+ * writes to the same log but is pinned to the session schema version and cannot
+ * stamp the firewall's (`FIREWALL_EVENT_SCHEMA_VERSION`):
+ *
+ *  - **Adoption.** A `belief.adopted` event carries the full `Belief`, but it is
+ *    surfaced only when a host-authored `firewall.belief.adopted@1` audit event
+ *    (schema-stamped, agent-unforgeable) confirms the *same* `belief_id` cleared
+ *    the firewall's gate. So an agent cannot `ctx.emit("belief.adopted", …)` a
+ *    fabricated clean/supported belief into the Keep queue; a belief that never
+ *    went through the firewall is correctly not a harvestable lesson. The full
+ *    record is taken **first-wins** per id, so a later forged re-emit cannot
+ *    overwrite a genuine adoption's content.
+ *  - **Transitions** ({@link readBeliefTransition}): the canonical
+ *    `firewall.belief.transitioned` type, `schema_version ===
+ *    FIREWALL_EVENT_SCHEMA_VERSION`, and a payload that strictly validates — so an
+ *    agent cannot emit a fake `security_status → clean` transition to launder a
+ *    belief the firewall genuinely quarantined.
+ *
+ * (A pure projection still cannot defend against direct log-file tampering — that
+ * is the signing boundary every projection shares, exactly as `pendingApprovals`
+ * trusts the guard's audit. What this closes are the *in-process* forgery paths a
+ * governed agent has via `ctx.emit`.)
  *
  * The security gate applies wherever firewall-rejected content would reach the
  * Keep queue — a candidate **and** the supersession history under it. A
@@ -151,6 +165,11 @@ export function harvestCandidates(
 
   const adopted = new Map<string, Belief>()
   const origin = new Map<string, { project_id: string; session_id: string }>()
+  // Belief ids the firewall confirms it adopted through the gate (host-authored
+  // `firewall.belief.adopted@1`). The full `belief.adopted` record carries the
+  // content; this set authenticates that the belief is genuine — an agent's
+  // `ctx.emit` cannot stamp the firewall schema version, so it cannot forge it.
+  const firewallAdopted = new Set<string>()
   const claims = new Map<string, Claim>()
   const evidenceByClaim = new Map<string, EvidenceSet>()
   const transitions: BeliefTransition[] = []
@@ -159,13 +178,23 @@ export function harvestCandidates(
     const { type } = event
     if (type === "belief.adopted") {
       const parsed = BeliefSchema.safeParse(event.payload)
-      if (parsed.success) {
+      // First-wins: the adoption record is set once; a later forged re-emit for
+      // the same id cannot overwrite a genuine adoption's content.
+      if (parsed.success && !adopted.has(parsed.data.id)) {
         adopted.set(parsed.data.id, parsed.data)
         origin.set(parsed.data.id, {
           project_id: event.project_id,
           session_id: event.session_id,
         })
       }
+      continue
+    }
+    if (
+      type === FIREWALL_BELIEF_ADOPTED_EVENT_TYPE &&
+      event.schema_version === FIREWALL_EVENT_SCHEMA_VERSION
+    ) {
+      const parsed = FirewallBeliefAdoptedPayloadSchema.safeParse(event.payload)
+      if (parsed.success) firewallAdopted.add(parsed.data.belief_id)
       continue
     }
     if (type === "claim.extracted") {
@@ -189,10 +218,15 @@ export function harvestCandidates(
   }
 
   // Reconstruct each belief's current lifecycle state by replaying its
-  // firewall-authored transitions in clock order. Each step re-validates into a
-  // Belief so the result is type-correct; a bogus `to_value` is ignored, keeping
-  // prior state.
-  const reconstructed = new Map<string, Belief>(adopted)
+  // firewall-authored transitions in clock order. Only beliefs the firewall
+  // confirms it adopted are reconstructed at all — so a forged `belief.adopted`
+  // with no matching audit never becomes a candidate, nor surfaces as history.
+  // Each step re-validates into a Belief so the result is type-correct; a bogus
+  // `to_value` is ignored, keeping prior state.
+  const reconstructed = new Map<string, Belief>()
+  for (const [id, belief] of adopted) {
+    if (firewallAdopted.has(id)) reconstructed.set(id, belief)
+  }
   for (const t of transitions) {
     const belief = reconstructed.get(t.belief_id)
     if (!belief) continue // no full record to reconstruct against — skip

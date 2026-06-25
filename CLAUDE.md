@@ -39,17 +39,20 @@ belief→lesson harvest: the new pure read-side projection
 `harvestCandidates(events)` in `@qmilab/lodestar-trace` surfaces a run's
 end-of-run **supported** beliefs + **superseded-with-history** chains as
 advisory `MemoryCandidate`s, each carrying its claim + evidence + provenance.
-Over a real on-disk NDJSON log it pins seven invariants — a genuine supported
+Over a real on-disk NDJSON log it pins eight invariants — a genuine supported
 lesson surfaces with its evidence; the headline **no-launder** (a poisoned
 `quarantined` or hard-demoted `blocked` belief that nonetheless reached
 `supported` appears nowhere, not even as history — the no-self-promotion
-guarantee extended to the human Keep queue); lifecycle is **reconstructed**
-from `belief.adopted` + **firewall-authored** `firewall.belief.transitioned`
-(adopted-unverified then promoted-supported counts; adopted-supported then
-quarantined does not); a transition is trusted only when canonical-type +
-`schema_version === FIREWALL_EVENT_SCHEMA_VERSION` + strict-payload, so an
-**agent-forged** `security_status→clean` `ctx.emit` (pinned to the session
-schema version) cannot clear a real quarantine; **supersession** is the
+guarantee extended to the human Keep queue); a belief is harvested only when its
+adoption is **firewall-authored** (a `belief.adopted` confirmed by a host-authored
+`firewall.belief.adopted@1` audit, first-wins on the record — an **agent-forged**
+`belief.adopted` with no audit, or a later content-overwrite, is rejected);
+lifecycle is **reconstructed** from those records + **firewall-authored**
+`firewall.belief.transitioned` (adopted-unverified then promoted-supported counts;
+adopted-supported then quarantined does not); a transition is trusted only when
+canonical-type + `schema_version === FIREWALL_EVENT_SCHEMA_VERSION` +
+strict-payload, so an **agent-forged** `security_status→clean` `ctx.emit` (pinned
+to the session schema version) cannot clear a real quarantine; **supersession** is the
 successor's newest-first audit trail, never a separate candidate, and its
 security gate applies to **history** too (a quarantined predecessor stays out);
 and the projection is **read-only** (log bytes + input array untouched).

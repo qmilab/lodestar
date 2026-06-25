@@ -72,23 +72,32 @@ so the rule is not wholesale — but the security-relevant subset of it applies.
    supersession chain whose current head is not a clean, supported, retrievable
    lesson surfaces nothing — conservative for v0.
 
-4. **Current lifecycle state is reconstructed, not snapshot-read — and only from
-   firewall-authored transitions.** A belief is adopted via `belief.adopted` (the
-   full `Belief`) and its axes may later move via `firewall.belief.transitioned`.
-   The projection replays those transitions in logical-clock order, so a belief
-   adopted `unverified` then promoted to `supported` *is* a candidate, and one
-   adopted `supported` then quarantined is *not*. Reconstruction trusts a
-   transition **only** when it is firewall-authored: the canonical
-   `firewall.belief.transitioned` type, `schema_version === FIREWALL_EVENT_SCHEMA_VERSION`
-   (the host stamp), and a payload that strictly validates. A governed agent's raw
-   `ctx.emit` writes to the same log but is pinned to the session schema version and
-   cannot stamp the firewall's, so an agent cannot emit a fake `security_status →
-   clean` transition to launder a belief the firewall genuinely quarantined. A bare
-   `belief.transitioned` or a `kind`-tagged agent emit is **not** trusted. (A pure
-   projection still cannot defend against direct log tampering or a wholesale forged
-   `belief.adopted` — that is the log-integrity / signing boundary every projection
-   shares; this closes the *easy* forge-a-clearance path, the one specific to
-   lifecycle replay.)
+4. **Both adoption and transitions are trusted only when firewall-authored.** A
+   governed agent's raw `ctx.emit` writes to the same log but is pinned to the
+   session schema version and cannot stamp the firewall's
+   (`FIREWALL_EVENT_SCHEMA_VERSION`), which is the load-bearing distinction:
+
+   - **Adoption.** A `belief.adopted` event carries the full `Belief`, but it is
+     surfaced **only** when a host-authored `firewall.belief.adopted@1` audit (the
+     schema-stamped event the firewall emits on every gate-cleared adoption)
+     confirms the *same* `belief_id`. So an agent cannot `ctx.emit("belief.adopted",
+     …)` a fabricated clean/supported belief into the Keep queue — a record with no
+     audit never went through the firewall and is correctly not harvestable. The
+     full record is taken **first-wins** per id, so a later forged re-emit cannot
+     overwrite a genuine adoption's content (e.g. flip `quarantined → clean`).
+   - **Transitions.** Reconstruction (which replays `firewall.belief.transitioned`
+     in logical-clock order, so an `unverified → supported` promotion counts and a
+     `supported → quarantined` demotion excludes) trusts a transition only when it
+     carries the canonical type, `schema_version === FIREWALL_EVENT_SCHEMA_VERSION`,
+     and a payload that strictly validates — so an agent cannot fake a
+     `security_status → clean` clearance. A bare `belief.transitioned` or a
+     `kind`-tagged agent emit is **not** trusted.
+
+   (A pure projection still cannot defend against direct log-file tampering — that
+   is the signing boundary every projection shares, exactly as `pendingApprovals`
+   trusts the guard's audit. This closes the *in-process* forgery paths a governed
+   agent has via `ctx.emit`: forge an adoption, overwrite adoption content, or forge
+   a clearance.)
 
 No `packages/core` schema change and no new event (ADR-0031 decision 3 holds):
 `MemoryCandidate` / `SupersededLesson` are `-trace` projection types reusing
