@@ -114,22 +114,25 @@ function evidenceSet(id: string, claimId: string): EvidenceSet {
 function adoptRecord(b: Belief): EventEnvelope {
   return makeEvent("belief.adopted", b)
 }
-/** The host-authored `firewall.belief.adopted@1` audit (schema_version "1") an agent can't forge. */
-function firewallAdopted(beliefId: string, claimId: string): EventEnvelope {
+/**
+ * The host-authored `firewall.belief.adopted@1` audit (schema_version "1") an
+ * agent can't forge. It binds the authenticated `claim_id` + `evidence_id`.
+ */
+function firewallAdopted(beliefId: string, claimId: string, evidenceId: string): EventEnvelope {
   return makeEvent(FIREWALL_BELIEF_ADOPTED_EVENT_TYPE, {
     kind: "belief.adopted",
     belief_id: beliefId,
     claim_id: claimId,
-    evidence_id: `ev-${beliefId}`,
+    evidence_id: evidenceId,
     rationale_id: `exp-${beliefId}`,
     by_authority: "promotion",
     at: "2026-01-01T00:00:00.000Z",
     by_actor_id: "test-actor",
   })
 }
-/** A genuinely-adopted belief: the full record + its host-authored audit. */
-function adopt(b: Belief): EventEnvelope[] {
-  return [adoptRecord(b), firewallAdopted(b.id, b.claim_id)]
+/** A genuinely-adopted belief: the full record + its host-authored audit (claim_id matches). */
+function adopt(b: Belief, evidenceId = `ev-${b.id}`): EventEnvelope[] {
+  return [adoptRecord(b), firewallAdopted(b.id, b.claim_id, evidenceId)]
 }
 /** Flatten mixed single events and event arrays into one log. */
 function log(...parts: (EventEnvelope | EventEnvelope[])[]): EventEnvelope[] {
@@ -191,7 +194,7 @@ describe("harvestCandidates", () => {
     const events = log(
       extract(claim("c1", "tests must pass before commit")),
       assess(evidenceSet("ev1", "c1")),
-      adopt(belief("b1", "c1")),
+      adopt(belief("b1", "c1"), "ev1"),
     )
     const out = harvestCandidates(events)
     expect(out).toHaveLength(1)
@@ -336,6 +339,27 @@ describe("harvestCandidates", () => {
       adoptRecord(belief("b1", "c1", { security_status: "clean" })),
     )
     expect(harvestCandidates(events)).toEqual([])
+  })
+
+  test("an adoption record whose claim_id does not match the audit is not harvested", () => {
+    // The firewall audit authenticates belief b1 adopted from claim c1; the
+    // record claims a different claim_id (a forged/partial record). Rejected.
+    const events = [adoptRecord(belief("b1", "c-forged")), firewallAdopted("b1", "c1", "ev-b1")]
+    expect(harvestCandidates(events)).toEqual([])
+  })
+
+  test("attaches the exact evidence the audit recorded, not the latest for the claim", () => {
+    // Two assessments for c1; the firewall recorded ev-cleared. The candidate
+    // must surface ev-cleared, not a later ev-stale that never cleared the gate.
+    const events = log(
+      extract(claim("c1", "lesson")),
+      assess(evidenceSet("ev-cleared", "c1")),
+      assess(evidenceSet("ev-stale", "c1")),
+      adopt(belief("b1", "c1"), "ev-cleared"),
+    )
+    const out = harvestCandidates(events)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.evidence?.id).toBe("ev-cleared")
   })
 
   // ── firewall-authored transitions only (Codex P1#1, round 1) ──────────────

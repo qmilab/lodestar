@@ -68,12 +68,13 @@ import {
  *
  *  - **Adoption.** A `belief.adopted` event carries the full `Belief`, but it is
  *    surfaced only when a host-authored `firewall.belief.adopted@1` audit event
- *    (schema-stamped, agent-unforgeable) confirms the *same* `belief_id` cleared
- *    the firewall's gate. So an agent cannot `ctx.emit("belief.adopted", …)` a
- *    fabricated clean/supported belief into the Keep queue; a belief that never
- *    went through the firewall is correctly not a harvestable lesson. The full
+ *    (schema-stamped, agent-unforgeable) confirms the *same* `belief_id` **and**
+ *    the record's `claim_id` matches the audit's. So an agent cannot
+ *    `ctx.emit("belief.adopted", …)` a fabricated belief (no audit) nor bind a
+ *    genuine id to a different claim's content (claim_id mismatch). The full
  *    record is taken **first-wins** per id, so a later forged re-emit cannot
- *    overwrite a genuine adoption's content.
+ *    overwrite a genuine adoption's content. The candidate's evidence is the exact
+ *    set the audit's `evidence_id` names (not the latest assessment for the claim).
  *  - **Transitions** ({@link readBeliefTransition}): the canonical
  *    `firewall.belief.transitioned` type, `schema_version ===
  *    FIREWALL_EVENT_SCHEMA_VERSION`, and a payload that strictly validates — so an
@@ -165,13 +166,13 @@ export function harvestCandidates(
 
   const adopted = new Map<string, Belief>()
   const origin = new Map<string, { project_id: string; session_id: string }>()
-  // Belief ids the firewall confirms it adopted through the gate (host-authored
-  // `firewall.belief.adopted@1`). The full `belief.adopted` record carries the
-  // content; this set authenticates that the belief is genuine — an agent's
-  // `ctx.emit` cannot stamp the firewall schema version, so it cannot forge it.
-  const firewallAdopted = new Set<string>()
+  // belief_id → the firewall's host-authored adoption record (`firewall.belief.adopted@1`).
+  // It carries the `claim_id` + `evidence_id` that actually cleared the gate, so it
+  // both authenticates the belief (an agent's `ctx.emit` can't stamp the firewall
+  // schema version) and binds the surfaced content to what the firewall approved.
+  const firewallAdopted = new Map<string, { claim_id: string; evidence_id: string }>()
   const claims = new Map<string, Claim>()
-  const evidenceByClaim = new Map<string, EvidenceSet>()
+  const evidenceById = new Map<string, EvidenceSet>()
   const transitions: BeliefTransition[] = []
 
   for (const event of filtered) {
@@ -194,7 +195,12 @@ export function harvestCandidates(
       event.schema_version === FIREWALL_EVENT_SCHEMA_VERSION
     ) {
       const parsed = FirewallBeliefAdoptedPayloadSchema.safeParse(event.payload)
-      if (parsed.success) firewallAdopted.add(parsed.data.belief_id)
+      if (parsed.success && !firewallAdopted.has(parsed.data.belief_id)) {
+        firewallAdopted.set(parsed.data.belief_id, {
+          claim_id: parsed.data.claim_id,
+          evidence_id: parsed.data.evidence_id,
+        })
+      }
       continue
     }
     if (type === "claim.extracted") {
@@ -204,13 +210,9 @@ export function harvestCandidates(
     }
     if (type === "evidence.assessed") {
       const parsed = EvidenceSetSchema.safeParse(event.payload)
-      if (parsed.success) {
-        // Keep the latest assessment per claim — re-assessment supersedes.
-        const prev = evidenceByClaim.get(parsed.data.claim_id)
-        if (!prev || parsed.data.assessed_at >= prev.assessed_at) {
-          evidenceByClaim.set(parsed.data.claim_id, parsed.data)
-        }
-      }
+      // Keyed by evidence-set id so a candidate can attach the exact set the
+      // firewall recorded, not whichever assessment for the claim came last.
+      if (parsed.success) evidenceById.set(parsed.data.id, parsed.data)
       continue
     }
     const transition = readBeliefTransition(event)
@@ -218,14 +220,16 @@ export function harvestCandidates(
   }
 
   // Reconstruct each belief's current lifecycle state by replaying its
-  // firewall-authored transitions in clock order. Only beliefs the firewall
-  // confirms it adopted are reconstructed at all — so a forged `belief.adopted`
-  // with no matching audit never becomes a candidate, nor surfaces as history.
-  // Each step re-validates into a Belief so the result is type-correct; a bogus
-  // `to_value` is ignored, keeping prior state.
+  // firewall-authored transitions in clock order. A belief is reconstructed only
+  // when the firewall confirms it adopted *that record*: the adoption audit must
+  // exist AND its `claim_id` must match the `belief.adopted` record's — so a
+  // forged record (no audit, or a mismatched same-id record) never becomes a
+  // candidate or history. Each step re-validates into a Belief so the result is
+  // type-correct; a bogus `to_value` is ignored, keeping prior state.
   const reconstructed = new Map<string, Belief>()
   for (const [id, belief] of adopted) {
-    if (firewallAdopted.has(id)) reconstructed.set(id, belief)
+    const audit = firewallAdopted.get(id)
+    if (audit && audit.claim_id === belief.claim_id) reconstructed.set(id, belief)
   }
   for (const t of transitions) {
     const belief = reconstructed.get(t.belief_id)
@@ -265,7 +269,10 @@ export function harvestCandidates(
     }
     const claim = claims.get(belief.claim_id)
     if (claim) item.claim = claim
-    const evidence = evidenceByClaim.get(belief.claim_id)
+    // Attach the exact evidence set the firewall recorded at adoption, not the
+    // latest assessment for the claim (which may post-date what cleared the gate).
+    const evidenceId = firewallAdopted.get(id)?.evidence_id
+    const evidence = evidenceId ? evidenceById.get(evidenceId) : undefined
     if (evidence) item.evidence = evidence
     candidates.push(item)
   }

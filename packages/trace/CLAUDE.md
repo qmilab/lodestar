@@ -44,8 +44,10 @@ projects it into the epistemic chain, then renders markdown.
   governed agent's `ctx.emit` is pinned to the session schema version and cannot
   stamp the firewall's (`FIREWALL_EVENT_SCHEMA_VERSION`): a `belief.adopted` is
   surfaced only when a host-authored `firewall.belief.adopted@1` audit confirms the
-  same `belief_id` (taken first-wins, so a later forged re-emit can't overwrite
-  content), and a transition is honoured only with the canonical type + that
+  same `belief_id` **and matching `claim_id`** (taken first-wins, so a later forged
+  re-emit can't overwrite content), the candidate's evidence is the exact set the
+  audit's `evidence_id` names (not the latest for the claim), and a transition is
+  honoured only with the canonical type + that
   schema stamp + a strict payload (so no forged `security_status → clean`
   clearance). The security gate applies to supersession **history** too: a
   quarantined / hard-demoted predecessor is kept out of `supersedes`.

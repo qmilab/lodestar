@@ -80,11 +80,15 @@ so the rule is not wholesale — but the security-relevant subset of it applies.
    - **Adoption.** A `belief.adopted` event carries the full `Belief`, but it is
      surfaced **only** when a host-authored `firewall.belief.adopted@1` audit (the
      schema-stamped event the firewall emits on every gate-cleared adoption)
-     confirms the *same* `belief_id`. So an agent cannot `ctx.emit("belief.adopted",
-     …)` a fabricated clean/supported belief into the Keep queue — a record with no
-     audit never went through the firewall and is correctly not harvestable. The
-     full record is taken **first-wins** per id, so a later forged re-emit cannot
-     overwrite a genuine adoption's content (e.g. flip `quarantined → clean`).
+     confirms the *same* `belief_id` **and** the record's `claim_id` matches the
+     audit's. So an agent cannot `ctx.emit("belief.adopted", …)` a fabricated belief
+     into the Keep queue (no audit), nor swap a genuine id onto a different claim's
+     content (claim_id mismatch) — both are correctly not harvestable. The full
+     record is taken **first-wins** per id, so a later forged re-emit cannot
+     overwrite a genuine adoption's content (e.g. flip `quarantined → clean`). The
+     candidate's **evidence** is the *exact* set the audit's `evidence_id` names —
+     not the latest assessment for the claim, which may post-date what cleared the
+     gate — so the provenance shown is the provenance the firewall approved.
    - **Transitions.** Reconstruction (which replays `firewall.belief.transitioned`
      in logical-clock order, so an `unverified → supported` promotion counts and a
      `supported → quarantined` demotion excludes) trusts a transition only when it
