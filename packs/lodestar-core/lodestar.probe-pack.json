@@ -299,6 +299,10 @@
       "file": "probes/harvest-projection-surfaces-durable-lessons.ts"
     },
     {
+      "name": "reflection-derives-supersession-from-conflict",
+      "file": "probes/reflection-derives-supersession-from-conflict.ts"
+    },
+    {
       "name": "public-api-surface",
       "file": "probes/public-api-surface.ts"
     }
