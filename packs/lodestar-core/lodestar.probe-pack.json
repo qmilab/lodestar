@@ -27,7 +27,8 @@
     "session_shipper",
     "pack_registry",
     "probe_runner",
-    "public_api"
+    "public_api",
+    "harvest_projection"
   ],
   "invariants": [
     "no_self_promotion",
@@ -72,6 +73,7 @@
     "runner_scoped_env",
     "runner_os_sandbox",
     "public_api_surface_stable",
+    "durable_memory_harvest",
     "approval_channel_transport",
     "approval_channel_forgery_boundary"
   ],
@@ -291,6 +293,10 @@
     {
       "name": "evidence-linker-cross-belief-join",
       "file": "probes/evidence-linker-cross-belief-join.ts"
+    },
+    {
+      "name": "harvest-projection-surfaces-durable-lessons",
+      "file": "probes/harvest-projection-surfaces-durable-lessons.ts"
     },
     {
       "name": "public-api-surface",

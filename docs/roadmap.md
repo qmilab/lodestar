@@ -419,14 +419,14 @@ Work past the v1 line, tracked here as it lands:
   only *cascades* pre-existing contradictions rather than deriving them. Surfaced by a
   downstream consumer (Asterism) harvesting belief-grade, human-reviewable durable memory
   via the low-level `CognitiveCore.ingest` primitives, but it benefits **every** consumer
-  with structured observations. Recommended order: **A** the evidence-linker claim-store
-  JOIN (highest value, no `packages/core` schema change — `EvidenceItem` already carries
-  `relation: contradicts` + `independence_group`; the linker records evidence items only,
-  leaving prior-belief transitions to reflection) → **D** an ADR locking the
-  **belief→durable-lesson** mapping (the `WorldModel` stays the current-state store) plus a
-  read-side **harvest projection** in `-trace` (end-of-run supported + superseded beliefs →
-  review-ready candidates, mirroring `pendingApprovals`) → **B** a propose-only reflection
-  DERIVE rule (same subject+relation, different object → propose contradicted/superseded).
+  with structured observations. Recommended order: **A ✓ shipped** the evidence-linker
+  claim-store JOIN (#157, ADR-0032 — no `packages/core` schema change; the linker records
+  evidence items only, leaving prior-belief transitions to reflection) → **D ✓ shipped** the
+  **belief→durable-lesson** mapping (ADR-0031; the `WorldModel` stays the current-state
+  store) plus the read-side **harvest projection** `harvestCandidates` in `-trace` (end-of-run
+  supported + superseded-with-history beliefs → review-ready candidates, mirroring
+  `pendingApprovals`; candidacy gate ADR-0033) → **B** a propose-only reflection DERIVE rule
+  (same subject+relation, different object → propose contradicted/superseded).
   A consumer's own tool-result extractor is consumer-owned (out of scope); an LLM-driven
   generic extractor is medium-term behind an explicit opt-in seam (never a built-in).
   Near-term cognitive-core mini-batch weight, ahead of the v1.5 adapter queue but not a

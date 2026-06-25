@@ -31,6 +31,42 @@ projects it into the epistemic chain, then renders markdown.
   re-verifies signatures (it has no access to the operator's pinned keys —
   the correct boundary); it trusts the guard's audit. Mirrors
   `collectResolvedRequestIds` in the `lodestar approve` CLI.
+- `src/harvest.ts` — `harvestCandidates(events)` derives the **durable-memory
+  harvest queue** (every supported, clean, retrievable belief worth offering a
+  human as a keeper *lesson*, with its evidence + provenance) and the
+  `MemoryCandidate` / `SupersededLesson` types. Pure projection in the same
+  family as `projectChain` / `pendingApprovals` — no I/O, read-only (ADR-0031,
+  epic #154 item D). **Lifecycle is reconstructed, not snapshot-read:** a belief
+  enters via `belief.adopted` (full `Belief`) and its axes may move via
+  `firewall.belief.transitioned`; the projection replays those in clock order, so
+  a belief adopted `unverified` then promoted to `supported` *is* a candidate.
+  Both adoption and transitions are trusted **only when firewall-authored** — a
+  governed agent's `ctx.emit` is pinned to the session schema version and cannot
+  stamp the firewall's (`FIREWALL_EVENT_SCHEMA_VERSION`): a `belief.adopted` is
+  surfaced only when a host-authored `firewall.belief.adopted@1` audit confirms the
+  same `belief_id` **and matching `claim_id`** (taken first-wins, so a later forged
+  re-emit can't overwrite content), the candidate's evidence is the exact set the
+  audit's `evidence_id` names (not the latest for the claim) — and the surfaced
+  claim + evidence **content** is first-wins per id too (a later same-id
+  `claim.extracted` / `evidence.assessed` can't overwrite an authenticated belief's
+  provenance) — and a transition is honoured only with the canonical type + that
+  schema stamp + a strict payload (so no forged `security_status → clean`
+  clearance). Authentication is **per-session** (the projection processes each
+  `(project_id, session_id)` independently), so a firewall audit from one session
+  can't authenticate a record from another over a project-wide list. The security
+  gate applies to supersession **history** too: a quarantined / hard-demoted
+  predecessor is kept out of `supersedes`.
+  **Candidacy gate (ADR-0033):** current `truth_status: supported` **and**
+  `security_status: clean` **and** `retrieval_status` ∈ {`normal`, `restricted`}
+  — the security-relevant subset of `DEFAULT_CONTEXT_POLICY`, so a quarantined /
+  hard-demoted belief cannot launder past the firewall into the human "Keep"
+  queue (no-self-promotion, extended to durable memory). Freshness / sensitivity
+  / scope / confidence are **surfaced, not gated** (the reviewer's call; the
+  session shipper owns the egress sensitivity ceiling). **Supersession** is
+  surfaced as the successor's newest-first `supersedes` audit trail
+  (`truth_status: superseded`), never a separate top-level candidate — replacement
+  with the history preserved, not overwritten. Advisory only — every item is
+  `status: "candidate"`; keeping a lesson is a separate write-side surface.
 - `src/report.ts` — `renderReport()` turns a projection into markdown.
 - `src/load.ts` — convenience wrappers around `EventLogReader` for the
   CLI; finds project directories and the default log root.
