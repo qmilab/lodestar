@@ -51,6 +51,9 @@
  *   L  both real adoption-event shapes fire the rule — the BARE `belief.adopted`
  *      (full Belief object, id at `payload.id`, what hosts emit; A–K use it) and
  *      the `firewall.belief.adopted` audit twin (id at `payload.belief_id`).
+ *   M  single-fire across the cursor when a host emits BOTH shapes for one
+ *      adoption and they straddle a window boundary — the later twin does not
+ *      re-propose (keyed on the FIRST adoption event).
  */
 
 import {
@@ -656,6 +659,45 @@ async function run(): Promise<{ passed: boolean; checks: Check[] }> {
       name: "L: the firewall.belief.adopted twin (belief_id payload) also triggers the rule",
       pass: supersessionsOf(result.payload.proposals).length === 1,
       detail: `supersession proposals=${supersessionsOf(result.payload.proposals).length}`,
+    })
+  }
+
+  // ── M: single-fire when the bare + firewall twin straddle a cursor boundary ──
+  //    A host emits BOTH the bare `belief.adopted` and the `firewall.belief.adopted`
+  //    twin for one adoption. If they fall into separate reflection windows, the
+  //    later twin must NOT re-propose the same supersession (keying on the FIRST
+  //    adoption event, not any). Without the fix, pass 2 re-fires.
+  {
+    const stores = freshStores()
+    const reflection = buildReflection(stores)
+    const sc = scope("derive-M")
+    const older = await seedBelief(stores, sc, "/branch", "current", "main", { observedAt: OLD_TS })
+    const newer = await seedBelief(stores, sc, "/branch", "current", "release", {
+      observedAt: NEW_TS,
+    })
+    const bareOlder = adoptedEvent(older, 0)
+    const bareNewer = adoptedEvent(newer, 1)
+    const twinNewer = firewallAdoptedEvent(newer, 2) // the twin lands a beat later
+    // Pass 1: only the bare adoptions have landed → fires once, cursor → seq 1.
+    const pass1 = await reflection.run({
+      trigger: "tail_batch",
+      events: [bareOlder, bareNewer],
+      since_seq: -1,
+      apply: false,
+    })
+    // Pass 2: the firewall twin for `newer` arrives in a later window (seq > 1).
+    const pass2 = await reflection.run({
+      trigger: "tail_batch",
+      events: [bareOlder, bareNewer, twinNewer],
+      since_seq: 1,
+      apply: false,
+    })
+    checks.push({
+      name: "M: a host's bare + firewall-twin adoption straddling a cursor boundary fires exactly once (no re-propose)",
+      pass:
+        supersessionsOf(pass1.payload.proposals).length === 1 &&
+        supersessionsOf(pass2.payload.proposals).length === 0,
+      detail: `pass1=${supersessionsOf(pass1.payload.proposals).length}, pass2=${supersessionsOf(pass2.payload.proposals).length}`,
     })
   }
 

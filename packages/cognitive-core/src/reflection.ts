@@ -508,22 +508,29 @@ export class Reflection {
     const claims = this.inputs.claims
     if (!beliefs || !claims) return { proposals: [], additional_observed_event_ids: [] }
 
-    // belief_id → its adoption event id, across the full history. Lets a
-    // conflicting peer that predates the window still appear in
-    // observed_event_ids (first-write-wins, like collectDecisions).
-    const adoptionEventByBelief = new Map<string, string>()
+    // belief_id → its FIRST adoption event id, across the full history.
+    // `history` is seq-sorted (gatherEvents sorts), so first-write-wins is the
+    // lowest-seq adoption. Lets a conflicting peer that predates the window
+    // still appear in observed_event_ids, like collectDecisions.
+    const firstAdoptionIdByBelief = new Map<string, string>()
     for (const e of history) {
       const id = extractAdoptedBeliefId(e)
-      if (id && !adoptionEventByBelief.has(id)) adoptionEventByBelief.set(id, e.id)
+      if (id && !firstAdoptionIdByBelief.has(id)) firstAdoptionIdByBelief.set(id, e.id)
     }
 
-    // Trigger beliefs: those adopted IN this window. The conflict fires from
-    // the later arrival's perspective; orienting older→newer below makes the
-    // proposal identical whichever of the pair was the trigger.
+    // Trigger beliefs: those whose FIRST adoption event lands in THIS window.
+    // Keying on the *first* (not any) adoption event preserves single-fire when
+    // a host emits BOTH the bare `belief.adopted` and the `firewall.belief.adopted`
+    // twin for one adoption and the two straddle a cursor boundary — the later
+    // twin, arriving in a subsequent window, is NOT a fresh trigger, so the same
+    // supersession is not re-proposed (codex round 2). The cursor advances
+    // monotonically, so a belief's first adoption falls in exactly one window →
+    // exactly one fire. Orienting older→newer below makes the proposal identical
+    // whichever of the pair was the trigger.
+    const windowEventIds = new Set(window.map((e) => e.id))
     const triggerIds = new Set<string>()
-    for (const e of window) {
-      const id = extractAdoptedBeliefId(e)
-      if (id) triggerIds.add(id)
+    for (const [beliefId, eventId] of firstAdoptionIdByBelief) {
+      if (windowEventIds.has(eventId)) triggerIds.add(beliefId)
     }
     if (triggerIds.size === 0) return { proposals: [], additional_observed_event_ids: [] }
 
@@ -573,9 +580,9 @@ export class Reflection {
         if (seenPairs.has(pairKey)) continue
         seenPairs.add(pairKey)
 
-        const olderEvent = adoptionEventByBelief.get(older.id)
+        const olderEvent = firstAdoptionIdByBelief.get(older.id)
         if (olderEvent) additional.add(olderEvent)
-        const newerEvent = adoptionEventByBelief.get(newer.id)
+        const newerEvent = firstAdoptionIdByBelief.get(newer.id)
         if (newerEvent) additional.add(newerEvent)
 
         const rationale = this.inputs.explanations.build({
