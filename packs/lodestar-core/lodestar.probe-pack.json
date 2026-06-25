@@ -28,7 +28,8 @@
     "pack_registry",
     "probe_runner",
     "public_api",
-    "harvest_projection"
+    "harvest_projection",
+    "generic_extraction"
   ],
   "invariants": [
     "no_self_promotion",
@@ -75,7 +76,8 @@
     "public_api_surface_stable",
     "durable_memory_harvest",
     "approval_channel_transport",
-    "approval_channel_forgery_boundary"
+    "approval_channel_forgery_boundary",
+    "generic_extractor_opt_in"
   ],
   "probes": [
     { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
@@ -301,6 +303,10 @@
     {
       "name": "reflection-derives-supersession-from-conflict",
       "file": "probes/reflection-derives-supersession-from-conflict.ts"
+    },
+    {
+      "name": "generic-llm-extractor-stays-unverified",
+      "file": "probes/generic-llm-extractor-stays-unverified.ts"
     },
     {
       "name": "public-api-surface",

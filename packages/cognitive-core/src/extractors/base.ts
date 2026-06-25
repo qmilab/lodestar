@@ -1,6 +1,18 @@
 import type { Claim, Observation, ResourceScope, Sensitivity } from "@qmilab/lodestar-core"
 
 /**
+ * The reserved `schema_key` for the generic LLM-driven fallback extractor.
+ *
+ * {@link lookupExtractor} routes any observation whose schema has no
+ * schema-bound extractor to whatever is registered under this key. Nothing
+ * is registered here by default — {@link createGenericLLMExtractor} produces
+ * an extractor that claims this slot, and registering it is an explicit
+ * opt-in (never a built-in), because LLM extraction is non-deterministic
+ * and replay-stable schema-bound extraction must stay the default.
+ */
+export const GENERIC_EXTRACTOR_SCHEMA_KEY = "__generic__"
+
+/**
  * An extractor consumes an Observation and produces zero or more Claims.
  *
  * Two flavours:
@@ -55,7 +67,7 @@ export function registerExtractor(extractor: ClaimExtractor): void {
 }
 
 export function lookupExtractor(schema_key: string): ClaimExtractor | undefined {
-  return extractors.get(schema_key) ?? extractors.get("__generic__")
+  return extractors.get(schema_key) ?? extractors.get(GENERIC_EXTRACTOR_SCHEMA_KEY)
 }
 
 export function _resetExtractorsForTests(): void {
