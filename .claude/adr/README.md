@@ -417,3 +417,16 @@ The options we rejected, each with a one-line reason.
   `belief.adopted` event; no authenticity gate needed (reads from the governed store, only
   proposes). No `packages/core` schema change. Locked by
   `reflection-derives-supersession-from-conflict`. **Status: Accepted.**
+- [ADR-0035](0035-generic-llm-claim-extractor.md) — Opt-in LLM-driven generic claim
+  extractor (epic #154 child C-2, #163). `createGenericLLMExtractor(model)` claims the
+  reserved `__generic__` fallback slot so observation text with no schema-bound extractor
+  can still yield claims — registered explicitly, **never** a built-in (replay-stable
+  deterministic extraction stays the default). The provider-agnostic `GenericExtractionModel`
+  seam keeps the LLM client/key/prompt in the consumer (Lodestar ships none). Every claim is
+  `extraction_method: "llm"`, and the partner **`GenericAwareEvidenceLinker`** stamps its
+  source evidence at `model_inference` quality, so the auto-observation (Parallax) gate keeps
+  the belief `unverified` — at high strength and even across two independent LLM inferences.
+  The downgrade lives in the linker (not the base path — making it load-bearing there would
+  break the locked #157 probe), so the opt-in is the extractor *and* its linker. No
+  `packages/core` schema change; pure no-op for existing flows. Locked by
+  `generic-llm-extractor-stays-unverified`. **Status: Accepted.**

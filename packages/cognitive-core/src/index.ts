@@ -5,6 +5,7 @@ export {
   type LinkForClaimInput,
 } from "./evidence-linker.js"
 export { DocAwareEvidenceLinker } from "./doc-evidence-linker.js"
+export { GenericAwareEvidenceLinker } from "./generic-evidence-linker.js"
 export {
   ExplanationGenerator,
   type BuildExplanationInput,
@@ -17,6 +18,13 @@ export {
   FsReadExtractor,
   DocumentationExtractor,
   DOCUMENTATION_SOURCE_SCHEMA_KEY,
+  GENERIC_EXTRACTOR_SCHEMA_KEY,
+  createGenericLLMExtractor,
+  renderObservationText,
+  type GenericExtractionModel,
+  type GenericExtractionRequest,
+  type GenericClaimDraft,
+  type GenericLLMExtractorOptions,
   type DocumentationSourcePayload,
   type ClaimExtractor,
   type ExtractionInput,

@@ -22,9 +22,22 @@ export {
   DOCUMENTATION_SOURCE_SCHEMA_KEY,
   type DocumentationSourcePayload,
 } from "./documentation.js"
+// The generic LLM-driven extractor is opt-in (not a built-in): registering it
+// claims the reserved __generic__ fallback slot, so it must be a deliberate
+// choice (replay-stable schema-bound extraction stays the default). Pair it
+// with a GenericAwareEvidenceLinker so its claims stay `unverified` (#163).
+export {
+  createGenericLLMExtractor,
+  renderObservationText,
+  type GenericExtractionModel,
+  type GenericExtractionRequest,
+  type GenericClaimDraft,
+  type GenericLLMExtractorOptions,
+} from "./generic-llm.js"
 export {
   type ClaimExtractor,
   type ExtractionInput,
+  GENERIC_EXTRACTOR_SCHEMA_KEY,
   registerExtractor,
   lookupExtractor,
 } from "./base.js"
