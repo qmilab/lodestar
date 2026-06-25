@@ -921,17 +921,26 @@ function extractContradictionTransition(
 }
 
 /**
- * The belief id named by a belief-adoption event. Accepts the bare
- * `belief.adopted` form (synthetic streams / firewall audit-sink) and the
- * host-stamped `firewall.belief.adopted` form — the same dual-form tolerance
- * `extractContradictionTransition` applies to transitions. Used by the DERIVE
- * rule to find beliefs newly adopted in the cursor window.
+ * The belief id named by a belief-adoption event. Two real shapes flow on the
+ * log and the DERIVE rule must read both:
+ *  - the **bare `belief.adopted`** a host emits (guard `runGuarded`, the MCP
+ *    proxy, the runtime gate) carries the **full `Belief` object** as its
+ *    payload, so the belief id is `payload.id`;
+ *  - the **`firewall.belief.adopted`** audit twin (and synthetic probe streams)
+ *    carries `payload.belief_id`.
+ * Reading `belief_id ?? id` accepts either, so the rule fires for a consumer
+ * stream that carries only the bare form (e.g. a host wiring `CognitiveCore`
+ * without the firewall audit twin) as well as a full guard/proxy/runtime log.
+ * Same dual-form tolerance `extractContradictionTransition` applies to
+ * transitions. A mis-read id is harmless: the rule then `beliefs.get(id)`s it
+ * and skips a miss.
  */
 function extractAdoptedBeliefId(event: EventEnvelope): string | null {
   if (event.type !== "belief.adopted" && event.type !== "firewall.belief.adopted") return null
-  const payload = event.payload as { belief_id?: unknown } | undefined
-  if (!payload || typeof payload.belief_id !== "string") return null
-  return payload.belief_id
+  const payload = event.payload as { belief_id?: unknown; id?: unknown } | undefined
+  if (!payload) return null
+  const id = payload.belief_id ?? payload.id
+  return typeof id === "string" ? id : null
 }
 
 /**

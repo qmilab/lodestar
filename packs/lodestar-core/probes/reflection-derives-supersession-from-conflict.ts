@@ -48,6 +48,9 @@
  *   J  incremental — a freshly-adopted belief conflicting with a PRE-EXISTING
  *      supported belief (whose adoption predates the window) still fires once.
  *   K  no stores → no-op (a dry-run inspection pass cannot derive conflicts).
+ *   L  both real adoption-event shapes fire the rule — the BARE `belief.adopted`
+ *      (full Belief object, id at `payload.id`, what hosts emit; A–K use it) and
+ *      the `firewall.belief.adopted` audit twin (id at `payload.belief_id`).
  */
 
 import {
@@ -190,18 +193,48 @@ async function seedBelief(
 }
 
 /**
- * A `belief.adopted` event naming a seeded belief — the window signal the derive
- * rule keys off. The rule reads only `payload.belief_id` and then looks the
- * belief up in the governed store, so a forged event can at most trigger a scan
- * of a belief that is already legitimately stored (and proposals are
- * propose-only) — there is no authenticity gate to forge past here.
+ * The **bare `belief.adopted`** event a real host emits (guard `runGuarded`, the
+ * MCP proxy, the runtime gate all `emit("belief.adopted", belief)`): its payload
+ * is the **full `Belief` object**, so the belief id is `payload.id` — NOT
+ * `payload.belief_id`. The probe uses this real shape so the derive rule's
+ * window gate is exercised against what hosts actually write. The rule reads the
+ * id and then looks the belief up in the governed store, so a forged event can
+ * at most trigger a scan of a belief that is already legitimately stored (and
+ * proposals are propose-only) — there is no authenticity gate to forge past.
  */
 function adoptedEvent(belief: Belief, seq: number): EventEnvelope {
+  return baseEnvelope(seq, "belief.adopted", "0.1.0", belief)
+}
+
+/**
+ * The **`firewall.belief.adopted`** audit twin a host stamps alongside the bare
+ * event: its payload carries `belief_id` (not the full belief). The derive rule
+ * must accept this shape too — a stream may carry only the twin.
+ */
+function firewallAdoptedEvent(belief: Belief, seq: number): EventEnvelope {
+  return baseEnvelope(seq, "firewall.belief.adopted", "1", {
+    kind: "belief.adopted",
+    belief_id: belief.id,
+    claim_id: belief.claim_id,
+    evidence_id: crypto.randomUUID(),
+    rationale_id: crypto.randomUUID(),
+    by_authority: "auto_observation",
+    at: belief.observed_at,
+    by_actor_id: "probe-actor",
+  })
+}
+
+function baseEnvelope(
+  seq: number,
+  type: string,
+  schema_version: string,
+  payload: unknown,
+): EventEnvelope {
   return {
     id: crypto.randomUUID(),
     seq,
-    type: "belief.adopted",
-    schema_version: "0.1.0",
+    type,
+    schema_version,
     project_id: "probe-project",
     session_id: "probe-session",
     actor_id: "probe-actor",
@@ -209,7 +242,7 @@ function adoptedEvent(belief: Belief, seq: number): EventEnvelope {
     logical_clock: seq,
     causal_parent_ids: [],
     payload_hash: "probe",
-    payload: { belief_id: belief.id, claim_id: belief.claim_id },
+    payload,
     versions: {},
   }
 }
@@ -598,6 +631,31 @@ async function run(): Promise<{ passed: boolean; checks: Check[] }> {
       name: "K: a dry-run pass without belief/claim stores derives no supersession and does not throw",
       pass: !threw && proposals === 0,
       detail: threw ? "threw" : `supersession proposals=${proposals}`,
+    })
+  }
+
+  // ── L: both real adoption-event shapes trigger the rule ───────────────────
+  //    Scenarios A–K already drive the BARE `belief.adopted` form (the full
+  //    Belief object → id at `payload.id`). L drives the `firewall.belief.adopted`
+  //    audit twin (id at `payload.belief_id`) and asserts it fires too, so a
+  //    stream carrying only the twin still surfaces the conflict.
+  {
+    const stores = freshStores()
+    const reflection = buildReflection(stores)
+    const sc = scope("derive-L")
+    const older = await seedBelief(stores, sc, "/branch", "current", "main", { observedAt: OLD_TS })
+    const newer = await seedBelief(stores, sc, "/branch", "current", "release", {
+      observedAt: NEW_TS,
+    })
+    const result = await reflection.run({
+      trigger: "programmatic",
+      events: [firewallAdoptedEvent(older, 0), firewallAdoptedEvent(newer, 1)],
+      apply: false,
+    })
+    checks.push({
+      name: "L: the firewall.belief.adopted twin (belief_id payload) also triggers the rule",
+      pass: supersessionsOf(result.payload.proposals).length === 1,
+      detail: `supersession proposals=${supersessionsOf(result.payload.proposals).length}`,
     })
   }
 
