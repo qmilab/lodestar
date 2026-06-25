@@ -158,6 +158,19 @@ export function aggregateStrength(evidence: EvidenceSet): number {
 const SOURCE_CONFIDENCE_CEILING = 0.95
 
 /**
+ * The saturation cap — the largest value `corroborationStrength` returns,
+ * strictly below `1`. Past ~13 strong independent groups the noisy-OR
+ * "miss" product underflows below one ULP at `1.0`, so `1 − miss` would round
+ * to exactly `1.0` and break the `[0, 1)` bound (and stall the ranking
+ * headroom). Clamping the result here keeps the scalar bounded and
+ * non-decreasing in that tail: it *saturates below a cap* rather than hitting
+ * `1`. The cap sits at the float-precision limit, so it only bites well beyond
+ * any realistic corroboration count — strict monotonicity holds everywhere
+ * below it.
+ */
+const MAX_CORROBORATION = 1 - Number.EPSILON
+
+/**
  * Compute a **corroboration-aware** quality score for an evidence set (#158).
  *
  * Unlike {@link aggregateStrength} (the normalized gate input, pinned at `1.0`
@@ -182,7 +195,8 @@ const SOURCE_CONFIDENCE_CEILING = 0.95
  *  - **monotone** in independent supporting groups (each added group with
  *    `p > 0` strictly raises the score),
  *  - **saturating** and **bounded** in `[0, 1)` (added sources yield
- *    diminishing returns; never reaches `1`),
+ *    diminishing returns; clamped at {@link MAX_CORROBORATION} so even a tail
+ *    of strong sources that underflows the noisy-OR product never reaches `1`),
  *  - **quality-weighted** (a `direct_observation` corroborator raises more than
  *    an `external_document` one), and
  *  - **dampened by contradiction** (a strong contradicting group pulls it
@@ -209,5 +223,8 @@ export function corroborationStrength(evidence: EvidenceSet): number {
 
   const supportConfidence = 1 - supportMiss
   const contradictConfidence = 1 - contradictMiss
-  return supportConfidence * (1 - contradictConfidence)
+  // Clamp below 1: with enough strong independent groups `supportMiss`
+  // underflows and `1 − supportMiss` rounds to exactly 1.0 in float64, which
+  // would break the `[0, 1)` bound. Saturate at the cap instead.
+  return Math.min(supportConfidence * (1 - contradictConfidence), MAX_CORROBORATION)
 }

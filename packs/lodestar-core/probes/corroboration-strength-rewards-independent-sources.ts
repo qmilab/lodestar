@@ -125,6 +125,29 @@ function scalarSection(): ProbeResult | { strengths: number[] } {
     return fail(`corroboration not saturating: Δ(2→3)=${d2} not < Δ(1→2)=${d1}`)
   }
 
+  // ── B (tail): bounded < 1 and non-decreasing even when the noisy-OR "miss"
+  // product underflows. Past ~13 strong independent groups `1 − supportMiss`
+  // rounds to exactly 1.0 in float64; the result must saturate strictly below 1,
+  // never reach it, and never tick *down* in the saturated tail. (PR #166 review.)
+  let prevTail = corroborationStrength(independentSupport(1))
+  for (let n = 2; n <= 64; n++) {
+    const v = corroborationStrength(independentSupport(n))
+    if (!(v < 1)) {
+      return fail(`corroboration ${v} for ${n} strong groups reached/exceeded 1 (bound broken)`)
+    }
+    if (v < prevTail - EPS) {
+      return fail(
+        `corroboration decreased in the saturated tail: ${n} groups (${v}) < ${n - 1} (${prevTail})`,
+      )
+    }
+    prevTail = v
+  }
+  // The specific case the review names: 13 strong groups (where the naive
+  // 1 − supportMiss would round to 1) stays strictly below 1.
+  if (!(corroborationStrength(independentSupport(13)) < 1)) {
+    return fail("corroboration for 13 strong independent groups did not stay < 1")
+  }
+
   // ── C: quality-weighted — a stronger corroborator raises the score more ─────
   const base = item("g0") // one direct_observation
   const plusDirect = corroborationStrength(evidence("ev-qd", [base, item("g1")]))
