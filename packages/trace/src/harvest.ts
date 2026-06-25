@@ -74,7 +74,10 @@ import {
  *    genuine id to a different claim's content (claim_id mismatch). The full
  *    record is taken **first-wins** per id, so a later forged re-emit cannot
  *    overwrite a genuine adoption's content. The candidate's evidence is the exact
- *    set the audit's `evidence_id` names (not the latest assessment for the claim).
+ *    set the audit's `evidence_id` names (not the latest assessment for the claim);
+ *    the surfaced claim + evidence **content** is likewise first-wins per id, so an
+ *    agent cannot `ctx.emit` a same-id `claim.extracted` / `evidence.assessed` to
+ *    overwrite the provenance shown for an authenticated belief.
  *  - **Transitions** ({@link readBeliefTransition}): the canonical
  *    `firewall.belief.transitioned` type, `schema_version ===
  *    FIREWALL_EVENT_SCHEMA_VERSION`, and a payload that strictly validates — so an
@@ -205,14 +208,20 @@ export function harvestCandidates(
     }
     if (type === "claim.extracted") {
       const parsed = ClaimSchema.safeParse(event.payload)
-      if (parsed.success) claims.set(parsed.data.id, parsed.data)
+      // First-wins: the host emits a claim's content before an agent could
+      // `ctx.emit` a same-id forgery (and ids are unpredictable), so a later
+      // re-emit cannot overwrite the provenance shown for an authenticated belief.
+      if (parsed.success && !claims.has(parsed.data.id)) claims.set(parsed.data.id, parsed.data)
       continue
     }
     if (type === "evidence.assessed") {
       const parsed = EvidenceSetSchema.safeParse(event.payload)
-      // Keyed by evidence-set id so a candidate can attach the exact set the
-      // firewall recorded, not whichever assessment for the claim came last.
-      if (parsed.success) evidenceById.set(parsed.data.id, parsed.data)
+      // Keyed by evidence-set id (so a candidate attaches the exact set the
+      // firewall's audit names), first-wins (so a later same-id re-emit cannot
+      // overwrite the evidence content the firewall actually cleared against).
+      if (parsed.success && !evidenceById.has(parsed.data.id)) {
+        evidenceById.set(parsed.data.id, parsed.data)
+      }
       continue
     }
     const transition = readBeliefTransition(event)

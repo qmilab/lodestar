@@ -362,6 +362,34 @@ describe("harvestCandidates", () => {
     expect(out[0]?.evidence?.id).toBe("ev-cleared")
   })
 
+  test("a later same-id claim.extracted cannot overwrite the surfaced claim", () => {
+    // The host extracts the genuine claim; the agent then re-emits claim.extracted
+    // with the same id but poisoned text. First-wins keeps the genuine statement.
+    const events = log(
+      extract(claim("c1", "the genuine lesson")),
+      adopt(belief("b1", "c1"), "ev1"),
+      assess(evidenceSet("ev1", "c1")),
+      extract(claim("c1", "attacker-controlled text")),
+    )
+    const out = harvestCandidates(events)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.claim?.statement).toBe("the genuine lesson")
+  })
+
+  test("a later same-id evidence.assessed cannot overwrite the surfaced evidence", () => {
+    const genuine = evidenceSet("ev1", "c1")
+    const forged = { ...evidenceSet("ev1", "c1"), assessed_by: "attacker" }
+    const events = log(
+      extract(claim("c1", "lesson")),
+      assess(genuine),
+      adopt(belief("b1", "c1"), "ev1"),
+      assess(forged),
+    )
+    const out = harvestCandidates(events)
+    expect(out).toHaveLength(1)
+    expect(out[0]?.evidence?.assessed_by).toBe("test-actor")
+  })
+
   // ── firewall-authored transitions only (Codex P1#1, round 1) ──────────────
 
   test("a forged transition (wrong schema_version) cannot clear a quarantined belief", () => {

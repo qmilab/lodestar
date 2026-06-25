@@ -88,7 +88,10 @@ so the rule is not wholesale — but the security-relevant subset of it applies.
      overwrite a genuine adoption's content (e.g. flip `quarantined → clean`). The
      candidate's **evidence** is the *exact* set the audit's `evidence_id` names —
      not the latest assessment for the claim, which may post-date what cleared the
-     gate — so the provenance shown is the provenance the firewall approved.
+     gate — so the provenance shown is the provenance the firewall approved. The
+     surfaced claim + evidence **content** is itself first-wins per id, so an agent
+     cannot `ctx.emit` a same-id `claim.extracted` / `evidence.assessed` *after* a
+     genuine adoption to overwrite the provenance with attacker-controlled text.
    - **Transitions.** Reconstruction (which replays `firewall.belief.transitioned`
      in logical-clock order, so an `unverified → supported` promotion counts and a
      `supported → quarantined` demotion excludes) trusts a transition only when it
