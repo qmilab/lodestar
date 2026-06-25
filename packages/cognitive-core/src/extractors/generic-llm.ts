@@ -174,11 +174,17 @@ export function renderObservationText(observation: Observation, maxTextBytes: nu
     }
   }
   if (text === undefined) {
+    let rendered: string | undefined
     try {
-      text = JSON.stringify(observation.payload)
+      // `payload` is `unknown`: JSON.stringify returns `undefined` (without
+      // throwing) for an `undefined` / function / symbol payload, and throws on
+      // a circular structure. Either way, coerce to a safe string rather than
+      // letting an undefined `text` crash the `text.length` access below.
+      rendered = JSON.stringify(observation.payload)
     } catch {
-      text = String(observation.payload)
+      rendered = undefined
     }
+    text = rendered ?? String(observation.payload)
   }
   return text.length > maxTextBytes ? text.slice(0, maxTextBytes) : text
 }

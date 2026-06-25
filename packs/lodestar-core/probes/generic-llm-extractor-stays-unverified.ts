@@ -51,6 +51,7 @@ import {
   lookupExtractor,
   registerBuiltInExtractors,
   registerExtractor,
+  renderObservationText,
 } from "@qmilab/lodestar-cognitive-core"
 import type { EvidenceItem, Observation, ResourceScope, Sensitivity } from "@qmilab/lodestar-core"
 import {
@@ -176,6 +177,41 @@ async function main(): Promise<{ passed: boolean; checks: Check[]; notes: string
     pass: createGenericLLMExtractor(stubModel).schema_key === GENERIC_EXTRACTOR_SCHEMA_KEY,
     detail: `schema_key=${createGenericLLMExtractor(stubModel).schema_key}`,
   })
+
+  // Robustness (Codex #164 review P2): the text renderer must coerce any
+  // payload to a string — JSON.stringify returns `undefined` (without throwing)
+  // for undefined / function / symbol payloads, and throws on a circular
+  // structure. None of these may crash ingestion before the model is called.
+  {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+    const cases: { label: string; payload: unknown }[] = [
+      { label: "undefined", payload: undefined },
+      { label: "function", payload: () => 1 },
+      { label: "symbol", payload: Symbol("s") },
+      { label: "circular", payload: circular },
+      { label: "number", payload: 42 },
+    ]
+    let allStrings = true
+    const details: string[] = []
+    for (const c of cases) {
+      let ok = false
+      try {
+        ok =
+          typeof renderObservationText({ payload: c.payload } as unknown as Observation, 100) ===
+          "string"
+      } catch {
+        ok = false
+      }
+      allStrings &&= ok
+      details.push(`${c.label}=${ok ? "string" : "THREW/non-string"}`)
+    }
+    checks.push({
+      name: "robustness: renderObservationText coerces any payload to a string (never throws)",
+      pass: allStrings,
+      detail: details.join(", "),
+    })
+  }
 
   // ── AC#3 (phase 0: empty registry) — nothing resolves an unknown schema ──
   checks.push({
