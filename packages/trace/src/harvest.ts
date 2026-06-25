@@ -13,6 +13,7 @@ import {
   FirewallBeliefTransitionedPayloadSchema,
   type RetrievalStatus,
 } from "@qmilab/lodestar-core"
+import { corroborationStrength } from "@qmilab/lodestar-memory-firewall"
 
 /**
  * The durable-memory harvest queue, projected from a flat event stream.
@@ -134,6 +135,17 @@ export interface MemoryCandidate {
   claim?: Claim
   /** The evidence set the belief cleared against. Present when an `evidence.assessed` for the claim is in the log. */
   evidence?: EvidenceSet
+  /**
+   * A corroboration-aware quality score in `[0, 1)` derived from {@link evidence}
+   * (#158): higher means more *independent* supporting sources, so a reviewer can
+   * rank "best-evidenced first". Present only when {@link evidence} is. It is a
+   * ranking/legibility signal, **not** a candidacy gate — candidacy is the
+   * `truth_status: supported` + security gate (see {@link isHarvestable}); a
+   * well- and a thinly-corroborated lesson are both candidates, distinguished only
+   * by this number. Computed by `corroborationStrength` (the non-gate sibling of
+   * the firewall's `aggregateStrength`).
+   */
+  corroboration?: number
   /** Prior lessons this one replaced, newest-first — the supersession audit trail. Empty when standalone. */
   supersedes: SupersededLesson[]
   /** Always `"candidate"`: advisory, human-review gated. Mirrors `PendingApproval.status`. */
@@ -317,7 +329,13 @@ function harvestSession(events: EventEnvelope[]): MemoryCandidate[] {
     // latest assessment for the claim (which may post-date what cleared the gate).
     const evidenceId = firewallAdopted.get(id)?.evidence_id
     const evidence = evidenceId ? evidenceById.get(evidenceId) : undefined
-    if (evidence) item.evidence = evidence
+    if (evidence) {
+      item.evidence = evidence
+      // Rank-only: how well independent sources corroborate this lesson. Never a
+      // candidacy gate (that is isHarvestable above) — both a well- and a
+      // thinly-evidenced lesson surface; this only orders them.
+      item.corroboration = corroborationStrength(evidence)
+    }
     candidates.push(item)
   }
   return candidates

@@ -48,6 +48,7 @@
   "dependencies": {
     "@qmilab/lodestar-core": "workspace:*",
     "@qmilab/lodestar-event-log": "workspace:*",
+    "@qmilab/lodestar-memory-firewall": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {

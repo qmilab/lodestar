@@ -162,6 +162,7 @@ export {
   InMemoryBeliefStore,
   InMemoryEvidenceStore,
   aggregateStrength,
+  corroborationStrength,
   isTransitionAllowed,
 } from "@qmilab/lodestar-memory-firewall"
 export type {
