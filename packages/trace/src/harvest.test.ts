@@ -26,13 +26,13 @@ const PROJECT = "trace-harvest-test-project"
 const SESSION = "trace-harvest-test-session"
 
 let seq = 0
-function makeEvent(type: string, payload: unknown): EventEnvelope {
+function makeEvent(type: string, payload: unknown, schemaVersion = "1"): EventEnvelope {
   seq += 1
   return {
     id: `evt-${seq}`,
     seq,
     type,
-    schema_version: "1",
+    schema_version: schemaVersion,
     project_id: PROJECT,
     session_id: SESSION,
     actor_id: "test-actor",
@@ -116,13 +116,8 @@ function extract(c: Claim): EventEnvelope {
 function assess(e: EvidenceSet): EventEnvelope {
   return makeEvent("evidence.assessed", e)
 }
-function transition(
-  beliefId: string,
-  axis: string,
-  toValue: string,
-  supersededBy?: string,
-): EventEnvelope {
-  return makeEvent(FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE, {
+function transitionPayload(beliefId: string, axis: string, toValue: string, supersededBy?: string) {
+  return {
     kind: "belief.transitioned",
     belief_id: beliefId,
     axis,
@@ -133,7 +128,33 @@ function transition(
     at: "2026-01-01T00:05:00.000Z",
     by_actor_id: "test-actor",
     ...(supersededBy ? { superseded_by: supersededBy } : {}),
-  })
+  }
+}
+
+/** A genuine firewall-authored transition: canonical type + `schema_version: "1"`. */
+function transition(
+  beliefId: string,
+  axis: string,
+  toValue: string,
+  supersededBy?: string,
+): EventEnvelope {
+  return makeEvent(
+    FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
+    transitionPayload(beliefId, axis, toValue, supersededBy),
+  )
+}
+
+/**
+ * A forged transition a governed agent could write via `ctx.emit`: the same
+ * canonical type + payload, but pinned to the session `schema_version` ("0.1.0")
+ * the agent cannot override. Must be ignored by lifecycle reconstruction.
+ */
+function forgedTransition(beliefId: string, axis: string, toValue: string): EventEnvelope {
+  return makeEvent(
+    FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
+    transitionPayload(beliefId, axis, toValue),
+    "0.1.0",
+  )
 }
 
 describe("harvestCandidates", () => {
@@ -267,5 +288,79 @@ describe("harvestCandidates", () => {
     const snapshot = JSON.stringify(events)
     harvestCandidates(events)
     expect(JSON.stringify(events)).toBe(snapshot)
+  })
+
+  // ── firewall-authored transitions only (Codex P1#1) ───────────────────────
+
+  test("a forged transition (wrong schema_version) cannot clear a quarantined belief", () => {
+    const events = [
+      adopt(belief("b1", "c1", { security_status: "quarantined" })),
+      // An agent ctx.emit at the session schema version, not the firewall's.
+      forgedTransition("b1", "security_status", "clean"),
+    ]
+    expect(harvestCandidates(events)).toEqual([])
+  })
+
+  test("a forged transition cannot promote an unverified belief to supported", () => {
+    const events = [
+      adopt(belief("b1", "c1", { truth_status: "unverified" })),
+      forgedTransition("b1", "truth_status", "supported"),
+    ]
+    expect(harvestCandidates(events)).toEqual([])
+  })
+
+  test("a bare belief.transitioned / kind-tagged agent emit is not trusted", () => {
+    const bare = makeEvent(
+      "belief.transitioned",
+      transitionPayload("b1", "security_status", "clean"),
+    )
+    const tagged = makeEvent(
+      "some.agent.event",
+      transitionPayload("b1", "security_status", "clean"),
+    )
+    const events = [adopt(belief("b1", "c1", { security_status: "quarantined" })), bare, tagged]
+    expect(harvestCandidates(events)).toEqual([])
+  })
+
+  test("a genuine firewall clearance (schema_version 1) does clear a quarantine", () => {
+    // Positive control for the forged-transition tests above.
+    const events = [
+      adopt(belief("b1", "c1", { security_status: "quarantined" })),
+      transition("b1", "security_status", "clean"),
+    ]
+    expect(harvestCandidates(events)).toHaveLength(1)
+  })
+
+  // ── supersession history respects the security gate (Codex P1#2) ──────────
+
+  test("a quarantined predecessor is excluded from supersession history", () => {
+    const events = [
+      adopt(belief("b1", "c1", { security_status: "quarantined" })),
+      adopt(belief("b2", "c2")),
+      transition("b1", "truth_status", "superseded", "b2"),
+    ]
+    const out = harvestCandidates(events)
+    expect(out.map((c) => c.belief.id)).toEqual(["b2"])
+    // b1 is quarantined: it is neither a candidate nor surfaced as history.
+    expect(out[0]?.supersedes).toEqual([])
+  })
+
+  test("a blocked predecessor is excluded from history but a clean ancestor behind it surfaces", () => {
+    // b0 (clean) → b1 (blocked) → b2 (clean, head). b1 hidden, b0 still shown.
+    const events = [
+      adopt(belief("b0", "c0", { observed_at: "2026-01-01T00:00:00.000Z" })),
+      adopt(
+        belief("b1", "c1", {
+          retrieval_status: "blocked",
+          observed_at: "2026-01-01T00:05:00.000Z",
+        }),
+      ),
+      adopt(belief("b2", "c2", { observed_at: "2026-01-01T00:10:00.000Z" })),
+      transition("b0", "truth_status", "superseded", "b1"),
+      transition("b1", "truth_status", "superseded", "b2"),
+    ]
+    const out = harvestCandidates(events)
+    expect(out.map((c) => c.belief.id)).toEqual(["b2"])
+    expect(out[0]?.supersedes.map((s) => s.belief.id)).toEqual(["b0"])
   })
 })

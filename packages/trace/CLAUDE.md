@@ -40,6 +40,12 @@ projects it into the epistemic chain, then renders markdown.
   enters via `belief.adopted` (full `Belief`) and its axes may move via
   `firewall.belief.transitioned`; the projection replays those in clock order, so
   a belief adopted `unverified` then promoted to `supported` *is* a candidate.
+  Reconstruction trusts **only firewall-authored** transitions (canonical type +
+  `schema_version === FIREWALL_EVENT_SCHEMA_VERSION` + strict payload) — a
+  governed agent's `ctx.emit` is pinned below that version and cannot forge a
+  `security_status → clean` clearance to launder a quarantine. The security gate
+  applies to supersession **history** too: a quarantined / hard-demoted
+  predecessor is kept out of `supersedes`.
   **Candidacy gate (ADR-0033):** current `truth_status: supported` **and**
   `security_status: clean` **and** `retrieval_status` ∈ {`normal`, `restricted`}
   — the security-relevant subset of `DEFAULT_CONTEXT_POLICY`, so a quarantined /

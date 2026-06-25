@@ -60,20 +60,35 @@ so the rule is not wholesale — but the security-relevant subset of it applies.
    when the candidate leaves the host. Gating sensitivity in the projection would
    double-apply a ceiling the wrong layer owns.
 
-3. **Supersession is surfaced as history, never as a separate candidate.** A
-   superseded belief is folded into the `supersedes` audit trail of the successor
-   that replaced it (newest-first), preserving "we used to believe X, then learned
-   Y". It is never a top-level candidate on its own. A supersession chain whose
-   current head is not a clean, supported, retrievable lesson surfaces nothing —
-   conservative for v0.
+3. **The gate applies wherever rejected content would reach the Keep queue — a
+   candidate *and* its supersession history.** A superseded belief is folded into
+   the `supersedes` audit trail of the successor that replaced it (newest-first),
+   preserving "we used to believe X, then learned Y", and is never a top-level
+   candidate. But a predecessor that fails the *security* gate (quarantined /
+   hard-demoted) is **dropped from the history too** — its content must not reach
+   the human queue even as audit trail (the walk still traverses *through* it so a
+   clean ancestor behind a rejected link still surfaces). Truth status is not gated
+   on history members (a predecessor is `superseded` by construction). A
+   supersession chain whose current head is not a clean, supported, retrievable
+   lesson surfaces nothing — conservative for v0.
 
-4. **Current lifecycle state is reconstructed, not snapshot-read.** A belief is
-   adopted via `belief.adopted` (the full `Belief`) and its axes may later move via
-   `firewall.belief.transitioned`. The projection replays those transitions in
-   logical-clock order, so a belief adopted `unverified` then promoted to
-   `supported` *is* a candidate, and one adopted `supported` then quarantined is
-   *not*. The gate (decision 1) reads the reconstructed state, not the adoption
-   snapshot.
+4. **Current lifecycle state is reconstructed, not snapshot-read — and only from
+   firewall-authored transitions.** A belief is adopted via `belief.adopted` (the
+   full `Belief`) and its axes may later move via `firewall.belief.transitioned`.
+   The projection replays those transitions in logical-clock order, so a belief
+   adopted `unverified` then promoted to `supported` *is* a candidate, and one
+   adopted `supported` then quarantined is *not*. Reconstruction trusts a
+   transition **only** when it is firewall-authored: the canonical
+   `firewall.belief.transitioned` type, `schema_version === FIREWALL_EVENT_SCHEMA_VERSION`
+   (the host stamp), and a payload that strictly validates. A governed agent's raw
+   `ctx.emit` writes to the same log but is pinned to the session schema version and
+   cannot stamp the firewall's, so an agent cannot emit a fake `security_status →
+   clean` transition to launder a belief the firewall genuinely quarantined. A bare
+   `belief.transitioned` or a `kind`-tagged agent emit is **not** trusted. (A pure
+   projection still cannot defend against direct log tampering or a wholesale forged
+   `belief.adopted` — that is the log-integrity / signing boundary every projection
+   shares; this closes the *easy* forge-a-clearance path, the one specific to
+   lifecycle replay.)
 
 No `packages/core` schema change and no new event (ADR-0031 decision 3 holds):
 `MemoryCandidate` / `SupersededLesson` are `-trace` projection types reusing

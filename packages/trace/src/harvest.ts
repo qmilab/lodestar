@@ -7,6 +7,8 @@ import {
   type EvidenceSet,
   EvidenceSetSchema,
   FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
+  FIREWALL_EVENT_SCHEMA_VERSION,
+  FirewallBeliefTransitionedPayloadSchema,
   type RetrievalStatus,
 } from "@qmilab/lodestar-core"
 
@@ -56,6 +58,24 @@ import {
  * belief adopted `unverified` then promoted to `supported` *is* a candidate,
  * and one adopted `supported` then quarantined *is not* — the reconstruction
  * replays the transitions in logical-clock order.
+ *
+ * Reconstruction trusts only **firewall-authored** transitions ({@link
+ * readBeliefTransition}): the canonical `firewall.belief.transitioned` type
+ * stamped with `schema_version === FIREWALL_EVENT_SCHEMA_VERSION` and a payload
+ * that strictly validates. That stamp is the load-bearing one — a governed
+ * agent's raw `ctx.emit` writes to the same log but is pinned to the session
+ * schema version and cannot forge the firewall's, so an agent cannot emit a fake
+ * `security_status → clean` transition to launder a belief the firewall genuinely
+ * quarantined. (A pure projection cannot defend against direct log tampering or a
+ * wholesale forged `belief.adopted` — that is the log-integrity / signing
+ * boundary every projection shares, exactly as `pendingApprovals` trusts the
+ * guard's audit; what this closes is the *easy* forge-a-clearance path.)
+ *
+ * The security gate applies wherever firewall-rejected content would reach the
+ * Keep queue — a candidate **and** the supersession history under it. A
+ * quarantined / hard-demoted predecessor is dropped from `supersedes` even
+ * though it is `superseded` (never a top-level candidate either), so a poisoned
+ * lesson cannot ride in as "history".
  */
 
 /**
@@ -98,18 +118,10 @@ export interface MemoryCandidate {
 /** Retrieval states a keeper candidate may carry — mirrors the firewall's adopted/default states. */
 const ELIGIBLE_RETRIEVAL: ReadonlySet<RetrievalStatus> = new Set(["normal", "restricted"])
 
-/** The four lifecycle axes a `firewall.belief.transitioned` event can move. */
-const LIFECYCLE_AXES: ReadonlySet<string> = new Set([
-  "truth_status",
-  "retrieval_status",
-  "security_status",
-  "freshness_status",
-])
-
-/** A normalised belief-axis transition read tolerantly from the event stream. */
+/** A firewall-authored belief-axis transition. `axis` is the locked four-value enum. */
 interface BeliefTransition {
   belief_id: string
-  axis: string
+  axis: "truth_status" | "retrieval_status" | "security_status" | "freshness_status"
   to_value: string
   superseded_by?: string
 }
@@ -172,19 +184,20 @@ export function harvestCandidates(
       }
       continue
     }
-    const transition = readBeliefTransition(type, event.payload)
+    const transition = readBeliefTransition(event)
     if (transition) transitions.push(transition)
   }
 
   // Reconstruct each belief's current lifecycle state by replaying its
-  // transitions in clock order. Each step re-validates into a Belief so the
-  // result is type-correct; a bogus `to_value` is ignored, keeping prior state.
+  // firewall-authored transitions in clock order. Each step re-validates into a
+  // Belief so the result is type-correct; a bogus `to_value` is ignored, keeping
+  // prior state.
   const reconstructed = new Map<string, Belief>(adopted)
   for (const t of transitions) {
     const belief = reconstructed.get(t.belief_id)
     if (!belief) continue // no full record to reconstruct against — skip
     const next: Record<string, unknown> = { ...belief }
-    if (LIFECYCLE_AXES.has(t.axis)) next[t.axis] = t.to_value
+    next[t.axis] = t.to_value
     if (t.superseded_by) next.superseded_by = t.superseded_by
     const parsed = BeliefSchema.safeParse(next)
     if (parsed.success) reconstructed.set(t.belief_id, parsed.data)
@@ -231,23 +244,37 @@ export function harvestCandidates(
 }
 
 /**
- * The candidacy gate (ADR-0031). A belief is a keeper candidate only when its
- * reconstructed current state is a corroborated, clean, retrievable lesson —
- * the security-relevant subset of the firewall's `DEFAULT_CONTEXT_POLICY`. See
- * the module header for why freshness / sensitivity / scope are *not* gated.
+ * The security gate — the no-launder axes. A belief whose content reaches the
+ * Keep queue (a candidate *or* the history under one) must be `security_status:
+ * clean` and retrievable; otherwise the firewall rejected it and surfacing it
+ * would launder rejected content into the human queue. This is the
+ * security-relevant subset of the firewall's `DEFAULT_CONTEXT_POLICY`.
+ */
+function passesSecurityGate(belief: Belief): boolean {
+  return belief.security_status === "clean" && ELIGIBLE_RETRIEVAL.has(belief.retrieval_status)
+}
+
+/**
+ * The candidacy gate (ADR-0031/0033). A belief is a *top-level* keeper candidate
+ * only when its reconstructed current state is a corroborated lesson
+ * (`truth_status: supported`) that also {@link passesSecurityGate}. See the module
+ * header for why freshness / sensitivity / scope are *not* gated.
  */
 function isHarvestable(belief: Belief): boolean {
-  return (
-    belief.truth_status === "supported" &&
-    belief.security_status === "clean" &&
-    ELIGIBLE_RETRIEVAL.has(belief.retrieval_status)
-  )
+  return belief.truth_status === "supported" && passesSecurityGate(belief)
 }
 
 /**
  * Walk the supersession chain backwards from a head belief, collecting every
  * prior lesson it (transitively) replaced. Cycle-safe via a visited set;
  * returned newest-first by `observed_at` so the immediate predecessor leads.
+ *
+ * A predecessor that fails {@link passesSecurityGate} (quarantined / hard-demoted
+ * content the firewall rejected) is **omitted** from the history — its content
+ * must not reach the Keep queue even as audit trail — but the walk still
+ * traverses *through* it so a clean ancestor behind a rejected link still
+ * surfaces. (Truth status is not gated here: a predecessor is `superseded` by
+ * construction.)
  */
 function collectHistory(
   headId: string,
@@ -263,7 +290,7 @@ function collectHistory(
     if (id === undefined || visited.has(id)) continue
     visited.add(id)
     const belief = reconstructed.get(id)
-    if (belief) {
+    if (belief && passesSecurityGate(belief)) {
       const lesson: SupersededLesson = { belief }
       const claim = claims.get(belief.claim_id)
       if (claim) lesson.claim = claim
@@ -279,24 +306,28 @@ function collectHistory(
 }
 
 /**
- * Read a belief-axis transition from an event, tolerantly. Recognises the
- * canonical `firewall.belief.transitioned` type, a bare `belief.transitioned`
- * (the synthetic shape some probes/loops emit), or any payload tagged
- * `kind: "belief.transitioned"`. Returns `undefined` for anything else.
+ * Read a **firewall-authored** belief-axis transition from an event. The lifecycle
+ * the harvest gate reads must reflect only the firewall's decisions, so this trusts
+ * an event only when all three hold: the canonical
+ * `firewall.belief.transitioned` type, the host stamp `schema_version ===
+ * FIREWALL_EVENT_SCHEMA_VERSION` (which a governed agent's `ctx.emit` is pinned
+ * below and cannot forge), and a payload that strictly validates against the core
+ * wire schema. A bare `belief.transitioned` or a `kind`-tagged agent emit is
+ * **not** trusted — that is the forge-a-clearance path. Returns `undefined`
+ * otherwise.
  */
-function readBeliefTransition(type: string, payload: unknown): BeliefTransition | undefined {
-  const p = payload as Record<string, unknown> | undefined
-  const looksLikeTransition =
-    type === FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE ||
-    type === "belief.transitioned" ||
-    p?.kind === "belief.transitioned"
-  if (!looksLikeTransition || !p) return undefined
-  const { belief_id, axis, to_value, superseded_by } = p
-  if (typeof belief_id !== "string" || typeof axis !== "string" || typeof to_value !== "string") {
+function readBeliefTransition(event: EventEnvelope): BeliefTransition | undefined {
+  if (
+    event.type !== FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE ||
+    event.schema_version !== FIREWALL_EVENT_SCHEMA_VERSION
+  ) {
     return undefined
   }
+  const parsed = FirewallBeliefTransitionedPayloadSchema.safeParse(event.payload)
+  if (!parsed.success) return undefined
+  const { belief_id, axis, to_value, superseded_by } = parsed.data
   const transition: BeliefTransition = { belief_id, axis, to_value }
-  if (typeof superseded_by === "string" && superseded_by.length > 0) {
+  if (superseded_by !== undefined && superseded_by.length > 0) {
     transition.superseded_by = superseded_by
   }
   return transition

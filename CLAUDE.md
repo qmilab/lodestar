@@ -39,20 +39,25 @@ belief→lesson harvest: the new pure read-side projection
 `harvestCandidates(events)` in `@qmilab/lodestar-trace` surfaces a run's
 end-of-run **supported** beliefs + **superseded-with-history** chains as
 advisory `MemoryCandidate`s, each carrying its claim + evidence + provenance.
-Over a real on-disk NDJSON log it pins five invariants — a genuine supported
+Over a real on-disk NDJSON log it pins seven invariants — a genuine supported
 lesson surfaces with its evidence; the headline **no-launder** (a poisoned
 `quarantined` or hard-demoted `blocked` belief that nonetheless reached
 `supported` appears nowhere, not even as history — the no-self-promotion
 guarantee extended to the human Keep queue); lifecycle is **reconstructed**
-from `belief.adopted` + `firewall.belief.transitioned` (adopted-unverified
-then promoted-supported counts; adopted-supported then quarantined does not);
-**supersession** is the successor's newest-first audit trail, never a separate
-candidate; and the projection is **read-only** (log bytes + input array
-untouched). Candidacy gate = `truth_status:supported` ∧ `security_status:clean`
-∧ `retrieval_status ∈ {normal,restricted}`, the security-relevant subset of
+from `belief.adopted` + **firewall-authored** `firewall.belief.transitioned`
+(adopted-unverified then promoted-supported counts; adopted-supported then
+quarantined does not); a transition is trusted only when canonical-type +
+`schema_version === FIREWALL_EVENT_SCHEMA_VERSION` + strict-payload, so an
+**agent-forged** `security_status→clean` `ctx.emit` (pinned to the session
+schema version) cannot clear a real quarantine; **supersession** is the
+successor's newest-first audit trail, never a separate candidate, and its
+security gate applies to **history** too (a quarantined predecessor stays out);
+and the projection is **read-only** (log bytes + input array untouched).
+Candidacy gate = `truth_status:supported` ∧ `security_status:clean` ∧
+`retrieval_status ∈ {normal,restricted}`, the security-relevant subset of
 `DEFAULT_CONTEXT_POLICY`; freshness/sensitivity/scope are surfaced not gated;
 no `packages/core` schema change, no new event; ADR-0031 mapping + ADR-0033
-candidacy gate), and fourteen Policy Kernel probes —
+candidacy gate + firewall-authored reconstruction), and fourteen Policy Kernel probes —
 the three-valued gate, the trust-ladder floor, the approval lifecycle,
 signature verification, the arbitrate hook, and the host wiring — the
 `guard.wrap()` approval-resolver seam, the MCP-proxy deadline/timeout
