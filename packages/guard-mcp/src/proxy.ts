@@ -1526,6 +1526,7 @@ export class MCPProxy {
       claim_count: ingest.claims.length,
       belief_count: ingest.beliefs.length,
       world_model_keys: ingest.worldModelUpdates,
+      world_model_withheld: ingest.worldModelWithheld,
     })
     for (const claim of ingest.claims) {
       await this.emit("claim.extracted", claim)

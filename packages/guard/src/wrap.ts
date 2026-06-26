@@ -403,6 +403,7 @@ export async function runGuarded<T>(
       claim_count: ingest.claims.length,
       belief_count: ingest.beliefs.length,
       world_model_keys: ingest.worldModelUpdates,
+      world_model_withheld: ingest.worldModelWithheld,
     })
     for (const claim of ingest.claims) {
       await emit("claim.extracted", claim)
@@ -626,6 +627,7 @@ export async function runGuarded<T>(
         claim_count: result.claims.length,
         belief_count: result.beliefs.length,
         world_model_keys: result.worldModelUpdates,
+        world_model_withheld: result.worldModelWithheld,
       })
       for (const claim of result.claims) {
         await emit("claim.extracted", claim)

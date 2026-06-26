@@ -430,3 +430,27 @@ The options we rejected, each with a one-line reason.
   break the locked #157 probe), so the opt-in is the extractor *and* its linker. No
   `packages/core` schema change; pure no-op for existing flows. Locked by
   `generic-llm-extractor-stays-unverified`. **Status: Accepted.**
+- [ADR-0036](0036-corroboration-aware-evidence-scalar.md) — Corroboration-aware evidence
+  scalar as a separate, non-gate signal (#158, deferred from #157). `aggregateStrength` (the
+  gate input) is normalized `(S − C)/(S + C)`, so an all-supporting set is always exactly
+  `1.0` — de-normalizing it would re-baseline every consumer. So corroboration is made
+  legible by a **second, additive** scalar `corroborationStrength` (a quality-weighted
+  noisy-OR over independent supporting groups; monotone, saturating, bounded `[0, 1)`,
+  contradiction-dampened; shared `strongestPerGroup` so the two can't drift) that **feeds no
+  gate** — `aggregateStrength` stays byte-for-byte unchanged, so no belief's lifecycle shifts
+  and Parallax holds untouched. Wired into the harvest projection as ranking-only
+  `MemoryCandidate.corroboration`. Locked by
+  `corroboration-strength-rewards-independent-sources`. **Status: Accepted.**
+- [ADR-0037](0037-world-model-honours-auto-observation-gate.md) — World-model writes honour
+  the auto-observation gate (epic #154 tail, #165). `ingest` step 6 wrote the world model —
+  the ungated "current state" store a planner reads to decide — on net-positive strength
+  alone, so a positive-but-gated claim (a lone `external_document` / `model_inference`) still
+  wrote current state, bypassing the Parallax gate that keeps it an `unverified` *belief*: a
+  poisoning **side door**, latent only because nothing reads the world model back yet. The
+  fix: a write updates current state only if its evidence nets positive **and** clears the
+  gate — otherwise the write is **withheld** and recorded on `IngestResult.worldModelWithheld`
+  (hosts carry it as `world_model_withheld`). Withhold rather than write-and-flag: the world
+  model has no read-time gate to enforce a flag, and a flagged write would shadow a
+  gate-cleared value; the unverified belief still carries the full record. Refines ADR-0032's
+  P2#1 rule. No `packages/core` schema change. Locked by
+  `world-model-withholds-gated-current-state`. **Status: Accepted.**

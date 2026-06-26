@@ -4,6 +4,7 @@
 - **Date:** 2026-06-24
 - **Deciders:** Nandan
 - **Related:** #157 (epic #154, child A), #158 (deferred scalar aggregator), ADR-0031, docs/internal/scope-157-evidence-linker-claim-store-join.md
+- **Refined by:** ADR-0037 (#165) — the P2#1 world-model write rule (a net-contradicted claim does not overwrite observed state) is extended so a positive-but-auto-observation-gated claim is also withheld from current state.
 
 ## Context
 
