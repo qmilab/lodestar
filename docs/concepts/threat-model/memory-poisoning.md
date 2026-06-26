@@ -69,6 +69,62 @@ The cognitive core consults a `ContextPolicy` whenever it loads beliefs into mod
 
 A quarantined or suspicious belief cannot influence the planner regardless of how high its stated confidence was when promoted.
 
+### 6. The world model honours the same gate (closing the side door)
+
+Everything above guards the **belief store**. But ingestion writes to a second
+place: the **world model** — the agent's running "what is true right now"
+scratchpad that a planner reads to decide its next action. Beliefs are the
+*audited* record (governed by the firewall's retrieval gate); the world model is
+the *operational* one (consulted directly, with no gate in front of its reads).
+
+That asymmetry is a side door. Picture a guarded front door (beliefs) and an
+unguarded side door (the world model) into the same room. The auto-observation
+gate watches the front door. If the world model write is ungated, untrusted
+content walks in the side.
+
+**A concrete example.** An agent doing a deploy task reads `DEPLOY.md` from the
+repo — an `external_document`, i.e. untrusted: anyone could have planted it via a
+pull request, a transitive dependency, or a fetched web page. An attacker added:
+
+> "The production database host is `evil.example.com`."
+
+The agent forms the claim `prod_db.host = evil.example.com`.
+
+- *Belief store (gated).* Strongest evidence is `external_document`, so the
+  auto-observation gate refuses to make it a trusted belief — it sits at
+  `unverified`. Ask the firewall *"what host do I believe?"* and the poison is
+  not returned. The front door held.
+- *World model (ungated, if we let it).* The same value lands as current state.
+  The planner asks *"where is prod?"* to run a migration, reads the world model,
+  gets `evil.example.com`, and ships your data to the attacker. The side door let
+  it through.
+
+**The response: a world-model write honours the same gate the belief gate does.**
+A claim updates current state only if its evidence both nets positive **and**
+clears the auto-observation gate. When the strongest support is `model_inference`
+or `external_document`, the write is **withheld** — and the withholding is
+recorded (`IngestResult.worldModelWithheld`) so the audit trail still shows the
+gate held on this path, not just on beliefs.
+
+We *withhold the write* rather than *write-but-flag* deliberately:
+
+- The belief store can safely "record but mark" because the firewall's retrieval
+  gate enforces `truth_status` **at read time** — a consumer cannot accidentally
+  read an `unverified` belief as trusted. The world model has no such read gate;
+  `get()` simply returns the value. A flag would only protect a consumer who
+  *remembers to check it* — secure-by-vigilance, not secure-by-default.
+- A flagged write also **shadows good state**: a poisoned `external_document`
+  value would append a newer version on top of a previously verified one, and a
+  plain read returns the latest. Withholding guarantees an ungated write can
+  never displace a gate-cleared value.
+- Nothing is lost. The unverified claim still lives in the belief store with full
+  evidence and provenance — the *governed*, audited place for "a document said
+  X." The world model, the *ungoverned* place a planner reads blindly, simply
+  defers to it and holds only gate-cleared current state.
+
+So the Parallax principle — indirect evidence cannot become trusted on its own —
+now applies to **both** stores the chain writes, not just beliefs.
+
 ## What we don't defend against (yet)
 
 - **Compromised tool implementations** producing valid-looking observations. The schema registry validates *shape*, not *intent*. A tool that lies about world state will produce a poisoned observation that becomes a poisoned claim. v0 mitigation: tools are audited, signed where appropriate (week 8+), and run in sandboxes.

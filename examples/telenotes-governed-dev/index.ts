@@ -156,6 +156,7 @@ const kernel = new ActionKernel(
       claim_count: result.claims.length,
       belief_count: result.beliefs.length,
       world_model_keys: result.worldModelUpdates,
+      world_model_withheld: result.worldModelWithheld,
     })
   },
   // Explicit kernel context — the stubs no longer fall through silently.

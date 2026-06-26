@@ -313,6 +313,10 @@
       "file": "probes/corroboration-strength-rewards-independent-sources.ts"
     },
     {
+      "name": "world-model-withholds-gated-current-state",
+      "file": "probes/world-model-withholds-gated-current-state.ts"
+    },
+    {
       "name": "public-api-surface",
       "file": "probes/public-api-surface.ts"
     }

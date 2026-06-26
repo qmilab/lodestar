@@ -57,6 +57,7 @@ export class CognitiveCore {
         claims: [],
         beliefs: [],
         worldModelUpdates: [],
+        worldModelWithheld: [],
         reason: `no extractor registered for schema '${observation.schema}'`,
       }
     }
@@ -82,11 +83,25 @@ export class CognitiveCore {
 
     // 4-5. Build evidence and propose belief adoption
     const beliefsAdopted: Belief[] = []
-    // Claims whose evidence nets positive — the only ones that may update the
-    // world model (step 6). A claim the cross-belief join nets NEGATIVE (it
-    // contradicts a held belief) is refused as a belief here; it must not then
-    // silently overwrite observed state with the losing value (#157 review).
+    // Claims whose evidence nets positive AND clears the auto-observation gate —
+    // the only ones that may update the world model (step 6). Two kinds of claim
+    // are kept OUT of current state:
+    //   - net-NEGATIVE: the cross-belief join found it contradicts a held belief,
+    //     so it is refused as a belief here and must not silently overwrite
+    //     observed state with the losing value (#157 review, ADR-0032 P2#1).
+    //   - auto-observation-GATED: a positive claim whose strongest support is
+    //     `model_inference` / `external_document`. The firewall keeps it at
+    //     `unverified` (Parallax); the world model is the ungated store a planner
+    //     reads blindly, so an unverified value here is a poisoning side door.
+    //     We WITHHOLD the write (recorded below) rather than write-and-flag,
+    //     because the world model has no read-time gate to enforce a flag and a
+    //     flagged write would shadow a previously gate-cleared value (#165,
+    //     ADR-0037). The unverified belief still carries the full record.
     const worldModelEligibleClaimIds = new Set<string>()
+    // Positive-strength claims withheld from current state purely by the
+    // auto-observation gate — surfaced in IngestResult so the audit trail shows
+    // the gate held on the world-model path too, keyed by claim id → quality.
+    const gateWithheldQualityByClaimId = new Map<string, EvidenceItem["quality"]>()
     for (const claim of claimsAccepted) {
       const evidence = await this.evidenceLinker.linkForClaim({
         claim,
@@ -96,19 +111,7 @@ export class CognitiveCore {
 
       const strength = aggregateStrength(evidence)
       if (strength <= 0) continue // no (or net-contradicting) evidence: stays 'extracted'
-      worldModelEligibleClaimIds.add(claim.id)
 
-      // Strong evidence (>= 0.7) earns an immediate 'supported' adoption
-      // under the 'auto_observation' transition authority. Weaker evidence
-      // stays 'unverified' until reflection or user promotes it.
-      //
-      // Note: BeliefAuthority describes where the BELIEF came from
-      // (observed/inferred/user_asserted/...). TransitionAuthority describes
-      // who is allowed to PERFORM a lifecycle change. They are different
-      // concepts. For observations ingested by the core, the belief's
-      // authority is always "observed"; the transition authority varies
-      // by evidence strength.
-      //
       // The auto-observation gate enforces the Parallax principle:
       // a claim sourced from a single piece of `model_inference` or
       // `external_document` evidence cannot auto-promote to
@@ -126,6 +129,27 @@ export class CognitiveCore {
       const autoObservationBlocked =
         strongestQuality === "external_document" || strongestQuality === "model_inference"
 
+      // World-model eligibility (step 6): a claim updates current state only if
+      // its evidence nets positive (checked above) AND clears the gate. A
+      // positive-but-gated claim is withheld from the world model — the same
+      // Parallax principle the belief gate applies, extended to the ungated
+      // current-state store (#165, ADR-0037).
+      if (autoObservationBlocked) {
+        gateWithheldQualityByClaimId.set(claim.id, strongestQuality)
+      } else {
+        worldModelEligibleClaimIds.add(claim.id)
+      }
+
+      // Strong evidence (>= 0.7) earns an immediate 'supported' adoption
+      // under the 'auto_observation' transition authority. Weaker evidence
+      // stays 'unverified' until reflection or user promotes it.
+      //
+      // Note: BeliefAuthority describes where the BELIEF came from
+      // (observed/inferred/user_asserted/...). TransitionAuthority describes
+      // who is allowed to PERFORM a lifecycle change. They are different
+      // concepts. For observations ingested by the core, the belief's
+      // authority is always "observed"; the transition authority varies
+      // by evidence strength.
       const initialTruthStatus =
         strength >= 0.7 && !autoObservationBlocked ? "supported" : "unverified"
       const initialConfidence = Math.min(0.95, Math.max(0.1, strength))
@@ -173,14 +197,27 @@ export class CognitiveCore {
 
     // 6. Update world model from structured_predicate fields
     const worldModelUpdates: string[] = []
+    // Positive-strength predicated claims withheld from current state by the
+    // auto-observation gate (not the net-contradiction rule). Surfaced so a host
+    // can show the gate held on the world-model side door too (#165, ADR-0037).
+    const worldModelWithheld: WorldModelWithheld[] = []
     for (const claim of claimsAccepted) {
       if (!claim.structured_predicate) continue
+      const key = `${claim.structured_predicate.subject}.${claim.structured_predicate.relation}`
+      // A positive claim the gate blocked is withheld and recorded — never
+      // written. The world model is read blindly by a planner, so an unverified
+      // value here is a poisoning side door; the unverified belief still carries
+      // the full record (#165, ADR-0037).
+      const withheldQuality = gateWithheldQualityByClaimId.get(claim.id)
+      if (withheldQuality) {
+        worldModelWithheld.push({ key, quality: withheldQuality })
+        continue
+      }
       // Skip claims whose evidence did not net positive — in particular a claim
       // the cross-belief join found to contradict a held belief, which we
       // already refused to adopt above. Propagating its value would let a
       // rejected claim overwrite observed state (#157 review).
       if (!worldModelEligibleClaimIds.has(claim.id)) continue
-      const key = `${claim.structured_predicate.subject}.${claim.structured_predicate.relation}`
       await this.worldModel.set({
         key,
         value: claim.structured_predicate.object,
@@ -197,6 +234,7 @@ export class CognitiveCore {
       claims: claimsAccepted,
       beliefs: beliefsAdopted,
       worldModelUpdates,
+      worldModelWithheld,
     }
   }
 }
@@ -217,7 +255,25 @@ export interface IngestResult {
   claims: Claim[]
   beliefs: Belief[]
   worldModelUpdates: string[]
+  /**
+   * Positive-strength predicated claims that were withheld from the world
+   * model purely by the auto-observation gate (strongest support is
+   * `model_inference` / `external_document`). Empty unless the gate blocked a
+   * current-state write. The full record survives as the `unverified` belief;
+   * this is the audit receipt that the gate held on the world-model side door
+   * too (#165, ADR-0037). Net-contradicted claims (strength ≤ 0) are excluded —
+   * those are governed by the separate #157 rule and appear nowhere.
+   */
+  worldModelWithheld: WorldModelWithheld[]
   reason?: string
+}
+
+/** A world-model write withheld by the auto-observation gate (#165). */
+export interface WorldModelWithheld {
+  /** The `subject.relation` current-state key the claim would have written. */
+  key: string
+  /** The strongest supporting evidence quality that triggered the gate. */
+  quality: EvidenceItem["quality"]
 }
 
 /**
