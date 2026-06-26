@@ -309,6 +309,10 @@
       "file": "probes/generic-llm-extractor-stays-unverified.ts"
     },
     {
+      "name": "corroboration-strength-rewards-independent-sources",
+      "file": "probes/corroboration-strength-rewards-independent-sources.ts"
+    },
+    {
       "name": "public-api-surface",
       "file": "probes/public-api-surface.ts"
     }

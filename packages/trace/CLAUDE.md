@@ -62,7 +62,15 @@ projects it into the epistemic chain, then renders markdown.
   hard-demoted belief cannot launder past the firewall into the human "Keep"
   queue (no-self-promotion, extended to durable memory). Freshness / sensitivity
   / scope / confidence are **surfaced, not gated** (the reviewer's call; the
-  session shipper owns the egress sensitivity ceiling). **Supersession** is
+  session shipper owns the egress sensitivity ceiling). Each candidate with
+  attached evidence also carries a derived **`corroboration`** score (#158,
+  ADR-0036) — `corroborationStrength` from `@qmilab/lodestar-memory-firewall`
+  (the non-gate sibling of `aggregateStrength`), a `[0, 1)` value that *rises*
+  with the number of independent supporting groups so a reviewer can rank
+  "best-evidenced first". **Ranking only, never a candidacy gate**: a well- and
+  a thinly-corroborated lesson are both candidates, distinguished only by this
+  number, and the oldest-first order is unchanged. Present only when `evidence`
+  is. (This is the `trace → memory-firewall` dependency.) **Supersession** is
   surfaced as the successor's newest-first `supersedes` audit trail
   (`truth_status: superseded`), never a separate top-level candidate — replacement
   with the history preserved, not overwritten. Advisory only — every item is

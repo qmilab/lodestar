@@ -32,6 +32,7 @@ export {
   type EvidenceStore,
   InMemoryEvidenceStore,
   aggregateStrength,
+  corroborationStrength,
 } from "./stores/evidence-store.js"
 
 // NOTE: the Postgres-backed stores are deliberately NOT re-exported here.

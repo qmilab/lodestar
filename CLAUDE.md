@@ -11,11 +11,11 @@ SQL/database adapter, ADR-0013), and the 24th, `@qmilab/lodestar-ship`
 `lodestar.session_ship@1` NDJSON wire format, ADR-0014). (`adapter-sql`
 shipped at 0.3.0 without provenance — a Cloudflare-WAF false-positive on
 a `DROP TABLE` doc literal forced a one-off manual token publish;
-resolved for future versions.) Seventy-four probes pass under
+resolved for future versions.) Seventy-five probes pass under
 strict TypeScript (two need a Postgres test database; one needs a Python
 + LangGraph runtime; one needs a Python + CrewAI runtime; one needs a
 Python + AutoGen runtime — see below).
-Seventy live in the first-party pack
+Seventy-one live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -106,7 +106,27 @@ pinned by a control showing the same `llm` claim via the BASE linker keeps
 `direct_observation` and promotes to `supported`. Thirteen checks: the gate holds
 (AC#1), Parallax across LLM inferences (AC#2), not-active-unless-registered (AC#3),
 never-a-built-in (AC#4), and the load-bearing-downgrade control (AC#5); in-memory;
-ADR-0035 / #154 child C-2 / #163), and fourteen Policy Kernel probes —
+ADR-0035 / #154 child C-2 / #163), one cognitive-core corroboration-scalar probe
+(`corroboration-strength-rewards-independent-sources` — the #158 corroboration-aware
+evidence scalar, the deferred-from-#157 ranking refinement: `aggregateStrength` (the
+firewall's gate input) is normalized `(S − C)/(S + C)`, so an all-supporting set is
+**always exactly `1.0`** no matter how many independent sources back it — deliberate, to
+keep the `≥ 0.7` promotion threshold calibration-stable. So corroboration is made legible
+by a **separate, additive** scalar `corroborationStrength` (a noisy-OR over independent
+supporting groups, quality-weighted, with a `0.95` per-source ceiling so even a lone
+`direct_observation` leaves headroom — monotone, saturating, bounded `[0, 1)`, dampened by
+contradiction; shares the independence-group helper with `aggregateStrength` so the two
+can't drift) that **feeds no gate**. The load-bearing split: the new number *rises* with
+corroboration while the gate input it sits beside is **byte-for-byte unmoved**, so adding
+it shifts no belief's lifecycle and Parallax holds untouched. It is wired into the harvest
+projection as a ranking-only `MemoryCandidate.corroboration` ("best-evidenced first") — the
+`trace → memory-firewall` dep — gating no candidacy. The probe pins the scalar's contract
+directly (A monotone, B saturating+bounded, C quality-weighted, D same-group dedup, E
+contradiction-dampens, F gate-untouched/Parallax) and drives the **real**
+`harvestCandidates` over an on-disk NDJSON log (G corroborated lesson outranks lone-source,
+both still candidates; H corroboration present only when evidence is); both aggregators stay
+**off** the stable public-API ledger as v0 heuristics; in-memory + real log; ADR-0036 / #158
+/ epic #154), and fourteen Policy Kernel probes —
 the three-valued gate, the trust-ladder floor, the approval lifecycle,
 signature verification, the arbitrate hook, and the host wiring — the
 `guard.wrap()` approval-resolver seam, the MCP-proxy deadline/timeout
@@ -656,7 +676,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Seventy-four probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Seventy-five probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Two — `tool-poisoning-cross-session` and `sql-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 

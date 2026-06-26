@@ -5,5 +5,9 @@
     "rootDir": "./src"
   },
   "include": ["src/**/*"],
-  "references": [{ "path": "../core" }, { "path": "../event-log" }]
+  "references": [
+    { "path": "../core" },
+    { "path": "../event-log" },
+    { "path": "../memory-firewall" }
+  ]
 }
