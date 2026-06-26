@@ -67,18 +67,28 @@ ADR-0004/0006/0007/0008/0009). It enforces, in-process:
 3. **Scoped credentials.** The connection is operator config (no silent default),
    resolved once, never in the agent's inputs, and the password is redacted from any
    caught driver error before it reaches an observation or the log.
-4. **Bounded capture.** A row cap on what enters the observation and a per-statement
-   `statement_timeout`. The cap bounds what enters the *observation*, not what the
-   database computes — the full result is materialized before the cap trims it — so
-   set a conservative `statement_timeout` and point the adapter at a least-privileged
-   role for the rest. Bounding the *fetch* itself (a server-side cursor) is tracked
-   in #101.
+4. **Bounded capture.** `sql.query` reads through a **server-side cursor** (#101):
+   inside the `READ ONLY` transaction it `DECLARE`s a `NO SCROLL` cursor for the
+   statement and `FETCH FORWARD`s at most `maxRows + 1` rows — one past the cap, to
+   set `truncated` — then closes it. So the host buffers a bounded number of rows
+   regardless of how large the full result is: the cap bounds the *fetch*, not just
+   the captured slice, and a fast huge scan (`SELECT * FROM huge` within
+   `statement_timeout`) cannot OOM the process before the cap would have trimmed it.
+   Only the SELECT-family statements (`SELECT`/`WITH`/`VALUES`/`TABLE`) are
+   cursorable; `EXPLAIN`/`SHOW` (inherently small output) take a direct read.
+   `statement_timeout` bounds wall-clock on top. (A data-modifying CTE leads with
+   `WITH`, so it is routed to the cursor, where Postgres refuses to `DECLARE` a
+   cursor over a data-modifying statement — the same refusal the `READ ONLY`
+   transaction gives, reached one step earlier.)
 
 **What it does NOT claim:** no OS/network sandbox of the database, no table/column/
 row authorization (that is the DB role's job), and Postgres only in v0 (the `READ
-ONLY` transaction + `statement_timeout` mechanics are Postgres-shaped). Dynamic
-identifiers (table/column names) cannot be bound and must be composed from a fixed
-allowlist in host code, never from the agent.
+ONLY` transaction + `statement_timeout` + cursor mechanics are Postgres-shaped). A
+non-Postgres connection URL (`mysql://`, `sqlite://`, …) fails **early** with a
+clear scheme error rather than a confusing mid-query failure — best-effort on the
+`{ url }` path (`assertPostgresUrl`); the `{ sql }` handle carries no URL to
+inspect. Dynamic identifiers (table/column names) cannot be bound and must be
+composed from a fixed allowlist in host code, never from the agent.
 
 ## Trust contracts
 
@@ -101,11 +111,17 @@ tool spawns a subprocess, so the honest sandbox is `controlled-network` (ADR-000
 - Keep `sql.query` read-only at BOTH layers — the lexical prefix check AND the
   `READ ONLY` transaction. The transaction is load-bearing; the lexical check is the
   clear early error.
+- Keep the read **fetch bounded** — the server-side cursor (`fetchViaCursor`) is what
+  bounds host memory, not the post-fetch `slice`. If you add a read path, route
+  SELECT-family statements through the cursor; only `EXPLAIN`/`SHOW` may read
+  directly. Interpolate ONLY the trusted statement text into `DECLARE` (values still
+  bind via `params`), and keep the cursor name a fixed identifier-safe constant.
 - Keep credentials operator-supplied and redacted; the agent must never see, name,
   or supply a connection string.
 - Declare real `effects` / `reversibility` / `required_trust_level` / `sandbox`. No
   silent defaults for security-relevant settings.
 - The `sql-adapter-enforces-invariants` probe is spec. If a change makes it pass
   without exercising the L3 hold, the parameterized boundary, both read-only paths,
-  statement-stacking rejection, the row cap, or credential redaction, that's a probe
-  bug, not an improvement.
+  statement-stacking rejection, the row cap, the **bounded cursor fetch**, the
+  **non-Postgres clear error**, or credential redaction, that's a probe bug, not an
+  improvement.

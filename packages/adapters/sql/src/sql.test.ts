@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
+import { assertPostgresUrl } from "./connection.js"
 import { applyRedactions, connectionRedactions, redactionVariants } from "./redact.js"
 import {
   assertReadOnly,
   assertSingleStatement,
+  isCursorable,
   isMultiStatement,
   stripLeadingNoise,
 } from "./statement.js"
@@ -79,6 +81,57 @@ describe("statement: read-only guard", () => {
 
   test("stripLeadingNoise removes leading comments and whitespace", () => {
     expect(stripLeadingNoise("  -- c\n  /* b */ select 1")).toBe("select 1")
+  })
+})
+
+describe("statement: cursorability (#101 bounded fetch routing)", () => {
+  test("SELECT-family statements are cursorable", () => {
+    // The SELECT/WITH-SELECT/VALUES/TABLE statements Postgres can DECLARE a cursor
+    // over — the large-result reads whose fetch must be bounded.
+    expect(isCursorable("select * from huge")).toBe(true)
+    expect(isCursorable("  WITH x as (select 1) select * from x")).toBe(true)
+    expect(isCursorable("values (1), (2)")).toBe(true)
+    expect(isCursorable("table huge")).toBe(true)
+    // comment/whitespace-tolerant via stripLeadingNoise
+    expect(isCursorable("/* hi */\n select 1")).toBe(true)
+  })
+
+  test("EXPLAIN/SHOW are read-only but NOT cursorable (take the direct path)", () => {
+    expect(isCursorable("explain select 1")).toBe(false)
+    expect(isCursorable("show statement_timeout")).toBe(false)
+  })
+
+  test("a write keyword is not cursorable (it never reaches the read path anyway)", () => {
+    expect(isCursorable("delete from t")).toBe(false)
+    expect(isCursorable("update t set a = 1")).toBe(false)
+  })
+})
+
+describe("connection: non-Postgres scheme guard (#101 ride-along)", () => {
+  test("accepts the Postgres URL schemes", () => {
+    expect(() => assertPostgresUrl("postgres://u:p@h:5432/d")).not.toThrow()
+    expect(() => assertPostgresUrl("postgresql://u:p@h/d")).not.toThrow()
+    // case-insensitive
+    expect(() => assertPostgresUrl("POSTGRES://u:p@h/d")).not.toThrow()
+  })
+
+  test("rejects a non-Postgres scheme with a clear, credential-free message", () => {
+    expect(() => assertPostgresUrl("mysql://u:p@h/d")).toThrow(/only Postgres/)
+    expect(() => assertPostgresUrl("sqlite:///tmp/x.db")).toThrow(/only Postgres/)
+    // the message names the offending scheme but NEVER the password
+    try {
+      assertPostgresUrl("mysql://app:s3cr3t-pw@db.example.com/appdb")
+      throw new Error("expected assertPostgresUrl to throw")
+    } catch (err) {
+      const msg = (err as Error).message
+      expect(msg).toContain("mysql")
+      expect(msg).not.toContain("s3cr3t-pw")
+    }
+  })
+
+  test("a schemeless libpq key=value DSN is left to the driver (best-effort)", () => {
+    // No `scheme://` to inspect — must not be rejected by the scheme guard.
+    expect(() => assertPostgresUrl("host=localhost dbname=app user=app password=x")).not.toThrow()
   })
 })
 

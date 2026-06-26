@@ -83,11 +83,13 @@ enforces, in-process:
 3. **Scoped credentials.** The connection is operator config (no silent default),
    resolved once, never in the agent's inputs, and the password is redacted from any
    caught error before it can reach an observation or the log.
-4. **Bounded capture.** A row cap on what enters the observation and a per-statement
-   `statement_timeout`, so a huge or slow result cannot inflate or hang an
-   observation. The cap trims the captured rows *after* the driver materializes the
-   full result, so set a conservative `statement_timeout` for very large reads;
-   bounding the fetch itself (a server-side cursor) is tracked in #101.
+4. **Bounded capture.** `sql.query` reads through a server-side cursor — it DECLAREs
+   a `NO SCROLL` cursor inside the `READ ONLY` transaction and FETCHes at most one
+   row past the cap — so the host buffers a bounded number of rows no matter how
+   large the full result is. The cap bounds the *fetch*, not merely the captured
+   slice, so a fast huge scan (`SELECT * FROM huge`) cannot OOM the process (#101).
+   `EXPLAIN`/`SHOW` (whose output is inherently small) take a direct read; a
+   per-statement `statement_timeout` bounds wall-clock on top.
 
 **What it does NOT claim:** it does not OS- or network-sandbox the database, and it
 does not enforce table/column/row-level authorization. The query reaches the real

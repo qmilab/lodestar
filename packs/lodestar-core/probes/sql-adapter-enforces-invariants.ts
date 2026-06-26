@@ -14,6 +14,11 @@
  *   2. **Result-row cap.** A query that returns more than the cap is trimmed to
  *      the cap and flagged `truncated` — a huge result cannot inflate an
  *      observation.
+ *   2b. **Bounded fetch (#101).** The cap bounds the FETCH, not just the captured
+ *      slice: a hundred-million-row `generate_series` capped at 2 completes via a
+ *      server-side cursor that pulls at most `maxRows+1` rows — so the host never
+ *      buffers the full result. A regression to materialize-then-slice would time
+ *      out / exhaust memory / crash instead of returning 2 rows + `truncated`.
  *   3. **Read-only enforcement.** A write attempted through `sql.query` fails and
  *      mutates nothing — BOTH an obvious `DELETE` (lexical guard) AND a
  *      data-modifying CTE (`WITH … DELETE … RETURNING`) that the lexical guard
@@ -39,6 +44,9 @@
  *      supplies it), and a connection error from a bad-credential connection is
  *      redacted of its distinctive password before it reaches the failed-action
  *      audit.
+ *   8. **Non-Postgres URL fails clearly (#101 ride-along).** A `mysql://` connection
+ *      fails fast with a message that names Postgres as the requirement — not a
+ *      confusing generic mid-query error — and never leaks the password it carries.
  *
  * If any of these regress, a Lodestar-wrapped agent could SQL-inject through a
  * bound parameter, mutate the database through the read tool, write without a
@@ -232,6 +240,41 @@ async function run(): Promise<ProbeResult> {
       }
     }
     details.push("row cap: a 5-row result was trimmed to 2 and flagged truncated")
+
+    // ---- 2b. Bounded fetch — the cap bounds the FETCH, not just the slice ---
+    // #101: a SELECT-family read runs through a server-side cursor and FETCHes at
+    // most maxRows+1 rows, so the host buffers a bounded number of rows REGARDLESS
+    // of how large the full result is. We ask for a hundred-million-row series with
+    // a cap of 2: the cursor FETCHes 3 rows (a few bytes, ~tens of ms — it streams
+    // exactly like a SeqScan of a huge table) and returns 2 + truncated. A
+    // regression to the old materialize-then-slice path would instead try to buffer
+    // 100M rows into the host process before trimming — it would exhaust memory or
+    // trip statement_timeout and end 'failed' (or crash the probe), never completing
+    // with 2 rows. So a clean PASS here IS the proof the fetch is bounded. (The SRF
+    // sits in the target list so it streams via ProjectSet; no ORDER BY/GROUP BY,
+    // which would force a blocking sort of the whole series before the first row.)
+    const boundedAction = await kernel.execute(
+      await kernel.arbitrate(
+        propose("sql.query", { statement: "select generate_series(1, 100000000) as g" }, READ()),
+      ),
+    )
+    const boundedOut = outputOf(boundedAction.id)
+    if (
+      boundedAction.phase !== "completed" ||
+      boundedOut?.row_count !== 2 ||
+      boundedOut?.truncated !== true
+    ) {
+      return {
+        passed: false,
+        details: [
+          ...details,
+          `bounded fetch FAILED: a 100,000,000-row generate_series capped at 2 did not complete with exactly 2 rows + truncated (phase=${boundedAction.phase}, out=${JSON.stringify(boundedOut)}). The server-side cursor must bound the FETCH — a regression that materializes the full result before trimming would time out, exhaust memory, or crash here.`,
+        ],
+      }
+    }
+    details.push(
+      "bounded fetch: a 100M-row generate_series capped at 2 completed instantly via the server-side cursor (FETCH bounded, host memory not ballooned)",
+    )
 
     // ---- 3. Read-only enforcement (lexical + READ ONLY transaction) -------
     // 3a: an obvious DELETE through the read tool is rejected lexically.
@@ -504,6 +547,58 @@ async function run(): Promise<ProbeResult> {
       )
     } finally {
       await badAdapter.close()
+    }
+
+    // ---- 8. A non-Postgres connection URL fails early with a clear error ---
+    // #101 ride-along: the tools are Postgres-shaped (READ ONLY transactions,
+    // SET LOCAL statement_timeout, server-side cursors), so a mysql:// / sqlite://
+    // connection cannot work. It must fail FAST with a message that names the
+    // problem (Postgres-only) — not a confusing generic "sql.query failed" mid-query
+    // — and must NOT leak the connection password it carries.
+    _resetToolsForTests()
+    const MYSQL_PW = "PROBE_MYSQL_SECRET_feedfacecafebeef"
+    const mysqlAdapter = registerSqlTools({
+      connection: { url: `mysql://probeuser:${MYSQL_PW}@127.0.0.1:1/nope` },
+      execute: false,
+      query: { timeoutMs: 3000 },
+    })
+    try {
+      const mysqlDone = await kernel.execute(
+        await kernel.arbitrate(propose("sql.query", { statement: "select 1 as one" }, READ())),
+      )
+      if (mysqlDone.phase !== "failed") {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `non-Postgres URL FAILED: a mysql:// connection did not end 'failed' (phase=${mysqlDone.phase}).`,
+          ],
+        }
+      }
+      const mysqlAudit = JSON.stringify(mysqlDone.audit)
+      if (!/postgres/i.test(mysqlAudit)) {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            `non-Postgres URL FAILED: the failure did not clearly name Postgres as the cause — a confusing generic error instead. audit: ${JSON.stringify(mysqlDone.audit.at(-1))}`,
+          ],
+        }
+      }
+      if (mysqlAudit.includes(MYSQL_PW)) {
+        return {
+          passed: false,
+          details: [
+            ...details,
+            "non-Postgres URL FAILED: the connection password leaked into the failed-action audit.",
+          ],
+        }
+      }
+      details.push(
+        "non-Postgres URL: a mysql:// connection scheme failed early with a clear 'only Postgres' error, password not leaked",
+      )
+    } finally {
+      await mysqlAdapter.close()
     }
 
     return { passed: true, details }

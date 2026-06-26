@@ -184,3 +184,24 @@ export function assertReadOnly(sql: string, tool: string): void {
     )
   }
 }
+
+/** Postgres `DECLARE … CURSOR FOR <query>` accepts only a `SELECT`/`VALUES`
+ * command (and `WITH … SELECT`, and `TABLE foo`, which are SELECT variants in the
+ * grammar). `EXPLAIN`/`SHOW` are read-only introspection but are NOT cursorable. */
+const CURSORABLE_LEADING = /^(select|with|values|table)\b/i
+
+/**
+ * Whether a statement that has already passed `assertReadOnly` can be wrapped in a
+ * server-side cursor (`DECLARE … CURSOR FOR <statement>`) to bound the fetch.
+ *
+ * Only the SELECT-family statements (`SELECT`/`WITH`/`VALUES`/`TABLE`) are
+ * cursorable; `EXPLAIN`/`SHOW` are read-only but not cursorable and must take the
+ * direct path (their output is inherently small, so bounding the *fetch* buys
+ * nothing). Comment/whitespace-tolerant via `stripLeadingNoise`. A data-modifying
+ * CTE (`WITH d AS (DELETE …) …`) leads with `WITH` and is reported cursorable here,
+ * but Postgres refuses to DECLARE a cursor over a data-modifying statement — so it
+ * fails at DECLARE, exactly as the READ ONLY transaction would have refused it.
+ */
+export function isCursorable(sql: string): boolean {
+  return CURSORABLE_LEADING.test(stripLeadingNoise(sql))
+}

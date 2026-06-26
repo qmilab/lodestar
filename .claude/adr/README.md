@@ -454,3 +454,16 @@ The options we rejected, each with a one-line reason.
   gate-cleared value; the unverified belief still carries the full record. Refines ADR-0032's
   P2#1 rule. No `packages/core` schema change. Locked by
   `world-model-withholds-gated-current-state`. **Status: Accepted.**
+- [ADR-0038](0038-sql-query-bounded-cursor-fetch.md) — `sql.query` bounds the fetch with a
+  server-side cursor (#101, hardens ADR-0013). The L1 read materialized the whole result set
+  then `slice`d to `maxRows`, so the cap bounded the *observation*, not host memory — a fast
+  large scan (`SELECT * FROM huge` within `statement_timeout`) could OOM the host. Bun 1.3.14's
+  `Bun.SQL` exposes no JS-level cursor, so the fix uses the SQL-level server-side cursor: inside
+  the `READ ONLY` transaction, `DECLARE … NO SCROLL CURSOR` for the statement then
+  `FETCH FORWARD maxRows+1` (one past the cap, for `truncated`) then `CLOSE` — the host buffers
+  a bounded number of rows regardless of result size. Values still bind (`DECLARE` carries the
+  `$1..$N` params), so the injection boundary is unchanged. Only SELECT-family statements are
+  cursorable (`isCursorable`); `EXPLAIN`/`SHOW` take the prior direct read. Ride-along:
+  `assertPostgresUrl` fails a non-Postgres URL (`mysql://`/`sqlite://`) early with a clear,
+  credential-free scheme error. No `packages/core` schema change, no new package. Locked by two
+  new sub-cases of `sql-adapter-enforces-invariants`. **Status: Accepted.**
