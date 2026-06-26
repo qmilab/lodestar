@@ -24,6 +24,31 @@ import { applyRedactions, connectionRedactions, redactionVariants } from "./reda
 
 export type SecretValue = string | (() => string | Promise<string>)
 
+/** Postgres URL schemes Bun.SQL understands. */
+const POSTGRES_SCHEME = /^postgres(ql)?$/i
+
+/**
+ * Best-effort early guard for the `{ url }` path: if the connection string is a URL
+ * with a NON-Postgres scheme (`mysql://`, `sqlite://`, …) fail fast with a clear
+ * message instead of a confusing mid-query error, because every tool here uses
+ * Postgres-specific machinery (`begin("read only")`, `SET LOCAL statement_timeout`,
+ * server-side `DECLARE … CURSOR`, the `.command`/`.count` result shape).
+ *
+ * It inspects ONLY the scheme: a schemeless libpq key/value DSN (`host=…
+ * password=…`) carries no `scheme://` to test, so it is left to the driver (the
+ * `{ sql }` handle path has no URL at all). The thrown message names ONLY the
+ * scheme — never the connection string — so no credential can leak through it.
+ */
+export function assertPostgresUrl(connectionString: string): void {
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//.exec(connectionString)
+  if (m && !POSTGRES_SCHEME.test(m[1] as string)) {
+    const scheme = (m[1] as string).toLowerCase()
+    throw new Error(
+      `sql: only Postgres connections are supported, but the connection scheme is '${scheme}://'. This adapter relies on Postgres features (READ ONLY transactions, statement_timeout, server-side cursors).`,
+    )
+  }
+}
+
 export type SqlConnectionConfig =
   | {
       /** A connection string, or a resolver that returns one. The adapter opens
@@ -83,6 +108,10 @@ export class SqlConnection {
     // for any error the first query surfaces. A non-URL DSN yields none here, so
     // the operator's explicit `redactions` are the fallback.
     this.redactions = [...new Set([...this.redactions, ...connectionRedactions(url)])]
+    // Fail fast on a non-Postgres scheme (mysql://, sqlite://, …) with a clear
+    // message rather than a confusing redacted error mid-query. Redactions are
+    // already in place above (the message itself names only the scheme).
+    assertPostgresUrl(url)
     return new SQL(url)
   }
 

@@ -257,12 +257,19 @@ read/mutation trust split (a `sql.query` at L1 returns rows but a write — both
 obvious `DELETE` and a data-modifying CTE the lexical guard waves through — is
 refused, the latter by a `READ ONLY` transaction the database itself enforces), the
 L3 mutation two-phase hold (a held `sql.execute` parks at `pending_approval` and
-touches no row until approved), statement-stacking rejection, a result-row cap, and
-the connection password never surfacing in inputs/observations and being redacted
-from a bad-connection error; the first adapter whose headline teeth is an injection
-boundary rather than egress; DB-gated like `tool-poisoning-cross-session` —
-`LODESTAR_TEST_DATABASE_URL`, skips loudly when unset, runs against `postgres:16` in
-CI; ADR-0013), and two session-shipper probes — `ship-respects-sensitivity-ceiling`
+touches no row until approved), statement-stacking rejection, a result-row cap, the
+**bounded cursor fetch** (#101 / ADR-0038: a hundred-million-row
+`generate_series` capped at 2 completes via a server-side `DECLARE … CURSOR` +
+`FETCH FORWARD maxRows+1` inside the `READ ONLY` transaction — the host buffers a
+bounded number of rows, so a fast huge scan cannot OOM the process; a regression to
+materialize-then-slice would time out / exhaust memory instead of returning 2 rows),
+the **non-Postgres-URL clear error** (a `mysql://` connection fails fast naming
+Postgres, password not leaked — the #101 ride-along), and the connection password
+never surfacing in inputs/observations and being redacted from a bad-connection
+error; the first adapter whose headline teeth is an injection boundary rather than
+egress; DB-gated like `tool-poisoning-cross-session` — `LODESTAR_TEST_DATABASE_URL`,
+skips loudly when unset, runs against `postgres:16` in CI; ADR-0013 + ADR-0038),
+and two session-shipper probes — `ship-respects-sensitivity-ceiling`
 (a local capture server asserts an above-ceiling `secret` belief's bytes never cross
 the wire while the redaction marker + the **original** `payload_hash` do, the bearer
 token reaches the collector as a header but never enters the NDJSON body, the POST
@@ -583,7 +590,7 @@ packages/
     nostr/             # (exists, P2) governed Nostr transport: nostr.publish (L4, second native egress — signing key IS the credential, in-process BIP-340) + nostr.fetch (L1, untrusted inbound); relay pinning, kind allowlist, NIP-42 AUTH, fetch SSRF guard; controlled-network sandbox; TS-level boundary, not network containment; ADR-0007
     http/              # (exists, P2) governed HTTP transport: http.request (L4, third native egress — host-bound auth header credential) + http.fetch (L1, untrusted inbound, the injection vector); hostname pinning + scheme allowlist + per-hop redirect re-validation (the SSRF escape) + bounded capture; reuses controlled-network; TS-level boundary, not network containment; ADR-0008
     messaging/         # (exists, P2) governed messaging transport: slack.post + email.send (both L4, fourth native egress — the purest human-approval demo); destination pinning (channel allowlist / recipient address+domain allowlist — the exfil guard), operator-fixed endpoint+sender (no agent host → no SSRF; no From spoofing), scoped header credential, no redirect following, send delivery semantics (non-2xx / Slack ok:false → failed); egress-only this slice; reuses controlled-network; TS-level boundary, not network containment; ADR-0009
-    sql/               # (exists) governed SQL/database adapter (Bun.SQL/Postgres): sql.query (L1, untrusted rows, READ ONLY transaction) + sql.execute (L3→L4 mutation, held); the parameterized-only injection boundary (values always bound, never concatenated — no string SQL); lexical single-statement + read-only guards; scoped connection credential redacted from errors; result-row cap + statement_timeout; TS-level boundary, not DB containment; ADR-0013
+    sql/               # (exists) governed SQL/database adapter (Bun.SQL/Postgres): sql.query (L1, untrusted rows, READ ONLY transaction) + sql.execute (L3→L4 mutation, held); the parameterized-only injection boundary (values always bound, never concatenated — no string SQL); lexical single-statement + read-only guards; scoped connection credential redacted from errors; server-side-cursor bounded fetch (DECLARE/FETCH maxRows+1, caps host memory not just the observation — #101/ADR-0038) + statement_timeout; non-Postgres-URL early error; TS-level boundary, not DB containment; ADR-0013
 
 examples/
   telenotes-governed-dev/    # (exists) reference demonstration; full pipeline

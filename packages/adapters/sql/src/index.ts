@@ -30,6 +30,7 @@ export {
 } from "./tools.js"
 export {
   SqlConnection,
+  assertPostgresUrl,
   type SqlConnectionConfig,
   type SecretValue,
 } from "./connection.js"
@@ -41,6 +42,7 @@ export {
 export {
   assertSingleStatement,
   assertReadOnly,
+  isCursorable,
   isMultiStatement,
   stripLeadingNoise,
 } from "./statement.js"

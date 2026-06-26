@@ -7,7 +7,7 @@ import {
 import { type TrustLevel, registry } from "@qmilab/lodestar-core"
 import { z } from "zod"
 import { SqlConnection, type SqlConnectionConfig } from "./connection.js"
-import { assertReadOnly, assertSingleStatement } from "./statement.js"
+import { assertReadOnly, assertSingleStatement, isCursorable } from "./statement.js"
 
 /**
  * Native SQL/database tools — `sql.query` (L1 read) and `sql.execute` (L3
@@ -33,9 +33,11 @@ import { assertReadOnly, assertSingleStatement } from "./statement.js"
  *     `pending_approval` until a human approves under a holding policy.
  *   - **Credential scoping.** The connection password is operator config, never in
  *     the agent's inputs, and redacted from any captured error. (`connection.ts`.)
- *   - **Bounded capture.** A row cap on what enters the observation and a
- *     per-statement `statement_timeout`, so a huge or slow result cannot inflate or
- *     hang an observation.
+ *   - **Bounded capture.** `sql.query` reads through a server-side cursor and
+ *     FETCHes at most one row past the cap, so the host buffers a bounded number of
+ *     rows regardless of how large the full result is — the cap bounds the *fetch*,
+ *     not merely the captured slice (#101). A per-statement `statement_timeout`
+ *     bounds wall-clock on top.
  *
  * A **TS-level governance boundary, not database containment**: the query reaches
  * the real database by design, and DB-side privileges (a least-privileged role) are
@@ -111,6 +113,99 @@ function timeoutLiteral(timeoutMs: number): number | null {
   return Math.min(Math.floor(timeoutMs), PG_MAX_STATEMENT_TIMEOUT_MS)
 }
 
+/** A row cap is operator config; normalize it to a non-negative integer so it can
+ * be both compared against and interpolated into a `FETCH` count without producing
+ * malformed SQL (`FETCH FORWARD 2.5 …`). */
+function rowCap(n: number): number {
+  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : DEFAULT_MAX_ROWS
+}
+
+/** The single read result shape both fetch paths return, before it is shaped into
+ * the `sql.query@1` output. */
+interface ReadResult {
+  rows: unknown[]
+  truncated: boolean
+  command: string
+}
+
+/** The slice of a transaction handle the read helpers use — Bun's `tx.unsafe`
+ * returns a thenable `SQL.Query`, which is a `PromiseLike`. Kept structural so the
+ * helpers do not depend on Bun's transaction type surface. */
+interface ReadTx {
+  unsafe(query: string, params?: unknown[]): PromiseLike<unknown>
+}
+
+/** A fixed, identifier-safe cursor name. Each `sql.query` runs in its own
+ * `begin("read only")` transaction, which reserves a dedicated connection, so the
+ * cursor namespace is never shared across concurrent queries — a constant is safe. */
+const QUERY_CURSOR = "lodestar_sql_query_cursor"
+
+/**
+ * Bounded server-side read (#101). DECLARE a `NO SCROLL` cursor over the (already
+ * single-statement, already read-only) statement, FETCH at most `maxRows + 1` rows
+ * — one past the cap, to learn whether the result was truncated — then CLOSE it.
+ * The host buffers at most `maxRows + 1` rows no matter how large the full result
+ * is, so a fast huge scan cannot OOM the process before the cap trims it.
+ *
+ * Values are still bound: only the trusted, already-validated statement text is
+ * interpolated into DECLARE (exactly as the direct path interpolates it into
+ * `unsafe`), every `$1..$N` value rides in `params`. Must run inside the caller's
+ * READ ONLY transaction — a cursor without `WITH HOLD` lives only for its
+ * transaction.
+ */
+async function fetchViaCursor(
+  tx: ReadTx,
+  statement: string,
+  params: unknown[],
+  maxRows: number,
+): Promise<ReadResult> {
+  await tx.unsafe(`declare ${QUERY_CURSOR} no scroll cursor for ${statement}`, params)
+  let all: unknown[]
+  try {
+    const fetched = await tx.unsafe(`fetch forward ${rowCap(maxRows) + 1} from ${QUERY_CURSOR}`)
+    all = Array.isArray(fetched) ? (fetched as unknown[]) : []
+  } finally {
+    // Best effort: the transaction's commit/rollback closes the cursor regardless,
+    // and after a FETCH error the transaction is aborted so CLOSE would fail too.
+    try {
+      await tx.unsafe(`close ${QUERY_CURSOR}`)
+    } catch {
+      /* cursor already gone / transaction aborted — teardown handles it */
+    }
+  }
+  const truncated = all.length > maxRows
+  return {
+    rows: truncated ? all.slice(0, maxRows) : all,
+    truncated,
+    // A cursor-backed read is always a SELECT — SELECT/WITH-SELECT/VALUES/TABLE all
+    // carry the SELECT command tag. The FETCH's own tag ("FETCH") is not the query's
+    // command, so report the read's true command rather than the transport's.
+    command: "SELECT",
+  }
+}
+
+/**
+ * Direct read for the non-cursorable read statements (`EXPLAIN`/`SHOW`), whose
+ * output is inherently small. Materializes the result then trims to the cap — the
+ * pre-#101 behavior, retained only where the fetch does not need bounding.
+ */
+async function fetchDirect(
+  tx: ReadTx,
+  statement: string,
+  params: unknown[],
+  maxRows: number,
+): Promise<ReadResult> {
+  const r = await tx.unsafe(statement, params)
+  const meta = r as unknown as { command?: string }
+  const all = Array.isArray(r) ? [...(r as unknown[])] : []
+  const truncated = all.length > maxRows
+  return {
+    rows: truncated ? all.slice(0, maxRows) : all,
+    truncated,
+    command: typeof meta.command === "string" ? meta.command : "SELECT",
+  }
+}
+
 const SqlStatementInput = z.object({
   statement: z
     .string()
@@ -143,7 +238,7 @@ export function makeSqlQueryTool(
   opts: SqlQueryToolOptions,
 ): Tool<z.infer<typeof SqlStatementInput>, SqlQueryOutput> {
   const conn = opts.connection
-  const maxRows = opts.maxRows ?? DEFAULT_MAX_ROWS
+  const maxRows = rowCap(opts.maxRows ?? DEFAULT_MAX_ROWS)
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   return {
     name: "sql.query",
@@ -165,26 +260,24 @@ export function makeSqlQueryTool(
       try {
         const sql = await conn.handle()
         // READ ONLY transaction: a data-modifying CTE is refused by the database
-        // itself, so the read tool cannot mutate even via a clever statement.
-        // Capture command + rows INSIDE the transaction and return a plain object.
+        // itself, so the read tool cannot mutate even via a clever statement. A
+        // SELECT-family statement reads through a server-side cursor so the host
+        // buffers at most maxRows+1 rows (#101); EXPLAIN/SHOW take the direct path
+        // (their output is small). Both run inside this transaction and return a
+        // plain object.
         const out = await sql.begin("read only", async (tx) => {
           if (timeout !== null) await tx.unsafe(`set local statement_timeout = ${timeout}`)
-          const r = await tx.unsafe(inputs.statement, params)
-          const meta = r as unknown as { command?: string }
-          return {
-            rows: Array.isArray(r) ? [...(r as unknown[])] : [],
-            command: typeof meta.command === "string" ? meta.command : "SELECT",
-          }
+          return isCursorable(inputs.statement)
+            ? await fetchViaCursor(tx, inputs.statement, params, maxRows)
+            : await fetchDirect(tx, inputs.statement, params, maxRows)
         })
-        const truncated = out.rows.length > maxRows
-        const rows = truncated ? out.rows.slice(0, maxRows) : out.rows
         return {
-          rows,
-          row_count: rows.length,
-          truncated,
-          columns: deriveColumns(rows),
+          rows: out.rows,
+          row_count: out.rows.length,
+          truncated: out.truncated,
+          columns: deriveColumns(out.rows),
           command: out.command,
-          summary: `sql.query: ${out.command} returned ${rows.length}${truncated ? `+ row(s) (capped at ${maxRows})` : " row(s)"}`,
+          summary: `sql.query: ${out.command} returned ${out.rows.length}${out.truncated ? `+ row(s) (capped at ${maxRows})` : " row(s)"}`,
         }
       } catch (err) {
         throw new Error(conn.redact(`sql.query failed: ${errMessage(err)}`))
