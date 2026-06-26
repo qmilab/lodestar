@@ -207,7 +207,13 @@ async function main(): Promise<{ passed: boolean; checks: Check[]; notes: string
   {
     const { core, worldModel } = buildSuite()
     const s = sc("lone-gated")
-    const r = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "auth" }, "fs.read")
+    const r = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "auth" },
+      "fs.read",
+    )
     const belief = r.beliefs[0]
     const wm = await worldModel.get(KEY, s)
     const hist = await worldModel.history(KEY, s)
@@ -285,7 +291,13 @@ async function main(): Promise<{ passed: boolean; checks: Check[]; notes: string
       })
     }
     // A lone gated claim with a DIFFERENT object — would-be poison.
-    const r2 = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "evil" }, "fs.read")
+    const r2 = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "evil" },
+      "fs.read",
+    )
     const wmAfter = await worldModel.get(KEY, s)
     const hist = await worldModel.history(KEY, s)
     const withheld = r2.worldModelWithheld.find((w) => w.key === KEY)
@@ -322,7 +334,13 @@ async function main(): Promise<{ passed: boolean; checks: Check[]; notes: string
     await ingest(core, s, OBS_SCHEMA, { ...PREDICATE, object: "auth" }, "probe.obs")
     // The doc claim agrees → the cross-belief join lifts its strongest quality
     // to direct_observation → the gate clears → it writes current state.
-    const r2 = await ingest(core, s, DOC_SCHEMA, { path: "/DEV.md", ...PREDICATE, object: "auth" }, "fs.read")
+    const r2 = await ingest(
+      core,
+      s,
+      DOC_SCHEMA,
+      { path: "/DEV.md", ...PREDICATE, object: "auth" },
+      "fs.read",
+    )
     const docBelief = r2.beliefs[0]
     const wm = await worldModel.get(KEY, s)
 
@@ -333,7 +351,10 @@ async function main(): Promise<{ passed: boolean; checks: Check[]; notes: string
     })
     checks.push({
       name: "AC#4: the gate-cleared (corroborated) claim DOES write current state",
-      pass: wm?.value === "auth" && r2.worldModelUpdates.includes(KEY) && r2.worldModelWithheld.length === 0,
+      pass:
+        wm?.value === "auth" &&
+        r2.worldModelUpdates.includes(KEY) &&
+        r2.worldModelWithheld.length === 0,
       detail: `world model ${KEY} = ${JSON.stringify(wm?.value)}, updates=${JSON.stringify(r2.worldModelUpdates)}, withheld=${JSON.stringify(r2.worldModelWithheld)}`,
     })
   }
