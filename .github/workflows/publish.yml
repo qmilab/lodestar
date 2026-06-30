@@ -185,6 +185,11 @@ jobs:
             // action-kernel (uses Bun's native Bun.SQL — no runtime deps). Same
             // first-publish trusted-publisher bootstrap as the others.
             "packages/adapters/sql",
+            // vector adapter (P2 follow-on, ADR-0039): a pgvector retrieval tool;
+            // depends on core + action-kernel + adapter-sql (reuses its Postgres
+            // connection), so it must publish AFTER sql. Same first-publish
+            // trusted-publisher bootstrap as the others.
+            "packages/adapters/vector",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -301,6 +306,9 @@ jobs:
             # sql adapter (P2 follow-on, ADR-0013): depends only on core +
             # action-kernel (Bun.SQL, no runtime deps). Same first-publish bootstrap.
             packages/adapters/sql
+            # vector adapter (P2 follow-on, ADR-0039): pgvector retrieval; depends
+            # on core + action-kernel + adapter-sql, so it publishes AFTER sql.
+            packages/adapters/vector
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep

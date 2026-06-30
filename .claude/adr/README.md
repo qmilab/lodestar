@@ -467,3 +467,19 @@ The options we rejected, each with a one-line reason.
   `assertPostgresUrl` fails a non-Postgres URL (`mysql://`/`sqlite://`) early with a clear,
   credential-free scheme error. No `packages/core` schema change, no new package. Locked by two
   new sub-cases of `sql-adapter-enforces-invariants`. **Status: Accepted.**
+- [ADR-0039](0039-governed-vector-rag-adapter.md) — the governed Vector/RAG retrieval adapter
+  (#78, epic #74). `@qmilab/lodestar-adapter-vector`'s `vector.query` (L1) runs a parameterized
+  pgvector similarity search over a pinned index; the retrieved chunks are the **RAG poisoning
+  surface**. Backend = pgvector over Postgres (reuses the SQL adapter's `SqlConnection` — so it
+  depends on + publishes after `adapter-sql`); input = a pre-computed query embedding (Lodestar
+  ships no model). Teeth: operator-pinned table + namespace allowlist (never agent input), values
+  bound (`$1::vector`/`$2`/`LIMIT $N`) with only validated-quoted identifiers interpolated, a
+  top-k cap bounded server-side by `LIMIT`, a `READ ONLY` transaction, and redacted credentials.
+  The headline cognition lives in `cognitive-core` (mirroring `doc.read`/`DocAwareEvidenceLinker`):
+  a `VectorRetrievalExtractor` mints one `external_document` content claim per chunk (chunk-specific
+  subject, no cross-join) + a `tool_result` envelope, and the `VectorAwareEvidenceLinker` stamps
+  chunks `external_document` so the auto-observation gate keeps a retrieved chunk from ever
+  auto-promoting a belief (Parallax holds across chunks). Two probes —
+  `vector-retrieval-cannot-auto-promote` (in-memory, the no-promote contrast) +
+  `vector-adapter-enforces-invariants` (DB-gated, real pgvector). CI's Postgres service moves to
+  `pgvector/pgvector:pg16`. No `packages/core` schema change. **Status: Accepted.**
