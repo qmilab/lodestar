@@ -83,6 +83,14 @@ describe("identifier validation (build time)", () => {
       /allowlist.*empty/,
     )
   })
+
+  test("rejects a namespace allowlist without a namespaceColumn (no silent widening)", () => {
+    // An allowlist with no column to filter on would be SILENTLY IGNORED — a
+    // query that omits `namespace` would search the whole index. Fail closed.
+    expect(() => makeVectorQueryTool(baseOpts({ namespaces: ["docs"] }))).toThrow(
+      /no `namespaceColumn`/,
+    )
+  })
 })
 
 describe("pre-query guards", () => {

@@ -28,7 +28,7 @@
  * Assertions (WITH seam):
  *   1. One content claim per retrieved chunk, each with a chunk-specific subject.
  *   2. Each chunk's evidence item is `quality: external_document`, stamped with
- *      per-chunk provenance (`independence_group: vector:<ns>:<id>`, `notes`
+ *      per-chunk provenance (`independence_group: vector:<table>:<ns>:<id>`, `notes`
  *      naming the index/namespace, `source_id` = the observation id).
  *   3. Every chunk belief is `truth_status: unverified`.
  *   4. No `external_document`-backed belief reached `supported`.
@@ -158,7 +158,10 @@ async function run(): Promise<ProbeResult> {
       }
     }
     const subjects = chunkClaims.map((c) => c.structured_predicate?.subject).sort()
-    const expectedSubjects = CHUNKS.map((c) => `vector_chunk:${NAMESPACE}:${c.id}`).sort()
+    // Subjects are table-scoped + encoded (vector_chunk:<table>:<ns>:<id>) so
+    // two indexes' chunks can't collide in the cross-belief join; TABLE/NS/ids
+    // here have no special chars, so encodeURIComponent leaves them as-is.
+    const expectedSubjects = CHUNKS.map((c) => `vector_chunk:${TABLE}:${NAMESPACE}:${c.id}`).sort()
     if (JSON.stringify(subjects) !== JSON.stringify(expectedSubjects)) {
       return {
         passed: false,
@@ -188,10 +191,13 @@ async function run(): Promise<ProbeResult> {
           details: `chunk evidence source_id '${item.source_id}' does not point back to observation '${withSeam.obsId}'`,
         }
       }
-      if (!item.independence_group?.startsWith(`vector:${NAMESPACE}:`)) {
+      // The independence group is table-scoped + encoded (vector:<table>:<ns>:<id>)
+      // so two indexes' chunks stay independent in aggregateStrength.
+      const chunkId = (claim.structured_predicate?.object as { chunk_id?: string })?.chunk_id
+      if (item.independence_group !== `vector:${TABLE}:${NAMESPACE}:${chunkId}`) {
         return {
           passed: false,
-          details: `chunk evidence independence_group '${item.independence_group}' does not identify the chunk source`,
+          details: `chunk evidence independence_group '${item.independence_group}' is not the expected table-scoped 'vector:${TABLE}:${NAMESPACE}:${chunkId}'`,
         }
       }
       if (!item.notes?.includes(TABLE) || !item.notes.includes(NAMESPACE)) {

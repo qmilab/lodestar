@@ -79,12 +79,13 @@ query; Lodestar ships no embedding model. The tool also accepts an optional
 **The cognition (the headline).** The `VectorRetrievalExtractor` mints an
 **envelope** claim (the record of the query — `tool_result` quality, allowed to
 promote) and **one content claim per retrieved chunk**, each with a chunk-specific
-subject (`vector_chunk:<ns>:<id>`) so a chunk never cross-joins (ADR-0032's
+subject (`vector_chunk:<table>:<ns>:<id>`, components encoded) so a chunk never
+cross-joins (ADR-0032's
 `crossBeliefItems`) onto an unrelated belief and inherits a promote-grade quality.
 The `VectorAwareEvidenceLinker` (the consumer of `guard.wrap()`'s
 `evidenceLinkerFactory` seam, exactly like `DocAwareEvidenceLinker`) stamps each
 chunk `external_document` with per-chunk provenance (`independence_group:
-vector:<ns>:<id>`, `notes` naming the index/namespace + distance). That downgrade
+vector:<table>:<ns>:<id>`, `notes` naming the index/namespace + distance). That downgrade
 trips the auto-observation gate, so **a retrieved chunk can never auto-promote a
 belief to `supported`** — even at promote-grade aggregate strength and even when
 multiple chunks corroborate (two `external_document` chunks stay `external_document`;

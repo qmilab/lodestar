@@ -252,9 +252,20 @@ export function makeVectorQueryTool(
     quoted: quoteIdentifier(c, "metadataColumn"),
   }))
   const namespaces = opts.namespaces ?? []
+  // namespaceColumn and namespaces are a paired requirement: configure both
+  // (a filtered, allowlisted index) or neither (an un-namespaced index). A
+  // half-configured guard is a footgun in either direction —
   if (nsCol !== undefined && namespaces.length === 0) {
     throw new Error(
       "vector: a namespaceColumn is configured but `namespaces` (the queryable allowlist) is empty",
+    )
+  }
+  // — and an allowlist with no column to filter on would be SILENTLY IGNORED: a
+  // query that omitted `namespace` would run with no WHERE clause and search the
+  // whole index, defeating the allowlist the operator supplied. Fail closed.
+  if (nsCol === undefined && namespaces.length > 0) {
+    throw new Error(
+      "vector: `namespaces` (an allowlist) is configured but no `namespaceColumn` — retrieval would search the whole index unfiltered; set a namespaceColumn or drop the allowlist",
     )
   }
 

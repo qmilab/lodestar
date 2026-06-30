@@ -41,6 +41,21 @@ export const VECTOR_RETRIEVAL_INVOCATION_RELATION = "vector.retrieval_invocation
  * quality, so the auto-observation gate keeps it from auto-promoting. */
 export const VECTOR_EXTERNAL_DOCUMENT_RELATION = "vector.external_document_content"
 
+/**
+ * A globally-unique key for one retrieved chunk: `<table>:<namespace>:<id>`, each
+ * component percent-encoded so a separator character inside a component cannot
+ * forge a collision (`encodeURIComponent` escapes `:` and `/`). It MUST include
+ * the table, because `EvidenceLinker.crossBeliefItems` joins on
+ * `(subject, relation)` alone — without the table, a chunk `docs/42` from index A
+ * and one from index B would share a subject and lend each other corroboration /
+ * contradiction, suppressing or contaminating unrelated beliefs. Shared by the
+ * extractor's claim subject and the linker's independence group so the two cannot
+ * drift.
+ */
+function chunkKey(table: string, namespace: string, chunkId: string): string {
+  return `${encodeURIComponent(table)}:${encodeURIComponent(namespace)}:${encodeURIComponent(chunkId)}`
+}
+
 /** One retrieved chunk's provenance, carried on the content claim's predicate so
  * the linker can stamp per-chunk source attribution onto the evidence item. */
 interface ChunkProvenance {
@@ -107,7 +122,8 @@ function chunkProvenance(claim: Claim): ChunkProvenance | undefined {
  *      quality) — the potentially-hostile content the auto-observation gate must
  *      not auto-promote.
  *
- * Each chunk claim uses a **chunk-specific subject** (`vector_chunk:<ns>:<id>`)
+ * Each chunk claim uses a **table-scoped, encoded subject**
+ * (`vector_chunk:<table>:<ns>:<id>`)
  * so a retrieved chunk never cross-joins (via `crossBeliefItems`,
  * `evidence-linker.ts`) onto an unrelated prior belief's `(subject, relation)`
  * and inherits a promote-grade quality — the same subject-isolation the MCP and
@@ -159,9 +175,10 @@ export const VectorRetrievalExtractor: ClaimExtractor = {
         id: randomUUID(),
         statement: `Retrieved chunk '${chunkId}' from ${payload.table}/${payload.namespace}: ${truncated}`,
         structured_predicate: {
-          // Chunk-specific subject so the chunk never cross-joins onto an
-          // unrelated belief and inherits a stronger quality (Parallax stays).
-          subject: `vector_chunk:${payload.namespace}:${chunkId}`,
+          // Chunk-specific, table-scoped, encoded subject so the chunk never
+          // cross-joins onto an unrelated belief and inherits a stronger quality
+          // (Parallax stays) — and two indexes' chunks can't collide.
+          subject: `vector_chunk:${chunkKey(payload.table, payload.namespace, chunkId)}`,
           relation: VECTOR_EXTERNAL_DOCUMENT_RELATION,
           object: {
             text,
@@ -190,7 +207,7 @@ export const VectorRetrievalExtractor: ClaimExtractor = {
  * belief — the headline RAG-poisoning defence.
  *
  * Each chunk evidence item is stamped with its **source chunk**
- * (`independence_group: vector:<namespace>:<chunk_id>`, `notes` naming the
+ * (`independence_group: vector:<table>:<namespace>:<chunk_id>`, `notes` naming the
  * index/namespace + distance, `source_id` = the observation id), so
  * `lodestar report` shows which retrieved chunk backed each claim and two
  * chunks from distinct sources stay independent (still both `external_document`,
@@ -231,7 +248,7 @@ export class VectorAwareEvidenceLinker extends EvidenceLinker {
       relation: "supports" as const,
       quality: obs.trust === "synthetic" ? "synthetic_probe" : targetQuality,
       independence_group: prov
-        ? `vector:${prov.namespace}:${prov.chunk_id}`
+        ? `vector:${chunkKey(prov.table, prov.namespace, prov.chunk_id)}`
         : `obs:${obs.source.tool}`,
       freshness: "fresh" as const,
       notes: prov
