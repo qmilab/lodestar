@@ -56,6 +56,16 @@ function chunkKey(table: string, namespace: string, chunkId: string): string {
   return `${encodeURIComponent(table)}:${encodeURIComponent(namespace)}:${encodeURIComponent(chunkId)}`
 }
 
+/** A short, human-readable preview of untrusted chunk text for a claim's
+ * `statement`, truncated by Unicode CODE POINTS (not UTF-16 units) so a non-BMP
+ * char at the boundary is neither miscounted nor split into a lone surrogate.
+ * Fast path: a UTF-16 length within the cap can't exceed it in code points. */
+function previewText(text: string, max: number): string {
+  if (text.length <= max) return text
+  const cps = Array.from(text)
+  return cps.length > max ? `${cps.slice(0, max).join("")}…` : text
+}
+
 /** One retrieved chunk's STABLE provenance, carried on the content claim's
  * predicate so the linker can stamp per-chunk source attribution onto the
  * evidence item. Deliberately excludes query-volatile fields (distance, rank):
@@ -175,10 +185,9 @@ export const VectorRetrievalExtractor: ClaimExtractor = {
       const text = typeof match.content === "string" ? match.content : ""
       if (text.length === 0) return
       const chunkId = typeof match.id === "string" ? match.id : `#${index}`
-      const truncated = text.length > 200 ? `${text.slice(0, 200)}…` : text
       claims.push({
         id: randomUUID(),
-        statement: `Retrieved chunk '${chunkId}' from ${payload.table}/${payload.namespace}: ${truncated}`,
+        statement: `Retrieved chunk '${chunkId}' from ${payload.table}/${payload.namespace}: ${previewText(text, 200)}`,
         structured_predicate: {
           // Chunk-specific, table-scoped, encoded subject so the chunk never
           // cross-joins onto an unrelated belief and inherits a stronger quality
