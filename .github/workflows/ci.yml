@@ -18,10 +18,13 @@ jobs:
     # Postgres service for the memory-firewall store integration tests. The
     # suite is gated on LODESTAR_TEST_DATABASE_URL (set on the Test step below);
     # without it the Postgres tests skip, so this service is what actually
-    # exercises the cross-session store path in CI.
+    # exercises the cross-session store path in CI. Uses the pgvector image
+    # (postgres:16 + the `vector` extension) so the `vector-adapter-enforces-
+    # invariants` probe (ADR-0039) runs for real rather than skipping; plain
+    # Postgres features (the SQL adapter, cross-session stores) are unaffected.
     services:
       postgres:
-        image: postgres:16
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: lodestar_test

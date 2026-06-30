@@ -7,6 +7,14 @@ export {
 export { DocAwareEvidenceLinker } from "./doc-evidence-linker.js"
 export { GenericAwareEvidenceLinker } from "./generic-evidence-linker.js"
 export {
+  VectorAwareEvidenceLinker,
+  VectorRetrievalExtractor,
+  registerVectorRetrievalExtractor,
+  VECTOR_RETRIEVAL_SCHEMA_KEY,
+  VECTOR_RETRIEVAL_INVOCATION_RELATION,
+  VECTOR_EXTERNAL_DOCUMENT_RELATION,
+} from "./vector-retrieval.js"
+export {
   ExplanationGenerator,
   type BuildExplanationInput,
 } from "./explanation.js"

@@ -23,6 +23,7 @@
     "http_adapter",
     "messaging_adapter",
     "sql_adapter",
+    "vector_adapter",
     "calibration",
     "session_shipper",
     "pack_registry",
@@ -62,6 +63,8 @@
     "http_transport_governance",
     "messaging_egress_governance",
     "sql_injection_boundary",
+    "vector_retrieval_poisoning_gate",
+    "vector_index_governance",
     "durable_calibration_event",
     "ship_sensitivity_ceiling",
     "ship_wire_roundtrip",
@@ -223,6 +226,14 @@
     {
       "name": "sql-adapter-enforces-invariants",
       "file": "probes/sql-adapter-enforces-invariants.ts"
+    },
+    {
+      "name": "vector-retrieval-cannot-auto-promote",
+      "file": "probes/vector-retrieval-cannot-auto-promote.ts"
+    },
+    {
+      "name": "vector-adapter-enforces-invariants",
+      "file": "probes/vector-adapter-enforces-invariants.ts"
     },
     {
       "name": "ship-respects-sensitivity-ceiling",
