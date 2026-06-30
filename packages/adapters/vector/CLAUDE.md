@@ -67,7 +67,9 @@ ADR-0004/0013). It enforces, in-process:
    database — so neither a huge index nor a single poisoned/oversized row can
    inflate an observation or balloon host memory; a trimmed chunk is flagged
    `content_truncated`. Rows with a `NULL` embedding (a `NULL`/`NaN` distance that
-   would fail output validation) are filtered out, never returned.
+   would fail output validation) **or a `NULL` id** are filtered out server-side,
+   never returned — a chunk with no stable id would otherwise be keyed by query
+   rank and collide with an unrelated null-id chunk in the cross-belief join.
 5. **Read-only + scoped credentials.** A `READ ONLY` transaction (a retrieval cannot
    mutate the index) with a `statement_timeout`; the connection password is operator
    config, never in the agent's inputs, and redacted from any caught error.

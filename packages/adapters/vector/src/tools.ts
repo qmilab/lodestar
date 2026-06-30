@@ -358,11 +358,14 @@ export function makeVectorQueryTool(
       const metaSelect = metadataCols
         .map((c, i) => `, left(${c.quoted}::text, ${maxChunkChars + 1}) as meta_${i}`)
         .join("")
-      // Always filter NULL embeddings: an unembedded row has a NULL distance,
-      // which would become NaN and fail the kernel's `z.number()` output
-      // validation (and is not a real match). Combine with the optional namespace
-      // filter. Both conditions reference operator-config identifiers only.
-      const conditions: string[] = [`${embeddingCol} is not null`]
+      // Always filter NULL ids and NULL embeddings. A NULL embedding yields a
+      // NULL distance (→ NaN) that would fail output validation; a NULL id has no
+      // stable chunk identity, so the cognition would key it by query rank and two
+      // unrelated null-id chunks at the same rank would collide in the
+      // cross-belief join (the no-cross-join invariant rests on a stable id).
+      // Both are excluded server-side. Combine with the optional namespace filter;
+      // every condition references operator-config identifiers only.
+      const conditions: string[] = [`${idCol} is not null`, `${embeddingCol} is not null`]
       if (namespace !== undefined && nsCol !== undefined) {
         params.push(namespace)
         conditions.push(`${nsCol} = $${params.length}`)
@@ -392,19 +395,23 @@ export function makeVectorQueryTool(
         const fetchedRows = Array.isArray(fetched)
           ? (fetched as Array<Record<string, unknown>>)
           : []
-        // Defensive: drop any row whose distance isn't a finite number. The
-        // `IS NOT NULL` filter makes this practically unreachable, but it
-        // guarantees the output never carries a NaN that fails validation.
-        const allRows = fetchedRows.filter((r) => Number.isFinite(r.distance as number))
+        // Defensive: drop any row without a stable id or a finite distance. The
+        // `IS NOT NULL` filters make this practically unreachable, but it
+        // guarantees the output never carries a NaN distance (fails validation)
+        // nor a rank-based id (which would collide in the cross-belief join).
+        const allRows = fetchedRows.filter(
+          (r) => r.id !== null && r.id !== undefined && Number.isFinite(r.distance as number),
+        )
         const truncated = allRows.length > topK
         const rows = truncated ? allRows.slice(0, topK) : allRows
-        const matches = rows.map((r, i) => {
+        const matches = rows.map((r) => {
           const rawContent = typeof r.content === "string" ? r.content : String(r.content ?? "")
           // Code-point-aware so it agrees with the DB's `left(..., N)` (character
           // count) — a non-BMP char at the cap is not miscounted or split.
           const capped = capCodePoints(rawContent, maxChunkChars)
           const match: VectorRetrievalOutput["matches"][number] = {
-            id: r.id === null || r.id === undefined ? `#${i}` : String(r.id),
+            // r.id is guaranteed non-null by the WHERE + defensive filters above.
+            id: String(r.id),
             content: capped.value,
             content_truncated: capped.truncated,
             distance: r.distance as number,

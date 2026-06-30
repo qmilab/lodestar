@@ -75,7 +75,9 @@ query; Lodestar ships no embedding model. The tool also accepts an optional
   `content_truncated`). The natural analogue of the SQL adapter's #101 cursor,
   reached more simply because the query already carries a `LIMIT`. Rows with a
   `NULL` embedding (a `NULL`/`NaN` distance that would fail the kernel's
-  `z.number()` output validation) are filtered with `embedding IS NOT NULL`.
+  `z.number()` output validation) or a `NULL` id (no stable chunk identity — it
+  would be keyed by query rank and collide with an unrelated null-id chunk in the
+  cross-belief join) are filtered server-side with `IS NOT NULL`.
 - **Read-only.** Runs inside a `READ ONLY` transaction with a `statement_timeout`.
 - **Credential scoping.** The connection password is operator config, never in the
   agent's inputs, and redacted from any captured error.

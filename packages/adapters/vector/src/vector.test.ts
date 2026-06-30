@@ -297,4 +297,23 @@ describe("parameterized query construction", () => {
     // A NULL/NaN distance row never reaches the output (it would fail z.number()).
     expect(out.matches.map((m) => m.id)).toEqual(["ok"])
   })
+
+  test("filters NULL ids (SQL) and drops them — no rank-based fallback id", async () => {
+    const fake = fakeHandle([
+      { id: "real", content: "a", distance: 0.1 },
+      { id: null, content: "b", distance: 0.2 },
+    ])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    const { statement } = fake.captured()
+    expect(statement).toContain('"id" is not null')
+    // A null-id chunk has no stable identity; it must be dropped, never given a
+    // rank-based id like `#1` that would collide in the cross-belief join.
+    expect(out.matches.map((m) => m.id)).toEqual(["real"])
+    expect(out.matches.some((m) => m.id.startsWith("#"))).toBe(false)
+  })
 })
