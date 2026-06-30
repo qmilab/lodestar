@@ -52,9 +52,12 @@ import {
  *     provider host (no agent-driven SSRF) nor the credential (operator-supplied
  *     resolver seam, redacted from captured output). Lodestar ships NO concrete
  *     Stripe/Adyen client or key — the operator injects a `PaymentProvider`.
- *   - **Strict delivery semantics.** An unconfirmed charge (a decline, a non-2xx, a
- *     `pending` settlement, an unparseable confirmation) ends the action `failed` —
- *     never a silent "charged".
+ *   - **Strict delivery semantics (fail-closed).** The charge succeeds ONLY on an
+ *     explicit provider confirmation; a decline, a non-2xx, a 202 Accepted, a
+ *     missing/unrecognised status, or a truncated/unparseable confirmation all end
+ *     the action `failed` — never a silent "charged". The generic provider confirms
+ *     by an explicit success-status allowlist; an operator whose provider signals
+ *     success differently passes a provider-specific `interpret`.
  *   - **Bounded capture, no redirect.** A wall-clock timeout, a response-body byte
  *     cap, and a refusal to follow any provider redirect (`transport.ts`).
  */
@@ -158,19 +161,21 @@ function parseJsonSafe(text: string): Record<string, unknown> | null {
   }
 }
 
-/** Status strings (lowercased) a generic provider uses to signal a charge that is
- * accepted/authorized but NOT yet a completed success — treated as unconfirmed
- * (fail-closed). */
-const PENDING_STATUSES = new Set([
-  "pending",
-  "processing",
-  "in_progress",
-  "incomplete",
-  "accepted",
-  "authorized",
-  "requires_action",
-  "requires_confirmation",
-  "requires_capture",
+/** Status strings (lowercased) that signal a charge has DEFINITIVELY completed. The
+ * generic interpreter is fail-closed: it confirms a charge ONLY on one of these (an
+ * explicit allowlist) — never on a bare 2xx. A provider that signals success with a
+ * status outside this set is supported by passing a provider-specific `interpret`. */
+const SUCCESS_STATUSES = new Set([
+  "succeeded",
+  "success",
+  "successful",
+  "paid",
+  "captured",
+  "completed",
+  "complete",
+  "settled",
+  "confirmed",
+  "approved",
 ])
 /** Status strings (lowercased) that signal an explicit failure. */
 const FAILED_STATUSES = new Set([
@@ -194,14 +199,15 @@ function auditExcerpt(body: string): string {
   return ` — provider response: ${body.length > MAX ? `${body.slice(0, MAX)}…` : body}`
 }
 
-/** Default interpretation of a generic HTTP charge response. **Fail-closed:** a
- * charge is `succeeded` ONLY on a definitive completion — HTTP 200/201, a parseable,
- * non-truncated body, and no pending/failure status. A non-2xx, an HTTP 202/204/…
- * (accepted ≠ captured), an explicit `status: pending|declined|…`, or a
- * truncated/unparseable confirmation all WITHHOLD success, so the strict delivery
- * gate fails the action — `payment.send` never reports an unconfirmed charge as
- * charged. An operator whose provider confirms differently passes their own
- * `interpret`. */
+/** Default interpretation of a generic HTTP charge response. **Fail-closed by
+ * allowlist:** a charge is `succeeded` ONLY when the provider EXPLICITLY confirms it
+ * — HTTP 200/201, a parseable, non-truncated body, AND a `status` in
+ * `SUCCESS_STATUSES`. A non-2xx or an explicit failure status is a decline; a 202/204
+ * (accepted ≠ captured), a missing status, an unrecognised status
+ * (`queued`/`requires_payment_method`/…), or a truncated/unparseable body are all
+ * UNCONFIRMED — never reported as charged. A provider that confirms with a different
+ * signal (e.g. a bare `200 {id}`) is supported by passing a provider-specific
+ * `interpret`; the generic default refuses to *assume* a charge it cannot read. */
 function defaultInterpret(r: SendResult): {
   succeeded: boolean
   status: "succeeded" | "failed" | "pending"
@@ -216,7 +222,7 @@ function defaultInterpret(r: SendResult): {
 
   // A non-2xx or an explicit failure status is a definitive decline.
   if (!r.ok || (status !== null && FAILED_STATUSES.has(status))) {
-    // The body is already redacted by the transport, so nothing here carries a secret.
+    // The body is already redacted (incl. JSON-decoded) by the transport.
     const reason =
       typeof parsed?.error === "string"
         ? parsed.error
@@ -232,30 +238,35 @@ function defaultInterpret(r: SendResult): {
     }
   }
 
-  // A 2xx that is NOT a definitive completion is unconfirmed, not charged: a
-  // non-200/201 code (202 Accepted, 204, …), an explicit pending status, or a
-  // truncated/unparseable body.
+  // Confirmed ONLY by an explicit success allowlist on a completed (200/201),
+  // parseable, non-truncated body. Everything else is unconfirmed (fail-closed).
   const completed = r.status === 200 || r.status === 201
-  const why = !completed
-    ? `non-completion HTTP ${r.status}`
-    : status !== null && PENDING_STATUSES.has(status)
-      ? `status '${status}'`
-      : r.body_truncated
-        ? "truncated confirmation"
-        : parsed === null
-          ? "unparseable confirmation body"
-          : null
-  if (why !== null) {
-    return {
-      succeeded: false,
-      status: "pending",
-      payment_id,
-      idempotent_replay: false,
-      decline_reason: `provider did not confirm the charge (${why})${auditExcerpt(r.body)}`,
-    }
+  if (
+    completed &&
+    !r.body_truncated &&
+    parsed !== null &&
+    status !== null &&
+    SUCCESS_STATUSES.has(status)
+  ) {
+    return { succeeded: true, status: "succeeded", payment_id, idempotent_replay }
   }
 
-  return { succeeded: true, status: "succeeded", payment_id, idempotent_replay }
+  const why = !completed
+    ? `non-completion HTTP ${r.status}`
+    : r.body_truncated
+      ? "truncated confirmation"
+      : parsed === null
+        ? "unparseable confirmation body"
+        : status === null
+          ? "no charge status in the response — pass a provider-specific interpret"
+          : `unconfirmed status '${status}'`
+  return {
+    succeeded: false,
+    status: "pending",
+    payment_id,
+    idempotent_replay: false,
+    decline_reason: `provider did not confirm the charge (${why})${auditExcerpt(r.body)}`,
+  }
 }
 
 export interface HttpPaymentProviderOptions {
@@ -268,7 +279,10 @@ export interface HttpPaymentProviderOptions {
   buildPayload?: (req: ChargeRequest) => unknown
   /** Header to carry the idempotency key. Default "Idempotency-Key". */
   idempotencyHeader?: string
-  /** Map a captured HTTP response to a charge result. Default: 2xx = succeeded. */
+  /** Map a captured HTTP response to a charge result. Default (fail-closed): success
+   * requires HTTP 200/201 + a non-truncated body + an explicit recognised success
+   * status; everything else is unconfirmed. Pass this for a provider that confirms
+   * with a different signal (e.g. a bare `200 {id}`). */
   interpret?: (r: SendResult) => {
     succeeded: boolean
     status: "succeeded" | "failed" | "pending"

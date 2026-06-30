@@ -22,12 +22,19 @@ friction. You cannot un-send a payment.
   authoritative re-checks.
 - `src/credentials.ts` — the `PaymentCredential` model (a single operator-supplied
   auth header) + `resolveCredential` (resolver seam) + `applyRedactions` /
-  `redactionVariants`. The messaging adapter's `credentials.ts` ported verbatim (the
-  same audited redaction code shared by every egress family).
+  `redactionVariants`. Ported from the messaging adapter's `credentials.ts`, **plus a
+  payments hardening**: `redactionVariants` also emits the JSON `\uXXXX`-escaped form
+  of the secret, so a credential a hostile provider echoes JSON-escaped (to evade a
+  raw-string match) is still scrubbed — even from a *truncated* body that cannot be
+  parsed (see transport).
 - `src/transport.ts` — the bounded JSON-POST wrapper (`postJson`): a wall-clock
   timeout (covering the async resolver via `raceAbort`), a streamed response-body
   byte cap with redaction applied **before** the cap, and **a refusal to follow any
-  redirect**. The messaging `transport.ts` ported verbatim.
+  redirect**. Ported from messaging's `transport.ts`, **plus a payments hardening**:
+  `readCappedBody` canonicalises a fully-parseable JSON body (`JSON.stringify` of the
+  parse collapses every `\uXXXX` escape to literal ASCII) and re-redacts it, so an
+  escaped credential — full *or* partial — cannot survive into the captured excerpt or
+  any field later parsed from it.
 - `src/tools.ts` — the `payment.send@1` output schema + registration, the
   `PaymentProvider` seam + `ChargeRequest` / `ChargeResult`, the generic-HTTP
   `createHttpPaymentProvider` default (the idempotency key forwarded as a header),
@@ -113,7 +120,11 @@ output), so no extractor/linker.
   and redacted, and the amount/currency capped. An agent-chosen payee is an exfil
   channel; an agent-chosen host is an SSRF vector; an uncapped amount is unbounded loss.
 - Keep the idempotency key forwarded so a replay cannot double-charge.
-- Keep delivery semantics strict: an unconfirmed charge must fail the action.
+- Keep delivery semantics **fail-closed**: the generic provider confirms a charge
+  ONLY on an explicit recognised success status (never a bare 2xx); a missing /
+  unrecognised status, a 202, or a truncated/unparseable body must fail the action. A
+  provider that confirms differently is handled by a custom `interpret`, not by
+  loosening the default.
 - For a new PSP, pass `buildPayload` / `interpret` rather than special-casing here —
   the governance is provider-independent.
 - The `payment-adapter-enforces-send-invariants` probe is spec. If a change makes it

@@ -41,6 +41,11 @@ registerPaymentTools({
     credential: { header: "Authorization", value: () => secrets.get("PSP_API_KEY") },
     // Optional: a provider-specific request body. Default is a generic charge shape.
     // buildPayload: (req) => ({ destination: req.payee, amount: req.amount_minor, ... }),
+    // The default confirms success ONLY on HTTP 200/201 + a recognized success
+    // `status` ("succeeded"/"paid"/"captured"/…). If your provider signals success
+    // differently (e.g. a bare 200 with just an id), pass `interpret` — the default
+    // is fail-closed and will NOT assume a charge it cannot read.
+    // interpret: (r) => ({ succeeded: r.ok, status: r.ok ? "succeeded" : "failed", ... }),
   }),
   // The exfil/redirection guard: the agent may pay only these.
   allowedPayees: ["acct_ops_vendor", "acct_payroll"],
@@ -71,9 +76,11 @@ An off-allowlist payee, an over-ceiling amount, or an off-allowlist currency fai
 the amount/currency are rejected at *propose* (so an over-ceiling payment is never
 even presentable to a human), and the payee is enforced authoritatively in *execute*
 (so an off-allowlist payee is a recorded `failed` security event, like the messaging
-exfil guard). The agent never supplies the provider host or the credential. An
-unconfirmed charge (a decline, a non-2xx, a `pending` settlement) ends the action
-`failed` — never a silent "charged".
+exfil guard). The agent never supplies the provider host or the credential. The
+charge succeeds only on an **explicit** provider confirmation — a decline, a non-2xx,
+a 202 Accepted, a missing/unrecognized status, or a truncated/unparseable response
+all end the action `failed`, never a silent "charged" (the generic provider is
+fail-closed; pass `interpret` for a provider that confirms differently).
 
 ## The boundary this claims — and the one it does not
 
@@ -94,7 +101,10 @@ ADR-0004/0006/0007/0008/0009). It enforces, in-process:
    resolved at request time, redacted from all captured output). HTTPS-only unless
    `allowHttp`.
 5. **No redirect following.** A 3xx from the provider is a hard failure.
-6. **Strict delivery semantics.** An unconfirmed charge ends the action `failed`.
+6. **Strict delivery semantics (fail-closed).** The charge succeeds only on an
+   explicit provider confirmation (the generic provider requires a recognized success
+   `status`); an unconfirmed response ends the action `failed`, never a silent
+   "charged". An operator whose provider confirms differently passes `interpret`.
 7. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop a
    hostile or misbehaving provider from hanging the call or inflating an observation.
 8. **L4 human-approval gate (the headline), with an L5 kill-switch.** Held until a

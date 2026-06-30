@@ -25,12 +25,16 @@
  *      completes flagged `idempotent_replay`.
  *   6. **Credentials never leak.** The operator API key is injected on the request
  *      (the provider sees it) but is absent from the recorded action inputs AND the
- *      emitted observation (redacted even when the provider echoes it back).
- *   7. **Delivery semantics — only a confirmed charge succeeds.** A provider decline
- *      (HTTP 402), a 200 whose body says `status:"pending"`, an HTTP 202 Accepted,
- *      and a truncated/unparseable confirmation ALL end the action `failed`, not a
- *      silent "charged"; the echoed credential is redacted from the failed-action
- *      audit. (A 2xx alone is not a confirmation.)
+ *      emitted observation — redacted even when the provider echoes it back, and even
+ *      when the echo is JSON `\u`-escaped (the captured body is canonicalised before
+ *      redaction, so the decoded token is not recoverable from the observation).
+ *   7. **Delivery semantics — only an explicitly-confirmed charge succeeds.** A
+ *      provider decline (HTTP 402), a 200 `status:"pending"` body, an HTTP 202
+ *      Accepted, a 200 with an UNRECOGNISED status, a 200 with NO status, and a
+ *      truncated/unparseable confirmation ALL end the action `failed`, not a silent
+ *      "charged"; the echoed credential is redacted from the failed-action audit. (A
+ *      bare 2xx is not a confirmation — the generic provider requires a recognised
+ *      success status, else the operator passes a custom `interpret`.)
  *   8. **L5 kill-switch.** A charge proposed at L5 is `rejected` outright (the gate
  *      denies without human approval), the provider is untouched, and a forced
  *      `resolve(granted)` is mechanically inert (refused by phase).
@@ -134,43 +138,58 @@ function startServer(): FakeServer {
       rec.count += 1
       const auth = req.headers.get("authorization")
       rec.auths.push(auth)
+      const a = auth ?? ""
+      const json = (value: unknown, status: number): Response =>
+        new Response(JSON.stringify(value), {
+          status,
+          headers: { "content-type": "application/json" },
+        })
       const parsed = JSON.parse(body) as { memo?: string }
-      if (parsed.memo === "DECLINE") {
-        // A decline that ECHOES the credential, to test audit redaction on failure.
-        return new Response(JSON.stringify({ error: "card_declined", echo: auth }), {
-          status: 402,
-          headers: { "content-type": "application/json" },
-        })
+      switch (parsed.memo) {
+        case "DECLINE":
+          // A decline that ECHOES the credential, to test audit redaction on failure.
+          return json({ error: "card_declined", echo: auth }, 402)
+        case "PENDING":
+          // A 200 whose body says the charge is NOT yet captured. A 2xx alone is not a
+          // confirmation — this must NOT be reported as charged.
+          return json({ id: "pay_pending", status: "pending" }, 200)
+        case "ACCEPTED":
+          // HTTP 202 Accepted: queued, not completed. Must NOT be reported as charged.
+          return json({ id: "pay_accepted" }, 202)
+        case "QUEUED":
+          // A 200 with an UNRECOGNISED status. Fail-closed: the generic interpreter
+          // only confirms on an allowlisted success status, never an unknown one.
+          return json({ id: "pay_queued", status: "queued" }, 200)
+        case "NOSTATUS":
+          // A 200 with NO status field. A bare 2xx is not a confirmation — must fail.
+          return json({ id: "pay_nostatus", echo: auth }, 200)
+        case "ESCAPED": {
+          // A SUCCESS (recognised status) whose echo hides the credential with a
+          // PARTIAL JSON `\u` escape (every other char), so NEITHER the raw token NOR
+          // the fully-escaped redaction variant matches — only canonicalising the
+          // parsed body before redaction can scrub it. The decoded token must not be
+          // recoverable from the observation.
+          const mixed = [...a]
+            .map((c, i) =>
+              i % 2 === 0 ? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}` : c,
+            )
+            .join("")
+          return new Response(`{"status":"succeeded","id":"pay_esc","echo":"${mixed}"}`, {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          })
+        }
+        case "OVERSIZE":
+          // An oversized body that echoes the credential positioned so the byte cap
+          // (256) cuts THROUGH it. A truncated confirmation cannot be trusted (so the
+          // charge must FAIL), and if the cap were applied before redaction a token
+          // prefix would survive into the failed-action audit.
+          return new Response(`${"X".repeat(239)}${a}${"X".repeat(200)}`, { status: 200 })
+        default:
+          // A normal success: a recognised success status, echoing the credential back
+          // (a misbehaving provider reflecting the token — must be redacted).
+          return json({ status: "succeeded", id: "pay_http_1", echo: auth }, 200)
       }
-      if (parsed.memo === "PENDING") {
-        // A 200 whose body says the charge is NOT yet captured. A 2xx alone is not a
-        // confirmation — this must NOT be reported as charged.
-        return new Response(JSON.stringify({ id: "pay_pending", status: "pending" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        })
-      }
-      if (parsed.memo === "ACCEPTED") {
-        // HTTP 202 Accepted: queued, not completed. Must NOT be reported as charged.
-        return new Response(JSON.stringify({ id: "pay_accepted" }), {
-          status: 202,
-          headers: { "content-type": "application/json" },
-        })
-      }
-      if (parsed.memo === "OVERSIZE") {
-        // An oversized body that echoes the credential positioned so the byte cap
-        // (256) cuts THROUGH it. A truncated confirmation cannot be trusted (so the
-        // charge must FAIL), and if the cap were applied before redaction a token
-        // prefix would survive into the failed-action audit.
-        const a = auth ?? ""
-        return new Response(`${"X".repeat(239)}${a}${"X".repeat(200)}`, { status: 200 })
-      }
-      // A normal success that echoes the credential back (a misbehaving provider
-      // reflecting the token into its response — must be redacted).
-      return new Response(JSON.stringify({ id: "pay_http_1", echo: auth }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      })
     },
   })
   return {
@@ -489,6 +508,42 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- 6b. A JSON-escaped credential echo is still redacted --------------
+    // A successful charge whose response echoes the credential with a PARTIAL `\u`
+    // escape (evading a raw-string match) must NOT leak the DECODED token into the
+    // observation — the captured body is canonicalised (escapes decoded → literal)
+    // before redaction.
+    const escHeld = await kernel.arbitrate(
+      propose(
+        {
+          payee: PAYEE,
+          amount_minor: 4_200,
+          currency: "usd",
+          idempotency_key: "inv-escp",
+          memo: "ESCAPED",
+        },
+        L4(),
+      ),
+    )
+    const escDone = await kernel.execute(kernel.resolve(escHeld, grant(escHeld, "req-escp")))
+    if (escDone.phase !== "completed") {
+      return {
+        passed: false,
+        details: `escaped-echo check FAILED: a success with a recognised status did not complete (phase=${escDone.phase}).`,
+      }
+    }
+    const escExcerpt = String(outputFor(escDone.id)?.response_excerpt ?? "")
+    const escDecoded = escExcerpt.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
+      String.fromCharCode(Number.parseInt(h, 16)),
+    )
+    if (escExcerpt.includes(TOKEN) || escDecoded.includes(TOKEN)) {
+      return {
+        passed: false,
+        details:
+          "escaped-echo leak FAILED: a JSON-escaped credential echo decoded to the token in the observation (the body was not canonicalised before redaction).",
+      }
+    }
+
     // ---- 7. Delivery semantics (decline → failed, audit redacted) ----------
     const decline = await kernel.arbitrate(
       propose(
@@ -518,13 +573,16 @@ async function run(): Promise<ProbeResult> {
     }
 
     // ---- 7b. Unconfirmed 2xx must NOT be reported as charged ----------------
-    // A 200 with status:"pending" and an HTTP 202 Accepted are both 2xx but neither
-    // is a captured charge — the strict gate must fail the action, never report it
-    // as charged. (Regression guard for the generic interpreter treating any 2xx as
-    // success.)
+    // The generic interpreter confirms ONLY on an explicit recognised success status.
+    // A 200 status:pending body, an HTTP 202 Accepted, a 200 with an UNRECOGNISED
+    // status, and a 200 with NO status field are all 2xx but none is a captured charge
+    // — the strict gate must fail the action, never report it as charged. (Regression
+    // guard for the generic interpreter treating a bare 2xx as success.)
     for (const [memo, key, label] of [
       ["PENDING", "inv-pend", "a 200 status:pending body"],
       ["ACCEPTED", "inv-acpt", "an HTTP 202 Accepted"],
+      ["QUEUED", "inv-queu", "a 200 with an unrecognised status"],
+      ["NOSTATUS", "inv-nost", "a 200 with no charge status"],
     ] as const) {
       const held = await kernel.arbitrate(
         propose(
@@ -586,7 +644,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native payment transport held every invariant through the Action Kernel: a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, and a truncated confirmation all ended 'failed' rather than a silent 'charged', with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
+        "Native payment transport held every invariant through the Action Kernel: a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed JSON-escaped (the captured body is canonicalised before redaction); a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
     }
   } finally {
     server.stop()

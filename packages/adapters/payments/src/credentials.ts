@@ -99,8 +99,27 @@ export function redactionVariants(secret: string): string[] {
       variants.add(enc)
       variants.add(lowercasePercentEscapes(enc))
     }
+    // JSON `\uXXXX`-escaped forms (lower- and upper-case hex). A hostile provider can
+    // echo the credential JSON-escaped to evade a raw-string match; a JSON consumer
+    // would then DECODE it. Bodies that fully parse are canonicalised + re-redacted at
+    // capture (see transport `readCappedBody`); these variants are the backstop for a
+    // *truncated* body, which cannot be parsed, so a fully-escaped echo straddling the
+    // cap is still scrubbed before it reaches the audit.
+    variants.add(jsonUnicodeEscape(base, false))
+    variants.add(jsonUnicodeEscape(base, true))
   }
   return [...variants]
+}
+
+/** The JSON `\uXXXX` escape of every UTF-16 code unit of `s` (the form a hostile
+ * provider uses to hide a credential from a raw-string redaction). */
+function jsonUnicodeEscape(s: string, upperHex: boolean): string {
+  let out = ""
+  for (let i = 0; i < s.length; i++) {
+    const hex = s.charCodeAt(i).toString(16).padStart(4, "0")
+    out += `\\u${upperHex ? hex.toUpperCase() : hex}`
+  }
+  return out
 }
 
 /** URL-encoded forms of a value (component- and URI-encoded), skipping any that

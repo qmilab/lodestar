@@ -119,7 +119,23 @@ async function readCappedBody(
   // multibyte content). Cutting already-redacted text can only drop trailing bytes
   // — every secret in the window is already `***` — so a partial secret can never
   // reappear (a cut multibyte tail is at worst a cosmetic replacement char).
-  const redacted = applyRedactions(buf.toString("utf8"), redactions)
+  const raw = buf.toString("utf8")
+  let redacted = applyRedactions(raw, redactions)
+  // JSON-escape evasion: a hostile provider can echo the credential as `\uXXXX`
+  // escapes, which a raw-string match misses but `JSON.parse` later DECODES — so the
+  // secret would surface decoded in any field parsed from this body (e.g. an `id` /
+  // `error`) AND in this very excerpt. If the body fully parses, re-encode it
+  // canonically (`JSON.stringify` emits ASCII literally, collapsing every escape) and
+  // redact THAT, so no escaped form — full or partial — can survive. A truncated body
+  // cannot be parsed; its straddling secret was already scrubbed before the cap, and
+  // the redaction set also carries `\uXXXX` variants as a backstop.
+  if (!truncated) {
+    try {
+      redacted = applyRedactions(JSON.stringify(JSON.parse(raw)), redactions)
+    } catch {
+      /* not JSON — the raw-string redaction stands */
+    }
+  }
   const redactedBuf = Buffer.from(redacted, "utf8")
   const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
   return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }
