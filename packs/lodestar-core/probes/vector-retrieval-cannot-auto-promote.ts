@@ -139,6 +139,59 @@ async function runScenario(useSeam: boolean, logRoot: string): Promise<ScenarioR
   }
 }
 
+/**
+ * Re-retrieve the SAME chunk twice (at DIFFERENT query distances) in one session
+ * — shared stores — and return the second ingest + an evidence reader. Used to
+ * assert that a re-retrieval CORROBORATES the prior chunk belief rather than
+ * contradicting it: the query-volatile fields (distance, rank) must be OUT of the
+ * compared `structured_predicate.object`, or the cross-belief join would see a
+ * different object and record a false contradiction (Codex r3 / ADR-0039).
+ */
+async function runReRetrieval(logRoot: string) {
+  const mkObs = (distance: number): Observation => ({
+    id: crypto.randomUUID(),
+    schema: VECTOR_RETRIEVAL_SCHEMA_KEY,
+    payload: {
+      table: TABLE,
+      namespace: NAMESPACE,
+      metric: "cosine",
+      match_count: 1,
+      truncated: false,
+      // The SAME chunk (id + content), surfaced at a DIFFERENT distance.
+      matches: [{ id: CHUNKS[0]?.id, content: CHUNKS[0]?.content, distance }],
+      summary: "vector.query re-retrieval",
+    },
+    source: {
+      tool: "vector.query",
+      invocation_id: crypto.randomUUID(),
+      captured_at: new Date().toISOString(),
+    },
+    context: { session_id: "pre", project_id: "pre", actor_id: "pre" },
+    trust: "validated",
+    sensitivity: "internal",
+  })
+
+  let second: IngestResult | undefined
+  const run = wrap<void>(async (ctx) => {
+    await ctx.ingestObservation(mkObs(0.08))
+    second = await ctx.ingestObservation(mkObs(0.71))
+  })
+  const { internals } = await run({
+    project_id: "vector-probe",
+    actor_id: "vector-probe-agent",
+    log_root: logRoot,
+    default_scope: { level: "project", identifier: "vector-probe" },
+    default_sensitivity: "internal",
+    policy_gate: autoApprovePolicy({ auto_approve_up_to: 2, approver_id: "vector-probe-policy" }),
+    precondition_checker: alwaysHoldsChecker,
+    cognitive: {
+      evidenceLinkerFactory: ({ evidence, beliefs, claims }) =>
+        new VectorAwareEvidenceLinker(evidence, beliefs, claims),
+    },
+  })
+  return { second, internals }
+}
+
 async function run(): Promise<ProbeResult> {
   ensureVectorExtractor()
   const logRoot = mkdtempSync(join(tmpdir(), "lodestar-vector-probe-"))
@@ -269,9 +322,47 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // Assertion 7: re-retrieving the SAME chunk corroborates, never contradicts.
+    // A query-volatile field (distance/rank) leaking into the compared predicate
+    // would make the second retrieval register as a contradiction of the first.
+    const rr = await runReRetrieval(logRoot)
+    const rrClaim = rr.second?.claims.find(
+      (c) => c.structured_predicate?.relation === VECTOR_EXTERNAL_DOCUMENT_RELATION,
+    )
+    if (!rrClaim) {
+      return { passed: false, details: "re-retrieval produced no chunk content claim" }
+    }
+    const rrItems = (await rr.internals.evidence.forClaim(rrClaim.id)).flatMap((s) => s.items)
+    if (rrItems.some((i) => i.relation === "contradicts")) {
+      return {
+        passed: false,
+        details:
+          "re-retrieving the same chunk recorded a CONTRADICTION — a query-volatile field (distance/rank) must not be in the compared structured_predicate.object.",
+      }
+    }
+    const crossSupport = rrItems.find(
+      (i) => i.relation === "supports" && /cross-belief/.test(i.notes ?? ""),
+    )
+    if (!crossSupport) {
+      return {
+        passed: false,
+        details:
+          "re-retrieving the same chunk did not corroborate the prior chunk belief (expected a cross-belief 'supports' item; the predicate object must be stable across retrievals).",
+      }
+    }
+    const contradictedBeliefs = (await rr.internals.beliefs.list()).filter(
+      (b) => b.truth_status === "contradicted",
+    )
+    if (contradictedBeliefs.length > 0) {
+      return {
+        passed: false,
+        details: `re-retrieval left ${contradictedBeliefs.length} belief(s) 'contradicted'; the same chunk retrieved twice must not contradict itself.`,
+      }
+    }
+
     return {
       passed: true,
-      details: `${chunkClaims.length} retrieved chunks each backed by external_document evidence with per-chunk provenance; all chunk beliefs 'unverified', the query envelope 'supported'.\n  WITH seam:    chunk belief truth_status 'unverified' (gate fired on external_document).\n  WITHOUT seam: the same chunk belief truth_status '${controlBelief.truth_status}'.\nThe VectorAwareEvidenceLinker seam attributes each chunk to its source and keeps retrieved content out of the supported set; the default linker would have promoted it.`,
+      details: `${chunkClaims.length} retrieved chunks each backed by external_document evidence with per-chunk provenance; all chunk beliefs 'unverified', the query envelope 'supported'.\n  WITH seam:    chunk belief truth_status 'unverified' (gate fired on external_document).\n  WITHOUT seam: the same chunk belief truth_status '${controlBelief.truth_status}'.\n  RE-RETRIEVAL: the same chunk retrieved at a different distance corroborates (cross-belief supports), never contradicts.\nThe VectorAwareEvidenceLinker seam attributes each chunk to its source and keeps retrieved content out of the supported set; the default linker would have promoted it.`,
     }
   } finally {
     rmSync(logRoot, { recursive: true, force: true })

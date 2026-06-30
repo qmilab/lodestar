@@ -336,7 +336,15 @@ export function makeVectorQueryTool(
       // `truncated`). Distinct param indexes so adding the namespace filter does
       // not renumber the others.
       const params: unknown[] = [vectorLiteral]
-      const metaSelect = metadataCols.map((c) => `, ${c.quoted}`).join("")
+      // Cap each metadata column the SAME way as content: cast to text and
+      // `left(..., maxChunkChars + 1)` in SQL, so a large/user-writable column
+      // (a JSONB `metadata` blob, or a misconfigured `content`/embedding column)
+      // can't balloon the transfer/observation through the metadata channel.
+      // Alias to a fixed `meta_<i>` so a metadata column named `id`/`content`/
+      // `distance` (or schema-qualified) can't collide with the other outputs.
+      const metaSelect = metadataCols
+        .map((c, i) => `, left(${c.quoted}::text, ${maxChunkChars + 1}) as meta_${i}`)
+        .join("")
       // Always filter NULL embeddings: an unembedded row has a NULL distance,
       // which would become NaN and fail the kernel's `z.number()` output
       // validation (and is not a real match). Combine with the optional namespace
@@ -388,7 +396,14 @@ export function makeVectorQueryTool(
           }
           if (metadataCols.length > 0) {
             const metadata: Record<string, unknown> = {}
-            for (const c of metadataCols) metadata[c.raw] = r[c.raw]
+            metadataCols.forEach((c, j) => {
+              const v = r[`meta_${j}`]
+              // The DB caps to maxChunkChars+1; trim the overflow char. Values
+              // are the column's text form (bounded) — a number/JSONB column
+              // surfaces as its bounded text, by design.
+              metadata[c.raw] =
+                typeof v === "string" && v.length > maxChunkChars ? v.slice(0, maxChunkChars) : v
+            })
             match.metadata = metadata
           }
           return match

@@ -186,8 +186,12 @@ describe("parameterized query construction", () => {
     expect(out.match_count).toBe(2)
   })
 
-  test("surfaces configured metadata columns per chunk", async () => {
-    const fake = fakeHandle([{ id: "c1", content: "hi", distance: 0.1, source: "a.md", page: 3 }])
+  test("surfaces configured metadata columns per chunk (text-cast, aliased)", async () => {
+    // The DB casts each metadata column to text and aliases it `meta_<i>`; the
+    // fake mimics what the DB would return after that.
+    const fake = fakeHandle([
+      { id: "c1", content: "hi", distance: 0.1, meta_0: "a.md", meta_1: "3" },
+    ])
     const tool = makeVectorQueryTool({
       connection: connFor(fake.handle),
       table: "embeddings",
@@ -196,9 +200,22 @@ describe("parameterized query construction", () => {
     })
     const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
     const { statement } = fake.captured()
-    expect(statement).toContain('"source"')
-    expect(statement).toContain('"page"')
-    expect(out.matches[0]?.metadata).toEqual({ source: "a.md", page: 3 })
+    expect(statement).toContain('left("source"::text')
+    expect(statement).toContain("as meta_0")
+    expect(out.matches[0]?.metadata).toEqual({ source: "a.md", page: "3" })
+  })
+
+  test("caps an oversized metadata value (no balloon via the metadata channel)", async () => {
+    const fake = fakeHandle([{ id: "c1", content: "hi", distance: 0.1, meta_0: "Z".repeat(11) }])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      metadataColumns: ["blob"],
+      dimensions: 3,
+      maxChunkChars: 10,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    expect(out.matches[0]?.metadata?.blob as string).toHaveLength(10)
   })
 
   test("caps chunk content (in SQL) and flags content_truncated", async () => {

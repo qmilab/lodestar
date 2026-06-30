@@ -56,20 +56,24 @@ function chunkKey(table: string, namespace: string, chunkId: string): string {
   return `${encodeURIComponent(table)}:${encodeURIComponent(namespace)}:${encodeURIComponent(chunkId)}`
 }
 
-/** One retrieved chunk's provenance, carried on the content claim's predicate so
- * the linker can stamp per-chunk source attribution onto the evidence item. */
+/** One retrieved chunk's STABLE provenance, carried on the content claim's
+ * predicate so the linker can stamp per-chunk source attribution onto the
+ * evidence item. Deliberately excludes query-volatile fields (distance, rank):
+ * the cross-belief join compares the whole predicate object, so a volatile field
+ * would make a re-retrieval of the same chunk register as a contradiction of the
+ * first. distance/rank stay in the observation payload for the reviewer. */
 interface ChunkProvenance {
   chunk_id: string
   namespace: string
   table: string
-  distance: number
 }
 
-/** A retrieved chunk, as the adapter surfaces it (untrusted content). */
+/** A retrieved chunk, as the adapter surfaces it (untrusted content). The
+ * cognition reads only the stable id + content; the query-volatile distance/rank
+ * stay in the observation payload and out of the compared predicate. */
 interface RetrievedChunk {
   id?: unknown
   content?: unknown
-  distance?: unknown
 }
 
 /** The fields of a `vector.retrieval_result@1` payload the extractor reads. The
@@ -102,16 +106,11 @@ function readPayload(payload: unknown): VectorRetrievalPayload {
 function chunkProvenance(claim: Claim): ChunkProvenance | undefined {
   const obj = claim.structured_predicate?.object as Record<string, unknown> | undefined
   if (!obj) return undefined
-  const { chunk_id, namespace, table, distance } = obj
+  const { chunk_id, namespace, table } = obj
   if (typeof chunk_id !== "string" || typeof namespace !== "string" || typeof table !== "string") {
     return undefined
   }
-  return {
-    chunk_id,
-    namespace,
-    table,
-    distance: typeof distance === "number" ? distance : Number.NaN,
-  }
+  return { chunk_id, namespace, table }
 }
 
 /**
@@ -169,7 +168,6 @@ export const VectorRetrievalExtractor: ClaimExtractor = {
       const text = typeof match.content === "string" ? match.content : ""
       if (text.length === 0) return
       const chunkId = typeof match.id === "string" ? match.id : `#${index}`
-      const distance = typeof match.distance === "number" ? match.distance : Number.NaN
       const truncated = text.length > 200 ? `${text.slice(0, 200)}…` : text
       claims.push({
         id: randomUUID(),
@@ -180,13 +178,15 @@ export const VectorRetrievalExtractor: ClaimExtractor = {
           // (Parallax stays) — and two indexes' chunks can't collide.
           subject: `vector_chunk:${chunkKey(payload.table, payload.namespace, chunkId)}`,
           relation: VECTOR_EXTERNAL_DOCUMENT_RELATION,
+          // STABLE fields only — no query-volatile distance/rank, so the
+          // cross-belief join treats a re-retrieval of the same chunk as
+          // corroboration (still external_document → Parallax holds), not a
+          // contradiction. distance/rank live in the observation payload.
           object: {
             text,
             chunk_id: chunkId,
             namespace: payload.namespace,
             table: payload.table,
-            distance,
-            content_index: index,
           },
         },
         ...base,
@@ -252,7 +252,7 @@ export class VectorAwareEvidenceLinker extends EvidenceLinker {
         : `obs:${obs.source.tool}`,
       freshness: "fresh" as const,
       notes: prov
-        ? `retrieved chunk '${prov.chunk_id}' from ${prov.table}/${prov.namespace}${Number.isFinite(prov.distance) ? ` (distance ${prov.distance})` : ""}`
+        ? `retrieved chunk '${prov.chunk_id}' from ${prov.table}/${prov.namespace}`
         : `vector.retrieval_invocation from ${obs.schema}`,
     }))
     // Same cross-belief join the base linker runs (#157).
