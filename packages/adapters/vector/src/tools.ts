@@ -54,6 +54,10 @@ const DEFAULT_TIMEOUT_MS = 15_000
 /** Per-chunk content cap (characters). Retrieved chunk text is untrusted, so it
  * is bounded server-side; the operator raises it for genuinely larger chunks. */
 const DEFAULT_MAX_CHUNK_CHARS = 4000
+/** Max id length (characters). A chunk id is a stable identity, so it cannot be
+ * truncated (that would collide distinct ids); a row whose id exceeds this is
+ * filtered instead, bounding the id transfer. Generous default for UUIDs/paths. */
+const DEFAULT_MAX_ID_CHARS = 256
 
 /** Postgres `statement_timeout` is an integer-millisecond GUC capped at INT_MAX. */
 const PG_MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647
@@ -244,6 +248,10 @@ export interface VectorQueryToolOptions {
   /** Per-chunk content cap in characters — retrieved chunk text is untrusted, so
    * it is bounded (in SQL) before it is captured. Default 4000. */
   maxChunkChars?: number
+  /** Max chunk-id length in characters — a row whose id is longer is filtered
+   * (an id is a stable identity and cannot be truncated without colliding).
+   * Default 256. */
+  maxIdChars?: number
   /** Per-query timeout (ms). Default 15s. */
   timeoutMs?: number
   /** Trust floor. Default L1 — a read whose chunks are untrusted external content. */
@@ -270,6 +278,7 @@ export function makeVectorQueryTool(
     opts.maxChunkChars ?? DEFAULT_MAX_CHUNK_CHARS,
     DEFAULT_MAX_CHUNK_CHARS,
   )
+  const maxIdChars = positiveIntOr(opts.maxIdChars ?? DEFAULT_MAX_ID_CHARS, DEFAULT_MAX_ID_CHARS)
 
   // Validate + quote every operator identifier ONCE at build time, so a
   // misconfiguration fails loudly here rather than at query time.
@@ -365,7 +374,14 @@ export function makeVectorQueryTool(
       // cross-belief join (the no-cross-join invariant rests on a stable id).
       // Both are excluded server-side. Combine with the optional namespace filter;
       // every condition references operator-config identifiers only.
-      const conditions: string[] = [`${idCol} is not null`, `${embeddingCol} is not null`]
+      const conditions: string[] = [
+        `${idCol} is not null`,
+        // Bound the id transfer by FILTERING oversized ids (an id is a stable
+        // identity — truncating it would collide distinct ids, the R5 hazard).
+        // maxIdChars is a trusted clamped operator integer, never agent input.
+        `length(${idCol}::text) <= ${maxIdChars}`,
+        `${embeddingCol} is not null`,
+      ]
       if (namespace !== undefined && nsCol !== undefined) {
         params.push(namespace)
         conditions.push(`${nsCol} = $${params.length}`)

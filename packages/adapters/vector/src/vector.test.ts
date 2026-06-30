@@ -316,4 +316,20 @@ describe("parameterized query construction", () => {
     expect(out.matches.map((m) => m.id)).toEqual(["real"])
     expect(out.matches.some((m) => m.id.startsWith("#"))).toBe(false)
   })
+
+  test("bounds the id transfer by FILTERING oversized ids in SQL (not truncating)", async () => {
+    const fake = fakeHandle([{ id: "ok", content: "a", distance: 0.1 }])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+      maxIdChars: 64,
+    })
+    await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    const { statement } = fake.captured()
+    // The bound is a WHERE filter on the id length — NOT a `left()` truncation,
+    // which would collide distinct ids. The id is still SELECTed raw.
+    expect(statement).toContain('length("id"::text) <= 64')
+    expect(statement).toContain('select "id" as id')
+  })
 })

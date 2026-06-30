@@ -152,9 +152,16 @@ export const VectorRetrievalExtractor: ClaimExtractor = {
       id: randomUUID(),
       statement: `vector.query against ${payload.table}/${payload.namespace} returned ${payload.matches.length} chunk${payload.matches.length === 1 ? "" : "s"} (metric ${payload.metric})`,
       structured_predicate: {
-        subject: `vector_index:${payload.table}:${payload.namespace}`,
+        // Per-INVOCATION subject: the envelope is a record of THIS specific query
+        // call, not a stable fact about the index. Keying it on the unique
+        // invocation_id means two queries of the same table/namespace never share
+        // a (subject, relation), so the cross-belief join never records the second
+        // as a contradiction (or corroboration) of the first — they are distinct
+        // events, not the same belief.
+        subject: `vector_query:${obs.source.invocation_id}`,
         relation: VECTOR_RETRIEVAL_INVOCATION_RELATION,
         object: {
+          table: payload.table,
           namespace: payload.namespace,
           metric: payload.metric,
           match_count: payload.matches.length,

@@ -143,12 +143,13 @@ async function run(): Promise<ProbeResult> {
       contentColumn: "content",
       embeddingColumn: "embedding",
       namespaceColumn: "ns",
-      namespaces: ["docs", "wiki", "sparse", "big", INJ_NS(table)],
+      namespaces: ["docs", "wiki", "sparse", "big", "longid", INJ_NS(table)],
       metadataColumns: ["ns"],
       metric: "cosine",
       dimensions: 3,
       maxTopK: 2,
       maxChunkChars: 16,
+      maxIdChars: 36,
       timeoutMs: 5000,
     },
   })
@@ -182,10 +183,11 @@ async function run(): Promise<ProbeResult> {
       ["inj1", INJ_NS(table)],
     )
     // A namespace whose only-other row has a NULL embedding (valid — the column
-    // has no NOT NULL), and a row with content longer than the per-chunk cap.
+    // has no NOT NULL), a row with content longer than the per-chunk cap, and a
+    // namespace with one short-id row + one oversized-id row (> maxIdChars).
     await db.unsafe(
-      `insert into ${table} (id, ns, content, embedding) values ('s1','sparse','sparse real','[1,0,0]'),('s2','sparse','no embedding here',NULL),('big1','big',$1,'[1,0,0]')`,
-      ["Z".repeat(200)],
+      `insert into ${table} (id, ns, content, embedding) values ('s1','sparse','sparse real','[1,0,0]'),('s2','sparse','no embedding here',NULL),('big1','big',$1,'[1,0,0]'),('l1','longid','short id ok','[1,0,0]'),($2,'longid','oversized id','[1,0,0]')`,
+      ["Z".repeat(200), `L${"o".repeat(60)}ng`],
     )
 
     // ---- 1. L1 read returns nearest chunks --------------------------------
@@ -358,6 +360,29 @@ async function run(): Promise<ProbeResult> {
     }
     details.push(
       "content cap: a 200-char untrusted chunk was trimmed to 16 chars and flagged content_truncated",
+    )
+
+    // ---- 8b. Oversized ids are filtered (bounded, not truncated) ----------
+    // The 'longid' namespace has a short-id row + a >maxIdChars-id row. The
+    // oversized id is FILTERED (an id can't be truncated without colliding), so
+    // only the short-id row returns — bounding the id transfer.
+    const longid = await queryVec([1, 0, 0], "longid")
+    const longidMatches = (outputOf(longid.id)?.matches ?? []) as Array<{ id?: string }>
+    if (
+      longid.phase !== "completed" ||
+      longidMatches.length !== 1 ||
+      longidMatches[0]?.id !== "l1"
+    ) {
+      return {
+        passed: false,
+        details: [
+          ...details,
+          `oversized-id filter FAILED: a namespace with a >maxIdChars id row did not return only the short-id row (phase=${longid.phase}, matches=${JSON.stringify(longidMatches.map((m) => m.id))}). An oversized id must be filtered, not truncated.`,
+        ],
+      }
+    }
+    details.push(
+      "oversized id: a chunk whose id exceeds the cap was filtered (id transfer bounded, identity not truncated)",
     )
 
     // ---- 9a. Credentials never leak (valid connection) --------------------

@@ -359,6 +359,22 @@ async function run(): Promise<ProbeResult> {
         details: `re-retrieval left ${contradictedBeliefs.length} belief(s) 'contradicted'; the same chunk retrieved twice must not contradict itself.`,
       }
     }
+    // Assertion 8: the SECOND query's ENVELOPE belief must adopt 'supported'. The
+    // envelope is per-invocation, so two queries of the same table/namespace are
+    // distinct events — the second must not be suppressed by a false contradiction
+    // of the first (which a shared, index-keyed envelope subject would cause).
+    const rrEnvClaim = rr.second?.claims.find(
+      (c) => c.structured_predicate?.relation === VECTOR_RETRIEVAL_INVOCATION_RELATION,
+    )
+    const rrEnvBelief = rrEnvClaim
+      ? rr.second?.beliefs.find((b) => b.claim_id === rrEnvClaim.id)
+      : undefined
+    if (rrEnvBelief?.truth_status !== "supported") {
+      return {
+        passed: false,
+        details: `the second query's envelope belief is '${rrEnvBelief?.truth_status ?? "absent"}', expected 'supported' — a per-invocation envelope must not contradict a prior query of the same index.`,
+      }
+    }
 
     return {
       passed: true,
