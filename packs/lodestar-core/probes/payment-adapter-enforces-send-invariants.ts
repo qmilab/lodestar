@@ -26,17 +26,19 @@
  *   6. **Credentials never leak.** The operator API key is injected on the request
  *      (the provider sees it) but is absent from the recorded action inputs AND the
  *      emitted observation (redacted even when the provider echoes it back).
- *   7. **Delivery semantics.** A provider decline (HTTP 402) ends the action
- *      `failed`, not a silent "charged", and the echoed credential is redacted from
- *      the failed-action audit.
+ *   7. **Delivery semantics — only a confirmed charge succeeds.** A provider decline
+ *      (HTTP 402), a 200 whose body says `status:"pending"`, an HTTP 202 Accepted,
+ *      and a truncated/unparseable confirmation ALL end the action `failed`, not a
+ *      silent "charged"; the echoed credential is redacted from the failed-action
+ *      audit. (A 2xx alone is not a confirmation.)
  *   8. **L5 kill-switch.** A charge proposed at L5 is `rejected` outright (the gate
  *      denies without human approval), the provider is untouched, and a forced
  *      `resolve(granted)` is mechanically inert (refused by phase).
  *
  *   + **Bounded capture, redaction before the cap.** An oversized provider response
- *      is captured up to the cap and flagged `response_truncated`; when it echoes
- *      the credential straddling the byte cap, redaction runs first so not even a
- *      token prefix survives.
+ *      is captured to the cap; a truncated confirmation cannot be trusted so the
+ *      charge FAILS, and when the body echoes the credential straddling the byte cap,
+ *      redaction runs first so not even a token prefix survives into the audit.
  *
  * If any of these regress, a Lodestar-wrapped agent could move money with no human
  * in the loop, pay an attacker, exceed the operator ceiling, double-charge on a
@@ -140,12 +142,28 @@ function startServer(): FakeServer {
           headers: { "content-type": "application/json" },
         })
       }
+      if (parsed.memo === "PENDING") {
+        // A 200 whose body says the charge is NOT yet captured. A 2xx alone is not a
+        // confirmation — this must NOT be reported as charged.
+        return new Response(JSON.stringify({ id: "pay_pending", status: "pending" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        })
+      }
+      if (parsed.memo === "ACCEPTED") {
+        // HTTP 202 Accepted: queued, not completed. Must NOT be reported as charged.
+        return new Response(JSON.stringify({ id: "pay_accepted" }), {
+          status: 202,
+          headers: { "content-type": "application/json" },
+        })
+      }
       if (parsed.memo === "OVERSIZE") {
         // An oversized body that echoes the credential positioned so the byte cap
-        // (2048) cuts THROUGH it. If the cap were applied before redaction, a token
-        // prefix would survive into the observation.
+        // (256) cuts THROUGH it. A truncated confirmation cannot be trusted (so the
+        // charge must FAIL), and if the cap were applied before redaction a token
+        // prefix would survive into the failed-action audit.
         const a = auth ?? ""
-        return new Response(`${"X".repeat(2031)}${a}${"X".repeat(500)}`, { status: 200 })
+        return new Response(`${"X".repeat(239)}${a}${"X".repeat(200)}`, { status: 200 })
       }
       // A normal success that echoes the credential back (a misbehaving provider
       // reflecting the token into its response — must be redacted).
@@ -423,7 +441,7 @@ async function run(): Promise<ProbeResult> {
         endpoint: `${server.base}/charges`,
         credential: CREDENTIAL,
         allowHttp: true,
-        maxBytes: 2048,
+        maxBytes: 256,
       }),
       allowedPayees: [PAYEE],
       allowedCurrencies: ["usd"],
@@ -499,7 +517,35 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
-    // ---- + Bounded capture (incl. a credential straddling the cap) ---------
+    // ---- 7b. Unconfirmed 2xx must NOT be reported as charged ----------------
+    // A 200 with status:"pending" and an HTTP 202 Accepted are both 2xx but neither
+    // is a captured charge — the strict gate must fail the action, never report it
+    // as charged. (Regression guard for the generic interpreter treating any 2xx as
+    // success.)
+    for (const [memo, key, label] of [
+      ["PENDING", "inv-pend", "a 200 status:pending body"],
+      ["ACCEPTED", "inv-acpt", "an HTTP 202 Accepted"],
+    ] as const) {
+      const held = await kernel.arbitrate(
+        propose(
+          { payee: PAYEE, amount_minor: 4_200, currency: "usd", idempotency_key: key, memo },
+          L4(),
+        ),
+      )
+      const done = await kernel.execute(kernel.resolve(held, grant(held, "req-unconf")))
+      if (done.phase !== "failed") {
+        return {
+          passed: false,
+          details: `delivery semantics FAILED: ${label} was reported as a confirmed charge (phase=${done.phase}) — an unconfirmed 2xx must fail.`,
+        }
+      }
+    }
+
+    // ---- + Bounded capture: a truncated confirmation FAILS, and stays redacted ---
+    // An oversized provider response is captured to the cap and flagged truncated; a
+    // truncated confirmation cannot be trusted, so the charge FAILS (not a silent
+    // "charged"). The capped excerpt reaches the failed-action audit, and the
+    // credential straddling the cap leaves no prefix (redaction runs before the cap).
     const big = await kernel.arbitrate(
       propose(
         {
@@ -513,29 +559,34 @@ async function run(): Promise<ProbeResult> {
       ),
     )
     const bigDone = await kernel.execute(kernel.resolve(big, grant(big, "req-big")))
-    const bigOut = outputFor(bigDone.id)
-    if (bigDone.phase !== "completed" || bigOut?.response_truncated !== true) {
+    if (bigDone.phase !== "failed") {
       return {
         passed: false,
-        details: `bounded capture FAILED: an oversized provider response was not truncated at the cap (phase=${bigDone.phase}, out=${JSON.stringify(bigOut)}).`,
+        details: `bounded capture FAILED: an oversized/truncated provider response was treated as a confirmed charge (phase=${bigDone.phase}) — a truncated confirmation must fail.`,
       }
     }
-    const bigObs = observations.find((o) => o.source.invocation_id === bigDone.id)
+    const bigAudit = JSON.stringify(bigDone.audit)
+    if (!/truncat/i.test(bigAudit)) {
+      return {
+        passed: false,
+        details: `bounded capture FAILED: the truncated response was not detected in the failed-action audit (detail=${bigDone.audit.at(-1)?.detail}).`,
+      }
+    }
     // The oversized body echoed the credential straddling the byte cap; redaction
     // runs before the cap, so not even a 9-char prefix that the full-token check
-    // would NOT catch may survive.
-    if (JSON.stringify(bigObs).includes("pmt-PROBE")) {
+    // would NOT catch may survive into the (body-carrying) audit.
+    if (bigAudit.includes("pmt-PROBE")) {
       return {
         passed: false,
         details:
-          "bounded capture FAILED: a credential prefix survived truncation (the cap was applied before redaction).",
+          "bounded capture FAILED: a credential prefix survived truncation in the audit (the cap was applied before redaction).",
       }
     }
 
     return {
       passed: true,
       details:
-        "Native payment transport held every invariant through the Action Kernel: a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation; a provider decline (HTTP 402) ended 'failed' with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap and flagged truncated, with not even a token prefix surviving.",
+        "Native payment transport held every invariant through the Action Kernel: a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, and a truncated confirmation all ended 'failed' rather than a silent 'charged', with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
     }
   } finally {
     server.stop()

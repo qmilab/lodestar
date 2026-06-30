@@ -158,8 +158,50 @@ function parseJsonSafe(text: string): Record<string, unknown> | null {
   }
 }
 
-/** Default interpretation of a generic HTTP charge response. An operator on a
- * provider with a different success/replay signal passes their own `interpret`. */
+/** Status strings (lowercased) a generic provider uses to signal a charge that is
+ * accepted/authorized but NOT yet a completed success — treated as unconfirmed
+ * (fail-closed). */
+const PENDING_STATUSES = new Set([
+  "pending",
+  "processing",
+  "in_progress",
+  "incomplete",
+  "accepted",
+  "authorized",
+  "requires_action",
+  "requires_confirmation",
+  "requires_capture",
+])
+/** Status strings (lowercased) that signal an explicit failure. */
+const FAILED_STATUSES = new Set([
+  "failed",
+  "failure",
+  "declined",
+  "decline",
+  "canceled",
+  "cancelled",
+  "error",
+  "rejected",
+  "voided",
+])
+
+/** A bounded, already-redacted excerpt of the provider response for the
+ * failed-action audit. The transport caps + redacts `r.body`; we bound it again so a
+ * hostile provider cannot bloat the audit on every decline. */
+function auditExcerpt(body: string): string {
+  if (body.length === 0) return ""
+  const MAX = 1024
+  return ` — provider response: ${body.length > MAX ? `${body.slice(0, MAX)}…` : body}`
+}
+
+/** Default interpretation of a generic HTTP charge response. **Fail-closed:** a
+ * charge is `succeeded` ONLY on a definitive completion — HTTP 200/201, a parseable,
+ * non-truncated body, and no pending/failure status. A non-2xx, an HTTP 202/204/…
+ * (accepted ≠ captured), an explicit `status: pending|declined|…`, or a
+ * truncated/unparseable confirmation all WITHHOLD success, so the strict delivery
+ * gate fails the action — `payment.send` never reports an unconfirmed charge as
+ * charged. An operator whose provider confirms differently passes their own
+ * `interpret`. */
 function defaultInterpret(r: SendResult): {
   succeeded: boolean
   status: "succeeded" | "failed" | "pending"
@@ -170,19 +212,50 @@ function defaultInterpret(r: SendResult): {
   const parsed = parseJsonSafe(r.body)
   const payment_id = typeof parsed?.id === "string" ? parsed.id : null
   const idempotent_replay = parsed?.idempotent_replay === true
-  if (r.ok) {
-    return { succeeded: true, status: "succeeded", payment_id, idempotent_replay }
+  const status = typeof parsed?.status === "string" ? parsed.status.toLowerCase() : null
+
+  // A non-2xx or an explicit failure status is a definitive decline.
+  if (!r.ok || (status !== null && FAILED_STATUSES.has(status))) {
+    // The body is already redacted by the transport, so nothing here carries a secret.
+    const reason =
+      typeof parsed?.error === "string"
+        ? parsed.error
+        : status !== null
+          ? `provider reported status '${status}'`
+          : `provider returned HTTP ${r.status}`
+    return {
+      succeeded: false,
+      status: "failed",
+      payment_id,
+      idempotent_replay: false,
+      decline_reason: `${reason}${auditExcerpt(r.body)}`,
+    }
   }
-  // The body is already redacted by the transport, so `error` cannot carry a secret.
-  const decline_reason =
-    typeof parsed?.error === "string" ? parsed.error : `provider returned status ${r.status}`
-  return {
-    succeeded: false,
-    status: "failed",
-    payment_id,
-    idempotent_replay: false,
-    decline_reason,
+
+  // A 2xx that is NOT a definitive completion is unconfirmed, not charged: a
+  // non-200/201 code (202 Accepted, 204, …), an explicit pending status, or a
+  // truncated/unparseable body.
+  const completed = r.status === 200 || r.status === 201
+  const why = !completed
+    ? `non-completion HTTP ${r.status}`
+    : status !== null && PENDING_STATUSES.has(status)
+      ? `status '${status}'`
+      : r.body_truncated
+        ? "truncated confirmation"
+        : parsed === null
+          ? "unparseable confirmation body"
+          : null
+  if (why !== null) {
+    return {
+      succeeded: false,
+      status: "pending",
+      payment_id,
+      idempotent_replay: false,
+      decline_reason: `provider did not confirm the charge (${why})${auditExcerpt(r.body)}`,
+    }
   }
+
+  return { succeeded: true, status: "succeeded", payment_id, idempotent_replay }
 }
 
 export interface HttpPaymentProviderOptions {
