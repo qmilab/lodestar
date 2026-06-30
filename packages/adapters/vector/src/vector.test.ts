@@ -248,6 +248,39 @@ describe("parameterized query construction", () => {
     expect(out.matches[0]?.content_truncated).toBe(false)
   })
 
+  test("counts the content cap by code points, not UTF-16 units (non-BMP safe)", async () => {
+    // 10 emoji = 10 code points (20 UTF-16 units). Postgres `left(.., 11)` would
+    // return all 10, so with maxChunkChars=10 it must NOT be flagged truncated or
+    // halved — the JS check must count code points, like the DB.
+    const tenEmoji = "😀".repeat(10)
+    const fake = fakeHandle([{ id: "c1", content: tenEmoji, distance: 0.1 }])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+      maxChunkChars: 10,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    expect(out.matches[0]?.content).toBe(tenEmoji)
+    expect(out.matches[0]?.content_truncated).toBe(false)
+  })
+
+  test("trims an over-cap non-BMP chunk at a code-point boundary (no split surrogate)", async () => {
+    // The DB returns 11 emoji (left(.., 11)); cap 10 → trim to exactly 10 emoji,
+    // never half of one (a lone surrogate).
+    const fake = fakeHandle([{ id: "c1", content: "😀".repeat(11), distance: 0.1 }])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+      maxChunkChars: 10,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    expect(out.matches[0]?.content_truncated).toBe(true)
+    expect(out.matches[0]?.content).toBe("😀".repeat(10))
+    expect(Array.from(out.matches[0]?.content ?? "")).toHaveLength(10)
+  })
+
   test("filters NULL embeddings (SQL) and drops a non-finite distance row", async () => {
     const fake = fakeHandle([
       { id: "ok", content: "a", distance: 0.1 },

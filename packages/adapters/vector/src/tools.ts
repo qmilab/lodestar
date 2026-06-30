@@ -127,6 +127,19 @@ function toVectorLiteral(embedding: number[]): string {
   return `[${embedding.join(",")}]`
 }
 
+/** Trim a string to at most `max` Unicode CODE POINTS — matching Postgres
+ * `left(..., max)`, which counts characters, not UTF-16 code units — and report
+ * whether it was over the cap. Code-point-aware so a non-BMP char (emoji) at the
+ * boundary is neither miscounted (`.length` counts surrogate pairs as two) nor
+ * split mid-pair. Fast path: a UTF-16 length within the cap can't have a
+ * code-point count above it, so short strings skip the `Array.from` walk. */
+function capCodePoints(s: string, max: number): { value: string; truncated: boolean } {
+  if (s.length <= max) return { value: s, truncated: false }
+  const cps = Array.from(s)
+  if (cps.length <= max) return { value: s, truncated: false }
+  return { value: cps.slice(0, max).join(""), truncated: true }
+}
+
 function errMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
@@ -387,22 +400,23 @@ export function makeVectorQueryTool(
         const rows = truncated ? allRows.slice(0, topK) : allRows
         const matches = rows.map((r, i) => {
           const rawContent = typeof r.content === "string" ? r.content : String(r.content ?? "")
-          const contentTruncated = rawContent.length > maxChunkChars
+          // Code-point-aware so it agrees with the DB's `left(..., N)` (character
+          // count) — a non-BMP char at the cap is not miscounted or split.
+          const capped = capCodePoints(rawContent, maxChunkChars)
           const match: VectorRetrievalOutput["matches"][number] = {
             id: r.id === null || r.id === undefined ? `#${i}` : String(r.id),
-            content: contentTruncated ? rawContent.slice(0, maxChunkChars) : rawContent,
-            content_truncated: contentTruncated,
+            content: capped.value,
+            content_truncated: capped.truncated,
             distance: r.distance as number,
           }
           if (metadataCols.length > 0) {
             const metadata: Record<string, unknown> = {}
             metadataCols.forEach((c, j) => {
               const v = r[`meta_${j}`]
-              // The DB caps to maxChunkChars+1; trim the overflow char. Values
-              // are the column's text form (bounded) — a number/JSONB column
-              // surfaces as its bounded text, by design.
-              metadata[c.raw] =
-                typeof v === "string" && v.length > maxChunkChars ? v.slice(0, maxChunkChars) : v
+              // The DB caps to maxChunkChars+1; trim the overflow char (code-point
+              // aware, like content). Values are the column's text form (bounded)
+              // — a number/JSONB column surfaces as its bounded text, by design.
+              metadata[c.raw] = typeof v === "string" ? capCodePoints(v, maxChunkChars).value : v
             })
             match.metadata = metadata
           }
