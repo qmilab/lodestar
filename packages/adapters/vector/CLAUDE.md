@@ -61,9 +61,13 @@ ADR-0004/0013). It enforces, in-process:
 3. **Parameterized values.** The query embedding, the namespace, and the `LIMIT` are
    always bound (`$1::vector` / `$2` / `$N`), never concatenated. Identifiers cannot
    be bound, so they come ONLY from operator config and are validated + double-quoted.
-4. **Top-k cap, bounded server-side.** `LIMIT topK + 1` bounds the fetch in the
-   database (one past the cap, to set `truncated`), so a huge index cannot inflate an
-   observation or balloon host memory.
+4. **Top-k cap + per-chunk content cap, bounded server-side.** `LIMIT topK + 1`
+   bounds the number of chunks (one past the cap, to set `truncated`) and
+   `left(content, maxChunkChars + 1)` bounds each chunk's text — both in the
+   database — so neither a huge index nor a single poisoned/oversized row can
+   inflate an observation or balloon host memory; a trimmed chunk is flagged
+   `content_truncated`. Rows with a `NULL` embedding (a `NULL`/`NaN` distance that
+   would fail output validation) are filtered out, never returned.
 5. **Read-only + scoped credentials.** A `READ ONLY` transaction (a retrieval cannot
    mutate the index) with a `statement_timeout`; the connection password is operator
    config, never in the agent's inputs, and redacted from any caught error.

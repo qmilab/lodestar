@@ -51,6 +51,9 @@ import { z } from "zod"
 const DEFAULT_MAX_TOP_K = 20
 const DEFAULT_TOP_K = 5
 const DEFAULT_TIMEOUT_MS = 15_000
+/** Per-chunk content cap (characters). Retrieved chunk text is untrusted, so it
+ * is bounded server-side; the operator raises it for genuinely larger chunks. */
+const DEFAULT_MAX_CHUNK_CHARS = 4000
 
 /** Postgres `statement_timeout` is an integer-millisecond GUC capped at INT_MAX. */
 const PG_MAX_STATEMENT_TIMEOUT_MS = 2_147_483_647
@@ -111,6 +114,12 @@ function timeoutLiteral(timeoutMs: number): number | null {
   return Math.min(Math.floor(timeoutMs), PG_MAX_STATEMENT_TIMEOUT_MS)
 }
 
+/** A positive integer or the fallback — for a content cap interpolated into
+ * `left(col, N)`, which must never render as a float or a non-positive count. */
+function positiveIntOr(n: number, fallback: number): number {
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback
+}
+
 /** Render a query embedding as a pgvector text literal (`[1,2,3]`). The value is
  * BOUND as a parameter and cast `$1::vector`, so it is never interpreted as SQL;
  * each element is already validated finite by the input schema. */
@@ -131,6 +140,9 @@ export const VectorMatchSchema = z
     id: z.string().describe("the chunk's stable id from the index"),
     content: z.string().describe("the retrieved chunk text — UNTRUSTED external_document content"),
     distance: z.number().describe("the pgvector distance to the query (smaller = nearer)"),
+    content_truncated: z
+      .boolean()
+      .describe("true if the chunk text exceeded the per-chunk character cap and was trimmed"),
     metadata: z
       .record(z.unknown())
       .optional()
@@ -216,6 +228,9 @@ export interface VectorQueryToolOptions {
   maxTopK?: number
   /** Default chunks when a query omits `top_k`. Default 5. */
   defaultTopK?: number
+  /** Per-chunk content cap in characters — retrieved chunk text is untrusted, so
+   * it is bounded (in SQL) before it is captured. Default 4000. */
+  maxChunkChars?: number
   /** Per-query timeout (ms). Default 15s. */
   timeoutMs?: number
   /** Trust floor. Default L1 — a read whose chunks are untrusted external content. */
@@ -238,6 +253,10 @@ export function makeVectorQueryTool(
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const maxTopK = opts.maxTopK ?? DEFAULT_MAX_TOP_K
   const defaultTopK = opts.defaultTopK ?? DEFAULT_TOP_K
+  const maxChunkChars = positiveIntOr(
+    opts.maxChunkChars ?? DEFAULT_MAX_CHUNK_CHARS,
+    DEFAULT_MAX_CHUNK_CHARS,
+  )
 
   // Validate + quote every operator identifier ONCE at build time, so a
   // misconfiguration fails loudly here rather than at query time.
@@ -318,15 +337,26 @@ export function makeVectorQueryTool(
       // not renumber the others.
       const params: unknown[] = [vectorLiteral]
       const metaSelect = metadataCols.map((c) => `, ${c.quoted}`).join("")
-      let whereClause = ""
+      // Always filter NULL embeddings: an unembedded row has a NULL distance,
+      // which would become NaN and fail the kernel's `z.number()` output
+      // validation (and is not a real match). Combine with the optional namespace
+      // filter. Both conditions reference operator-config identifiers only.
+      const conditions: string[] = [`${embeddingCol} is not null`]
       if (namespace !== undefined && nsCol !== undefined) {
         params.push(namespace)
-        whereClause = ` where ${nsCol} = $${params.length}`
+        conditions.push(`${nsCol} = $${params.length}`)
       }
+      const whereClause = ` where ${conditions.join(" and ")}`
       params.push(topK + 1)
       const limitParam = `$${params.length}`
+      // Cap each chunk's content in SQL with `left(...)` (maxChunkChars is a
+      // trusted, clamped operator integer — never agent input) so the host never
+      // *transfers* an unbounded untrusted string: bounded capture is per CHUNK,
+      // not just per row, the same posture as the HTTP adapter's body cap. Fetch
+      // one char past the cap to detect per-chunk truncation.
+      const cappedContent = `left(${contentCol}, ${maxChunkChars + 1})`
       const statement =
-        `select ${idCol} as id, ${contentCol} as content, ` +
+        `select ${idCol} as id, ${cappedContent} as content, ` +
         `${embeddingCol} ${op} $1::vector as distance${metaSelect} ` +
         `from ${table}${whereClause} ` +
         `order by ${embeddingCol} ${op} $1::vector ` +
@@ -338,14 +368,23 @@ export function makeVectorQueryTool(
           if (timeout !== null) await tx.unsafe(`set local statement_timeout = ${timeout}`)
           return await tx.unsafe(statement, params)
         })
-        const allRows = Array.isArray(fetched) ? (fetched as Array<Record<string, unknown>>) : []
+        const fetchedRows = Array.isArray(fetched)
+          ? (fetched as Array<Record<string, unknown>>)
+          : []
+        // Defensive: drop any row whose distance isn't a finite number. The
+        // `IS NOT NULL` filter makes this practically unreachable, but it
+        // guarantees the output never carries a NaN that fails validation.
+        const allRows = fetchedRows.filter((r) => Number.isFinite(r.distance as number))
         const truncated = allRows.length > topK
         const rows = truncated ? allRows.slice(0, topK) : allRows
         const matches = rows.map((r, i) => {
+          const rawContent = typeof r.content === "string" ? r.content : String(r.content ?? "")
+          const contentTruncated = rawContent.length > maxChunkChars
           const match: VectorRetrievalOutput["matches"][number] = {
             id: r.id === null || r.id === undefined ? `#${i}` : String(r.id),
-            content: typeof r.content === "string" ? r.content : String(r.content ?? ""),
-            distance: typeof r.distance === "number" ? r.distance : Number.NaN,
+            content: contentTruncated ? rawContent.slice(0, maxChunkChars) : rawContent,
+            content_truncated: contentTruncated,
+            distance: r.distance as number,
           }
           if (metadataCols.length > 0) {
             const metadata: Record<string, unknown> = {}

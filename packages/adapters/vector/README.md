@@ -34,8 +34,11 @@ belief.
   may pick only from the operator's namespace allowlist.
 - **Parameterized values.** The embedding, the namespace, and the `LIMIT` are always
   bound; only validated, double-quoted operator identifiers are interpolated.
-- **Top-k cap, bounded server-side.** `LIMIT` bounds the fetch in the database, so a
-  huge index cannot inflate an observation or balloon host memory.
+- **Top-k cap + per-chunk content cap, bounded server-side.** `LIMIT` bounds the
+  number of chunks and `left(content, N)` bounds each chunk's text — both in the
+  database — so a huge index, or a single poisoned/oversized row, cannot inflate an
+  observation or balloon host memory (a trimmed chunk is flagged `content_truncated`).
+  Rows with a `NULL` embedding are filtered, not returned as a `NaN` distance.
 - **Read-only, scoped credentials.** A `READ ONLY` transaction with a
   `statement_timeout`; the connection password is operator config and redacted from
   any caught error.

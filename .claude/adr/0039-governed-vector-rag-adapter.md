@@ -67,11 +67,15 @@ query; Lodestar ships no embedding model. The tool also accepts an optional
   (`$2`), and the `LIMIT` (`$N`) are always **bound**, never concatenated. Only
   operator-config identifiers (table/columns) are interpolated, each validated
   against a strict identifier grammar and double-quoted at tool-build time.
-- **Top-k cap, bounded server-side.** `LIMIT topK + 1` bounds the fetch in the
-  database (one row past the cap, to set `truncated`), so a huge index cannot
-  inflate an observation or balloon host memory — the natural analogue of the SQL
-  adapter's #101 cursor, reached more simply because the query already carries a
-  `LIMIT`.
+- **Top-k cap + per-chunk content cap, bounded server-side.** `LIMIT topK + 1`
+  bounds the number of chunks (one row past the cap, to set `truncated`) and
+  `left(content, maxChunkChars + 1)` bounds each chunk's text — both in the
+  database — so neither a huge index nor a single poisoned/oversized row can
+  inflate an observation or balloon host memory (a trimmed chunk is flagged
+  `content_truncated`). The natural analogue of the SQL adapter's #101 cursor,
+  reached more simply because the query already carries a `LIMIT`. Rows with a
+  `NULL` embedding (a `NULL`/`NaN` distance that would fail the kernel's
+  `z.number()` output validation) are filtered with `embedding IS NOT NULL`.
 - **Read-only.** Runs inside a `READ ONLY` transaction with a `statement_timeout`.
 - **Credential scoping.** The connection password is operator config, never in the
   agent's inputs, and redacted from any captured error.

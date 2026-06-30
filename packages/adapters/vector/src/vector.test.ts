@@ -200,4 +200,51 @@ describe("parameterized query construction", () => {
     expect(statement).toContain('"page"')
     expect(out.matches[0]?.metadata).toEqual({ source: "a.md", page: 3 })
   })
+
+  test("caps chunk content (in SQL) and flags content_truncated", async () => {
+    // The DB caps via `left(col, maxChunkChars + 1)`; the fake returns one char
+    // past the cap (what the DB would), so the JS trim + flag fire.
+    const fake = fakeHandle([{ id: "c1", content: "x".repeat(11), distance: 0.1 }])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+      maxChunkChars: 10,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    const { statement } = fake.captured()
+    expect(statement).toContain("left(")
+    expect(out.matches[0]?.content).toHaveLength(10)
+    expect(out.matches[0]?.content_truncated).toBe(true)
+  })
+
+  test("does not flag content_truncated for a chunk within the cap", async () => {
+    const fake = fakeHandle([{ id: "c1", content: "short", distance: 0.1 }])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+      maxChunkChars: 100,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    expect(out.matches[0]?.content).toBe("short")
+    expect(out.matches[0]?.content_truncated).toBe(false)
+  })
+
+  test("filters NULL embeddings (SQL) and drops a non-finite distance row", async () => {
+    const fake = fakeHandle([
+      { id: "ok", content: "a", distance: 0.1 },
+      { id: "bad", content: "b", distance: null },
+    ])
+    const tool = makeVectorQueryTool({
+      connection: connFor(fake.handle),
+      table: "embeddings",
+      dimensions: 3,
+    })
+    const out = await tool.execute({ embedding: [1, 0, 0] }, {} as never)
+    const { statement } = fake.captured()
+    expect(statement).toContain('"embedding" is not null')
+    // A NULL/NaN distance row never reaches the output (it would fail z.number()).
+    expect(out.matches.map((m) => m.id)).toEqual(["ok"])
+  })
 })

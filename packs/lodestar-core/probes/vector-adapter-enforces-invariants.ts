@@ -25,12 +25,17 @@
  *      seeded row and the table still exists; the embedding is bound `$1::vector`.
  *   6. **Dimension guard.** A query embedding of the wrong dimensionality FAILS
  *      with a clear error rather than a confusing mid-query failure.
- *   7. **Content round-trips faithfully.** The retrieved chunk text is returned
- *      verbatim as untrusted content (the firewall keeps it from auto-promoting —
- *      that half is `vector-retrieval-cannot-auto-promote`).
- *   8. **Credentials never leak.** The connection password never surfaces in the
- *      recorded inputs/observations, and a bad-connection error is redacted of
- *      its distinctive password before it reaches the failed-action audit.
+ *   7. **NULL embeddings are filtered, not fatal.** A namespace with an
+ *      unembedded row (NULL embedding → NULL/NaN distance) still completes and
+ *      returns only the real rows — the `embedding IS NOT NULL` filter excludes
+ *      the bad row instead of failing output validation on a NaN.
+ *   8. **Per-chunk content cap.** An oversized chunk is trimmed to the cap (in
+ *      SQL) and flagged `content_truncated`, so a poisoned/oversized row cannot
+ *      balloon the observation — bounded capture per chunk, not just per row.
+ *   9. **Content round-trips faithfully + credentials never leak.** The chunk
+ *      text is returned verbatim (within the cap) as untrusted content; the
+ *      connection password never surfaces in the recorded inputs/observations,
+ *      and a bad-connection error is redacted before it reaches the audit.
  *
  * If any of these regress, a Lodestar-wrapped RAG agent could read an
  * un-allowlisted namespace, leak rows across namespaces, inflate an observation
@@ -138,11 +143,12 @@ async function run(): Promise<ProbeResult> {
       contentColumn: "content",
       embeddingColumn: "embedding",
       namespaceColumn: "ns",
-      namespaces: ["docs", "wiki", INJ_NS(table)],
+      namespaces: ["docs", "wiki", "sparse", "big", INJ_NS(table)],
       metadataColumns: ["ns"],
       metric: "cosine",
       dimensions: 3,
       maxTopK: 2,
+      maxChunkChars: 16,
       timeoutMs: 5000,
     },
   })
@@ -174,6 +180,12 @@ async function run(): Promise<ProbeResult> {
     await db.unsafe(
       `insert into ${table} (id, ns, content, embedding) values ('d1','docs','alpha doc','[1,0,0]'),('d2','docs','beta doc','[0,1,0]'),('d3','docs','gamma doc','[0,0,1]'),('w1','wiki','wiki alpha','[1,0,0]'),($1,$2,'injection canary','[1,0,0]')`,
       ["inj1", INJ_NS(table)],
+    )
+    // A namespace whose only-other row has a NULL embedding (valid — the column
+    // has no NOT NULL), and a row with content longer than the per-chunk cap.
+    await db.unsafe(
+      `insert into ${table} (id, ns, content, embedding) values ('s1','sparse','sparse real','[1,0,0]'),('s2','sparse','no embedding here',NULL),('big1','big',$1,'[1,0,0]')`,
+      ["Z".repeat(200)],
     )
 
     // ---- 1. L1 read returns nearest chunks --------------------------------
@@ -296,9 +308,59 @@ async function run(): Promise<ProbeResult> {
     }
     details.push("dimension guard: a wrong-dimension embedding failed with a clear error")
 
-    // ---- 7. Content untrusted-inbound — covered by assertion 1 (verbatim). -
+    // ---- 7. NULL embeddings are filtered, not fatal -----------------------
+    // The 'sparse' namespace has one real row + one NULL-embedding row. pgvector
+    // returns a NULL (→ NaN) distance for the unembedded row, which would fail
+    // z.number() output validation; the `embedding IS NOT NULL` filter excludes
+    // it. The query must complete and return only the real row.
+    const sparse = await queryVec([1, 0, 0], "sparse")
+    const sparseMatches = (outputOf(sparse.id)?.matches ?? []) as Array<{ id?: string }>
+    if (
+      sparse.phase !== "completed" ||
+      sparseMatches.length !== 1 ||
+      sparseMatches[0]?.id !== "s1"
+    ) {
+      return {
+        passed: false,
+        details: [
+          ...details,
+          `NULL-embedding handling FAILED: a namespace with a NULL-embedding row did not complete with exactly the real row (phase=${sparse.phase}, matches=${JSON.stringify(sparseMatches.map((m) => m.id))}). The IS NOT NULL filter must exclude unembedded rows, not fail the query on a NaN distance.`,
+        ],
+      }
+    }
+    details.push(
+      "NULL embeddings: an unembedded row is filtered out, not a NaN that fails the query",
+    )
 
-    // ---- 8a. Credentials never leak (valid connection) --------------------
+    // ---- 8. Per-chunk content cap (bounded untrusted capture) -------------
+    // The 'big' namespace holds a 200-char chunk; with maxChunkChars=16 the
+    // returned content is trimmed to the cap and flagged, so a poisoned/oversized
+    // row cannot balloon the observation.
+    const big = await queryVec([1, 0, 0], "big")
+    const bigMatch = (
+      (outputOf(big.id)?.matches ?? []) as Array<{
+        content?: string
+        content_truncated?: boolean
+      }>
+    )[0]
+    if (
+      big.phase !== "completed" ||
+      (bigMatch?.content?.length ?? 0) !== 16 ||
+      bigMatch?.content_truncated !== true
+    ) {
+      return {
+        passed: false,
+        details: [
+          ...details,
+          `content cap FAILED: a 200-char chunk capped at 16 did not return 16 chars + content_truncated (phase=${big.phase}, len=${bigMatch?.content?.length}, truncated=${bigMatch?.content_truncated}).`,
+        ],
+      }
+    }
+    details.push(
+      "content cap: a 200-char untrusted chunk was trimmed to 16 chars and flagged content_truncated",
+    )
+
+    // ---- 9a. Credentials never leak (valid connection) --------------------
     const password = (() => {
       try {
         return new URL(databaseUrl).password
@@ -319,7 +381,7 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
-    // ---- 8b. A bad-credential connection error is redacted ----------------
+    // ---- 9b. A bad-credential connection error is redacted ----------------
     _resetToolsForTests()
     const DISTINCTIVE_PW = "PROBE_VEC_SECRET_deadbeefcafef00d"
     const badAdapter = registerVectorTools({
