@@ -69,6 +69,17 @@ export interface PostJsonOptions {
  * byte inside `[0, maxBytes)` is FULLY present in the window, redact the whole
  * window, then bound the redacted text to the cap. Slicing the already-redacted
  * text can only drop trailing content; it can never reveal a partial secret. */
+
+/** Decode every JSON `\uXXXX` escape in `text` to its literal character — the form a
+ * hostile provider uses to hide a credential from a raw-string redaction. Decoding
+ * collapses full AND partial/mixed escapes to literal text so the redaction set
+ * matches; adjacent surrogate-pair escapes recombine naturally in the result. */
+function decodeUnicodeEscapes(text: string): string {
+  return text.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
+  )
+}
+
 async function readCappedBody(
   resp: Response,
   maxBytes: number,
@@ -120,22 +131,28 @@ async function readCappedBody(
   // — every secret in the window is already `***` — so a partial secret can never
   // reappear (a cut multibyte tail is at worst a cosmetic replacement char).
   const raw = buf.toString("utf8")
-  let redacted = applyRedactions(raw, redactions)
   // JSON-escape evasion: a hostile provider can echo the credential as `\uXXXX`
-  // escapes, which a raw-string match misses but `JSON.parse` later DECODES — so the
-  // secret would surface decoded in any field parsed from this body (e.g. an `id` /
-  // `error`) AND in this very excerpt. If the body fully parses, re-encode it
-  // canonically (`JSON.stringify` emits ASCII literally, collapsing every escape) and
-  // redact THAT, so no escaped form — full or partial — can survive. A truncated body
-  // cannot be parsed; its straddling secret was already scrubbed before the cap, and
-  // the redaction set also carries `\uXXXX` variants as a backstop.
+  // escapes, which a raw-string match misses but a JSON consumer DECODES — so the
+  // secret would surface decoded in any field parsed from this body (an `id` /
+  // `error`) AND in this very excerpt. NORMALISE before redacting so no escaped form —
+  // full, partial, or mixed — survives:
+  //   1. Decode every `\uXXXX` escape to its literal char. This collapses partial /
+  //      mixed escapes (which no single redaction variant matches) and works on a
+  //      TRUNCATED or non-JSON body, which cannot be parsed.
+  //   2. If the body is COMPLETE JSON, additionally re-encode it canonically
+  //      (`JSON.stringify` of the parse also collapses `\/`, surrogate pairs, and
+  //      structure) — the strongest form.
+  // The redaction set's `\uXXXX` variants remain useful: they size the read overlap
+  // so a fully-escaped secret straddling the cap is captured before this decode.
+  let normalized = decodeUnicodeEscapes(raw)
   if (!truncated) {
     try {
-      redacted = applyRedactions(JSON.stringify(JSON.parse(raw)), redactions)
+      normalized = JSON.stringify(JSON.parse(raw))
     } catch {
-      /* not JSON — the raw-string redaction stands */
+      /* not complete JSON — the escape-decoded form stands */
     }
   }
+  const redacted = applyRedactions(normalized, redactions)
   const redactedBuf = Buffer.from(redacted, "utf8")
   const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
   return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }

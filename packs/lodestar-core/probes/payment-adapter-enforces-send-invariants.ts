@@ -25,9 +25,11 @@
  *      completes flagged `idempotent_replay`.
  *   6. **Credentials never leak.** The operator API key is injected on the request
  *      (the provider sees it) but is absent from the recorded action inputs AND the
- *      emitted observation — redacted even when the provider echoes it back, and even
- *      when the echo is JSON `\u`-escaped (the captured body is canonicalised before
- *      redaction, so the decoded token is not recoverable from the observation).
+ *      emitted observation — redacted even when the provider echoes it back, even when
+ *      the echo is JSON `\u`-escaped (full, partial, or mixed), and even when that
+ *      escaped echo arrives in a TRUNCATED / invalid-JSON failure body that reaches
+ *      the audit (the captured body is escape-decoded before redaction, so no decoded
+ *      token is recoverable from the observation or the failed-action audit).
  *   7. **Delivery semantics — only an explicitly-confirmed charge succeeds.** A
  *      provider decline (HTTP 402), a 200 `status:"pending"` body, an HTTP 202
  *      Accepted, a 200 with an UNRECOGNISED status, a 200 with NO status, and a
@@ -185,6 +187,18 @@ function startServer(): FakeServer {
           // charge must FAIL), and if the cap were applied before redaction a token
           // prefix would survive into the failed-action audit.
           return new Response(`${"X".repeat(239)}${a}${"X".repeat(200)}`, { status: 200 })
+        case "ESCTRUNC": {
+          // An oversized (→ truncated), INVALID-JSON body (no closing brace) that
+          // echoes the credential MIXED-escaped near the start: canonicalisation is
+          // skipped (cannot parse), so ONLY escape-decoding before redaction can scrub
+          // it from the failed-action audit (which carries the response excerpt).
+          const mixed = [...a]
+            .map((c, i) =>
+              i % 2 === 0 ? `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}` : c,
+            )
+            .join("")
+          return new Response(`{"x":"${mixed}","filler":"${"Y".repeat(400)}"`, { status: 200 })
+        }
         default:
           // A normal success: a recognised success status, echoing the credential back
           // (a misbehaving provider reflecting the token — must be redacted).
@@ -641,10 +655,47 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- + A mixed-escaped credential in a TRUNCATED/invalid body stays redacted ---
+    // A hostile provider echoes the credential MIXED `\u`-escaped in a body that is
+    // truncated AND invalid JSON (so canonicalisation is skipped). The failed-action
+    // audit (decline_reason carries the response excerpt) must NOT contain the
+    // credential — not even after JSON-decoding — because the body is escape-decoded
+    // before redaction at capture.
+    const escTrunc = await kernel.arbitrate(
+      propose(
+        {
+          payee: PAYEE,
+          amount_minor: 4_200,
+          currency: "usd",
+          idempotency_key: "inv-esct",
+          memo: "ESCTRUNC",
+        },
+        L4(),
+      ),
+    )
+    const escTruncDone = await kernel.execute(kernel.resolve(escTrunc, grant(escTrunc, "req-esct")))
+    if (escTruncDone.phase !== "failed") {
+      return {
+        passed: false,
+        details: `escaped-truncated check FAILED: a truncated/invalid-JSON response was not failed (phase=${escTruncDone.phase}).`,
+      }
+    }
+    const escTruncDetail = String(escTruncDone.audit.at(-1)?.detail ?? "")
+    const escTruncDecoded = escTruncDetail.replace(/\\u([0-9a-fA-F]{4})/g, (_, h) =>
+      String.fromCharCode(Number.parseInt(h, 16)),
+    )
+    if (escTruncDetail.includes(TOKEN) || escTruncDecoded.includes(TOKEN)) {
+      return {
+        passed: false,
+        details:
+          "escaped-truncated leak FAILED: a mixed-escaped credential decoded to the token in the failed-action audit (the body was not escape-decoded before redaction).",
+      }
+    }
+
     return {
       passed: true,
       details:
-        "Native payment transport held every invariant through the Action Kernel: a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed JSON-escaped (the captured body is canonicalised before redaction); a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
+        "Native payment transport held every invariant through the Action Kernel: a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed JSON-escaped (full, partial, or mixed), and not even when a mixed-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body is escape-decoded before redaction); a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
     }
   } finally {
     server.stop()

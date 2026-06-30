@@ -99,12 +99,13 @@ export function redactionVariants(secret: string): string[] {
       variants.add(enc)
       variants.add(lowercasePercentEscapes(enc))
     }
-    // JSON `\uXXXX`-escaped forms (lower- and upper-case hex). A hostile provider can
-    // echo the credential JSON-escaped to evade a raw-string match; a JSON consumer
-    // would then DECODE it. Bodies that fully parse are canonicalised + re-redacted at
-    // capture (see transport `readCappedBody`); these variants are the backstop for a
-    // *truncated* body, which cannot be parsed, so a fully-escaped echo straddling the
-    // cap is still scrubbed before it reaches the audit.
+    // JSON `\uXXXX`-escaped forms (lower- and upper-case hex). The transport
+    // (`readCappedBody`) DECODES `\uXXXX` escapes before redacting a captured body, so
+    // a partial/mixed-escaped echo is already collapsed to literal there; these
+    // variants serve two remaining purposes — they size the read overlap so a
+    // *fully*-escaped secret straddling the byte cap is captured before that decode,
+    // and they backstop non-body surfaces (status text / error strings) that are not
+    // escape-decoded.
     variants.add(jsonUnicodeEscape(base, false))
     variants.add(jsonUnicodeEscape(base, true))
   }

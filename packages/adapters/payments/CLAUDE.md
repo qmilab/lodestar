@@ -24,17 +24,19 @@ friction. You cannot un-send a payment.
   auth header) + `resolveCredential` (resolver seam) + `applyRedactions` /
   `redactionVariants`. Ported from the messaging adapter's `credentials.ts`, **plus a
   payments hardening**: `redactionVariants` also emits the JSON `\uXXXX`-escaped form
-  of the secret, so a credential a hostile provider echoes JSON-escaped (to evade a
-  raw-string match) is still scrubbed — even from a *truncated* body that cannot be
-  parsed (see transport).
+  of the secret — which sizes the transport's read overlap (so a fully-escaped secret
+  straddling the cap is captured) and backstops non-body surfaces; the body itself is
+  escape-decoded before redaction in the transport.
 - `src/transport.ts` — the bounded JSON-POST wrapper (`postJson`): a wall-clock
   timeout (covering the async resolver via `raceAbort`), a streamed response-body
   byte cap with redaction applied **before** the cap, and **a refusal to follow any
   redirect**. Ported from messaging's `transport.ts`, **plus a payments hardening**:
-  `readCappedBody` canonicalises a fully-parseable JSON body (`JSON.stringify` of the
-  parse collapses every `\uXXXX` escape to literal ASCII) and re-redacts it, so an
-  escaped credential — full *or* partial — cannot survive into the captured excerpt or
-  any field later parsed from it.
+  `readCappedBody` **decodes every `\uXXXX` escape to literal before redacting** (and,
+  for a complete JSON body, also re-encodes canonically) — so a credential a hostile
+  provider echoes escaped, in ANY form (full, partial, or mixed) and even in a
+  *truncated* or invalid-JSON response that reaches the audit via `decline_reason`,
+  is collapsed to a literal the redaction set matches. The escaped credential cannot
+  survive into the captured excerpt or any field later parsed from it.
 - `src/tools.ts` — the `payment.send@1` output schema + registration, the
   `PaymentProvider` seam + `ChargeRequest` / `ChargeResult`, the generic-HTTP
   `createHttpPaymentProvider` default (the idempotency key forwarded as a header),
