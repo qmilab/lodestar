@@ -483,3 +483,18 @@ The options we rejected, each with a one-line reason.
   `vector-retrieval-cannot-auto-promote` (in-memory, the no-promote contrast) +
   `vector-adapter-enforces-invariants` (DB-gated, real pgvector). CI's Postgres service moves to
   `pgvector/pgvector:pg16`. No `packages/core` schema change. **Status: Accepted.**
+- [ADR-0040](0040-governed-payments-adapter.md) — the governed Payments adapter (#80, epic #74).
+  `@qmilab/lodestar-adapter-payments`'s `payment.send` (L4 egress, irreversible) is the **strongest
+  human-approval case** — irreversible money movement, the egress-only contrast to the vector
+  adapter's untrusted inbound retrieval. A near-verbatim port of the messaging adapter's five-file
+  split (`credentials.ts`/`transport.ts` unchanged but for a rename). Lodestar ships **no PSP client
+  or key** — the operator injects a `PaymentProvider` (with a generic-HTTP default). Teeth: an
+  operator-pinned **payee** allowlist (enforced in `execute`, an audited `failed` event — the
+  messaging exfil-guard precedent), a NEW operator **amount ceiling** + **currency allowlist**
+  (rejected at *propose* via the input-schema `.superRefine`, so an over-ceiling payment is never
+  presentable to a human — the kernel's only fail-fast-at-propose seam; preconditions do not fire at
+  propose), a forwarded **idempotency key** (no double-charge on replay), an operator-fixed endpoint
+  + scoped/redacted credential, strict delivery semantics (an unconfirmed charge fails), and an **L5
+  kill-switch** (the gate denies outright; a valid approval is inert). One probe,
+  `payment-adapter-enforces-send-invariants` (always-on, in-memory fake provider, eight cases). No
+  `packages/core` schema change; deps = core + action-kernel + zod. **Status: Accepted.**

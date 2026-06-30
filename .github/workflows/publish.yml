@@ -190,6 +190,10 @@ jobs:
             // connection), so it must publish AFTER sql. Same first-publish
             // trusted-publisher bootstrap as the others.
             "packages/adapters/vector",
+            // payments adapter (P2 follow-on, ADR-0040): a governed payment-send
+            // tool; depends only on core + action-kernel (no runtime deps). Same
+            // first-publish trusted-publisher bootstrap as the others.
+            "packages/adapters/payments",
             "packages/memory-firewall/adapters/mem0",
             "packages/memory-firewall/adapters/letta",
             "packages/memory-firewall/adapters/zep",
@@ -309,6 +313,9 @@ jobs:
             # vector adapter (P2 follow-on, ADR-0039): pgvector retrieval; depends
             # on core + action-kernel + adapter-sql, so it publishes AFTER sql.
             packages/adapters/vector
+            # payments adapter (P2 follow-on, ADR-0040): governed payment-send;
+            # depends only on core + action-kernel (no runtime deps).
+            packages/adapters/payments
             packages/memory-firewall/adapters/mem0
             packages/memory-firewall/adapters/letta
             packages/memory-firewall/adapters/zep

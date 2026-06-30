@@ -15,6 +15,7 @@
     { "path": "./packages/adapters/messaging" },
     { "path": "./packages/adapters/sql" },
     { "path": "./packages/adapters/vector" },
+    { "path": "./packages/adapters/payments" },
     { "path": "./packages/guard" },
     { "path": "./packages/guard-mcp" },
     { "path": "./packages/runtime-core" },

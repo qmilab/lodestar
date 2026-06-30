@@ -1,0 +1,55 @@
+{
+  "name": "@qmilab/lodestar-adapter-payments",
+  "version": "0.4.0",
+  "description": "Governed payment-send tool adapter (operator-pinned payee, amount ceiling, idempotency key; L4 held until approved) for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
+  "license": "Apache-2.0",
+  "author": "QMI Lab <hello@qmilab.com>",
+  "homepage": "https://qmilab.com/lodestar",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qmilab/lodestar.git",
+    "directory": "packages/adapters/payments"
+  },
+  "bugs": {
+    "url": "https://github.com/qmilab/lodestar/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "trust",
+    "lodestar",
+    "adapter",
+    "payments",
+    "payment",
+    "human-approval",
+    "action-kernel",
+    "tool"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "bun": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "src", "!**/*.test.*", "README.md", "LICENSE"],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "@qmilab/lodestar-core": "workspace:*",
+    "@qmilab/lodestar-action-kernel": "workspace:*",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "5.6.3"
+  }
+}
