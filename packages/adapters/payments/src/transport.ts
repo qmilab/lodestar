@@ -70,13 +70,29 @@ export interface PostJsonOptions {
  * window, then bound the redacted text to the cap. Slicing the already-redacted
  * text can only drop trailing content; it can never reveal a partial secret. */
 
-/** Decode every JSON `\uXXXX` escape in `text` to its literal character — the form a
- * hostile provider uses to hide a credential from a raw-string redaction. Decoding
- * collapses full AND partial/mixed escapes to literal text so the redaction set
- * matches; adjacent surrogate-pair escapes recombine naturally in the result. */
-function decodeUnicodeEscapes(text: string): string {
-  return text.replace(/\\u([0-9a-fA-F]{4})/g, (_m, hex) =>
-    String.fromCharCode(Number.parseInt(hex, 16)),
+const JSON_SIMPLE_ESCAPES: Record<string, string> = {
+  '"': '"',
+  "\\": "\\",
+  "/": "/",
+  b: "\b",
+  f: "\f",
+  n: "\n",
+  r: "\r",
+  t: "\t",
+}
+
+/** Decode the COMPLETE set of JSON string escapes in `text` to their literal
+ * characters — every form a hostile provider can use to hide a credential from a
+ * raw-string redaction, which a JSON consumer would then DECODE: `\"` `\\` `\/` `\b`
+ * `\f` `\n` `\r` `\t` and `\uXXXX`. A single left-to-right pass mirrors JSON's own
+ * decoding (so `\\/` → `\/`, never over-decoded), collapsing full / partial / mixed
+ * escapes — and works on a truncated or invalid body that cannot be parsed. Adjacent
+ * `\uXXXX` surrogate-pair escapes recombine naturally in the result. */
+function decodeJsonStringEscapes(text: string): string {
+  return text.replace(/\\(u[0-9a-fA-F]{4}|["\\/bfnrt])/g, (_m, esc) =>
+    esc[0] === "u"
+      ? String.fromCharCode(Number.parseInt(esc.slice(1), 16))
+      : (JSON_SIMPLE_ESCAPES[esc] ?? esc),
   )
 }
 
@@ -131,28 +147,16 @@ async function readCappedBody(
   // — every secret in the window is already `***` — so a partial secret can never
   // reappear (a cut multibyte tail is at worst a cosmetic replacement char).
   const raw = buf.toString("utf8")
-  // JSON-escape evasion: a hostile provider can echo the credential as `\uXXXX`
-  // escapes, which a raw-string match misses but a JSON consumer DECODES — so the
-  // secret would surface decoded in any field parsed from this body (an `id` /
-  // `error`) AND in this very excerpt. NORMALISE before redacting so no escaped form —
-  // full, partial, or mixed — survives:
-  //   1. Decode every `\uXXXX` escape to its literal char. This collapses partial /
-  //      mixed escapes (which no single redaction variant matches) and works on a
-  //      TRUNCATED or non-JSON body, which cannot be parsed.
-  //   2. If the body is COMPLETE JSON, additionally re-encode it canonically
-  //      (`JSON.stringify` of the parse also collapses `\/`, surrogate pairs, and
-  //      structure) — the strongest form.
-  // The redaction set's `\uXXXX` variants remain useful: they size the read overlap
-  // so a fully-escaped secret straddling the cap is captured before this decode.
-  let normalized = decodeUnicodeEscapes(raw)
-  if (!truncated) {
-    try {
-      normalized = JSON.stringify(JSON.parse(raw))
-    } catch {
-      /* not complete JSON — the escape-decoded form stands */
-    }
-  }
-  const redacted = applyRedactions(normalized, redactions)
+  // JSON-escape evasion: a hostile provider can echo the credential using ANY JSON
+  // string escape — `\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` `\uXXXX`, full / partial /
+  // mixed — which a raw-string match misses but a JSON consumer DECODES, so the secret
+  // would surface decoded in any field parsed from this body (an `id` / `error`) AND in
+  // this very excerpt. Decode the COMPLETE escape set to literal BEFORE redacting, so
+  // every escaped form collapses to a literal the redaction set matches — on a valid,
+  // truncated, or invalid body alike (no JSON parse required). The redaction set's
+  // `\uXXXX` variants remain useful: they size the read overlap so a fully-escaped
+  // secret straddling the cap is fully captured before this decode.
+  const redacted = applyRedactions(decodeJsonStringEscapes(raw), redactions)
   const redactedBuf = Buffer.from(redacted, "utf8")
   const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
   return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }

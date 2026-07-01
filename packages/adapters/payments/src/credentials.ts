@@ -100,20 +100,18 @@ export function redactionVariants(secret: string): string[] {
       variants.add(lowercasePercentEscapes(enc))
     }
     // JSON `\uXXXX`-escaped forms (lower- and upper-case hex). The transport
-    // (`readCappedBody`) DECODES `\uXXXX` escapes before redacting a captured body, so
-    // a partial/mixed-escaped echo is already collapsed to literal there; these
+    // (`readCappedBody`) DECODES the FULL JSON string-escape set before redacting a
+    // captured body, so an escaped echo is already collapsed to literal there; these
     // variants serve two remaining purposes — they size the read overlap so a
-    // *fully*-escaped secret straddling the byte cap is captured before that decode,
-    // and they backstop non-body surfaces (status text / error strings) that are not
-    // escape-decoded.
+    // *fully*-escaped secret straddling the byte cap is captured before that decode
+    // (the `\uXXXX` form is the longest, 6× per char), and they backstop non-body
+    // surfaces (status text / error strings) that are not escape-decoded.
     variants.add(jsonUnicodeEscape(base, false))
     variants.add(jsonUnicodeEscape(base, true))
-    // JSON *string* escaping (`"` → \", `\` → \\, control chars → \n / \uXXXX). This
-    // is the form a credential containing JSON-special characters takes inside a JSON
-    // string — including after the transport canonicalises a body with
-    // `JSON.stringify`, which RE-escapes those chars. The `\uXXXX` decode does not
-    // touch `\"` / `\\`, so without this a special-char credential could survive the
-    // canonicalised excerpt. A no-op for a token with no special chars.
+    // JSON *string* escaping (`"` → \", `\` → \\, control chars → \n / \uXXXX). The
+    // form a credential with JSON-special characters takes inside a JSON string;
+    // redundant with the transport's full escape-decode for the body, kept to backstop
+    // the non-decoded surfaces. A no-op for a token with no special chars.
     variants.add(jsonStringEscape(base))
   }
   return [...variants]

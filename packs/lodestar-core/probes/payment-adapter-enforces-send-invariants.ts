@@ -29,11 +29,12 @@
  *   6. **Credentials never leak.** The operator API key is injected on the request
  *      (the provider sees it) but is absent from the recorded action inputs AND the
  *      emitted observation — redacted even when the provider echoes it back, even when
- *      the echo is JSON `\u`-escaped (full, partial, or mixed), and even when that
- *      escaped echo arrives in a TRUNCATED / invalid-JSON failure body that reaches
- *      the audit (the captured body is escape-decoded before redaction, so no decoded
- *      token is recoverable from the observation or the failed-action audit) — and a
- *      credential with JSON-special chars is covered in its JSON string-escaped form.
+ *      the echo uses ANY JSON string escape (`\uXXXX`, `\/`, `\"`, …; full, partial, or
+ *      mixed), and even when that escaped echo arrives in a TRUNCATED / invalid-JSON
+ *      failure body that reaches the audit (the captured body has its full JSON escape
+ *      set decoded before redaction, so no decoded token — including a `\/`-escaped
+ *      base64 credential — is recoverable from the observation or the audit); a
+ *      credential with JSON-special chars is also covered in its JSON string-escaped form.
  *   7. **Delivery semantics — only an explicitly-confirmed charge succeeds.** A
  *      provider decline (HTTP 402), a 200 `status:"pending"` body, an HTTP 202
  *      Accepted, a 200 with an UNRECOGNISED status, a 200 with NO status, and a
@@ -69,6 +70,7 @@ import {
   applyRedactions,
   createHttpPaymentProvider,
   makePaymentSendTool,
+  postJson,
   redactionVariants,
   registerPaymentTools,
 } from "@qmilab/lodestar-adapter-payments"
@@ -83,6 +85,10 @@ interface ProbeResult {
 // must NEVER surface in inputs or observations.
 const TOKEN = "pmt-PROBE-secret-deadbeefcafef00d"
 const CREDENTIAL = { header: "Authorization", value: `Bearer ${TOKEN}` }
+// A base64-style credential CONTAINING `/` — a provider can echo it JSON-escaped as
+// `\/`, which a `\uXXXX`-only decode misses. The transport must decode the FULL escape
+// set. Distinctive marker "pmt/PROBE" survives any single-escape trick when decoded.
+const SLASH_TOKEN = "pmt/PROBE/secret/deadbeef00d"
 const PAYEE = "acct_vendor"
 const CEILING = { usd: 50_000 } // $500.00 in cents
 
@@ -205,6 +211,13 @@ function startServer(): FakeServer {
             )
             .join("")
           return new Response(`{"x":"${mixed}","filler":"${"Y".repeat(400)}"`, { status: 200 })
+        }
+        case "SLASHTRUNC": {
+          // An oversized (→ truncated), INVALID-JSON body echoing the credential with
+          // every `/` JSON-escaped as `\/` (the base64-token evasion a `\uXXXX`-only
+          // decode misses). The transport must decode the FULL JSON escape set.
+          const slashed = a.replace(/\//g, "\\/")
+          return new Response(`{"x":"${slashed}","filler":"${"Y".repeat(400)}"`, { status: 200 })
         }
         default:
           // A normal success: a recognised success status, echoing the credential back
@@ -739,10 +752,38 @@ async function run(): Promise<ProbeResult> {
       }
     }
 
+    // ---- + A `\/`-escaped credential in a truncated body stays redacted --------
+    // The transport decodes ALL JSON string escapes (not just `\uXXXX`) before
+    // redaction — so a base64-style credential containing `/`, echoed `\/`-escaped in a
+    // TRUNCATED / invalid body, leaves no decodable token in the captured excerpt.
+    // Driven through the exported `postJson` directly against the fake (transport-level).
+    const slashRes = await postJson({
+      url: new URL(`${server.base}/charges`),
+      body: JSON.stringify({ memo: "SLASHTRUNC" }),
+      credential: { header: "Authorization", value: `Bearer ${SLASH_TOKEN}` },
+      timeoutMs: 15_000,
+      maxBytes: 256,
+      tool: "payment.send",
+    })
+    const slashDecoded = slashRes.body
+      .replace(/\\\//g, "/")
+      .replace(/\\u([0-9a-fA-F]{4})/g, (_, h) => String.fromCharCode(Number.parseInt(h, 16)))
+    if (
+      slashRes.body.includes(SLASH_TOKEN) ||
+      slashRes.body.includes("pmt/PROBE") ||
+      slashDecoded.includes(SLASH_TOKEN) ||
+      slashDecoded.includes("pmt/PROBE")
+    ) {
+      return {
+        passed: false,
+        details: `slash-escape leak FAILED: a \\/-escaped credential survived (or decoded back) in the captured excerpt (body='${slashRes.body}').`,
+      }
+    }
+
     return {
       passed: true,
       details:
-        "Native payment transport held every invariant through the Action Kernel: an out-of-range trust config (below L4 or above L5) was rejected at build (a payment can never sit below the human-approval gate nor carry an off-ladder level); a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed JSON-escaped (full, partial, or mixed), and not even when a mixed-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body is escape-decoded before redaction), and a credential with JSON-special chars is redacted in its JSON string-escaped form; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
+        "Native payment transport held every invariant through the Action Kernel: an out-of-range trust config (below L4 or above L5) was rejected at build (a payment can never sit below the human-approval gate nor carry an off-ladder level); a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed with any JSON string escape (\\uXXXX, \\/, \\\", …; full, partial, or mixed), and not even when a mixed-escaped or `\\/`-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body has its full JSON escape set decoded before redaction), and a credential with JSON-special chars is redacted in its JSON string-escaped form; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
     }
   } finally {
     server.stop()

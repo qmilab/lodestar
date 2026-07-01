@@ -31,12 +31,14 @@ friction. You cannot un-send a payment.
   timeout (covering the async resolver via `raceAbort`), a streamed response-body
   byte cap with redaction applied **before** the cap, and **a refusal to follow any
   redirect**. Ported from messaging's `transport.ts`, **plus a payments hardening**:
-  `readCappedBody` **decodes every `\uXXXX` escape to literal before redacting** (and,
-  for a complete JSON body, also re-encodes canonically) — so a credential a hostile
-  provider echoes escaped, in ANY form (full, partial, or mixed) and even in a
-  *truncated* or invalid-JSON response that reaches the audit via `decline_reason`,
-  is collapsed to a literal the redaction set matches. The escaped credential cannot
-  survive into the captured excerpt or any field later parsed from it.
+  `readCappedBody` **decodes the COMPLETE JSON string-escape set** (`\"` `\\` `\/`
+  `\b` `\f` `\n` `\r` `\t` `\uXXXX`) **to literal before redacting** — so a credential a
+  hostile provider echoes escaped in ANY form (full, partial, or mixed; `\uXXXX` OR
+  `\/` for a slash-containing base64 token), even in a *truncated* or invalid-JSON
+  response that reaches the audit via `decline_reason`, is collapsed to a literal the
+  redaction set matches. A single left-to-right pass mirrors JSON's own decoding (so a
+  doubled `\\` is not over-decoded); the escaped credential cannot survive into the
+  captured excerpt or any field later parsed from it.
 - `src/tools.ts` — the `payment.send@1` output schema + registration, the
   `PaymentProvider` seam + `ChargeRequest` / `ChargeResult`, the generic-HTTP
   `createHttpPaymentProvider` default (the idempotency key forwarded as a header),
