@@ -112,7 +112,7 @@ Being precise about current state:
 
 | Status | Packages |
 | --- | --- |
-| **Built & published (v0.2.0)** | `core`, `event-log`, `action-kernel`, `policy-kernel`, `cognitive-core`, `memory-firewall` (+ `mem0`/`letta`/`zep` adapters), `guard`, `guard-mcp`, `trace`, `viewer`, `otel-exporter`, `harness`, `cli`, native adapters `filesystem` / `git` / `shell` / `nostr` / `http` / `messaging` |
+| **Built & published (v0.5.0)** | 27 npm packages: `core`, `event-log`, `action-kernel`, `policy-kernel`, `cognitive-core`, `memory-firewall` (+ `mem0` / `letta` / `zep` import adapters), `guard`, `guard-mcp`, `runtime-core`, `trace`, `viewer`, `otel-exporter`, `ship`, `harness`, `cli`, and the nine native adapters `filesystem` / `git` / `shell` / `nostr` / `http` / `messaging` / `sql` / `vector` / `payments`. Plus four PyPI runtime hooks — `lodestar-runtime-client`, `lodestar-langgraph`, `lodestar-crewai`, `lodestar-autogen` |
 | **Reserved (not yet built)** | adapter `github` — the forge *API* surface (PRs / issues / releases) behind a `ForgeProvider` seam; git *transport* already ships in `adapter-git` (ADR-0006) |
 
 The **Policy Kernel** has landed: real three-valued enforcement (allow / deny /

@@ -221,9 +221,10 @@ What the probe asserts:
 Not claimed: that the import was refused. Importing and reading are recorded,
 honestly labelled, and the label is what survives.
 
-(This is the one probe that needs a real database — it runs in CI against
+(This probe needs a real database — it runs in CI against
 `postgres:16`, and skips with a loud banner locally if
-`LODESTAR_TEST_DATABASE_URL` is unset.)
+`LODESTAR_TEST_DATABASE_URL` is unset; the `sql` and `vector` adapter probes need
+one too.)
 
 ### 3. The live hijack attempt, as CI spec
 
@@ -383,9 +384,9 @@ Everything above is checkable from a clone
 [Bun](https://bun.sh)):
 
 ```sh
-# The full executable threat model — 48 probes across two packs
-# (one needs Postgres and skips with a loud banner without
-#  LODESTAR_TEST_DATABASE_URL — expected locally, runs for real in CI)
+# The full executable threat model — 79 probes across two packs
+# (seven need extra infra — Postgres, an OS sandbox, or a Python runtime —
+#  and skip with a loud banner without it; all run for real in CI)
 bun run probes:ci
 
 # Just the attack scenarios from this post

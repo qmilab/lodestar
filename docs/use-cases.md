@@ -89,7 +89,7 @@ agent's behavior, and for showing a reviewer what actually happened.
 ## 7. Continuous safety in CI
 
 The [probe packs](reference/probe-packs.md) are adversarial checks you can run on
-every change. `bun run probes:ci` runs all 47 probes across both packs; they pin
+every change. `bun run probes:ci` runs all 79 probes across both packs; they pin
 the firewall, gate, and chain invariants so a refactor can't silently weaken them.
 Probes are spec, not scaffolding.
 

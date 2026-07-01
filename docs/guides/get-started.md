@@ -18,9 +18,10 @@ If you want the narrative version first, read the
   not pnpm.
 - **Git** — the demos drive a coding agent that reads, edits, tests, and commits
   against a small fixture repo.
-- That's it for the core path. One probe
-  (`tool-poisoning-cross-session`) additionally needs a Postgres database; it
-  skips cleanly when you don't have one (see [below](#run-the-safety-probes)).
+- That's it for the core path. A few probes additionally need extra
+  infrastructure — a Postgres database (e.g. `tool-poisoning-cross-session`), an OS
+  sandbox, or a Python runtime; they skip cleanly when you don't have it (see
+  [below](#run-the-safety-probes)).
 
 ## Clone and install
 
