@@ -108,6 +108,13 @@ export function redactionVariants(secret: string): string[] {
     // escape-decoded.
     variants.add(jsonUnicodeEscape(base, false))
     variants.add(jsonUnicodeEscape(base, true))
+    // JSON *string* escaping (`"` → \", `\` → \\, control chars → \n / \uXXXX). This
+    // is the form a credential containing JSON-special characters takes inside a JSON
+    // string — including after the transport canonicalises a body with
+    // `JSON.stringify`, which RE-escapes those chars. The `\uXXXX` decode does not
+    // touch `\"` / `\\`, so without this a special-char credential could survive the
+    // canonicalised excerpt. A no-op for a token with no special chars.
+    variants.add(jsonStringEscape(base))
   }
   return [...variants]
 }
@@ -121,6 +128,12 @@ function jsonUnicodeEscape(s: string, upperHex: boolean): string {
     out += `\\u${upperHex ? hex.toUpperCase() : hex}`
   }
   return out
+}
+
+/** The inner (quote-stripped) JSON string escaping of `s` — what a value looks like
+ * inside a JSON string after `JSON.stringify` (`"` → \", `\` → \\, control chars). */
+function jsonStringEscape(s: string): string {
+  return JSON.stringify(s).slice(1, -1)
 }
 
 /** URL-encoded forms of a value (component- and URI-encoded), skipping any that

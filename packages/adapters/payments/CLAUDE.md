@@ -107,7 +107,11 @@ in docs and tool descriptions.
 declares an `external_call` effect (like every egress adapter) so a host building the
 contract knows to mark it `external`. The tool spawns no subprocess, so the honest
 sandbox is `controlled-network` (ADR-0007). Do **not** lower the L4 floor or widen
-the payee/currency allowlists or the ceiling to make a demo pass.
+the payee/currency allowlists or the ceiling to make a demo pass. The `trust` option
+is validated at build: the only valid values are **4** (default, held) and **5**
+(kill-switch); a value below 4 is **rejected** (a payment must never sit below the
+human-approval gate — otherwise a host that auto-approves sub-L4 could charge with no
+human in the loop).
 
 ## Scope
 

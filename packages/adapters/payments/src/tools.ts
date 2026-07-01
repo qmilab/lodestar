@@ -410,7 +410,9 @@ export interface PaymentSendToolOptions {
   /** The operator amount ceiling in minor units: a single cap for all currencies, or
    * a per-currency `{ usd: 50000, eur: 45000 }` map. Every allowed currency must be capped. */
   ceiling: number | Record<string, number>
-  /** Trust floor. Default L4 — egress, held until approved. Set 5 to disable (kill-switch). */
+  /** Trust floor. Default L4 (held until approved). The ONLY other valid value is 5
+   * (kill-switch — disabled). A value below 4 is REJECTED at build: a payment must
+   * never sit below the L4 human-approval gate. */
   trust?: TrustLevel
 }
 
@@ -447,6 +449,17 @@ export function makePaymentSendTool(
 ): Tool<PaymentSendInput, PaymentSendOutput> {
   const payeePolicy: PayeePolicy = compilePayeePolicy(opts.allowedPayees)
   const money: MoneyPolicy = compileMoneyPolicy(opts.allowedCurrencies, opts.ceiling)
+  // A payment is L4 (held until approved) or L5 (disabled). A trust floor BELOW L4
+  // would let a host that auto-approves sub-L4 actions execute a charge with no human
+  // in the loop — the exact invariant this adapter exists to hold. Reject it at build
+  // (fail-closed config), rather than silently clamp: the option is only for RAISING
+  // to L5 as a kill-switch.
+  const trust: TrustLevel = opts.trust ?? 4
+  if (trust < 4) {
+    throw new Error(
+      `payment.send: trust level ${trust} is below the L4 minimum for payments (use 4 = held-until-approved, or 5 = kill-switch)`,
+    )
+  }
   const provider = opts.provider
   // The input schema closes over the operator's MONEY config: an off-allowlist
   // currency or an over-ceiling amount adds an issue → `propose()` throws → NO hold
@@ -484,7 +497,7 @@ export function makePaymentSendTool(
     effects: SEND_EFFECTS,
     reversibility: "irreversible",
     permissions: ["network.egress"] as Permission[],
-    required_trust_level: opts.trust ?? 4,
+    required_trust_level: trust,
     sandbox: "controlled-network",
     preconditions: () => [],
     execute: async (input) => {

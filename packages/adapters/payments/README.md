@@ -108,7 +108,9 @@ ADR-0004/0006/0007/0008/0009). It enforces, in-process:
 7. **Bounded capture.** A wall-clock timeout and a response-body byte cap stop a
    hostile or misbehaving provider from hanging the call or inflating an observation.
 8. **L4 human-approval gate (the headline), with an L5 kill-switch.** Held until a
-   human approves; pinnable to L5 to disable payments entirely.
+   human approves; pinnable to L5 to disable payments entirely. The `trust` option
+   is validated — the only valid values are 4 (default) and 5; a value below L4 is
+   **rejected at build**, so a payment can never sit below the approval gate.
 
 **What it does NOT claim:** it does not OS-sandbox the network, and it ships no PSP
 integration — the POST reaches the real provider by design (that is the governed
