@@ -11,6 +11,9 @@
  *   0. **Config is fail-closed.** An out-of-range `trust` (below L4 or above L5) is
  *      REJECTED at build — a payment must never sit below the human-approval gate nor
  *      carry an off-ladder level (the option is only for raising to L5 as a kill-switch).
+ *      A per-currency `ceiling` entry for a non-allowlisted currency is likewise
+ *      refused, and `ceilingFor` / `assertWithinCeiling` never cap an off-allowlist
+ *      currency (the `MoneyPolicy` contract, sound for direct callers of the helper).
  *   1. **L4 hold blocks the world.** A `payment.send` proposed at L4 parks at
  *      `pending_approval`, and NOTHING reaches the provider while it waits. Only
  *      after `resolve(granted)` + `execute` does it charge, exactly once, the
@@ -68,6 +71,8 @@ import {
   type ChargeResult,
   type PaymentProvider,
   applyRedactions,
+  assertWithinCeiling,
+  compileMoneyPolicy,
   createHttpPaymentProvider,
   makePaymentSendTool,
   postJson,
@@ -332,6 +337,44 @@ async function run(): Promise<ProbeResult> {
         passed: false,
         details: `trust floor FAILED: makePaymentSendTool accepted an out-of-range trust level ${badTrust} — a payment must be L4 or L5 only.`,
       }
+    }
+  }
+
+  // ---- 0b. Money policy: a ceiling map cannot authorize an off-allowlist currency --
+  // A per-currency ceiling entry for a currency NOT in the allowlist is refused at
+  // build; and `ceilingFor` / the exported `assertWithinCeiling` guard return
+  // undefined / throw for any non-allowlisted currency (the MoneyPolicy contract).
+  let extraCeilingKeyThrew = false
+  try {
+    compileMoneyPolicy(["usd"], { usd: 50_000, xxx: 999_999 })
+  } catch {
+    extraCeilingKeyThrew = true
+  }
+  if (!extraCeilingKeyThrew) {
+    return {
+      passed: false,
+      details:
+        "money policy FAILED: compileMoneyPolicy accepted a ceiling entry for a non-allowlisted currency (an off-allowlist currency could be capped/authorized).",
+    }
+  }
+  const usdOnly = compileMoneyPolicy(["usd"], { usd: 50_000 })
+  if (usdOnly.ceilingFor("xxx") !== undefined) {
+    return {
+      passed: false,
+      details: "money policy FAILED: ceilingFor returned a cap for a non-allowlisted currency.",
+    }
+  }
+  let offCurrencyThrew = false
+  try {
+    assertWithinCeiling(100, "xxx", usdOnly, "payment.send")
+  } catch {
+    offCurrencyThrew = true
+  }
+  if (!offCurrencyThrew) {
+    return {
+      passed: false,
+      details:
+        "money policy FAILED: assertWithinCeiling did not reject an off-allowlist currency (the exported defensive guard is unsound).",
     }
   }
 
@@ -814,7 +857,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native payment transport held every invariant through the Action Kernel: an out-of-range trust config (below L4 or above L5) was rejected at build (a payment can never sit below the human-approval gate nor carry an off-ladder level); a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed with any JSON string escape (\\uXXXX, \\/, \\\", …; full, partial, or mixed), and not even when a mixed-escaped or `\\/`-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body has its full JSON escape set decoded before redaction), and a credential with JSON-special chars is redacted in its JSON string-escaped form; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
+        "Native payment transport held every invariant through the Action Kernel: an out-of-range trust config (below L4 or above L5) was rejected at build (a payment can never sit below the human-approval gate nor carry an off-ladder level), and a per-currency ceiling entry for a non-allowlisted currency was refused (ceilingFor/assertWithinCeiling never cap an off-allowlist currency); a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed with any JSON string escape (\\uXXXX, \\/, \\\", …; full, partial, or mixed), and not even when a mixed-escaped or `\\/`-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body has its full JSON escape set decoded before redaction), and a credential with JSON-special chars is redacted in its JSON string-escaped form; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
     }
   } finally {
     server.stop()

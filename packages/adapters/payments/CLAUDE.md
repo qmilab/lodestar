@@ -17,9 +17,11 @@ friction. You cannot un-send a payment.
   `isAllowedPayee`, format-insensitive, charges the operator's canonical payee) and
   the **money policy** (`compileMoneyPolicy` / `assertAllowedCurrency` /
   `assertWithinCeiling` / `isAllowedCurrency` — the NEW amount-ceiling + currency
-  allowlist; an allowed currency with no ceiling is refused config). Pure functions
-  so they run both as propose-time input-schema refinements AND execute-time
-  authoritative re-checks.
+  allowlist; an allowed currency with no ceiling, OR a per-currency ceiling entry for a
+  non-allowlisted currency, is refused config, and `ceilingFor` never caps an
+  off-allowlist currency — so the exported `assertWithinCeiling` is a sound defensive
+  guard). Pure functions so they run both as propose-time input-schema refinements AND
+  execute-time authoritative re-checks.
 - `src/credentials.ts` — the `PaymentCredential` model (a single operator-supplied
   auth header) + `resolveCredential` (resolver seam) + `applyRedactions` /
   `redactionVariants`. Ported from the messaging adapter's `credentials.ts`, **plus a

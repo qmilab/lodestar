@@ -134,6 +134,13 @@ export function compileMoneyPolicy(
     const c = normalizeCurrency(k)
     if (c.length === 0) continue
     assertPositiveIntMinor(v, `ceiling for '${c}'`)
+    // A ceiling for a currency that is NOT allowlisted is dead/confusing config — and
+    // would otherwise hand a cap to an off-allowlist currency. Refuse it, don't ignore.
+    if (!allowed.has(c)) {
+      throw new Error(
+        `payments: ceiling has an entry for '${c}', which is not in allowedCurrencies (refusing config)`,
+      )
+    }
     byCurrency.set(c, v)
   }
   // Every allowed currency must carry a ceiling — no uncapped allowed currency.
@@ -144,7 +151,16 @@ export function compileMoneyPolicy(
       )
     }
   }
-  return { allowedCurrencies: allowed, ceilingFor: (c) => byCurrency.get(normalizeCurrency(c)) }
+  // `ceilingFor` gates on the allowlist too (mirroring the single-cap branch), so the
+  // `MoneyPolicy` contract — undefined for a non-allowed currency — holds unconditionally,
+  // keeping the exported `assertWithinCeiling` a sound defensive guard for direct callers.
+  return {
+    allowedCurrencies: allowed,
+    ceilingFor: (c) => {
+      const n = normalizeCurrency(c)
+      return allowed.has(n) ? byCurrency.get(n) : undefined
+    },
+  }
 }
 
 /** Whether a currency is operator-allowed (pure, no throw) — for input-schema refinement. */
