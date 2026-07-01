@@ -37,4 +37,4 @@ __all__ = [
     "DEFAULT_HOLD_WAIT_MS",
 ]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

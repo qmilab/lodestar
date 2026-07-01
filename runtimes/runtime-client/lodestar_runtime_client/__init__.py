@@ -24,4 +24,4 @@ from .client import GateClient, GateError, ToolBody
 
 __all__ = ["GateClient", "GateError", "ToolBody"]
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"

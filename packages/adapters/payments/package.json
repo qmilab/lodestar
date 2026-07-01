@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-payments",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Governed payment-send tool adapter (operator-pinned payee, amount ceiling, idempotency key; L4 held until approved) for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",
