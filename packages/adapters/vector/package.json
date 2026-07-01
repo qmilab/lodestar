@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-vector",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Governed Vector/RAG retrieval tool adapter (pgvector similarity search; retrieved chunks are external_document) for the Lodestar Action Kernel. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

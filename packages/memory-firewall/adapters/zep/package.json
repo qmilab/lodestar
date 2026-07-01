@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-memory-firewall-zep",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Zep fact-import adapter — bring Zep facts through the Lodestar Memory Firewall as external_document evidence at unverified/restricted, never silently promoted (Zep ratings never raise truth status). Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

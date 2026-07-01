@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "lodestar-autogen"
-version = "0.4.0"
+version = "0.5.0"
 description = "Govern an AutoGen agent's native tool calls with Lodestar — the thin native hook that remotes each tool call through the Lodestar Action Kernel over NDJSON-RPC (ADR-0027)."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -20,7 +20,7 @@ classifiers = [
 # pure-stdlib `lodestar-runtime-client`, shared across the runtime hooks (#128,
 # ADR-0028) and pinned in lockstep with this package. The AutoGen integration in
 # `adapter` imports autogen lazily; install the `autogen` extra.
-dependencies = ["lodestar-runtime-client==0.4.0"]
+dependencies = ["lodestar-runtime-client==0.5.0"]
 
 [project.optional-dependencies]
 # autogen-agentchat pulls autogen-core (where BaseTool / CancellationToken live).

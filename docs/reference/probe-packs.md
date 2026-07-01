@@ -1,6 +1,6 @@
 ---
 title: "Probe packs"
-description: "The lodestar.probe-pack.json manifest format, the loader, and the full list of 47 probes and 3 sentinels across the two first-party packs."
+description: "The lodestar.probe-pack.json manifest format, the loader, and the full list of 79 probes and 3 sentinels across the two first-party packs."
 ---
 
 # Probe packs
@@ -14,8 +14,9 @@ satisfying them.
 The two first-party packs live in `packs/`:
 
 - **`lodestar-core`** — the core epistemic-chain, memory-firewall, guard,
-  event-log, Policy Kernel, sentinel-wiring, adapter, and read-side invariants
-  (43 probes).
+  event-log, Policy Kernel, sentinel-wiring, adapter, cognitive-core,
+  trust-pack-registry, probe-runner, runtime-adapter, and read-side invariants
+  (75 probes).
 - **`coding-agent-safety`** — the "wrap a coding agent" story: prompt injection,
   tool poisoning, confidence drift, plus the three first-party sentinels (4 probes
   + 3 sentinels).
@@ -65,7 +66,7 @@ against the built-in `FIRST_PARTY_SENTINELS` registry. v0 does not support
 third-party sentinels or `npm`-sourced packs — both are reserved for the post-v1
 registry.
 
-## The 43 probes in `lodestar-core`
+## The 75 probes in `lodestar-core`
 
 **Firewall, epistemic-chain, guard, and event-log invariants** (Batches 1–5):
 
@@ -106,6 +107,9 @@ registry.
 | `approval-via-side-channel` | a separate-process `lodestar approve` resolution un-parks the hold |
 | `forged-approval-cannot-execute` | a forged / unsigned / tampered approval can't un-park a held L4 (Ed25519) |
 | `proxy-hold-carries-rule-authority` | a held action carries its matched rule's required authority |
+| `approval-via-http-channel` | a hold resolves through the pluggable HTTP approval-transport channel |
+| `forged-approval-via-http-channel-cannot-execute` | a hostile channel can delay but never mint/tamper/replay an approval — the Ed25519 boundary holds after transport |
+| `pending-queue-excludes-rejected-forgery` | a rejected forged resolution never appears in the pending-approvals queue |
 
 **Sentinel→action and calibration→action wiring:**
 
@@ -133,6 +137,65 @@ registry.
 | `nostr-adapter-enforces-egress-invariants` | nostr — relay pinning, in-process BIP-340 signing, the key never on the wire |
 | `http-adapter-enforces-egress-invariants` | http — hostname pinning + per-hop redirect re-validation against SSRF, host-bound credential |
 | `messaging-adapter-enforces-egress-invariants` | messaging — destination pinning, operator-fixed sender, no redirect following |
+| `filesystem-adapter-enforces-write-invariants` | `fs.write` — held L3 write, root-confined + symlink-checked paths, no host-env expansion, bounded-not-truncated |
+| `sql-adapter-enforces-invariants` | sql — the parameterized-only injection boundary, read/mutation trust split, held L3 mutation, bounded cursor fetch (needs Postgres) |
+| `vector-retrieval-cannot-auto-promote` | retrieved RAG chunks are `external_document`, so the gate keeps them unverified (Parallax across chunks) |
+| `vector-adapter-enforces-invariants` | vector — operator-pinned table + namespace allowlist, parameterized values, top-k cap, `READ ONLY` (needs Postgres) |
+| `payment-adapter-enforces-send-invariants` | `payment.send` — L4 hold, operator-pinned payee, amount ceiling + currency allowlist, idempotency key, L5 kill-switch |
+
+**Read side — the session shipper:**
+
+| Probe | Pins |
+| --- | --- |
+| `ship-respects-sensitivity-ceiling` | above-ceiling beliefs ship redacted (marker + original hash); the bearer token never enters the NDJSON body |
+| `ship-wire-roundtrip` | the receiver re-verifies `payload_hash`; redacted records are flagged, not hash-mismatched; the session is lossless at `--sensitivity-ceiling secret` |
+
+**Trust-pack registry** (signed, verifiable pack distribution):
+
+| Probe | Pins |
+| --- | --- |
+| `pack-manifest-signature-required` | a pack manifest's Ed25519 signature is verified against pinned author keys on load |
+| `forged-pack-cannot-load` | every local forgery (wrong key, un-pinned signer, lifted signer, edited-after-signing) is refused |
+| `tampered-pack-content-cannot-load` | a per-file content digest catches a probe byte swapped under a still-valid signature |
+| `pack-resolves-from-npm` | a pack resolves from a version+SRI-pinned npm package or a full-SHA-pinned git repo, verifying over the fetched bytes |
+| `mutable-git-ref-rejected` | a git source must pin an immutable 40-hex SHA; a branch/tag/short-SHA is refused |
+| `resolution-runs-no-pack-code` | the non-executing fetch: a tarball `postinstall` / repo `post-checkout` hook never fires before verification |
+| `pack-publish-add-roundtrip` | the publish→add flow: sign-in-place + self-verify, then resolve→verify→install→record the immutable pin |
+| `unverified-badge-not-trusted` | attestation badges are advisory (verified vs. unverified surfaced), never a gate; verified against a separate attester root |
+| `pack-index-signature-required` | a static signed discovery index is verified against pinned index-publisher keys; it advertises but never authorizes |
+
+**Probe-runner containment:**
+
+| Probe | Pins |
+| --- | --- |
+| `runner-denies-host-env-to-probe` | the runner spawns each probe under a scoped env (fresh HOME + inherited PATH), never the host `process.env` |
+| `runner-sandboxes-probe-filesystem-and-network` | each probe runs in an OS sandbox (`sandbox-exec` / `bubblewrap`) confining filesystem + outbound network (needs a sandbox mechanism) |
+
+**Non-MCP runtime adapters** (the shared runtime-gate spine):
+
+| Probe | Pins |
+| --- | --- |
+| `runtime-gate-enforces-two-phase` | the always-on TS spine — a held L4 stays held until a signed approval resolves it, over the real NDJSON-RPC protocol |
+| `langgraph-tool-calls-are-governed` | a real Python LangGraph graph is governed through the shared gate (needs Python + LangGraph) |
+| `crewai-tool-calls-are-governed` | a real CrewAI toolset is governed through the same unchanged gate (needs Python + CrewAI) |
+| `autogen-tool-calls-are-governed` | a real AutoGen toolset is governed through the same unchanged gate (needs Python + AutoGen) |
+
+**Cognitive-core belief enrichment** (#154):
+
+| Probe | Pins |
+| --- | --- |
+| `evidence-linker-cross-belief-join` | a claim corroborated by an independent higher-quality belief promotes `unverified → supported`; two `external_document` beliefs still can't promote each other |
+| `harvest-projection-surfaces-durable-lessons` | a read-side projection surfaces end-of-run `supported` beliefs as advisory memory candidates; a poisoned/quarantined belief never launders through |
+| `reflection-derives-supersession-from-conflict` | the reflection DERIVE rule proposes (never auto-applies) a supersession from two conflicting `supported` beliefs |
+| `generic-llm-extractor-stays-unverified` | the opt-in generic LLM extractor mints `model_inference`-quality claims that stay `unverified` (Parallax across LLM inferences) |
+| `corroboration-strength-rewards-independent-sources` | a separate additive corroboration scalar rises with independent sources while the gate input stays byte-for-byte unmoved |
+| `world-model-withholds-gated-current-state` | a positive-but-gated claim is withheld from the world model, not written-and-flagged |
+
+**Public-API stability:**
+
+| Probe | Pins |
+| --- | --- |
+| `public-api-surface` | the executable mirror of the public-API ledger — every declared-stable symbol pinned by a compile-time signature assertion + a runtime behavioral check |
 
 **Durable calibration:**
 
@@ -155,13 +218,21 @@ registry.
 | `suspicious-memory-origin` | an `external_document` belief steering a decision |
 | `anomalous-tool-sequence` | a tool sequence that deviates from the task shape |
 
-## The Postgres-backed probe
+## Probes that need extra infrastructure
 
-All 47 probes pass under strict TypeScript. One —
-**`tool-poisoning-cross-session`** — exercises the Postgres-backed belief store
-across two sessions, so it reads `LODESTAR_TEST_DATABASE_URL` and **skips with a
-loud banner** (exit 0) when that variable is unset. CI runs it for real against a
-`postgres:16` service.
+All 79 probes pass under strict TypeScript. Seven need extra infrastructure and
+**skip with a loud banner** (exit 0) when it is unavailable, so `bun run
+probes:ci` stays green on a bare checkout; CI provides all of them:
+
+- **Postgres** (via `LODESTAR_TEST_DATABASE_URL`, run against a `postgres:16` /
+  `pgvector` service): `tool-poisoning-cross-session` (the Postgres-backed belief
+  store across two sessions), `sql-adapter-enforces-invariants`, and
+  `vector-adapter-enforces-invariants`.
+- **An OS sandbox mechanism** (`sandbox-exec` on macOS / `bubblewrap` on Linux):
+  `runner-sandboxes-probe-filesystem-and-network`.
+- **A Python runtime + framework**: `langgraph-tool-calls-are-governed` (Python +
+  LangGraph), `crewai-tool-calls-are-governed` (Python + CrewAI), and
+  `autogen-tool-calls-are-governed` (Python + AutoGen).
 
 ## Related
 

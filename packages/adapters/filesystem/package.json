@@ -1,6 +1,6 @@
 {
   "name": "@qmilab/lodestar-adapter-filesystem",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Filesystem adapter for the Lodestar Action Kernel: governed reads and root-confined writes. Part of Lodestar, the trust layer for AI agents.",
   "license": "Apache-2.0",
   "author": "QMI Lab <hello@qmilab.com>",

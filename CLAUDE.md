@@ -2,25 +2,28 @@
 
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
-**Status**: v0.4.0 published to npm (all 25 packages) and PyPI (the four
+**Status**: v0.5.0 published to npm (all 27 packages) and PyPI (the four
 `lodestar-runtime-*` Python hooks) via CI trusted publishing — staged
-publishing, maintainer-approved; v0.2 architecture locked. The 0.4.0
-release added the 25th npm package, `@qmilab/lodestar-runtime-core` (the
-language-agnostic governance-gate sidecar, ADR-0024/ADR-0025), and the
-non-MCP runtime-adapter epic's PyPI hooks — `lodestar-runtime-client`
-(the shared RPC client) plus `lodestar-langgraph`, `lodestar-crewai`, and
-`lodestar-autogen` (ADR-0026/ADR-0027/ADR-0028) — alongside the trust-pack
-registry epic (#76) and probe-runner scoped-env + OS-sandbox execution
-(ADR-0022/ADR-0023). The two packages that had landed at 0.3.0 were the
-23rd, `@qmilab/lodestar-adapter-sql` (the governed SQL/database adapter,
+publishing, maintainer-approved; v0.2 architecture locked. The 0.5.0
+release added the 26th and 27th npm packages —
+`@qmilab/lodestar-adapter-vector` (the governed Vector/RAG retrieval adapter
+over pgvector, ADR-0039) and `@qmilab/lodestar-adapter-payments` (the
+governed payment-send adapter, ADR-0040) — alongside the cognitive-core
+belief-enrichment epic (#154, ADRs 0031–0037), the interop/hygiene tail of
+#140 (the stable `firewall.*@1` event contract, the public-API stability
+ledger + its probe), and the `adapter-sql` server-side-cursor bounded fetch
+(#101, ADR-0038). The 0.4.0 release added the 25th npm package,
+`@qmilab/lodestar-runtime-core` (the language-agnostic governance-gate
+sidecar, ADR-0024/ADR-0025), and the non-MCP runtime-adapter epic's PyPI
+hooks — `lodestar-runtime-client` (the shared RPC client) plus
+`lodestar-langgraph`, `lodestar-crewai`, and `lodestar-autogen`
+(ADR-0026/ADR-0027/ADR-0028) — alongside the trust-pack registry epic (#76)
+and probe-runner scoped-env + OS-sandbox execution (ADR-0022/ADR-0023). The
+two packages that had landed at 0.3.0 were the 23rd,
+`@qmilab/lodestar-adapter-sql` (the governed SQL/database adapter,
 ADR-0013), and the 24th, `@qmilab/lodestar-ship` (the read-side session
 shipper — `lodestar ship`, the `lodestar.session_ship@1` NDJSON wire
-format, ADR-0014). `main` is currently ahead of the v0.4.0 tag — a ready
-v0.5.0, unpublished — carrying the cognitive-core belief-enrichment epic
-(#154, ADRs 0031–0037), the interop/hygiene tail of #140 (the stable
-`firewall.*@1` event contract, the public-API stability ledger + its
-probe), and the `adapter-sql` server-side-cursor bounded fetch (#101,
-ADR-0038). Seventy-nine probes pass under
+format, ADR-0014). Seventy-nine probes pass under
 strict TypeScript (three need a Postgres test database; one needs a Python
 + LangGraph runtime; one needs a Python + CrewAI runtime; one needs a
 Python + AutoGen runtime — see below).
