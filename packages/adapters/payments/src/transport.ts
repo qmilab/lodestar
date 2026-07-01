@@ -151,12 +151,25 @@ async function readCappedBody(
   // string escape — `\"` `\\` `\/` `\b` `\f` `\n` `\r` `\t` `\uXXXX`, full / partial /
   // mixed — which a raw-string match misses but a JSON consumer DECODES, so the secret
   // would surface decoded in any field parsed from this body (an `id` / `error`) AND in
-  // this very excerpt. Decode the COMPLETE escape set to literal BEFORE redacting, so
-  // every escaped form collapses to a literal the redaction set matches — on a valid,
-  // truncated, or invalid body alike (no JSON parse required). The redaction set's
-  // `\uXXXX` variants remain useful: they size the read overlap so a fully-escaped
-  // secret straddling the cap is fully captured before this decode.
-  const redacted = applyRedactions(decodeJsonStringEscapes(raw), redactions)
+  // this very excerpt. NORMALISE before redacting so no escaped form survives:
+  //   - COMPLETE JSON → re-encode canonically (`JSON.stringify` of the parse). This
+  //     collapses every ASCII escape (`\uXXXX`, `\/`, …) to literal so redaction
+  //     matches, while KEEPING the body valid JSON (control chars stay `\n` etc.) — so
+  //     `defaultInterpret` can still parse `status`/`id` from it. The `"` → `\"`
+  //     re-escape is covered by the `jsonStringEscape` redaction variant.
+  //   - NOT parseable (truncated / invalid) → decode the FULL JSON string-escape set to
+  //     literal. Such a body is not validly parsed downstream anyway (the charge fails,
+  //     correctly), so there is no parseability to preserve — only the escaped secret
+  //     to scrub from the excerpt / audit (e.g. a `\/`-escaped base64 token).
+  // The redaction set's `\uXXXX` variants also size the read overlap so a fully-escaped
+  // secret straddling the cap is captured before this step.
+  let normalized: string
+  try {
+    normalized = JSON.stringify(JSON.parse(raw))
+  } catch {
+    normalized = decodeJsonStringEscapes(raw)
+  }
+  const redacted = applyRedactions(normalized, redactions)
   const redactedBuf = Buffer.from(redacted, "utf8")
   const text = redactedBuf.byteLength > maxBytes ? utf8CutAtMost(redactedBuf, maxBytes) : redacted
   return { text, bytes: Buffer.byteLength(text, "utf8"), truncated }

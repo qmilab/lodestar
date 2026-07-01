@@ -219,6 +219,12 @@ function startServer(): FakeServer {
           const slashed = a.replace(/\//g, "\\/")
           return new Response(`{"x":"${slashed}","filler":"${"Y".repeat(400)}"`, { status: 200 })
         }
+        case "CTRLSUCCESS":
+          // A VALID JSON success whose value carries control-char escapes (\n, \t). The
+          // transport must keep the body PARSEABLE (canonicalise, not blindly decode) —
+          // decoding \n to a raw newline would break JSON parsing and wrongly FAIL a
+          // legitimate charge.
+          return json({ status: "succeeded", id: "pay_ctrl", desc: "line1\nline2\ttab" }, 200)
         default:
           // A normal success: a recognised success status, echoing the credential back
           // (a misbehaving provider reflecting the token — must be redacted).
@@ -601,6 +607,31 @@ async function run(): Promise<ProbeResult> {
         passed: false,
         details:
           "escaped-echo leak FAILED: a JSON-escaped credential echo decoded to the token in the observation (the body was not canonicalised before redaction).",
+      }
+    }
+
+    // ---- 6c. A valid escaped success still parses (canonicalise, not corrupt) ----
+    // A legitimate success whose body carries control-char escapes (\n, \t) MUST still
+    // confirm: the transport canonicalises valid JSON (keeping it parseable) rather than
+    // blindly decoding escapes, which would turn \n into a raw newline, break parsing,
+    // and wrongly fail a real charge.
+    const ctrlHeld = await kernel.arbitrate(
+      propose(
+        {
+          payee: PAYEE,
+          amount_minor: 4_200,
+          currency: "usd",
+          idempotency_key: "inv-ctrl",
+          memo: "CTRLSUCCESS",
+        },
+        L4(),
+      ),
+    )
+    const ctrlDone = await kernel.execute(kernel.resolve(ctrlHeld, grant(ctrlHeld, "req-ctrl")))
+    if (ctrlDone.phase !== "completed") {
+      return {
+        passed: false,
+        details: `parseability FAILED: a valid success carrying control-char escapes did not complete (phase=${ctrlDone.phase}) — the transport corrupted a parseable body.`,
       }
     }
 

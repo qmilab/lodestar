@@ -100,18 +100,20 @@ export function redactionVariants(secret: string): string[] {
       variants.add(lowercasePercentEscapes(enc))
     }
     // JSON `\uXXXX`-escaped forms (lower- and upper-case hex). The transport
-    // (`readCappedBody`) DECODES the FULL JSON string-escape set before redacting a
-    // captured body, so an escaped echo is already collapsed to literal there; these
-    // variants serve two remaining purposes — they size the read overlap so a
-    // *fully*-escaped secret straddling the byte cap is captured before that decode
-    // (the `\uXXXX` form is the longest, 6× per char), and they backstop non-body
-    // surfaces (status text / error strings) that are not escape-decoded.
+    // (`readCappedBody`) normalises a captured body before redacting — canonicalising
+    // complete JSON, or full-escape-decoding a non-parseable body — so an escaped echo
+    // is collapsed to literal there; these variants serve two remaining purposes: they
+    // size the read overlap so a *fully*-escaped secret straddling the byte cap is
+    // captured before that step (the `\uXXXX` form is the longest, 6× per char), and
+    // they backstop non-body surfaces (status text / error strings), which are not
+    // normalised.
     variants.add(jsonUnicodeEscape(base, false))
     variants.add(jsonUnicodeEscape(base, true))
-    // JSON *string* escaping (`"` → \", `\` → \\, control chars → \n / \uXXXX). The
-    // form a credential with JSON-special characters takes inside a JSON string;
-    // redundant with the transport's full escape-decode for the body, kept to backstop
-    // the non-decoded surfaces. A no-op for a token with no special chars.
+    // JSON *string* escaping (`"` → \", `\` → \\, control chars → \n / \uXXXX). The form
+    // a credential with JSON-special characters takes inside a JSON string — including
+    // after the transport canonicalises a complete JSON body with `JSON.stringify`,
+    // which RE-escapes `"`/`\`. Load-bearing for the canonicalise path; a no-op for a
+    // token with no special chars.
     variants.add(jsonStringEscape(base))
   }
   return [...variants]

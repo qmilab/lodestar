@@ -30,15 +30,18 @@ friction. You cannot un-send a payment.
 - `src/transport.ts` — the bounded JSON-POST wrapper (`postJson`): a wall-clock
   timeout (covering the async resolver via `raceAbort`), a streamed response-body
   byte cap with redaction applied **before** the cap, and **a refusal to follow any
-  redirect**. Ported from messaging's `transport.ts`, **plus a payments hardening**:
-  `readCappedBody` **decodes the COMPLETE JSON string-escape set** (`\"` `\\` `\/`
-  `\b` `\f` `\n` `\r` `\t` `\uXXXX`) **to literal before redacting** — so a credential a
-  hostile provider echoes escaped in ANY form (full, partial, or mixed; `\uXXXX` OR
-  `\/` for a slash-containing base64 token), even in a *truncated* or invalid-JSON
-  response that reaches the audit via `decline_reason`, is collapsed to a literal the
-  redaction set matches. A single left-to-right pass mirrors JSON's own decoding (so a
-  doubled `\\` is not over-decoded); the escaped credential cannot survive into the
-  captured excerpt or any field later parsed from it.
+  redirect**. Ported from messaging's `transport.ts`, **plus a payments hardening** that
+  normalises a captured body before redacting so no JSON-escaped credential echo (`\"`
+  `\\` `\/` `\b` `\f` `\n` `\r` `\t` `\uXXXX`; full/partial/mixed — e.g. a `\/`-escaped
+  base64 token) survives into the excerpt or the audit:
+  - a **complete JSON** body is re-encoded canonically (`JSON.stringify` of the parse) —
+    which collapses every ASCII escape to literal so redaction matches, while **keeping
+    it valid JSON** (control chars stay `\n`, etc.) so `defaultInterpret` can still parse
+    `status`/`id`; the `"` → `\"` re-escape is covered by the `jsonStringEscape` variant;
+  - a **non-parseable** (truncated / invalid) body — which is not validly parsed
+    downstream anyway, so the charge fails correctly — has its **full JSON string-escape
+    set decoded to literal** (a single left-to-right pass mirroring JSON decoding, so a
+    doubled `\\` is not over-decoded), scrubbing an escaped secret from the excerpt.
 - `src/tools.ts` — the `payment.send@1` output schema + registration, the
   `PaymentProvider` seam + `ChargeRequest` / `ChargeResult`, the generic-HTTP
   `createHttpPaymentProvider` default (the idempotency key forwarded as a header),
