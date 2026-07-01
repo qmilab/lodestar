@@ -109,9 +109,10 @@ contract knows to mark it `external`. The tool spawns no subprocess, so the hone
 sandbox is `controlled-network` (ADR-0007). Do **not** lower the L4 floor or widen
 the payee/currency allowlists or the ceiling to make a demo pass. The `trust` option
 is validated at build: the only valid values are **4** (default, held) and **5**
-(kill-switch); a value below 4 is **rejected** (a payment must never sit below the
-human-approval gate — otherwise a host that auto-approves sub-L4 could charge with no
-human in the loop).
+(kill-switch); anything else (below 4 or above 5) is **rejected** (a payment must
+never sit below the human-approval gate — otherwise a host that auto-approves sub-L4
+could charge with no human in the loop — nor carry an off-ladder level that no valid
+`ActionContract` can invoke).
 
 ## Scope
 

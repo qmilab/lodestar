@@ -8,9 +8,9 @@
  * Payments is epic #74 child #80 — the strongest human-approval case (an outward,
  * irreversible money movement), so these are the things that MUST hold:
  *
- *   0. **Config is fail-closed.** A sub-L4 `trust` is REJECTED at build — a payment
- *      must never sit below the human-approval gate (the option is only for raising
- *      to L5 as a kill-switch).
+ *   0. **Config is fail-closed.** An out-of-range `trust` (below L4 or above L5) is
+ *      REJECTED at build — a payment must never sit below the human-approval gate nor
+ *      carry an off-ladder level (the option is only for raising to L5 as a kill-switch).
  *   1. **L4 hold blocks the world.** A `payment.send` proposed at L4 parks at
  *      `pending_approval`, and NOTHING reaches the provider while it waits. Only
  *      after `resolve(granted)` + `execute` does it charge, exactly once, the
@@ -291,27 +291,28 @@ async function run(): Promise<ProbeResult> {
   // ===========================================================================
   const fake = makeFakeProvider()
 
-  // ---- 0. Config: a sub-L4 trust floor is REJECTED at build ----------------
-  // The trust option exists only to RAISE to L5 (kill-switch). A value below L4 would
-  // let a host that auto-approves sub-L4 actions charge with NO human in the loop —
-  // the invariant this adapter exists to hold — so it must be refused at build.
-  let subL4Threw = false
-  try {
-    makePaymentSendTool({
-      provider: fake.provider,
-      allowedPayees: [PAYEE],
-      allowedCurrencies: ["usd"],
-      ceiling: CEILING,
-      trust: 2,
-    })
-  } catch {
-    subL4Threw = true
-  }
-  if (!subL4Threw) {
-    return {
-      passed: false,
-      details:
-        "trust floor FAILED: makePaymentSendTool accepted a sub-L4 trust level — a payment could execute below the human-approval gate.",
+  // ---- 0. Config: an out-of-range trust floor is REJECTED at build ---------
+  // A payment is L4 (held) or L5 (disabled) — nothing else. Below L4 would let a host
+  // that auto-approves sub-L4 charge with NO human in the loop; above L5 is off the
+  // trust ladder. Both must be refused at build (the option is only for raising to L5).
+  for (const badTrust of [2, 6] as const) {
+    let threw = false
+    try {
+      makePaymentSendTool({
+        provider: fake.provider,
+        allowedPayees: [PAYEE],
+        allowedCurrencies: ["usd"],
+        ceiling: CEILING,
+        trust: badTrust,
+      })
+    } catch {
+      threw = true
+    }
+    if (!threw) {
+      return {
+        passed: false,
+        details: `trust floor FAILED: makePaymentSendTool accepted an out-of-range trust level ${badTrust} — a payment must be L4 or L5 only.`,
+      }
     }
   }
 
@@ -741,7 +742,7 @@ async function run(): Promise<ProbeResult> {
     return {
       passed: true,
       details:
-        "Native payment transport held every invariant through the Action Kernel: a sub-L4 trust config was rejected at build (a payment can never sit below the human-approval gate); a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed JSON-escaped (full, partial, or mixed), and not even when a mixed-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body is escape-decoded before redaction), and a credential with JSON-special chars is redacted in its JSON string-escaped form; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
+        "Native payment transport held every invariant through the Action Kernel: an out-of-range trust config (below L4 or above L5) was rejected at build (a payment can never sit below the human-approval gate nor carry an off-ladder level); a payment.send proposed at L4 parked at pending_approval and reached no provider until approval, then charged exactly once to the operator-canonical payee; an over-ceiling amount and an off-allowlist currency both threw at propose (no hold, provider untouched); an approved charge to a non-pinned payee ended 'failed' with the provider untouched (the audited exfil guard); a replay with the same idempotency_key did not double-charge and was flagged idempotent_replay; the operator API key reached the provider but never surfaced in the inputs or the (token-echoing) observation — not even when echoed JSON-escaped (full, partial, or mixed), and not even when a mixed-escaped echo arrived in a truncated/invalid-JSON failure body that reached the audit (the captured body is escape-decoded before redaction), and a credential with JSON-special chars is redacted in its JSON string-escaped form; a provider decline (HTTP 402), a 200 status:pending body, an HTTP 202 Accepted, a 200 with an unrecognised status, a 200 with no status, and a truncated confirmation all ended 'failed' rather than a silent 'charged' (the generic interpreter confirms only on an explicit success status), with the echoed credential redacted from the audit; an L5-pinned charge was rejected outright with a valid grant mechanically inert; and an oversized response echoing the credential straddling the byte cap was captured to the cap with not even a token prefix surviving.",
     }
   } finally {
     server.stop()

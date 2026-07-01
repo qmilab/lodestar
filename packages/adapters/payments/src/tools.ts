@@ -411,8 +411,9 @@ export interface PaymentSendToolOptions {
    * a per-currency `{ usd: 50000, eur: 45000 }` map. Every allowed currency must be capped. */
   ceiling: number | Record<string, number>
   /** Trust floor. Default L4 (held until approved). The ONLY other valid value is 5
-   * (kill-switch — disabled). A value below 4 is REJECTED at build: a payment must
-   * never sit below the L4 human-approval gate. */
+   * (kill-switch — disabled). Any other value (below 4 or above 5) is REJECTED at
+   * build: a payment must never sit below the L4 human-approval gate, nor carry an
+   * out-of-ladder level. */
   trust?: TrustLevel
 }
 
@@ -449,15 +450,17 @@ export function makePaymentSendTool(
 ): Tool<PaymentSendInput, PaymentSendOutput> {
   const payeePolicy: PayeePolicy = compilePayeePolicy(opts.allowedPayees)
   const money: MoneyPolicy = compileMoneyPolicy(opts.allowedCurrencies, opts.ceiling)
-  // A payment is L4 (held until approved) or L5 (disabled). A trust floor BELOW L4
-  // would let a host that auto-approves sub-L4 actions execute a charge with no human
-  // in the loop — the exact invariant this adapter exists to hold. Reject it at build
-  // (fail-closed config), rather than silently clamp: the option is only for RAISING
-  // to L5 as a kill-switch.
+  // A payment is L4 (held until approved) or L5 (disabled) — nothing else. A floor
+  // BELOW L4 would let a host that auto-approves sub-L4 actions execute a charge with
+  // no human in the loop; a value ABOVE L5 is off the trust ladder (`TrustLevelSchema`
+  // caps at 5) and would make the tool un-invokable by any valid `ActionContract` (or
+  // propagate an out-of-ladder level into policy/audit). Reject anything but 4/5 at
+  // build (fail-closed config), rather than silently clamp: the option is only for
+  // RAISING to L5 as a kill-switch.
   const trust: TrustLevel = opts.trust ?? 4
-  if (trust < 4) {
+  if (trust !== 4 && trust !== 5) {
     throw new Error(
-      `payment.send: trust level ${trust} is below the L4 minimum for payments (use 4 = held-until-approved, or 5 = kill-switch)`,
+      `payment.send: trust level ${trust} is invalid for payments (use 4 = held-until-approved, or 5 = kill-switch)`,
     )
   }
   const provider = opts.provider
