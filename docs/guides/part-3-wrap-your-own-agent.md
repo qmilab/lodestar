@@ -32,7 +32,7 @@ cd lodestar
 bun install
 ```
 
-(The packages are also on npm as `@qmilab/lodestar-*` at v0.2.0 — the clone
+(The packages are also on npm as `@qmilab/lodestar-*` at v0.5.0 — the clone
 path is used here because it gives you the examples and probes to crib from,
 and every `bun run lodestar …` command below resolves through the clone
 root's `lodestar` script. In your own project instead:
