@@ -522,10 +522,32 @@ piece that could be built later.
   chain — free, local, no account. Without it a team UI would be the *only* way to
   resolve a hold, every held L4 would time out to a denial, and the solo path
   would be gated.
-- **A separate team surface (if built, lives elsewhere):** multi-approver
-  workflows, team routing of `required_authority` to real people, a hosted
-  approval surface, audit/compliance exports of the approval trail, and
+- **A separate team surface (if built, lives elsewhere):** team *routing* of
+  `required_authority` to real people, partial-state tracking, reminders /
+  escalation / on-call, roster-management UX, directory / RBAC / multi-tenancy, a
+  hosted approval surface, audit/compliance exports of the approval trail, and
   curated/managed policy packs. None of it gates the local workflow.
+
+**Multi-approver: the line runs through it, not around it.** An earlier revision
+assigned N-of-M wholesale to the team surface. That was too coarse, and ADR-0041
+splits it along the same seam every other decision here follows — **the kernel
+adjudicates; the client accumulates**:
+
+- **Adjudication is a trust decision, so it ships here.** Threshold expression in
+  the signed policy (`ApprovalRequirement.quorum`), independent signature
+  verification of each constituent resolution against the operator-pinned roster,
+  distinctness, the deny veto, and the authoritative "granted by M of N — here are
+  the M verifiable resolutions" record. If a coordinating client instead gathered
+  N signatures and submitted one synthesized grant, the kernel would record a
+  *single-approver* decision and quorum would degrade into an unverifiable claim
+  by that intermediary — the exact property customer-held keys exist to prevent.
+- **Routing is not a trust decision, so it stays out.** Who to ask, in what order,
+  with what reminders, rendered in whose queue — none of it changes what the
+  kernel will accept as authorization.
+
+See ADR-0041 for the full design (including why the threshold does *not* belong on
+`RequiredAuthority`, and why a mid-collection roster rotation fails closed). Design
+accepted; implementation not yet scheduled.
 
 ## Governing UI
 
@@ -566,10 +588,13 @@ and why it decided, not just "approve y/n"), and resolves it.
   proxy's hold loop polls. The UI is one concrete implementation of
   `ApprovalResolver`; the local `lodestar approve` CLI is another, a CI
   auto-rule a third. What the team surface adds over the CLI is *team* —
-  routing, multi-approver, the queue view — not the ability to approve at all.
+  routing, collecting multiple approvers' resolutions, the queue view — not the
+  ability to approve at all, and not the adjudication of whether a quorum was met
+  (that is the kernel's, per ADR-0041).
 - `required_authority` on the request is what routes it: the surface shows a
   request only to an approver whose `Actor` clears its trust baseline, sensitivity
-  clearance, and scope. Multi-approver (N-of-M) and team views live here.
+  clearance, and scope. Team routing and queue views live here; the N-of-M
+  *verdict* does not — the surface collects and displays, the kernel decides.
 - This is the surface that closes the loop the whole project points at:
   `lodestar guard mcp-proxy && claude code` proposes an L4 push → the Policy
   Kernel holds it → the approver sees the chain and approves → the action
@@ -626,8 +651,12 @@ manifest:
     proxy timeout. v0 treats a timed-out hold as a soft denial to re-propose.
   - **Synchronous pre-flight sentinel pass** — closing the alert-latency race in
     the arbitrate hook; v0 reads landed alerts (eventually-consistent).
-  - **Multi-approver / team routing / hosted approval surface** — a separate
-    team-scale surface, out of scope here.
+  - **Team routing / hosted approval surface** — a separate team-scale surface,
+    out of scope here. *(Note the split: **M-of-N quorum adjudication** is
+    in-scope for this component and designed in ADR-0041 — it is a trust
+    decision, so the kernel must verify it independently. Only the routing,
+    collection, and queue-view layer above it stays out. Design accepted;
+    implementation not yet scheduled.)*
   - **Cross-session policy state** — a held approval surviving a process restart
     needs the persistent stores; in-scope only where the Postgres stores already
     are.
