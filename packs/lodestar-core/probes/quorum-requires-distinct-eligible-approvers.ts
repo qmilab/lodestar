@@ -98,9 +98,13 @@
  *      deterministic misconfiguration, not a hold that stalls to a timeout.
  *   T. An unusable vote (post-deadline / mis-bound) is CONSUMED from the
  *      single-slot channel rather than left to block every later approver.
- *   U. The runtime-gate half of T. S and U both assert BOTH hosts on purpose:
- *      they run separate promotion and construction code, and "the gate mirrors
- *      the proxy" is an assumption that has already shipped a missing fix once.
+ *   U. The runtime-gate half of T. S, U and X all assert BOTH hosts on purpose:
+ *      they run separate promotion, construction and log-scanning code, and "the
+ *      gate mirrors the proxy" is an assumption that has already shipped a missing
+ *      fix once.
+ *   X. A vote SIGNED before the deadline still counts when the host records it
+ *      late — the deadline is about when the approver decided, not about the
+ *      host's append latency.
  *
  * Why this matters: quorum is the control an operator reaches for when one
  * approver is not enough — an irreversible payment, a production deploy, a key
@@ -1466,6 +1470,124 @@ async function runtimeGateReplayClassificationCase(): Promise<string | undefined
 }
 
 /**
+ * X. A vote SIGNED before the deadline must still count when the host records it
+ *    LATE. The envelope timestamp measures the host's own latency — a poll
+ *    interval, a slow append — while the approver's `at` is inside the signed
+ *    bytes and is the thing the deadline is about. Filtering on the envelope
+ *    charges the approver for the host's lag, so the Mth vote can be accepted at
+ *    promotion, written, and then ignored, expiring a quorum that was actually
+ *    reached in time.
+ *
+ *    Staged by writing the promoted grants with an envelope timestamp past the
+ *    deadline and a signed `at` well within it — a deterministic stand-in for the
+ *    real race (deadline elapses, host appends microseconds later). Asserted on
+ *    BOTH hosts: they run separate log scans.
+ */
+async function lateAppendCase(): Promise<string | undefined> {
+  // ── the runtime gate ──
+  {
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-late-gate-"))
+    const sessionId = "probe-quorum-late-gate"
+    const { gate, hook } = await buildGate(sessionId, logDir, "deploy", true)
+    const held = await hook.govern("deploy")
+    if (held.phase !== "pending_approval") {
+      await gate.stop()
+      return `[X/gate] the L4 call was not held (phase '${String(held.phase)}').`
+    }
+    const actionId = String(held.action_id)
+    const requestId = String(held.request_id)
+    const request = { request_id: requestId, action_id: actionId }
+
+    // Promote three genuine votes BY HAND, each signed now (well inside the
+    // deadline) but stamped as appended an hour late.
+    const writer = new EventLogWriter(logDir)
+    for (const approver of ["alice", "bob", "carol"]) {
+      const vote = castVote(request, approver)
+      const payload = {
+        request_id: vote.request_id,
+        action_id: vote.action_id,
+        approver_id: vote.approver_id,
+        at: vote.at,
+        signature: vote.signature,
+      }
+      await writer.append({
+        id: `late-${approver}`,
+        type: "approval.granted",
+        schema_version: "1",
+        project_id: PROJECT_ID,
+        session_id: sessionId,
+        actor_id: "host:probe",
+        timestamp: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+    }
+    const resumed = await hook.resume(actionId, requestId, 600)
+    await gate.stop()
+    if (resumed.phase !== "completed") {
+      return `[X/gate] three votes SIGNED inside the deadline did not satisfy the quorum because the gate recorded them late (phase '${String(resumed.phase)}'). The deadline is about when the approver decided, not when the host got around to appending.`
+    }
+    if (hook.bodyRuns.length !== 1) {
+      return `[X/gate] the remoted body ran ${hook.bodyRuns.length}x; expected exactly 1.`
+    }
+  }
+
+  // ── the MCP proxy ──
+  {
+    _resetToolsForTests()
+    registry._resetForTests()
+    _resetEventLogStateForTests()
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-late-proxy-"))
+    const sessionId = "probe-quorum-late-proxy"
+    const { proxy, calls } = makeProxy(logDir, sessionId, 6000)
+    await proxy.start()
+    const callPromise = proxy.handleCallTool({ name: PROXY_TOOL, arguments: {} })
+    const request = await waitForRequest(logDir, sessionId, 3000)
+    if (request === undefined) {
+      await proxy.stop()
+      return "[X/proxy] approval.requested never appeared in the proxy log."
+    }
+    // The proxy is the sole writer of its log; a second writer in the SAME process
+    // shares the single-writer mutex, which is the documented in-process resolver
+    // path — so this is a legitimate way to stage a late-appended promotion.
+    const writer = new EventLogWriter(logDir)
+    for (const approver of ["alice", "bob", "carol"]) {
+      const vote = castVote(request, approver)
+      const payload = {
+        request_id: vote.request_id,
+        action_id: vote.action_id,
+        approver_id: vote.approver_id,
+        at: vote.at,
+        signature: vote.signature,
+      }
+      await writer.append({
+        id: `late-proxy-${approver}`,
+        type: "approval.granted",
+        schema_version: "1",
+        project_id: PROJECT_ID,
+        session_id: sessionId,
+        actor_id: "host:probe",
+        timestamp: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+    }
+    const result = await callPromise
+    await proxy.stop()
+    if (result.isError === true) {
+      const kind = (result._meta as { _lodestar?: { kind?: unknown } })?._lodestar?.kind
+      return `[X/proxy] three votes SIGNED inside the deadline did not satisfy the quorum because the proxy recorded them late (kind '${String(kind)}').`
+    }
+    if (calls() !== 1) return `[X/proxy] downstream tool ran ${calls()}x; expected exactly 1.`
+  }
+  return undefined
+}
+
+/**
  * U. The runtime-gate half of case T. An unusable vote (post-deadline / mis-bound)
  *    must be CONSUMED from the single-slot channel by the GATE too, not only by
  *    the proxy — the two hosts run separate promotion code, and assuming one
@@ -1553,10 +1675,13 @@ async function run(): Promise<ProbeResult> {
   const staleVoteFailure = await runtimeGateStaleVoteCase()
   if (staleVoteFailure !== undefined) return { passed: false, details: staleVoteFailure }
 
+  const lateAppendFailure = await lateAppendCase()
+  if (lateAppendFailure !== undefined) return { passed: false, details: lateAppendFailure }
+
   return {
     passed: true,
     details:
-      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log; an undersized roster was refused before the collector ran (in process there is no deadline to rescue a hang); and a hold no configured seam could resolve wrote no approval.requested@1, leaving nothing unanswerable in the queue. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay; a roster too small to ever satisfy the declared threshold was refused at construction; and an unusable post-deadline vote was cleared from the single-slot channel — asserted on BOTH hosts, which run separate code — so the three real votes could still land.",
+      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log; an undersized roster was refused before the collector ran (in process there is no deadline to rescue a hang); and a hold no configured seam could resolve wrote no approval.requested@1, leaving nothing unanswerable in the queue. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay; a roster too small to ever satisfy the declared threshold was refused at construction; and an unusable post-deadline vote was cleared from the single-slot channel — asserted on BOTH hosts, which run separate code — so the three real votes could still land; and votes signed inside the deadline still satisfied the quorum on both hosts when the host recorded them late, since the deadline is about the approver's signed decision time, not the host's append latency.",
   }
 }
 

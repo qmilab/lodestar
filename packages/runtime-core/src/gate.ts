@@ -1448,9 +1448,15 @@ export class RuntimeGate {
       const payload = parsed.data
       if (payload.request_id !== request.request_id) continue
       if (payload.action_id !== request.action_id) continue
-      if (!withinDeadline(payload.at, deadlineAt) || !withinDeadline(ev.timestamp, deadlineAt)) {
-        continue
-      }
+      // The deadline applies to the approver's SIGNED `at`, not to the envelope
+      // timestamp (which the single-approver scan uses). The signed field is when
+      // the approver decided — inside the signed bytes, so unforgeable — while the
+      // envelope is when THIS GATE got around to appending it. Filtering on the
+      // envelope charges the approver for the gate's own latency, so a vote
+      // accepted at promotion could be written and then ignored, expiring a quorum
+      // that was reached in time. `evaluateQuorum` re-checks the same signed field
+      // against the same deadline, so nothing is weakened.
+      if (!withinDeadline(payload.at, deadlineAt)) continue
       const doc: ApprovalResolutionDoc = {
         request_id: payload.request_id,
         action_id: payload.action_id,

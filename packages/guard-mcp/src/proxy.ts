@@ -2385,6 +2385,17 @@ function resolutionOutcomeFor(
  * There is no `isRejected` skip list here: a forged event is filtered by the
  * caller's signature gate on every pass, and unlike the single-approver path
  * there is nothing for it to "mask" — the scan does not stop at the first hit.
+ *
+ * The deadline is applied to the approver's **signed** `at`, NOT to the envelope
+ * timestamp the single-approver scan uses. The two measure different things: the
+ * signed field is when the approver decided (inside the signed bytes, so it cannot
+ * be backdated without their key), while the envelope is when THIS HOST got around
+ * to appending it. Filtering on the envelope charges the approver for the host's
+ * own latency — a poll interval, a slow log write — so the Mth vote could be
+ * accepted at promotion, written, and then ignored, expiring a quorum that was
+ * actually reached in time. Nothing is weakened: `evaluateQuorum` re-checks the
+ * same signed `at` against the same deadline, and the signed field is the one an
+ * attacker cannot move.
  */
 function allResolutionsFor(
   events: EventEnvelope[],
@@ -2399,13 +2410,13 @@ function allResolutionsFor(
   }> = []
   for (const e of events) {
     if (e.type !== "approval.granted" && e.type !== "approval.denied") continue
-    if (notAfter !== undefined && e.timestamp > notAfter) continue
     const schema =
       e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
     const parsed = schema.safeParse(e.payload)
     if (!parsed.success) continue
     const p = parsed.data
     if (p.request_id !== requestId || p.action_id !== actionId) continue
+    if (notAfter !== undefined && Date.parse(p.at) > Date.parse(notAfter)) continue
     const kind = e.type === "approval.granted" ? "granted" : "denied"
     found.push({ doc: { ...p, kind }, signature: p.signature, eventId: e.id })
   }
