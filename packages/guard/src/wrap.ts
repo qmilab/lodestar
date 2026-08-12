@@ -47,10 +47,12 @@ import {
   needsQuorum,
   promotedVoteEventType,
   promotedVotePayload,
+  quorumCapacity,
   quorumDeniedOutcome,
   quorumGrantedOutcome,
   quorumOptions,
   quorumReachedPayload,
+  quorumRosterShortfall,
   quorumShortfallReason,
   resolutionIsAuthentic,
   voteFromResolution,
@@ -58,6 +60,7 @@ import {
 } from "./quorum-host.js"
 import type {
   AgentLoop,
+  ApprovalResolver,
   CallToolOptions,
   CallToolResult,
   GuardConfig,
@@ -463,6 +466,18 @@ export async function runGuarded<T>(
   const compiledPolicy: CompiledPolicy | undefined =
     typeof config.policy_gate === "function" ? undefined : config.policy_gate
 
+  // M-of-N quorum (ADR-0041), the same construction-time guard the MCP proxy and
+  // the runtime gate apply — a provably-unsatisfiable roster is a deterministic
+  // misconfiguration, so refuse the session rather than discover it on the first
+  // held action. It matters MORE here than out-of-process: those hosts bound a
+  // hold by a deadline, but in process `collect` owns the waiting, so a collector
+  // patiently waiting for a third vote that can never exist hangs the tool call
+  // outright instead of timing out.
+  if (compiledPolicy !== undefined) {
+    const shortfall = quorumRosterShortfall(compiledPolicy.policy, config.quorum)
+    if (shortfall !== null) throw new Error(`guard: ${shortfall}`)
+  }
+
   // Propagate the guarded session/project ids into every
   // `tool.execute(inputs, ctx)` call so custom tools that scope side
   // effects by session_id / project_id (logging, temp dirs, capability
@@ -504,6 +519,18 @@ export async function runGuarded<T>(
       "Set `GuardConfig.quorum` to { authorized_keys, approvers, collect }.",
     )
     const quorum = config.quorum
+    // Against the REQUEST's own threshold, not just the policy's maximum: a bare
+    // `PolicyGate` carries no document for the session-setup guard above to read,
+    // and this is the number `collect` will be asked to reach. Checked BEFORE
+    // calling it, because a collector waiting for votes that can never exist has
+    // no deadline to rescue it.
+    const required = request.quorum ?? 1
+    const capacity = quorumCapacity(quorum)
+    if (capacity < required) {
+      throw new Error(
+        `guard.callTool: action '${parked.tool}' needs a quorum of ${required} distinct approvers, but only ${capacity} configured approver(s) hold BOTH a pinned key and an authority record. No sequence of votes could satisfy it, and in process there is no deadline to time the wait out.`,
+      )
+    }
 
     const votes: QuorumVote[] = []
     for (const resolution of await quorum.collect(request)) {
@@ -584,21 +611,48 @@ export async function runGuarded<T>(
       if (reevaluated.verdict === "hold") evaluation = reevaluated
     }
     const request = openApprovalRequest(parked, evaluation)
+
+    // ADR-0041: a `quorum >= 2` request takes the adjudicated path; the branch is
+    // on the REQUEST, not on config, so a policy that declares a quorum can never
+    // be silently resolved by the single-approver resolver.
+    //
+    // Which seam this request needs is decided BEFORE `approval.requested@1` is
+    // written. Emitting first and throwing after would leave a durable pending
+    // approval in the log that NOTHING configured could ever resolve — it would
+    // sit in `pendingApprovals` and in `lodestar approve list` forever, indexed as
+    // an open hold awaiting a human who has no way to answer it. The two shapes
+    // that hit this are both plausible: a quorum request under a session wired
+    // only with `approval_resolver`, and a single-approver request under one wired
+    // only with `quorum`.
+    const isQuorumHold = needsQuorum(request)
+    let resolver: ApprovalResolver | undefined
+    if (isQuorumHold) {
+      assertQuorumRoster(
+        request,
+        config.quorum,
+        "Set `GuardConfig.quorum` to { authorized_keys, approvers, collect }.",
+      )
+    } else {
+      if (config.approval_resolver === undefined) {
+        throw new Error(
+          `guard.callTool: action '${toolName}' was held for approval (pending_approval) but no approval_resolver was configured. A policy that can hold must say who resolves the hold.`,
+        )
+      }
+      resolver = config.approval_resolver
+    }
+
     await emit("approval.requested", request)
 
-    // ADR-0041: a `quorum >= 2` request takes the adjudicated path instead. The
-    // branch is on the REQUEST, not on config, so a policy that declares a quorum
-    // can never be silently resolved by the single-approver resolver.
-    if (needsQuorum(request)) {
+    if (isQuorumHold) {
       return await resolveQuorumHold(parked, request)
     }
-    if (config.approval_resolver === undefined) {
-      throw new Error(
-        `guard.callTool: action '${toolName}' was held for approval (pending_approval) but no approval_resolver was configured. A policy that can hold must say who resolves the hold.`,
-      )
+    // `resolver` is assigned on every non-quorum path above; the guard is for the
+    // type-checker, not a reachable branch.
+    if (resolver === undefined) {
+      throw new Error(`guard.callTool: no approval resolver for action '${toolName}'`)
     }
 
-    const outcome = await config.approval_resolver(request)
+    const outcome = await resolver(request)
     // Apply (and validate the binding) first, so the canonical `at` comes from
     // the kernel transition and a mis-bound outcome throws before we log it.
     const resolved = kernel.resolve(parked, outcome)

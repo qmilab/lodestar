@@ -59,6 +59,11 @@
  *   P. A collector's mis-bound vote is never promoted: a validly-signed
  *      resolution for a DIFFERENT request must not be written into this session's
  *      log, where it would look like that other request's resolution.
+ *   V. An undersized roster is refused BEFORE the collector is called. In process
+ *      `collect` owns the waiting with no deadline, so a collector holding out for
+ *      a vote that can never exist hangs the call rather than timing out.
+ *   W. A hold no configured seam can resolve writes NO `approval.requested@1` —
+ *      it must not leave a durable pending approval nothing can ever answer.
  *
  * And through the REAL MCP proxy, over the REAL signed `.approvals/` file
  * side-channel — the accumulating hold loop, which is where the transport
@@ -416,6 +421,13 @@ function assertNotAuthorized(label: string, outcome: CaseOutcome): string | unde
 
 // ── Cases A–J: guard.wrap() ──────────────────────────────────────────────────
 
+/** Grants every request it is authorised for — the single-approver seam. */
+const singleApproverResolver: ApprovalResolver = async (request) => {
+  const auth = authorizeResolution(request, actorFor("alice"), "granted", { reason: "ok" })
+  if (!auth.authorized) throw new Error(`probe approver refused: ${auth.reason}`)
+  return auth.outcome
+}
+
 async function guardCases(): Promise<string | undefined> {
   // A. Three eligible grants satisfy it.
   const a = await driveQuorum((r) => [
@@ -558,17 +570,12 @@ async function guardCases(): Promise<string | undefined> {
   // J. `quorum` absent is byte-identical to today: the single-approver resolver
   //    path, unchanged, and NO quorum event.
   registerProbeTool()
-  const singleResolver: ApprovalResolver = async (request) => {
-    const auth = authorizeResolution(request, actorFor("alice"), "granted", { reason: "ok" })
-    if (!auth.authorized) throw new Error(`probe approver refused: ${auth.reason}`)
-    return auth.outcome
-  }
   const j = await runGuarded(
     async (ctx) => {
       await ctx.callTool("probe.deploy", {}, { contract: { required_level: 4 } })
       return "ok"
     },
-    { ...baseConfig(SINGLE_APPROVER_POLICY), approval_resolver: singleResolver },
+    { ...baseConfig(SINGLE_APPROVER_POLICY), approval_resolver: singleApproverResolver },
   )
   if (j.result !== "ok" || callCount() !== 1) {
     return `[J] the single-approver path regressed: loop returned '${j.result}', tool ran ${callCount()}x (expected 'ok' / 1).`
@@ -628,6 +635,83 @@ async function guardCases(): Promise<string | undefined> {
   ])
   if (vetoed.length !== 0) {
     return "[O] the host's action.rejected did not close the vetoed hold — a settled quorum must not linger in the queue."
+  }
+
+  // V. An UNDERSIZED roster is refused at SESSION SETUP, before any action runs.
+  //    This matters more in process than out of it: the proxy and the gate bound a
+  //    hold by a deadline, but here `collect` owns the waiting, so a collector
+  //    patiently holding out for a third vote that can never exist would hang the
+  //    tool call outright rather than time out.
+  registerProbeTool()
+  let collectorCalled = false
+  let undersizedError = ""
+  try {
+    await runGuarded(async () => "ok", {
+      ...baseConfig(QUORUM_POLICY),
+      quorum: {
+        // Two fully-configured approvers against the policy's quorum of 3.
+        authorized_keys: new Map(["alice", "bob"].map((id) => [id, publicKeyOf(id)])),
+        approvers: new Map(["alice", "bob"].map((id) => [id, actorFor(id)])),
+        collect: async () => {
+          collectorCalled = true
+          return []
+        },
+      },
+    })
+  } catch (err) {
+    undersizedError = err instanceof Error ? err.message : String(err)
+  }
+  if (undersizedError === "") {
+    return "[V] a session whose quorum roster (2) can never satisfy its policy (quorum 3) was accepted — every held action would then reach a collector that can never succeed, and in process there is no deadline to rescue the wait."
+  }
+  if (collectorCalled) {
+    return "[V] the collector ran despite a roster that could never satisfy the threshold."
+  }
+  if (!/quorum 3/.test(undersizedError) || !/only 2/.test(undersizedError)) {
+    return `[V] the refusal did not name the threshold and the actual capacity. Got: ${undersizedError}`
+  }
+
+  // W. A request NO configured seam can resolve must not leave a durable pending
+  //    approval. Emitting `approval.requested@1` and then throwing would index an
+  //    open hold in `pendingApprovals` and `lodestar approve list` forever,
+  //    awaiting a human with no way to answer it.
+  //
+  //    The reachable shape is a SINGLE-APPROVER policy under a session wired only
+  //    with `quorum`: the session-setup guard sees no quorum rule and passes, the
+  //    request carries no quorum so the quorum seam does not apply, and there is
+  //    no `approval_resolver`. (The mirror shape — a quorum policy with only
+  //    `approval_resolver` — is now refused at session setup by case V's guard.)
+  registerProbeTool()
+  const orphaned = await runGuarded(
+    async (ctx) => {
+      try {
+        await ctx.callTool("probe.deploy", {}, { contract: { required_level: 4 } })
+        return "ok"
+      } catch {
+        return "threw"
+      }
+    },
+    {
+      ...baseConfig(SINGLE_APPROVER_POLICY),
+      quorum: {
+        authorized_keys: new Map(EVERY_APPROVER.map((id) => [id, publicKeyOf(id)])),
+        approvers: new Map(EVERY_ELIGIBLE.map((id) => [id, actorFor(id)])),
+        collect: async () => [],
+      },
+    },
+  )
+  if (orphaned.result !== "threw") {
+    return "[W] a single-approver hold resolved through a session with no approval_resolver."
+  }
+  if (callCount() !== 0) {
+    return `[W] the tool ran ${callCount()}x for a hold no seam could resolve; expected 0.`
+  }
+  const orphanEvents = await sessionEvents(orphaned.session_id)
+  if (orphanEvents.some((e) => e.type === "approval.requested")) {
+    return "[W] an 'approval.requested@1' was written for a hold NO configured seam can resolve — it would sit in pendingApprovals and `lodestar approve list` forever, awaiting a human with no way to answer it."
+  }
+  if (pendingApprovals(orphanEvents).length !== 0) {
+    return "[W] an unresolvable hold was left in the read-side pending queue."
   }
 
   // P. A collector's MIS-BOUND vote is never promoted. It is validly signed, just
@@ -1472,7 +1556,7 @@ async function run(): Promise<ProbeResult> {
   return {
     passed: true,
     details:
-      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; and a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay; a roster too small to ever satisfy the declared threshold was refused at construction; and an unusable post-deadline vote was cleared from the single-slot channel — asserted on BOTH hosts, which run separate code — so the three real votes could still land.",
+      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log; an undersized roster was refused before the collector ran (in process there is no deadline to rescue a hang); and a hold no configured seam could resolve wrote no approval.requested@1, leaving nothing unanswerable in the queue. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay; a roster too small to ever satisfy the declared threshold was refused at construction; and an unusable post-deadline vote was cleared from the single-slot channel — asserted on BOTH hosts, which run separate code — so the three real votes could still land.",
   }
 }
 

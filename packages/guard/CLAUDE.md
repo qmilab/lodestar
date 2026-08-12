@@ -183,6 +183,14 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    `approval.granted@1` **carrying its signature** (a reader must be able to
    re-verify it against their own pinned keys), and only a satisfied evaluation
    emits `approval.quorum_reached@1` and un-parks the action.
+   `runGuarded` applies the same construction-time `quorumRosterShortfall` guard
+   the proxy and runtime gate do — and it matters **more** here: those hosts bound
+   a hold by a deadline, but in process `collect` owns the waiting, so a collector
+   holding out for a vote that can never exist hangs the tool call rather than
+   timing out. **Which seam a hold needs is decided BEFORE `approval.requested@1`
+   is written**: emitting first and throwing after would leave a durable pending
+   approval in the log that nothing configured could ever resolve, indexed as an
+   open hold in `pendingApprovals` and `lodestar approve list` forever.
 7. **Sentinels gate only through a wired arbiter — and only when the agent
    declares its decisions.** `GuardConfig.arbiter` is the seam; supplying it (with
    `policy_gate` compiled from the *same* arbiter, i.e. the `compileWithSentinels`
