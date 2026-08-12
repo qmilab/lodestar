@@ -88,6 +88,11 @@
  *      signed grant would un-park an action the policy held for three approvers.
  *   R. Once a quorum is reached, a promoted deny that never vetoed does not
  *      relabel a later downstream rejection as a human refusal on replay.
+ *   S. A roster that could never satisfy the declared threshold is refused at
+ *      CONSTRUCTION — `quorum: 3` with two fully-configured approvers is a
+ *      deterministic misconfiguration, not a hold that stalls to a timeout.
+ *   T. An unusable vote (post-deadline / mis-bound) is CONSUMED from the
+ *      single-slot channel rather than left to block every later approver.
  *
  * Why this matters: quorum is the control an operator reaches for when one
  * approver is not enough — an irreversible payment, a production deploy, a key
@@ -135,6 +140,7 @@ import {
   MCPProxy,
   type ProxyConfig,
   UpstreamServer,
+  readApprovalResolution,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard-mcp"
 import {
@@ -756,6 +762,16 @@ function makeProxy(
   return { proxy, calls: () => calls }
 }
 
+/** Poll `check` until it is true or `withinMs` elapses. */
+async function waitFor(check: () => Promise<boolean>, withinMs: number): Promise<boolean> {
+  const deadline = Date.now() + withinMs
+  while (Date.now() < deadline) {
+    if (await check()) return true
+    await delay(20)
+  }
+  return false
+}
+
 async function waitForRequest(
   logDir: string,
   sessionId: string,
@@ -787,6 +803,48 @@ async function waitForGrants(
     await delay(20)
   }
   return false
+}
+
+/**
+ * S. A roster that could never satisfy the declared threshold is a DETERMINISTIC
+ *    misconfiguration, not a runtime condition — `quorum: 3` with two fully
+ *    configured approvers can never be met by any sequence of votes. Unchecked it
+ *    presents as every governed L4 call stalling to an approval timeout with
+ *    nothing explaining why. Both out-of-process hosts refuse to construct.
+ */
+function undersizedRosterCase(): string | undefined {
+  const logDir = "/tmp/lodestar-probe-quorum-undersized"
+  let threw = ""
+  try {
+    makeProxy(logDir, "probe-quorum-undersized", 4000, {
+      // Two fully-configured approvers against the policy's quorum of 3.
+      authorized_keys: new Map(["alice", "bob"].map((id) => [id, publicKeyOf(id)])),
+      approvers: new Map(["alice", "bob"].map((id) => [id, actorFor(id)])),
+    })
+  } catch (err) {
+    threw = err instanceof Error ? err.message : String(err)
+  }
+  if (threw === "") {
+    return "[S] a roster of 2 was accepted for a policy declaring quorum 3 — no sequence of votes could satisfy it, so every hold would stall to an approval timeout with nothing explaining why."
+  }
+  if (!/quorum 3/.test(threw) || !/only 2/.test(threw)) {
+    return `[S] the refusal did not name the threshold and the actual capacity. Got: ${threw}`
+  }
+  // A key with no authority record does not add capacity: it can cast a
+  // promotable vote that never counts. Three keys, two authorities, still short.
+  let partialThrew = ""
+  try {
+    makeProxy(logDir, "probe-quorum-undersized-2", 4000, {
+      authorized_keys: new Map(["alice", "bob", "carol"].map((id) => [id, publicKeyOf(id)])),
+      approvers: new Map(["alice", "bob"].map((id) => [id, actorFor(id)])),
+    })
+  } catch (err) {
+    partialThrew = err instanceof Error ? err.message : String(err)
+  }
+  if (partialThrew === "") {
+    return "[S] a third PINNED KEY with no authority record was counted toward capacity — such an approver can cast a promotable vote but it can never be eligible."
+  }
+  return undefined
 }
 
 async function proxyCases(): Promise<string | undefined> {
@@ -833,6 +891,55 @@ async function proxyCases(): Promise<string | undefined> {
     if (countOf(types, APPROVAL_QUORUM_REACHED_EVENT_TYPE) !== 1) {
       return `[K] expected exactly 1 '${APPROVAL_QUORUM_REACHED_EVENT_TYPE}'; got ${countOf(types, APPROVAL_QUORUM_REACHED_EVENT_TYPE)}.`
     }
+  }
+
+  // T. An UNUSABLE vote in the single-slot channel must be CONSUMED, not left to
+  //    block it. A resolution dated after the deadline (approver clock skew) can
+  //    never become valid; because `lodestar approve` now refuses to clobber a
+  //    queued peer vote, leaving it in place would stop every later approver and
+  //    time the quorum out. The three genuine votes that follow must still land.
+  {
+    _resetToolsForTests()
+    registry._resetForTests()
+    _resetEventLogStateForTests()
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-proxy-stale-"))
+    const sessionId = "probe-quorum-proxy-stale"
+    const { proxy, calls } = makeProxy(logDir, sessionId, 8000)
+    await proxy.start()
+    const callPromise = proxy.handleCallTool({ name: PROXY_TOOL, arguments: {} })
+    const request = await waitForRequest(logDir, sessionId, 3000)
+    if (request === undefined) return "[T] approval.requested never appeared in the proxy log."
+
+    // A vote whose decision time is far past the hold's deadline.
+    const skewed = castVote(request, "dave")
+    await writeApprovalResolution(logDir, PROJECT_ID, {
+      ...skewed,
+      at: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+    })
+    // Wait for the proxy to see and clear the slot.
+    const cleared = await waitFor(
+      async () =>
+        (await readApprovalResolution(logDir, PROJECT_ID, request.request_id)) === undefined,
+      3000,
+    )
+    if (!cleared) {
+      return "[T] an unusable (post-deadline) vote was left in the single-slot channel — every later approver would be refused and the quorum would time out."
+    }
+
+    let cast = 0
+    for (const approver of ["alice", "bob", "carol"]) {
+      await writeApprovalResolution(logDir, PROJECT_ID, castVote(request, approver))
+      cast += 1
+      if (!(await waitForGrants(logDir, sessionId, cast, 3000))) {
+        return `[T] vote ${cast} ('${approver}') was not promoted after the stale vote was cleared.`
+      }
+    }
+    const result = await callPromise
+    await proxy.stop()
+    if (result.isError === true) {
+      return "[T] the quorum did not complete after an unusable vote was cleared from the channel."
+    }
+    if (calls() !== 1) return `[T] downstream tool ran ${calls()}x; expected exactly 1.`
   }
 
   // L. A PARTIALLY satisfied request that hits its deadline is a SOFT DENIAL.
@@ -1251,6 +1358,9 @@ async function run(): Promise<ProbeResult> {
   const guardFailure = await guardCases()
   if (guardFailure !== undefined) return { passed: false, details: guardFailure }
 
+  const undersized = undersizedRosterCase()
+  if (undersized !== undefined) return { passed: false, details: undersized }
+
   const proxyFailure = await proxyCases()
   if (proxyFailure !== undefined) return { passed: false, details: proxyFailure }
 
@@ -1266,7 +1376,7 @@ async function run(): Promise<ProbeResult> {
   return {
     passed: true,
     details:
-      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; and a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; and a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay.",
+      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; and a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay; a roster too small to ever satisfy the declared threshold was refused at construction; and an unusable post-deadline vote was cleared from the single-slot channel so the three real votes could still land.",
   }
 }
 

@@ -151,7 +151,65 @@ export function approverRosterFrom(
  * would be the thing that discovers the gap.
  */
 export function policyDeclaresQuorum(policy: Policy): boolean {
-  return policy.rules.some((rule) => (rule.approval?.quorum ?? 1) >= 2)
+  return maxDeclaredQuorum(policy) >= 2
+}
+
+/** The largest threshold any rule in this policy can open. `1` when none does. */
+export function maxDeclaredQuorum(policy: Policy): number {
+  return policy.rules.reduce((max, rule) => Math.max(max, rule.approval?.quorum ?? 1), 1)
+}
+
+/**
+ * How many *distinct* approvers this roster could ever contribute to a quorum:
+ * those holding **both** a pinned key (so their vote can be authentic) and an
+ * authority record (so it can be eligible). Either alone is useless — a key with
+ * no authority casts a promotable vote that never counts, and an authority record
+ * with no key cannot produce a vote at all.
+ *
+ * This is a strict upper bound, not a promise: an approver may still fail the
+ * request's `required_authority` at evaluation time, and the action's proposer is
+ * excluded from its own quorum. It exists so a host can reject the case that is
+ * *provably* unsatisfiable before it accepts any traffic.
+ */
+export function quorumCapacity(roster: QuorumRoster): number {
+  const pinned = new Set(
+    roster.authorized_keys instanceof Map
+      ? roster.authorized_keys.keys()
+      : roster.authorized_keys.map((k) => k.actor_id),
+  )
+  let capacity = 0
+  for (const actorId of roster.approvers.keys()) {
+    if (pinned.has(actorId)) capacity += 1
+  }
+  return capacity
+}
+
+/**
+ * The construction-time guard both out-of-process hosts share: `null` when this
+ * roster could satisfy every threshold `policy` can open, else the operator-facing
+ * reason it cannot.
+ *
+ * A roster smaller than the threshold is a **deterministic misconfiguration**, not
+ * a runtime condition — `quorum: 3` with two eligible approvers can never be
+ * satisfied by any sequence of votes. Left unchecked it presents as every governed
+ * L4 call stalling to `approval_timeout` with nothing in the log explaining why,
+ * which is the failure mode the whole no-silent-non-enforcement family exists to
+ * prevent. Better to refuse to start.
+ */
+export function quorumRosterShortfall(
+  policy: Policy,
+  roster: QuorumRoster | undefined,
+): string | null {
+  const required = maxDeclaredQuorum(policy)
+  if (required < 2) return null
+  if (roster === undefined) {
+    return `the policy declares a require_approval rule with quorum ${required}, but no pinned approver carries an \`authority\` record. Quorum checks TWO orthogonal things: a pinned public_key proves a vote is authentic, and an authority record ({ trust_baseline, sensitivity_clearance, authority_scope }) proves the approver is eligible against the rule's required_authority. Keys alone would let ANY pinned approvers satisfy the threshold, so a quorum with no authority records can never be satisfied. Declare \`authority\` on the approvers who may vote, or drop \`quorum\` from the rule.`
+  }
+  const capacity = quorumCapacity(roster)
+  if (capacity < required) {
+    return `the policy declares a require_approval rule with quorum ${required}, but only ${capacity} approver(s) hold BOTH a pinned key and an \`authority\` record. No sequence of votes could ever satisfy it, so every held action would stall to an approval timeout with nothing explaining why. Pin at least ${required} fully-configured approvers, or lower the rule's quorum.`
+  }
+  return null
 }
 
 /**
