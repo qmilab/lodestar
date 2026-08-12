@@ -118,6 +118,10 @@ grant is the authorization — **byte-identical to today** (compatibility ask #1
   ("2 approvers who each hold `repo:lodestar` and `secret` clearance") without a
   group registry. Groups would require a roster schema change and pull
   directory/RBAC concepts into OSS, which #175 explicitly assigns to consumers.
+  **This makes the predicate load-bearing**: because it is the *only* expression
+  of eligibility, adjudication must enforce it, which is why `evaluateQuorum`
+  takes an approver-authority input as well as the key roster (see "Adjudication
+  checks two orthogonal things").
 - **Q8 — incremental.** A bundle submission recreates the precise anti-pattern
   this ADR exists to prevent: an intermediary assembling M signatures and
   handing over one artifact. Per-vote events keep every signature independently
@@ -137,12 +141,61 @@ cognitive-core + harness).
 | Layer | Package | Responsibility |
 |---|---|---|
 | Wire format | `@qmilab/lodestar-core` | `ApprovalRequirement.quorum?`, `ApprovalRequest.quorum?`, `ApprovalQuorumReachedPayloadSchema` + event-type constants |
-| Adjudication | `@qmilab/lodestar-policy-kernel` | A **pure** `evaluateQuorum(request, resolutions, { authorizedKeys, proposedBy })` → `{ satisfied, required, approvers[], rejected[] }`. Re-verifies each resolution via the existing `verifyApprovalSignature`, dedups by `actor_id`, applies the deny veto and the proposer exclusion. No I/O, no clock. |
+| Adjudication | `@qmilab/lodestar-policy-kernel` | A **pure** `evaluateQuorum(request, resolutions, { authorizedKeys, approvers, proposedBy })` → `{ satisfied, required, approvers[], rejected[] }`. Per resolution: re-verifies authenticity via `verifyApprovalSignature`, **then** re-checks eligibility against `request.required_authority` (see below); dedups by `actor_id`; applies the deny veto and the proposer exclusion. No I/O, no clock. |
 | Authority | `-guard` / `-guard-mcp` / `-runtime-core` | Holds the pinned roster, calls `evaluateQuorum`, emits `approval.quorum_reached@1`, drives `resolve()`. Remains the sole log writer. |
 | Read side | `@qmilab/lodestar-trace` | Projects the authoritative record. |
 
 `-policy-kernel` is importable without `-guard`, so the adjudication primitive
 satisfies ask #3 directly.
+
+### Adjudication checks two orthogonal things, and needs two inputs
+
+Counting signatures is **not** sufficient. Authenticity and eligibility are
+separate properties with separate inputs, and conflating them silently weakens
+every quorum:
+
+- **Authenticity** — "did an operator-pinned key sign this exact resolution?"
+  Input: `authorizedKeys` (`actor_id → SPKI PEM`). Enforced by
+  `verifyApprovalSignature`.
+- **Eligibility** — "does this approver satisfy `request.required_authority`
+  (`min_trust_baseline` / `sensitivity_clearance` / `scope`)?" Input: the
+  approver's `Actor`. Enforced by the same predicate `authorizeResolution`
+  already applies.
+
+`authorizedKeys` cannot answer the second question, and **the signed resolution
+carries no authority** — the canonical document is
+`{ request_id, action_id, kind, approver_id, reason?, at }`, deliberately.
+So `evaluateQuorum` takes an operator-supplied
+`approvers: ReadonlyMap<actor_id, Actor>` alongside the key roster. **An approver
+whose `Actor` is absent or falls short does not count toward the quorum** (fail
+closed) — it is recorded in `rejected[]` with the shortfall reason, exactly as
+`approverShortfall` phrases it today.
+
+Without this, a rule reading `{ required_authority: { sensitivity_clearance:
+"secret" }, quorum: 3 }` would be satisfied by *any three pinned approvers*. That
+is not a corner case: `openApprovalRequest` runs every rule's authority through
+`withActionSensitivity()`, which **always** stamps at least the action's mapped
+sensitivity — so every `ApprovalRequest.required_authority` is non-empty, and the
+gap would bite on every quorum rather than only on explicitly-stricter ones.
+
+**This raises the predicate's status for the quorum path only.** Today the
+eligibility check runs in the *writer* process against a **self-declared**
+`Actor` (`lodestar approve` builds one from its own flags; `approve.ts:60`
+labels it *"honest-mistake protection … not a cryptographic boundary (a hard
+boundary needs signed actors / a trusted actor registry, deliberately
+deferred)"*). Quorum cannot inherit that posture, because **Q3 makes
+`required_authority` the sole expression of who is eligible** — if adjudication
+does not enforce it, Q3's answer is hollow and "2 approvers holding
+`repo:lodestar`" degrades to "2 pinned approvers". So for `quorum ≥ 2` the
+authority source must be **operator-held**, never taken from the resolution or
+from the resolver's self-declaration. Consistent with Q6, it is read at
+**evaluation time**, so a demoted approver stops counting exactly as a revoked
+key does.
+
+The single-approver path is **unchanged** — still self-declared, still
+honest-mistake protection, still byte-identical to today (compatibility ask #1).
+This ADR closes the deferred-actor-registry gap for the quorum path only, and
+does not pretend to close it generally.
 
 **Authoritative vs. advisory on the read side.** `approval.quorum_reached@1` is
 the verified assertion. A UI that wants to render in-progress "2 of 3" derives
@@ -179,8 +232,17 @@ instead of its own tally. Every prior single-signature consumer is untouched.
   (in-process resolver, MCP proxy, runtime gate) need the same update, and the
   proxy's deadline path must expire a *partially* satisfied request as a soft
   denial — an accumulated 2-of-3 that hits its deadline is **not** an approval.
+- **Enabling quorum requires operators to pin approver *authority*, not just
+  approver keys.** `authorized_keys` alone cannot satisfy a non-empty
+  `required_authority`, and every request has one. A host with no authority
+  source cannot satisfy a `quorum ≥ 2` rule — deliberately, since the
+  alternative is a quorum that counts ineligible approvers. Note this is a new
+  operator *input*, not a roster schema change: the `Actor` map is supplied to
+  `evaluateQuorum` by the host, exactly as `authorizeResolution` already takes
+  one, so `authorized_keys` keeps its shape and Q3's "no roster change" holds.
 - **Mid-collection rotation stalls a vote** (Q6). Accepted as the fail-closed
-  direction; must be documented for operators.
+  direction; must be documented for operators. The same applies to an approver
+  demoted below the predicate mid-collection.
 - **The floor-held case carries no quorum.** A hold forced by the trust-ladder
   floor has no matched rule and therefore no `ApprovalRequirement`, so it defaults
   to 1. An operator wanting quorum on floor-held actions writes an explicit
@@ -195,8 +257,11 @@ written. Implementation must ship with:
   minimum: a collector-synthesized single grant **cannot** satisfy `quorum: 3`;
   M−1 valid grants do not un-park; a duplicate `actor_id` counts once; a deny
   after M−1 grants rejects; the proposer's own grant does not count at
-  `quorum ≥ 2`; a revoked key's outstanding vote stops counting; and
-  `quorum: 1`/absent is byte-identical to today.
+  `quorum ≥ 2`; a revoked key's outstanding vote stops counting; **an
+  authentically-signed grant from a pinned approver who does *not* clear
+  `required_authority` does not count** (and an approver with no supplied
+  `Actor` does not count — fail closed); and `quorum: 1`/absent is
+  byte-identical to today.
 - The new symbols declared in `docs/reference/public-api.md` **before**
   integrators pin them (compatibility ask #2).
 - `docs/architecture/policy-kernel.md` non-goal restated (done in this ADR's PR).
@@ -223,3 +288,16 @@ written. Implementation must ship with:
 - **Reusing `approval.granted@1` as the authorization at M>1** — rejected: it
   conflates "one approver granted" with "the action is authorized," which is
   exactly the distinction quorum introduces.
+- **Adjudicating on signatures alone (no authority input)** — rejected: it counts
+  *authentic* approvers rather than *eligible* ones, so any three pinned keys
+  would satisfy a `secret`-clearance quorum. Because `withActionSensitivity()`
+  always stamps a clearance floor, this would misfire on every quorum rule, and
+  it would hollow out Q3.
+- **Carrying the approver's authority inside the signed resolution** — rejected:
+  self-attested authority is not authority. It would let a pinned-but-ineligible
+  approver mint their own clearance, and it would change the canonical resolution
+  document (breaking every existing signature).
+- **Reading authority from the resolver's self-declaration (today's CLI
+  behaviour)** — rejected for quorum: `approve.ts` already labels that
+  honest-mistake protection rather than a boundary, and Q3 makes the predicate
+  load-bearing. Left unchanged for the single-approver path.

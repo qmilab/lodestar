@@ -516,6 +516,14 @@ The options we rejected, each with a one-line reason.
   bundle recreates the collector anti-pattern). Adjudication is a **pure** `evaluateQuorum` in
   `-policy-kernel` (importable without `-guard`, per the read-side reachability ask); `-trace`
   projects the verified record, with in-progress "2 of 3" explicitly **advisory, never
-  authorization**. Schema delta = **three additive-optional fields**, permitted by
-  `public-api.md`'s "additive growth only" — not v0.2-lock surgery.
+  authorization**. It checks **two orthogonal things and so takes two inputs** — authenticity
+  (`authorizedKeys`) *and* eligibility (an operator-supplied `actor_id → Actor` map checked against
+  `required_authority`, fail-closed on unknown): counting signatures alone would let *any* three
+  pinned approvers satisfy a `secret`-clearance quorum, and since `withActionSensitivity()` always
+  stamps a clearance floor that would misfire on **every** quorum, hollowing out the
+  predicate-only-eligibility decision. Raises the predicate from today's self-declared
+  honest-mistake check to an adjudicated one **for the quorum path only** — closing, just there,
+  the "trusted actor registry, deliberately deferred" gap `approve.ts` names. Schema delta =
+  **three additive-optional fields**, permitted by `public-api.md`'s "additive growth only" — not
+  v0.2-lock surgery.
   **Status: Accepted (design; implementation not yet scheduled).**
