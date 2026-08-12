@@ -37,6 +37,19 @@ export {
   type OpenApprovalRequestOptions,
 } from "./approval.js"
 
+// M-of-N quorum adjudication (ADR-0041). Pure — no I/O, no clock, no key access
+// of its own — so a read-side consumer can re-adjudicate a logged quorum against
+// its own pinned roster without importing the write-side runtime.
+export {
+  evaluateQuorum,
+  type EvaluateQuorumOptions,
+  type QuorumEvaluation,
+  type QuorumRejectionCode,
+  type QuorumVeto,
+  type QuorumVote,
+  type RejectedQuorumVote,
+} from "./quorum.js"
+
 export {
   autoApprovePolicy,
   autoApprovePolicyCompiled,
