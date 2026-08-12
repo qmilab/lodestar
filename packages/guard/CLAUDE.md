@@ -107,7 +107,13 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   signature, promote the vote to its own `approval.granted@1` (which is what gives
   it a citable `event_id`), then run the pure `evaluateQuorum` over everything
   accumulated. Adjudication itself lives in `@qmilab/lodestar-policy-kernel` and is
-  never duplicated here.
+  never duplicated here. **This seam is declared stable** in
+  `docs/reference/public-api.md` and pinned by the `public-api-surface` probe —
+  signatures at compile time, and the security semantics behaviourally (no
+  unsigned path in `resolutionIsAuthentic`; `assertQuorumRoster` throws rather
+  than downgrading; `quorumGrantedOutcome` throws on an unsatisfied evaluation;
+  `promotedVotePayload` carries the signature). The *wording* of
+  `quorumShortfallReason` is deliberately not contractual.
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is
