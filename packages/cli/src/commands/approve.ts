@@ -324,21 +324,38 @@ async function resolveRequest(input: {
 
   // Already resolved in the log — the proxy (or an in-process resolver) settled
   // it. Report the existing verdict and exit cleanly; the desired end-state holds.
-  const existing = existingResolution(events, requestId)
+  const quorumFor = collectQuorumTargets(collectRequests(events))
+  const existing = existingResolution(events, requestId, quorumFor)
   if (existing !== undefined) {
+    const because =
+      existing.note ?? `${existing.verdict}${existing.approver ? ` by '${existing.approver}'` : ""}`
     process.stdout.write(
-      `[approve] request '${requestId}' is already ${existing.verdict}${existing.approver ? ` by '${existing.approver}'` : ""}. No change made.\n`,
+      `[approve] request '${requestId}' is already ${existing.note ? `resolved — ${because}` : because}. No change made.\n`,
     )
     return 0
   }
 
-  // A resolution is already queued in the side-channel (the proxy has not yet
+  // A resolution is already queued in the side-channel (the host has not yet
   // promoted it). Overwriting is a legitimate change-of-mind, but be explicit.
   const queued = await readApprovalResolution(root, projectId, requestId)
-  if (queued !== undefined && queued.kind !== kind) {
-    process.stdout.write(
-      `[approve] a '${queued.kind}' resolution by '${queued.approver_id}' is already queued for '${requestId}'; overwriting with '${kind}'.\n`,
-    )
+  if (queued !== undefined) {
+    // The channel is a SINGLE SLOT per request, which only becomes contentious
+    // with quorum: several approvers vote on the same request, and overwriting a
+    // peer's not-yet-promoted vote would silently destroy it. Refuse rather than
+    // clobber — the vote is lost with no trace otherwise, and "retry in a moment"
+    // is a far better failure than a quorum that never completes. Overwriting
+    // one's OWN queued vote is still a legitimate change of mind.
+    if (quorumFor.has(requestId) && queued.approver_id !== approver) {
+      process.stderr.write(
+        `[approve] refused: a '${queued.kind}' vote by '${queued.approver_id}' is queued for '${requestId}' and has not been promoted yet.\n          The approval channel holds one vote at a time, so writing now would discard theirs.\n          Re-run in a moment, once the host has promoted it.\n`,
+      )
+      return 5
+    }
+    if (queued.kind !== kind) {
+      process.stdout.write(
+        `[approve] a '${queued.kind}' resolution by '${queued.approver_id}' is already queued for '${requestId}'; overwriting with '${kind}'.\n`,
+      )
+    }
   }
 
   if (request.deadline !== undefined && Date.parse(request.deadline) < Date.now()) {
@@ -662,11 +679,22 @@ function collectQuorumProgress(events: EventEnvelope[]): Map<string, string[]> {
  * The existing log verdict for a request, if any — ignoring a grant/deny the
  * proxy signature-rejected (see {@link collectResolvedRequestIds}), so a forged
  * resolution does not block a real one. `approval.expired@1` is always honoured.
+ *
+ * **A grant is NOT terminal on a `quorum >= 2` request** (ADR-0041): there it is
+ * one approver's *vote*, and the authorization is `approval.quorum_reached@1`.
+ * The `quorumFor` map is what makes that distinction; without it the second and
+ * third approvers would be told the request "is already granted by <first
+ * approver>" and could never cast their vote — quorum would be unusable through
+ * this CLI. A *deny* is still terminal: one valid deny is decisive regardless of
+ * grants collected. Same split `collectResolvedRequestIds` applies to the read
+ * side; the two must agree, or the queue and the write path disagree about what
+ * is still open.
  */
 function existingResolution(
   events: EventEnvelope[],
   requestId: string,
-): { verdict: "granted" | "denied" | "expired"; approver?: string } | undefined {
+  quorumFor: ReadonlyMap<string, number>,
+): { verdict: "granted" | "denied" | "expired"; approver?: string; note?: string } | undefined {
   const index = rejectionIndex(events)
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
@@ -678,6 +706,7 @@ function existingResolution(
         p.data.request_id === requestId &&
         isGenuineResolution(e, requestId, index)
       ) {
+        if (e.type === "approval.granted" && quorumFor.has(requestId)) continue
         return {
           verdict: e.type === "approval.granted" ? "granted" : "denied",
           approver: p.data.approver_id,
@@ -686,6 +715,15 @@ function existingResolution(
     } else if (e.type === "approval.expired") {
       const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
       if (p.success && p.data.request_id === requestId) return { verdict: "expired" }
+    } else if (e.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
+      const p = ApprovalExpiredPayloadSchema.pick({ request_id: true }).safeParse(e.payload)
+      if (p.success && p.data.request_id === requestId) {
+        const quorum = quorumFor.get(requestId)
+        return {
+          verdict: "granted",
+          note: `its quorum${quorum !== undefined ? ` of ${quorum}` : ""} was reached`,
+        }
+      }
     }
   }
   return undefined

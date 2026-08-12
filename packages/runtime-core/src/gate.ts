@@ -71,6 +71,7 @@ import {
   quorumOptions,
   quorumReachedPayload,
   quorumShortfallReason,
+  resolutionIsAuthentic,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
 import {
@@ -1243,12 +1244,17 @@ export class RuntimeGate {
       // wait window), so a stalled channel cannot hang a short-poll resume.
       await this.promoteChannelVote(
         request,
+        roster,
         channelFetchBudgetMs(deadlineAt, startedAt, waitMs),
         deadlineAt,
       )
 
       // (2) + (3) Re-read the durable log and adjudicate everything accumulated.
-      const evaluation = evaluateQuorum(request, await this.verifiedVotesFromLog(request), options)
+      const evaluation = evaluateQuorum(
+        request,
+        await this.verifiedVotesFromLog(request, roster),
+        options,
+      )
 
       if (evaluation.satisfied || evaluation.vetoed !== undefined) {
         const at = new Date().toISOString()
@@ -1331,6 +1337,7 @@ export class RuntimeGate {
    */
   private async promoteChannelVote(
     request: ApprovalRequest,
+    roster: QuorumRoster,
     fetchBudgetMs: number,
     deadlineAt: number | undefined,
   ): Promise<void> {
@@ -1352,7 +1359,7 @@ export class RuntimeGate {
       this.consumeResolution(ref)
       return
     }
-    if (this.resolutionVerified(resolution, resolution.signature)) {
+    if (resolutionIsAuthentic(resolution, roster.authorized_keys)) {
       this.promotedVoteHashes.add(hash)
       await this.emitCanonicalResolution(outcomeFromResolution(resolution), resolution.signature)
     } else {
@@ -1366,7 +1373,16 @@ export class RuntimeGate {
   /**
    * Every `approval.granted@1` / `approval.denied@1` in the durable log bound to
    * this request, inside its deadline, whose signature verifies against the
-   * operator-pinned approver keys — as the votes `evaluateQuorum` adjudicates.
+   * **quorum roster's** pinned keys — as the votes `evaluateQuorum` adjudicates.
+   *
+   * The roster, not `config.approvals.authorized_keys`, is deliberate on two
+   * counts. It honours an injected `RuntimeGateOverrides.quorumRoster` (a host
+   * that pins keys only there would otherwise have every valid vote rejected
+   * before adjudication ever saw it), and it routes through
+   * `resolutionIsAuthentic`, which has **no unsigned path** — unlike the
+   * single-approver `resolutionVerified`, which honours a no-keys + explicit
+   * `allow_unsigned` legacy mode. An unsigned vote is exactly the synthesized
+   * artifact ADR-0041 refuses, so quorum must not inherit that escape hatch.
    *
    * Signature verification here is only the *authenticity* half; eligibility,
    * distinctness, the proposer exclusion and the deny veto are all
@@ -1374,7 +1390,10 @@ export class RuntimeGate {
    * and audited once (deduped by envelope id — the log is append-only, so the event
    * never changes), exactly as the single-approver path does.
    */
-  private async verifiedVotesFromLog(request: ApprovalRequest): Promise<QuorumVote[]> {
+  private async verifiedVotesFromLog(
+    request: ApprovalRequest,
+    roster: QuorumRoster,
+  ): Promise<QuorumVote[]> {
     let events: EventEnvelope[] = []
     try {
       events = await this.readSessionEvents()
@@ -1405,7 +1424,9 @@ export class RuntimeGate {
         at: payload.at,
       }
       if (payload.reason !== undefined) doc.reason = payload.reason
-      if (!this.resolutionVerified(doc, payload.signature)) {
+      if (
+        !resolutionIsAuthentic({ ...doc, signature: payload.signature }, roster.authorized_keys)
+      ) {
         await this.emitSignatureRejected(`log:${ev.id}`, doc, {
           source: "log",
           rejectedEventId: ev.id,

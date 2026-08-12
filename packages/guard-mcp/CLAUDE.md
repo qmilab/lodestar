@@ -304,7 +304,13 @@ Cognitive Core. The resulting event log is renderable by
     `approvals.authorized_keys[].authority` is the operator-held eligibility
     record; guard (D) throws at construction if the policy declares a quorum and
     no approver carries one, because otherwise every vote would be rejected as
-    ineligible and the hold would look like a stalled approval.
+    ineligible and the hold would look like a stalled approval. **The quorum path
+    verifies against the ROSTER, not `config.approvals.authorized_keys`** — via
+    the shared `resolutionIsAuthentic`, not `resolutionVerified`. Two reasons:
+    it honours an injected `MCPProxyOverrides.quorumRoster` (a host pinning keys
+    only there would otherwise have every valid vote rejected before adjudication
+    saw it), and it has **no unsigned path**, so quorum does not inherit the
+    single-approver `allow_unsigned` legacy mode.
 
 ## Persistence
 

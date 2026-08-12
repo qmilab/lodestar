@@ -63,6 +63,7 @@ import {
   quorumOptions,
   quorumReachedPayload,
   quorumShortfallReason,
+  resolutionIsAuthentic,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
 import type {
@@ -1393,7 +1394,7 @@ export class MCPProxy {
         if (this.promotedVoteHashes.has(hash)) {
           // Already in the log from an earlier poll; just re-consume.
           this.consumeResolution(ref)
-        } else if (this.resolutionVerified(resolution, resolution.signature)) {
+        } else if (resolutionIsAuthentic(resolution, roster.authorized_keys)) {
           this.promotedVoteHashes.add(hash)
           await this.emitCanonicalResolution(resolutionToOutcome(resolution), resolution.signature)
           this.consumeResolution(ref)
@@ -1416,7 +1417,7 @@ export class MCPProxy {
       }
       evaluation = evaluateQuorum(
         request,
-        this.verifiedVotesFromLog(events, request, parked.id),
+        this.verifiedVotesFromLog(events, request, parked.id, roster),
         quorumOptions(roster, parked.proposed_by),
       )
       if (evaluation.satisfied || evaluation.vetoed !== undefined) return evaluation
@@ -1441,7 +1442,16 @@ export class MCPProxy {
   /**
    * Every `approval.granted@1` / `approval.denied@1` in the log that is bound to
    * this request, inside its deadline, and whose signature verifies against the
-   * operator-pinned approver keys — as the votes `evaluateQuorum` adjudicates.
+   * **quorum roster's** pinned keys — as the votes `evaluateQuorum` adjudicates.
+   *
+   * The roster, not `this.config.approvals.authorized_keys`, is deliberate on two
+   * counts. It honours an injected `MCPProxyOverrides.quorumRoster` (a host that
+   * pins keys only there would otherwise have every valid vote rejected before
+   * adjudication ever saw it), and it routes through `resolutionIsAuthentic`,
+   * which has **no unsigned path** — unlike the single-approver
+   * `resolutionVerified`, which honours a no-keys + explicit `allow_unsigned`
+   * legacy mode. An unsigned vote is exactly the synthesized artifact ADR-0041
+   * refuses, so quorum must not inherit that escape hatch.
    *
    * A vote that fails the signature gate is skipped and audited once (deduped by
    * envelope id; the log is append-only so the event never changes), exactly as
@@ -1452,10 +1462,13 @@ export class MCPProxy {
     events: EventEnvelope[],
     request: ApprovalRequest,
     actionId: string,
+    roster: QuorumRoster,
   ): QuorumVote[] {
     const votes: QuorumVote[] = []
     for (const found of allResolutionsFor(events, request.request_id, actionId, request.deadline)) {
-      if (!this.resolutionVerified(found.doc, found.signature)) {
+      if (
+        !resolutionIsAuthentic({ ...found.doc, signature: found.signature }, roster.authorized_keys)
+      ) {
         void this.emitSignatureRejected(`log:${found.eventId}`, found.doc, {
           source: "log",
           rejectedEventId: found.eventId,

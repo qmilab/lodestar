@@ -64,6 +64,17 @@
  *      not an approval — 2-of-3 at the deadline times out with the tool never
  *      run. This is the case a naive "we already have most of them" reading
  *      would get wrong.
+ *   M. The documented `quorumRoster` override IS the effective trust root: a host
+ *      that pins its keys only there reaches quorum. Config pins an unrelated
+ *      approver, so verifying against config instead of the roster would reject
+ *      every real vote before adjudication and look like nobody voted.
+ *
+ * And through the REAL runtime gate over the REAL NDJSON-RPC loopback — the third
+ * host, whose hold accumulates across `resume` calls rather than in one poll loop:
+ *
+ *   N. Votes accumulate across resumes until the threshold is met and the remoted
+ *      tool body runs exactly once; and the same `quorumRoster` override is the
+ *      trust root there too.
  *
  * Why this matters: quorum is the control an operator reaches for when one
  * approver is not enough — an irreversible payment, a production deploy, a key
@@ -107,6 +118,11 @@ import {
   UpstreamServer,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard-mcp"
+import {
+  RuntimeGate,
+  RuntimeGateConfigSchema,
+  createLoopbackPair,
+} from "@qmilab/lodestar-runtime-core"
 import { z } from "zod"
 
 interface ProbeResult {
@@ -563,7 +579,18 @@ function proxyAuthorizedKeys(): Array<{
   })
 }
 
-function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number) {
+function makeProxy(
+  logDir: string,
+  sessionId: string,
+  approvalTimeoutMs: number,
+  /**
+   * Case M: pin the quorum roster through `MCPProxyOverrides.quorumRoster`
+   * instead of config. When set, `authorized_keys` deliberately carries a
+   * DIFFERENT approver, so a host that verified votes against config rather than
+   * the injected roster would reject every valid vote.
+   */
+  injectedRoster?: QuorumRoster,
+) {
   let calls = 0
   const config: ProxyConfig = {
     project_id: PROJECT_ID,
@@ -574,7 +601,15 @@ function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number)
     default_sensitivity: "internal",
     auto_approve_ceiling: 3,
     approval_timeout_ms: approvalTimeoutMs,
-    approvals: { authorized_keys: proxyAuthorizedKeys(), allow_unsigned: false },
+    approvals: {
+      // With an injected roster, config pins only an unrelated approver — enough
+      // to satisfy the "a waiting proxy must pin a key" guard, and nothing more.
+      authorized_keys:
+        injectedRoster === undefined
+          ? proxyAuthorizedKeys()
+          : [{ actor_id: "dave", public_key: publicKeyOf("dave") }],
+      allow_unsigned: false,
+    },
     downstream_servers: [{ name: DOWNSTREAM_NAME, command: "not-spawned", args: [] }],
     tool_defaults: {
       [PROXY_TOOL]: {
@@ -592,6 +627,7 @@ function makeProxy(logDir: string, sessionId: string, approvalTimeoutMs: number)
   }
   const proxy = new MCPProxy(config, {
     policyGate: compile(proxyPolicy, { decider_id: "probe-policy", allow_unsigned: true }),
+    ...(injectedRoster !== undefined ? { quorumRoster: injectedRoster } : {}),
     downstreamFactory: (cfg) =>
       cfg.downstream_servers.map(
         (entry) =>
@@ -728,6 +764,208 @@ async function proxyCases(): Promise<string | undefined> {
       return `[L] the partial quorum did not reach the 'approval.expired@1' terminal. Got: ${types.join(", ")}`
     }
   }
+
+  // M. The documented `quorumRoster` OVERRIDE is the effective trust root. A host
+  //    that pins its keys only through the override must be able to reach quorum
+  //    — so signature verification on the accumulating path has to read the
+  //    ROSTER, not `config.approvals.authorized_keys`. Config here pins only
+  //    `dave`, who casts no vote; if verification consulted config the three real
+  //    votes would every one be rejected before `evaluateQuorum` ever saw them,
+  //    and the hold would time out looking like nobody voted.
+  {
+    _resetToolsForTests()
+    registry._resetForTests()
+    _resetEventLogStateForTests()
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-proxy-roster-"))
+    const sessionId = "probe-quorum-proxy-roster"
+    const { proxy, calls } = makeProxy(
+      logDir,
+      sessionId,
+      6000,
+      roster(EVERY_APPROVER, EVERY_ELIGIBLE),
+    )
+    await proxy.start()
+    const callPromise = proxy.handleCallTool({ name: PROXY_TOOL, arguments: {} })
+    const request = await waitForRequest(logDir, sessionId, 3000)
+    if (request === undefined) return "[M] approval.requested never appeared in the proxy log."
+
+    let cast = 0
+    for (const approver of ["alice", "bob", "carol"]) {
+      await writeApprovalResolution(logDir, PROJECT_ID, castVote(request, approver))
+      cast += 1
+      if (!(await waitForGrants(logDir, sessionId, cast, 3000))) {
+        return `[M] vote ${cast} ('${approver}') was never promoted — the injected quorumRoster is not being used as the verification trust root, so a host that pins keys only there cannot satisfy a quorum.`
+      }
+    }
+
+    const result = await callPromise
+    await proxy.stop()
+    const types = (await new EventLogReader(logDir).readSession(PROJECT_ID, sessionId)).map(
+      (e) => e.type,
+    )
+    if (result.isError === true) {
+      const kind = (result._meta as { _lodestar?: { kind?: unknown } })?._lodestar?.kind
+      return `[M] three eligible votes verified against the INJECTED roster did not authorize the call (kind '${String(kind)}').`
+    }
+    if (calls() !== 1) {
+      return `[M] downstream tool ran ${calls()}x; expected exactly 1.`
+    }
+    if (countOf(types, APPROVAL_QUORUM_REACHED_EVENT_TYPE) !== 1) {
+      return `[M] expected exactly 1 '${APPROVAL_QUORUM_REACHED_EVENT_TYPE}'; got ${countOf(types, APPROVAL_QUORUM_REACHED_EVENT_TYPE)}.`
+    }
+  }
+
+  return undefined
+}
+
+// ── Case N: the runtime gate accumulates across resumes ─────────────────────
+
+type RpcMessage = Record<string, unknown> & { type?: string; id?: number }
+
+/** A minimal in-process hook speaking the real NDJSON-RPC protocol. */
+class GateHook {
+  private idCounter = 0
+  private readonly pending = new Map<number, (msg: RpcMessage) => void>()
+  private readyResolve?: () => void
+  /** Every remoted tool-body run the gate asked for. */
+  readonly bodyRuns: string[] = []
+
+  constructor(private readonly channel: ReturnType<typeof createLoopbackPair>["hook"]) {
+    channel.onMessage((raw) => {
+      const msg = raw as RpcMessage
+      if (msg.type === "ready") {
+        this.readyResolve?.()
+        return
+      }
+      if (msg.type === "run_tool") {
+        this.bodyRuns.push(String(msg.tool))
+        this.channel.send({ type: "tool_result", id: msg.id, output: { ran: true }, documents: [] })
+        return
+      }
+      if (typeof msg.id === "number") {
+        const resolve = this.pending.get(msg.id)
+        if (resolve) {
+          this.pending.delete(msg.id)
+          resolve(msg)
+        }
+      }
+    })
+  }
+
+  waitReady(): Promise<void> {
+    return new Promise((resolve) => {
+      this.readyResolve = resolve
+    })
+  }
+
+  private request(partial: Record<string, unknown>): Promise<RpcMessage> {
+    const id = ++this.idCounter
+    return new Promise((resolve) => {
+      this.pending.set(id, resolve)
+      this.channel.send({ ...partial, id })
+    })
+  }
+
+  register(name: string): Promise<RpcMessage> {
+    return this.request({ type: "register_tool", name })
+  }
+  govern(tool: string): Promise<RpcMessage> {
+    return this.request({ type: "govern", tool, args: {} })
+  }
+  resume(actionId: string, requestId: string, waitMs: number): Promise<RpcMessage> {
+    return this.request({
+      type: "resume",
+      action_id: actionId,
+      request_id: requestId,
+      wait_ms: waitMs,
+    })
+  }
+}
+
+async function runtimeGateCase(): Promise<string | undefined> {
+  _resetToolsForTests()
+  registry._resetForTests()
+  _resetEventLogStateForTests()
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-runtime-"))
+  const sessionId = "probe-quorum-runtime"
+  const toolName = "deploy"
+  const config = RuntimeGateConfigSchema.parse({
+    project_id: PROJECT_ID,
+    actor_id: AGENT_ID,
+    session_id: sessionId,
+    log_root: logDir,
+    default_scope: { level: "project", identifier: PROJECT_ID },
+    default_sensitivity: "internal",
+    auto_approve_ceiling: 3,
+    approval_timeout_ms: 8000,
+    tool_defaults: {
+      [`runtime.${toolName}`]: {
+        required_trust_level: 4,
+        reversibility: "irreversible",
+        sandbox: "read",
+        permissions: [],
+        blast_radius: "external",
+      },
+    },
+    // As in case M, config pins only an unrelated approver: the injected roster
+    // below must be what votes are verified against.
+    approvals: {
+      authorized_keys: [{ actor_id: "dave", public_key: publicKeyOf("dave") }],
+      allow_unsigned: false,
+    },
+  })
+  const runtimePolicy: Policy = {
+    ...QUORUM_POLICY,
+    rules: [{ ...QUORUM_POLICY.rules[0], match: {} } as Policy["rules"][number]],
+  }
+  const gate = new RuntimeGate(config, {
+    policyGate: compile(runtimePolicy, { decider_id: "probe-policy", allow_unsigned: true }),
+    quorumRoster: roster(EVERY_APPROVER, EVERY_ELIGIBLE),
+  })
+  await gate.init()
+  const pair = createLoopbackPair()
+  const hook = new GateHook(pair.hook)
+  void gate.serve(pair.gate)
+  await hook.waitReady()
+  await hook.register(toolName)
+
+  const held = await hook.govern(toolName)
+  if (held.phase !== "pending_approval") {
+    return `[N] the L4 call was not held (phase '${String(held.phase)}').`
+  }
+  const actionId = String(held.action_id)
+  const requestId = String(held.request_id)
+
+  let last: RpcMessage = held
+  for (const approver of ["alice", "bob", "carol"]) {
+    await writeApprovalResolution(
+      logDir,
+      PROJECT_ID,
+      castVote({ request_id: requestId, action_id: actionId }, approver),
+    )
+    last = await hook.resume(actionId, requestId, 600)
+    // Only the vote that completes the threshold may un-park the action.
+    if (approver !== "carol" && last.phase !== "pending_approval") {
+      return `[N] the hold left 'pending_approval' after only some of the votes (phase '${String(last.phase)}') — an accumulated M-1 is not an approval.`
+    }
+  }
+  await gate.stop()
+
+  if (last.phase !== "completed") {
+    return `[N] three eligible votes accumulated across resumes did not complete the action (phase '${String(last.phase)}'). Votes were verified against the INJECTED quorumRoster, so a host that pins keys only there must be able to reach quorum.`
+  }
+  if (hook.bodyRuns.length !== 1) {
+    return `[N] the remoted tool body ran ${hook.bodyRuns.length}x; expected exactly 1.`
+  }
+  const types = (await new EventLogReader(logDir).readSession(PROJECT_ID, sessionId)).map(
+    (e) => e.type,
+  )
+  if (countOf(types, "approval.granted") !== 3) {
+    return `[N] expected 3 promoted votes in the durable log; got ${countOf(types, "approval.granted")}.`
+  }
+  if (countOf(types, APPROVAL_QUORUM_REACHED_EVENT_TYPE) !== 1) {
+    return `[N] expected exactly 1 '${APPROVAL_QUORUM_REACHED_EVENT_TYPE}'; got ${countOf(types, APPROVAL_QUORUM_REACHED_EVENT_TYPE)}.`
+  }
   return undefined
 }
 
@@ -740,10 +978,13 @@ async function run(): Promise<ProbeResult> {
   const proxyFailure = await proxyCases()
   if (proxyFailure !== undefined) return { passed: false, details: proxyFailure }
 
+  const runtimeFailure = await runtimeGateCase()
+  if (runtimeFailure !== undefined) return { passed: false, details: runtimeFailure }
+
   return {
     passed: true,
     details:
-      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; and a request with no quorum took the single-approver path byte-identically, emitting no quorum event. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run.",
+      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; and a request with no quorum took the single-approver path byte-identically, emitting no quorum event. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too.",
   }
 }
 

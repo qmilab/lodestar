@@ -91,6 +91,10 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    `approval.quorum_reached@1` is the *authorization* that drives `resolve()`.
    Config: `approvals.authorized_keys[].authority` is the operator-held
    eligibility record; a policy declaring quorum with none throws at construction.
+   The quorum path verifies against the **roster** (honouring an injected
+   `RuntimeGateOverrides.quorumRoster`) via `resolutionIsAuthentic`, which has no
+   unsigned path — not `resolutionVerified`, whose `allow_unsigned` legacy mode
+   quorum must not inherit.
 6. **Honest scope (ADR-0004).** Governance over declared actions, not OS
    containment. Raw I/O outside the tool abstraction is out of scope — state it,
    don't pretend to capture it. Pair with network/filesystem controls.
