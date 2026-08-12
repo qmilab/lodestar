@@ -31,6 +31,23 @@ projects it into the epistemic chain, then renders markdown.
   re-verifies signatures (it has no access to the operator's pinned keys —
   the correct boundary); it trusts the guard's audit. Mirrors
   `collectResolvedRequestIds` in the `lodestar approve` CLI.
+  **Quorum-aware (ADR-0041):** for a request carrying `quorum >= 2`, a lone
+  `approval.granted@1` is one approver's *vote* and does NOT resolve it — the
+  request stays queued until the host-authored `approval.quorum_reached@1` (the
+  authorization), a deny (decisive regardless of grants collected), or
+  `approval.expired@1` (which expires a *partially* satisfied hold too). Without
+  that split a 3-of-3 hold would drop off the queue on its first vote while the
+  kernel still had the action parked. Such an item also carries `quorum` and
+  `approvers_so_far` — **advisory progress, never authorization**: the projection
+  holds no pinned keys and no approver authority records, so it cannot tell
+  whether a vote is genuine or whether its approver clears `required_authority`,
+  and can only ever *overstate*. `quorumRecords(events)` projects the
+  authoritative `approval.quorum_reached@1` **verbatim** rather than recomputing
+  it — the emitting host held the keys and the roster — and each constituent names
+  its evidence (`payload_hash` + `granted_event_id`) so a consumer with its own
+  pinned keys can re-verify the claim instead of trusting the emitter. The gate
+  never reads either surface. Same posture as the trust-pack badges (advisory,
+  never a gate) and `corroborationStrength` (feeds no gate).
 - `src/harvest.ts` — `harvestCandidates(events)` derives the **durable-memory
   harvest queue** (every supported, clean, retrievable belief worth offering a
   human as a keeper *lesson*, with its evidence + provenance) and the

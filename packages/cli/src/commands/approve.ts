@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { readFile, rename, rm, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
+  APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   type Actor,
   ApprovalDeniedPayloadSchema,
   ApprovalExpiredPayloadSchema,
@@ -207,7 +208,9 @@ async function listPending(root: string, projectId: string): Promise<number> {
   }
 
   const requests = collectRequests(events)
-  const resolvedIds = collectResolvedRequestIds(events)
+  const quorumFor = collectQuorumTargets(requests)
+  const resolvedIds = collectResolvedRequestIds(events, quorumFor)
+  const quorumProgress = collectQuorumProgress(events)
 
   const pending: ApprovalRequest[] = []
   for (const req of requests.values()) {
@@ -242,6 +245,16 @@ async function listPending(root: string, projectId: string): Promise<number> {
     }
     const authority = describeAuthority(req)
     if (authority !== undefined) process.stdout.write(`authority: ${authority}\n`)
+    if (req.quorum !== undefined) {
+      // Advisory progress — see `collectQuorumProgress`. Rendered as "seen", not
+      // "counted", because this process cannot verify a vote or an approver's
+      // eligibility; the host adjudicates.
+      const voters = quorumProgress.get(req.request_id) ?? []
+      process.stdout.write(
+        `   quorum: ${req.quorum} distinct approvers required; ${voters.length} vote(s) seen so far` +
+          `${voters.length > 0 ? ` (${voters.join(", ")})` : ""} — advisory, the host adjudicates\n`,
+      )
+    }
     process.stdout.write(
       `  resolve: lodestar approve grant ${req.request_id} --approver <id> --project ${projectId}\n\n`,
     )
@@ -582,8 +595,18 @@ function isGenuineResolution(
  * `approval.expired@1` is proxy-authored and always definitive (a timed-out hold
  * the agent re-proposes). A request that was forged-then-rejected but not yet
  * resolved stays actionable so an operator can still grant it.
+ *
+ * **A grant does not resolve a `quorum >= 2` request** (ADR-0041): there it is one
+ * approver's *vote*, and the authorization is the host-authored
+ * `approval.quorum_reached@1`. Without this split the second and third approvers
+ * would never see the request — it would drop off this queue the moment the first
+ * one voted, while the kernel still had the action parked. A *deny* still resolves
+ * it: one valid deny is decisive regardless of grants collected.
  */
-function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
+function collectResolvedRequestIds(
+  events: EventEnvelope[],
+  quorumFor: ReadonlyMap<string, number>,
+): Set<string> {
   const index = rejectionIndex(events)
   const out = new Set<string>()
   for (const e of events) {
@@ -591,11 +614,46 @@ function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
-      if (p.success && isGenuineResolution(e, p.data.request_id, index)) out.add(p.data.request_id)
-    } else if (e.type === "approval.expired") {
-      const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
+      if (!p.success) continue
+      if (!isGenuineResolution(e, p.data.request_id, index)) continue
+      if (e.type === "approval.granted" && quorumFor.has(p.data.request_id)) continue
+      out.add(p.data.request_id)
+    } else if (e.type === "approval.expired" || e.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
+      const p = ApprovalExpiredPayloadSchema.pick({ request_id: true }).safeParse(e.payload)
       if (p.success) out.add(p.data.request_id)
     }
+  }
+  return out
+}
+
+/** `request_id → quorum`, for every open request that declares one. */
+function collectQuorumTargets(requests: ReadonlyMap<string, ApprovalRequest>): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const req of requests.values()) {
+    if (req.quorum !== undefined) out.set(req.request_id, req.quorum)
+  }
+  return out
+}
+
+/**
+ * Distinct approvers already seen granting each quorum request — **advisory
+ * progress for the operator's queue, never authorization.** `lodestar approve`
+ * runs in the resolver process and holds no pinned approver keys, so it cannot
+ * tell a genuine vote from one the host will refuse, nor whether an approver
+ * clears `required_authority`. It can only overstate; the authoritative count is
+ * the host's `approval.quorum_reached@1`.
+ */
+function collectQuorumProgress(events: EventEnvelope[]): Map<string, string[]> {
+  const index = rejectionIndex(events)
+  const out = new Map<string, string[]>()
+  for (const e of events) {
+    if (e.type !== "approval.granted") continue
+    const p = ApprovalGrantedPayloadSchema.safeParse(e.payload)
+    if (!p.success) continue
+    if (!isGenuineResolution(e, p.data.request_id, index)) continue
+    const seen = out.get(p.data.request_id) ?? []
+    if (!seen.includes(p.data.approver_id)) seen.push(p.data.approver_id)
+    out.set(p.data.request_id, seen)
   }
   return out
 }
