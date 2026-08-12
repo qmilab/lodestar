@@ -24,8 +24,8 @@ export type {
 export { toWireProjection } from "./wire.js"
 export type { WireProjection } from "./wire.js"
 
-export { pendingApprovals } from "./approvals.js"
-export type { PendingApproval } from "./approvals.js"
+export { pendingApprovals, quorumRecords } from "./approvals.js"
+export type { PendingApproval, QuorumRecord } from "./approvals.js"
 
 export { harvestCandidates } from "./harvest.js"
 export type { MemoryCandidate, SupersededLesson } from "./harvest.js"

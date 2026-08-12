@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises"
 import { ResourceScopeSchema } from "@qmilab/lodestar-core"
-import { ApprovalChannelConfigSchema, httpChannelForbidsUnsigned } from "@qmilab/lodestar-guard"
+import {
+  ApprovalChannelConfigSchema,
+  ApproverAuthoritySchema,
+  httpChannelForbidsUnsigned,
+} from "@qmilab/lodestar-guard"
 import { z } from "zod"
 
 /**
@@ -160,6 +164,32 @@ export const AuthorizedApproverSchema = z.object({
   actor_id: z.string().min(1),
   /** Ed25519 public key, SPKI PEM (the form `lodestar approve keygen` emits). */
   public_key: z.string().min(1),
+  /**
+   * This approver's **authority** — required only to satisfy a `quorum >= 2`
+   * rule (ADR-0041), ignored on the single-approver path (where the resolver
+   * still self-declares, as it always has).
+   *
+   * Quorum needs two orthogonal things and the key answers only one of them.
+   * The key proves *authenticity* ("an operator-pinned key signed this exact
+   * resolution"); this field proves *eligibility* ("this approver satisfies the
+   * request's `required_authority`"). The signed resolution deliberately carries
+   * no authority — self-attested authority is not authority — so without an
+   * operator-held record here, a rule reading `{ required_authority: {
+   * sensitivity_clearance: "secret" }, quorum: 3 }` would be satisfied by *any
+   * three pinned approvers*. That is not a corner case: every opened request
+   * carries at least the action's mapped sensitivity, so the gap would bite on
+   * every quorum rule.
+   *
+   * Deliberately narrower than a full core `Actor`: it is exactly the fields the
+   * authority predicate reads. An operator declares *authority*, not an identity
+   * record — fabricated `kind` / `display_name` / `created_at` ceremony in a
+   * security-relevant config is a place for mistakes to hide.
+   *
+   * Read at **evaluation time**, never snapshotted at request time, so demoting
+   * an approver mid-collection stops their vote counting exactly as revoking
+   * their key does.
+   */
+  authority: ApproverAuthoritySchema.optional(),
 })
 export type AuthorizedApprover = z.infer<typeof AuthorizedApproverSchema>
 

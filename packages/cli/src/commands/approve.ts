@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto"
 import { readFile, rename, rm, writeFile } from "node:fs/promises"
 import { resolve } from "node:path"
 import {
+  APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   type Actor,
   ApprovalDeniedPayloadSchema,
   ApprovalExpiredPayloadSchema,
@@ -207,7 +208,15 @@ async function listPending(root: string, projectId: string): Promise<number> {
   }
 
   const requests = collectRequests(events)
-  const resolvedIds = collectResolvedRequestIds(events)
+  const quorumFor = collectQuorumTargets(requests)
+  const actionForRequest = new Map([...requests.values()].map((r) => [r.request_id, r.action_id]))
+  const resolvedIds = collectResolvedRequestIds(
+    events,
+    quorumFor,
+    collectRejectedActionIds(events),
+    actionForRequest,
+  )
+  const quorumProgress = collectQuorumProgress(events)
 
   const pending: ApprovalRequest[] = []
   for (const req of requests.values()) {
@@ -242,6 +251,16 @@ async function listPending(root: string, projectId: string): Promise<number> {
     }
     const authority = describeAuthority(req)
     if (authority !== undefined) process.stdout.write(`authority: ${authority}\n`)
+    if (req.quorum !== undefined) {
+      // Advisory progress — see `collectQuorumProgress`. Rendered as "seen", not
+      // "counted", because this process cannot verify a vote or an approver's
+      // eligibility; the host adjudicates.
+      const voters = quorumProgress.get(req.request_id) ?? []
+      process.stdout.write(
+        `   quorum: ${req.quorum} distinct approvers required; ${voters.length} vote(s) seen so far` +
+          `${voters.length > 0 ? ` (${voters.join(", ")})` : ""} — advisory, the host adjudicates\n`,
+      )
+    }
     process.stdout.write(
       `  resolve: lodestar approve grant ${req.request_id} --approver <id> --project ${projectId}\n\n`,
     )
@@ -311,21 +330,44 @@ async function resolveRequest(input: {
 
   // Already resolved in the log — the proxy (or an in-process resolver) settled
   // it. Report the existing verdict and exit cleanly; the desired end-state holds.
-  const existing = existingResolution(events, requestId)
+  const quorumFor = collectQuorumTargets(collectRequests(events))
+  const existing = existingResolution(
+    events,
+    requestId,
+    quorumFor,
+    collectRejectedActionIds(events),
+    request.action_id,
+  )
   if (existing !== undefined) {
+    const because =
+      existing.note ?? `${existing.verdict}${existing.approver ? ` by '${existing.approver}'` : ""}`
     process.stdout.write(
-      `[approve] request '${requestId}' is already ${existing.verdict}${existing.approver ? ` by '${existing.approver}'` : ""}. No change made.\n`,
+      `[approve] request '${requestId}' is already ${existing.note ? `resolved — ${because}` : because}. No change made.\n`,
     )
     return 0
   }
 
-  // A resolution is already queued in the side-channel (the proxy has not yet
+  // A resolution is already queued in the side-channel (the host has not yet
   // promoted it). Overwriting is a legitimate change-of-mind, but be explicit.
   const queued = await readApprovalResolution(root, projectId, requestId)
-  if (queued !== undefined && queued.kind !== kind) {
-    process.stdout.write(
-      `[approve] a '${queued.kind}' resolution by '${queued.approver_id}' is already queued for '${requestId}'; overwriting with '${kind}'.\n`,
-    )
+  if (queued !== undefined) {
+    // The channel is a SINGLE SLOT per request, which only becomes contentious
+    // with quorum: several approvers vote on the same request, and overwriting a
+    // peer's not-yet-promoted vote would silently destroy it. Refuse rather than
+    // clobber — the vote is lost with no trace otherwise, and "retry in a moment"
+    // is a far better failure than a quorum that never completes. Overwriting
+    // one's OWN queued vote is still a legitimate change of mind.
+    if (quorumFor.has(requestId) && queued.approver_id !== approver) {
+      process.stderr.write(
+        `[approve] refused: a '${queued.kind}' vote by '${queued.approver_id}' is queued for '${requestId}' and has not been promoted yet.\n          The approval channel holds one vote at a time, so writing now would discard theirs.\n          Re-run in a moment, once the host has promoted it.\n`,
+      )
+      return 5
+    }
+    if (queued.kind !== kind) {
+      process.stdout.write(
+        `[approve] a '${queued.kind}' resolution by '${queued.approver_id}' is already queued for '${requestId}'; overwriting with '${kind}'.\n`,
+      )
+    }
   }
 
   if (request.deadline !== undefined && Date.parse(request.deadline) < Date.now()) {
@@ -582,8 +624,24 @@ function isGenuineResolution(
  * `approval.expired@1` is proxy-authored and always definitive (a timed-out hold
  * the agent re-proposes). A request that was forged-then-rejected but not yet
  * resolved stays actionable so an operator can still grant it.
+ *
+ * **No promoted VOTE resolves a `quorum >= 2` request** (ADR-0041) — neither a
+ * grant nor a deny. A host promotes a vote that is *authentic* but not yet known
+ * to be *eligible* (authenticity gates the log write, eligibility gates the
+ * count), and `evaluateQuorum` lets only an eligible deny veto. So a pinned
+ * approver who does not clear `required_authority` can cast a deny the host
+ * correctly ignores; treating it as terminal here would drop the still-open hold
+ * off this queue and make `approve grant` refuse every later eligible vote, so
+ * any low-privilege pinned approver could doom a quorum unilaterally. The
+ * verdicts are host-authored only: `approval.quorum_reached@1`,
+ * `approval.expired@1`, or the `action.rejected` the host writes on a veto.
  */
-function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
+function collectResolvedRequestIds(
+  events: EventEnvelope[],
+  quorumFor: ReadonlyMap<string, number>,
+  rejectedActionIds: ReadonlySet<string>,
+  actionForRequest: ReadonlyMap<string, string>,
+): Set<string> {
   const index = rejectionIndex(events)
   const out = new Set<string>()
   for (const e of events) {
@@ -591,11 +649,62 @@ function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
       const p = (
         e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
       ).safeParse(e.payload)
-      if (p.success && isGenuineResolution(e, p.data.request_id, index)) out.add(p.data.request_id)
-    } else if (e.type === "approval.expired") {
-      const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
+      if (!p.success) continue
+      if (!isGenuineResolution(e, p.data.request_id, index)) continue
+      if (quorumFor.has(p.data.request_id)) continue
+      out.add(p.data.request_id)
+    } else if (e.type === "approval.expired" || e.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
+      const p = ApprovalExpiredPayloadSchema.pick({ request_id: true }).safeParse(e.payload)
       if (p.success) out.add(p.data.request_id)
     }
+  }
+  // A vetoed quorum has no `approval.*` terminal of its own, so the host's
+  // `action.rejected` is what closes it.
+  for (const [requestId, actionId] of actionForRequest) {
+    if (quorumFor.has(requestId) && rejectedActionIds.has(actionId)) out.add(requestId)
+  }
+  return out
+}
+
+/** Actions the host drove to a terminal `rejected` — the veto/expiry close signal. */
+function collectRejectedActionIds(events: EventEnvelope[]): Set<string> {
+  const out = new Set<string>()
+  for (const e of events) {
+    if (e.type !== "action.rejected") continue
+    const id = (e.payload as { id?: unknown } | undefined)?.id
+    if (typeof id === "string" && id.length > 0) out.add(id)
+  }
+  return out
+}
+
+/** `request_id → quorum`, for every open request that declares one. */
+function collectQuorumTargets(requests: ReadonlyMap<string, ApprovalRequest>): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const req of requests.values()) {
+    if (req.quorum !== undefined) out.set(req.request_id, req.quorum)
+  }
+  return out
+}
+
+/**
+ * Distinct approvers already seen granting each quorum request — **advisory
+ * progress for the operator's queue, never authorization.** `lodestar approve`
+ * runs in the resolver process and holds no pinned approver keys, so it cannot
+ * tell a genuine vote from one the host will refuse, nor whether an approver
+ * clears `required_authority`. It can only overstate; the authoritative count is
+ * the host's `approval.quorum_reached@1`.
+ */
+function collectQuorumProgress(events: EventEnvelope[]): Map<string, string[]> {
+  const index = rejectionIndex(events)
+  const out = new Map<string, string[]>()
+  for (const e of events) {
+    if (e.type !== "approval.granted") continue
+    const p = ApprovalGrantedPayloadSchema.safeParse(e.payload)
+    if (!p.success) continue
+    if (!isGenuineResolution(e, p.data.request_id, index)) continue
+    const seen = out.get(p.data.request_id) ?? []
+    if (!seen.includes(p.data.approver_id)) seen.push(p.data.approver_id)
+    out.set(p.data.request_id, seen)
   }
   return out
 }
@@ -604,12 +713,28 @@ function collectResolvedRequestIds(events: EventEnvelope[]): Set<string> {
  * The existing log verdict for a request, if any — ignoring a grant/deny the
  * proxy signature-rejected (see {@link collectResolvedRequestIds}), so a forged
  * resolution does not block a real one. `approval.expired@1` is always honoured.
+ *
+ * **No promoted VOTE is terminal on a `quorum >= 2` request** (ADR-0041) —
+ * neither a grant nor a deny. A host promotes an *authentic* vote before knowing
+ * it is *eligible*, and only an eligible deny vetoes, so a pinned approver who
+ * does not clear `required_authority` could otherwise tell every later approver
+ * the request "is already denied" and doom the quorum single-handedly. The
+ * verdicts are host-authored: `approval.quorum_reached@1`, `approval.expired@1`,
+ * or the `action.rejected` the host writes when a veto lands. Same rule as
+ * `collectResolvedRequestIds`; the two must agree, or the queue and the write
+ * path disagree about what is still open.
  */
 function existingResolution(
   events: EventEnvelope[],
   requestId: string,
-): { verdict: "granted" | "denied" | "expired"; approver?: string } | undefined {
+  quorumFor: ReadonlyMap<string, number>,
+  rejectedActionIds: ReadonlySet<string>,
+  actionId: string,
+): { verdict: "granted" | "denied" | "expired"; approver?: string; note?: string } | undefined {
   const index = rejectionIndex(events)
+  if (quorumFor.has(requestId) && rejectedActionIds.has(actionId)) {
+    return { verdict: "denied", note: "its action was already rejected" }
+  }
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
       const p = (
@@ -620,6 +745,7 @@ function existingResolution(
         p.data.request_id === requestId &&
         isGenuineResolution(e, requestId, index)
       ) {
+        if (quorumFor.has(requestId)) continue
         return {
           verdict: e.type === "approval.granted" ? "granted" : "denied",
           approver: p.data.approver_id,
@@ -628,6 +754,15 @@ function existingResolution(
     } else if (e.type === "approval.expired") {
       const p = ApprovalExpiredPayloadSchema.safeParse(e.payload)
       if (p.success && p.data.request_id === requestId) return { verdict: "expired" }
+    } else if (e.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
+      const p = ApprovalExpiredPayloadSchema.pick({ request_id: true }).safeParse(e.payload)
+      if (p.success && p.data.request_id === requestId) {
+        const quorum = quorumFor.get(requestId)
+        return {
+          verdict: "granted",
+          note: `its quorum${quorum !== undefined ? ` of ${quorum}` : ""} was reached`,
+        }
+      }
     }
   }
   return undefined

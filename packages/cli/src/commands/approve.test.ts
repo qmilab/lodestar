@@ -37,16 +37,18 @@ const APPROVER_KEY_ENV = "LODESTAR_APPROVER_KEY"
 async function seedRequest(
   logRoot: string,
   requiredAuthority: RequiredAuthority,
+  quorum?: number,
 ): Promise<{ requestId: string; actionId: string }> {
   const requestId = randomUUID()
   const actionId = randomUUID()
-  const payload = {
+  const payload: Record<string, unknown> = {
     request_id: requestId,
     action_id: actionId,
     reason: "L4 (external/shared) always requires approval",
     required_authority: requiredAuthority,
     requested_at: new Date().toISOString(),
   }
+  if (quorum !== undefined) payload.quorum = quorum
   await new EventLogWriter(logRoot).append({
     id: randomUUID(),
     type: "approval.requested",
@@ -577,6 +579,349 @@ describe("lodestar approve — forgery recovery", () => {
       expect(granted.code).toBe(0)
       expect(granted.out).toContain("already granted")
       expect(granted.out).toContain("human:operator")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+describe("lodestar approve — a quorum request keeps accepting votes (ADR-0041)", () => {
+  /**
+   * Promote a vote into the log exactly as a host does, so the CLI sees the state
+   * a second approver would actually walk into.
+   */
+  async function promoteGrant(
+    logRoot: string,
+    requestId: string,
+    actionId: string,
+    approverId: string,
+  ): Promise<void> {
+    const payload = {
+      request_id: requestId,
+      action_id: actionId,
+      approver_id: approverId,
+      at: new Date().toISOString(),
+    }
+    await new EventLogWriter(logRoot).append({
+      id: randomUUID(),
+      type: "approval.granted",
+      schema_version: "1",
+      project_id: PROJECT,
+      session_id: SESSION,
+      actor_id: "host:test",
+      timestamp: new Date().toISOString(),
+      causal_parent_ids: [],
+      payload,
+      payload_hash: canonicalHash(payload),
+      versions: { schema_registry_version: "0.1.0" },
+    })
+  }
+
+  test("a promoted grant does NOT block the second approver's vote", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {}, 3)
+      // Approver 1's vote has already been promoted by the host.
+      await promoteGrant(logRoot, requestId, actionId, "alice")
+
+      // Approver 2 must still be able to cast theirs. Before ADR-0041's write-path
+      // fix this exited 0 with "already granted by 'alice'" and wrote nothing, so
+      // a quorum could never be reached through this CLI.
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).not.toContain("already granted")
+      const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
+      expect(queued?.approver_id).toBe("bob")
+      expect(queued?.kind).toBe("granted")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("approval.quorum_reached@1 IS terminal — the authorization already landed", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-reached-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {}, 2)
+      const payload = {
+        request_id: requestId,
+        action_id: actionId,
+        quorum: 2,
+        approvals: [
+          {
+            approver_id: "alice",
+            at: new Date().toISOString(),
+            payload_hash: "h-a",
+            granted_event_id: "e-a",
+          },
+          {
+            approver_id: "bob",
+            at: new Date().toISOString(),
+            payload_hash: "h-b",
+            granted_event_id: "e-b",
+          },
+        ],
+        at: new Date().toISOString(),
+      }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "approval.quorum_reached",
+        schema_version: "1",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "carol",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("quorum")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("refuses to clobber a PEER's un-promoted vote — the channel is one slot", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-clobber-"))
+    try {
+      const { requestId } = await seedRequest(logRoot, {}, 3)
+      const first = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "alice",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(first.code).toBe(0)
+      // Bob votes before the host has promoted alice's. Overwriting would destroy
+      // her vote with no trace, so this refuses rather than clobbers.
+      const second = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(second.code).toBe(5)
+      expect(second.err).toContain("has not been promoted yet")
+      const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
+      expect(queued?.approver_id).toBe("alice")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("an approver may still overwrite their OWN un-promoted vote", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-rethink-"))
+    try {
+      const { requestId } = await seedRequest(logRoot, {}, 3)
+      await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "alice",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      const { code } = await runApprove([
+        "deny",
+        requestId,
+        "--approver",
+        "alice",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
+      expect(queued?.kind).toBe("denied")
+      expect(queued?.approver_id).toBe("alice")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a promoted DENY does not block later votes — it is a vote, not a verdict", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-inelig-deny-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {}, 3)
+      // An authentic but INELIGIBLE approver denies. The host promotes the vote
+      // (authenticity gates the log write) but `evaluateQuorum` refuses to let it
+      // veto (eligibility gates the count), so the hold is still open. If this CLI
+      // treated the deny as terminal, that approver could doom any quorum alone.
+      const payload = {
+        request_id: requestId,
+        action_id: actionId,
+        approver_id: "intern",
+        at: new Date().toISOString(),
+      }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "approval.denied",
+        schema_version: "1",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).not.toContain("already denied")
+      expect((await readApprovalResolution(logRoot, PROJECT, requestId))?.approver_id).toBe("bob")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("the host's action.rejected DOES close a vetoed quorum", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-vetoed-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {}, 3)
+      // The host adjudicated the veto and drove the action to its terminal. That
+      // is the only signal a read/write surface can trust — a promoted deny alone
+      // is not one, because this process cannot tell eligible from ineligible.
+      const action = { id: actionId, phase: "rejected" }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "action.rejected",
+        schema_version: "0.1.0",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload: action,
+        payload_hash: canonicalHash(action),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("already rejected")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a promoted deny on a SINGLE-APPROVER request stays terminal (unchanged)", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-single-deny-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      const payload = {
+        request_id: requestId,
+        action_id: actionId,
+        approver_id: "carol",
+        at: new Date().toISOString(),
+      }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "approval.denied",
+        schema_version: "1",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("already denied")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a promoted grant on a SINGLE-APPROVER request stays terminal (unchanged)", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-single-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      await promoteGrant(logRoot, requestId, actionId, "alice")
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("already granted")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
     } finally {
       await rm(logRoot, { recursive: true, force: true })
     }

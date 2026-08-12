@@ -55,6 +55,19 @@ export const ApprovalRequestSchema = z.object({
   deadline: TimestampSchema.optional().describe(
     "ISO 8601 hold timeout (proxy path); omitted entirely in-process, never undefined",
   ),
+  // Copied from the matched rule's ApprovalRequirement (ADR-0041), so a read-side
+  // consumer knows the target without holding the policy document — the same
+  // reason `required_authority` is copied here. Omitted entirely when absent
+  // (never undefined, never 1) so an existing single-approver request is
+  // byte-identical to what it is today and its canonical hash does not move.
+  quorum: z
+    .number()
+    .int()
+    .min(2)
+    .optional()
+    .describe(
+      "distinct approvals required; omitted entirely for the single-approver path (so >= 2 here, never 1)",
+    ),
 })
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
 
@@ -122,6 +135,90 @@ export const ApprovalExpiredPayloadSchema = z.object({
 export type ApprovalExpiredPayload = z.infer<typeof ApprovalExpiredPayloadSchema>
 
 /**
+ * One constituent vote inside an {@link ApprovalQuorumReachedPayloadSchema}: a
+ * pointer to an `approval.granted@1` the adjudicator independently verified.
+ *
+ * It carries the two bindings a later reader needs to re-check the claim rather
+ * than trust it — `payload_hash`, the canonical resolution document that
+ * approver signed (so the vote's content is pinned), and `granted_event_id`,
+ * the envelope id of the promoted grant (so the signature itself can be
+ * re-fetched from the log). The quorum record therefore *names its evidence*
+ * instead of asserting a count, in the same spirit as the harvest projection's
+ * audit trail and `guard.approval.signature_rejected`'s `rejected_event_id`.
+ */
+export const QuorumApprovalRefSchema = z.object({
+  approver_id: z.string().min(1).describe("actor_id of the approver who cast this vote"),
+  at: TimestampSchema.describe("the resolution's decision time, as signed"),
+  payload_hash: z
+    .string()
+    .min(1)
+    .describe("sha-256 of the canonical resolution document this approver signed"),
+  granted_event_id: z
+    .string()
+    .min(1)
+    .describe("envelope id of the approval.granted@1 event carrying this vote"),
+})
+export type QuorumApprovalRef = z.infer<typeof QuorumApprovalRefSchema>
+
+/**
+ * The payload of an `approval.quorum_reached@1` event: **M distinct verified
+ * approvals satisfy the request's threshold — and here they are** (ADR-0041).
+ *
+ * This is the *authorization*, and it is what drives the Action Kernel's
+ * `resolve()` when a request carries `quorum >= 2`. The distinction it
+ * introduces is load-bearing: an `approval.granted@1` is **one approver's
+ * vote**, which at the single-approver threshold also happens to be the
+ * authorization — quorum separates the two. A request with no `quorum` emits no
+ * event of this type, so the single-approver path is unchanged.
+ *
+ * Host-authored, never agent-authored: only the component holding the
+ * operator-pinned approver keys can verify the constituent resolutions, so only
+ * it may emit this. A reader that re-derives quorum independently re-verifies
+ * each `granted_event_id` against its own pinned keys rather than trusting this
+ * record — the record makes the claim *checkable*, it does not make it true.
+ *
+ * Two invariants are enforced structurally rather than left to the emitter, so
+ * a bogus quorum is not even representable on the wire: `approvals` must be at
+ * least `quorum` long, and every `approver_id` in it must be distinct.
+ */
+export const ApprovalQuorumReachedPayloadSchema = z
+  .object({
+    request_id: z.string().min(1),
+    action_id: z.string().min(1),
+    quorum: z
+      .number()
+      .int()
+      .min(2)
+      .describe("the threshold that had to be met; >= 2 (a 1-approver hold emits no such event)"),
+    approvals: z
+      .array(QuorumApprovalRefSchema)
+      .min(2)
+      .describe("the verified constituent votes, in the order they were counted"),
+    at: TimestampSchema.describe("when the threshold was satisfied"),
+  })
+  .superRefine((p, ctx) => {
+    if (p.approvals.length < p.quorum) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["approvals"],
+        message: `quorum of ${p.quorum} requires at least ${p.quorum} approvals; got ${p.approvals.length}`,
+      })
+    }
+    const seen = new Set<string>()
+    for (const [i, a] of p.approvals.entries()) {
+      if (seen.has(a.approver_id)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["approvals", i, "approver_id"],
+          message: `duplicate approver '${a.approver_id}' — quorum counts DISTINCT approvers`,
+        })
+      }
+      seen.add(a.approver_id)
+    }
+  })
+export type ApprovalQuorumReachedPayload = z.infer<typeof ApprovalQuorumReachedPayloadSchema>
+
+/**
  * Event-type literals and versions. Use the constants rather than the bare
  * strings so a future rename is grep-safe — same convention as
  * `SENTINEL_ALERTED_EVENT_TYPE` and `REFLECTION_COMPLETED_EVENT_TYPE`.
@@ -134,6 +231,8 @@ export const APPROVAL_DENIED_EVENT_TYPE = "approval.denied" as const
 export const APPROVAL_DENIED_SCHEMA_VERSION = "1" as const
 export const APPROVAL_EXPIRED_EVENT_TYPE = "approval.expired" as const
 export const APPROVAL_EXPIRED_SCHEMA_VERSION = "1" as const
+export const APPROVAL_QUORUM_REACHED_EVENT_TYPE = "approval.quorum_reached" as const
+export const APPROVAL_QUORUM_REACHED_SCHEMA_VERSION = "1" as const
 
 /**
  * The payload of a `guard.approval.signature_rejected@1` audit event: the guard

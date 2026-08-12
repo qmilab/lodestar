@@ -16,8 +16,10 @@ import {
   type IngestResult,
 } from "@qmilab/lodestar-cognitive-core"
 import {
+  APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   ApprovalDeniedPayloadSchema,
   ApprovalGrantedPayloadSchema,
+  ApprovalRequestSchema,
   FIREWALL_EVENT_SCHEMA_VERSION,
   FirewallAuditPayloadSchema,
   GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
@@ -47,15 +49,30 @@ import {
   ApprovalSignatureError,
   type CompiledPolicy,
   type PolicyEvaluation,
+  QUORUM_REACHED_EVENT,
+  type QuorumRoster,
+  type QuorumVote,
   type SecretValue,
   type SentinelArbiter,
   alwaysHoldsChecker,
+  approverRosterFrom,
+  assertQuorumRoster,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
+  canonicalApprovalResolutionHash,
   createApprovalChannel,
+  evaluateQuorum,
   holdEvaluationForParkedAction,
   httpChannelForbidsUnsigned,
+  needsQuorum,
   openApprovalRequest,
+  quorumDeniedOutcome,
+  quorumGrantedOutcome,
+  quorumOptions,
+  quorumReachedPayload,
+  quorumRosterShortfall,
+  quorumShortfallReason,
+  resolutionIsAuthentic,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
 import {
@@ -120,6 +137,15 @@ export interface RuntimeGateOverrides {
   /** Inject the approval transport directly (a probe / library stub), instead of
    *  building it from `config.approvals.channel` (ADR-0015). Wins over config. */
   approvalChannel?: ApprovalChannel
+  /**
+   * Override the M-of-N quorum roster (ADR-0041) — the pinned approver keys
+   * (authenticity) plus the operator-supplied authority map (eligibility).
+   * Defaults to the roster derived from `config.approvals.authorized_keys[]`,
+   * where each entry may declare an `authority`. A probe / library host injects
+   * through this; it relaxes nothing — `evaluateQuorum` applies the same two
+   * gates either way.
+   */
+  quorumRoster?: QuorumRoster
   /** Resolve an http channel's `token_env` to its bearer token. The gate never
    *  reads `process.env` — the host (the CLI) resolves the env var and injects this,
    *  the same discipline as the proxy's `resolveApprovalToken`. */
@@ -161,6 +187,22 @@ export class RuntimeGate {
    * mediates only the *source*, never the forgery boundary.
    */
   private readonly approvalChannel: ApprovalChannel
+  /**
+   * The M-of-N quorum roster (ADR-0041), or `undefined` when no pinned approver
+   * declares an `authority` — in which case this gate cannot adjudicate a quorum,
+   * and the constructor has already refused a policy that declares one.
+   */
+  private readonly quorumRoster: QuorumRoster | undefined
+  /**
+   * Canonical hashes of the resolutions already promoted into the log this
+   * session, so a quorum hold cannot write the SAME vote twice. The
+   * single-approver path never needed it (it settles on the first resolution and
+   * stops reading); a quorum resume keeps polling while `consume` is
+   * fire-and-forget, so a not-yet-deleted file would otherwise be re-promoted on
+   * every pass. An audit-integrity guard, not a counting one — `evaluateQuorum`
+   * dedups by `actor_id` regardless.
+   */
+  private readonly promotedVoteHashes = new Set<string>()
 
   private writer?: EventLogWriter
   private firewall?: MemoryFirewall
@@ -317,6 +359,19 @@ export class RuntimeGate {
           "but no arbiter — the sentinels it was compiled with would be inert. Inject the " +
           "matching arbiter via RuntimeGateOverrides.arbiter.",
       )
+    }
+    // M-of-N quorum (ADR-0041), the same no-silent-non-enforcement shape as the
+    // guards above and as the proxy's. A policy declaring `quorum >= 2` with no
+    // approver `authority` records could never satisfy it: every vote would be
+    // rejected as ineligible and the hold would time out looking like a stalled
+    // approval rather than a misconfiguration. Fail at construction.
+    this.quorumRoster =
+      overrides?.quorumRoster ?? approverRosterFrom(config.approvals?.authorized_keys ?? [])
+    if (this.compiledPolicy !== undefined) {
+      // Covers BOTH provably-unsatisfiable shapes: no authority records at all,
+      // and a roster smaller than the largest threshold the policy can open.
+      const shortfall = quorumRosterShortfall(this.compiledPolicy.policy, this.quorumRoster)
+      if (shortfall !== null) throw new Error(`RuntimeGate: ${shortfall}`)
     }
   }
 
@@ -736,6 +791,51 @@ export class RuntimeGate {
     const deadlineAt =
       recovered?.deadline !== undefined ? Date.parse(recovered.deadline) : undefined
 
+    // ADR-0041: a `quorum >= 2` request accumulates votes across resumes instead of
+    // settling on the first one. The branch is on the recovered REQUEST, so a
+    // policy that declares a quorum can never be un-parked by a single grant — and
+    // it is recovered from the durable log, so a gate that restarted mid-collection
+    // still knows the threshold it is holding to.
+    if (recovered !== undefined && needsQuorum(recovered)) {
+      return await this.resolveQuorumResume(msg, parked, recovered, deadlineAt)
+    }
+    if (recovered === undefined) {
+      // The durable `approval.requested@1` is missing or malformed, so we do NOT
+      // know this hold's terms. Falling through would resume on `msg.request_id`
+      // — a HOOK-SUPPLIED id — down the single-approver path, where one valid
+      // signed grant un-parks an action the policy may have required M approvers
+      // for. That is the silent downgrade every other quorum surface refuses
+      // (`assertQuorumRoster` throws rather than fall back), and this is the one
+      // place the terms come from the log rather than a live evaluation.
+      //
+      // Re-run the compiled policy to find out. A `require_approval` rule
+      // declaring a quorum makes this unresolvable — the accumulated votes are
+      // signed against the ORIGINAL `request_id`, which is exactly what was lost,
+      // so a freshly-opened request could never match them. Fail closed and let
+      // the hook re-propose. (A bare `PolicyGate` cannot express quorum at all, so
+      // with no compiled policy there is nothing to downgrade and the existing
+      // single-approver fallback — still bound by the signature's `request_id` +
+      // `action_id` — is untouched.)
+      const reevaluated = this.compiledPolicy?.evaluate(parked)
+      if (reevaluated?.verdict === "hold" && (reevaluated.quorum ?? 1) >= 2) {
+        const expired: ApprovalOutcome = {
+          kind: "expired",
+          action_id: msg.action_id,
+          request_id: requestId,
+        }
+        const rejectedAction = kernel.resolve(parked, expired)
+        await this.emit("action.rejected", rejectedAction)
+        this.pendingActions.delete(msg.action_id)
+        return {
+          type: "govern_result",
+          phase: "rejected",
+          action_id: msg.action_id,
+          reason: `this action requires a quorum of ${reevaluated.quorum} approvers, but its durable approval request could not be recovered from the log — refusing to resume on a single approval. Re-propose the action.`,
+          kind: "approval_required",
+        }
+      }
+    }
+
     const waitMs = msg.wait_ms ?? 0
     const startedAt = Date.now()
     for (;;) {
@@ -1117,6 +1217,270 @@ export class RuntimeGate {
    *  bound to this request/action, deadline-gated. A forged / unsigned / tampered
    *  resolution is recorded once and (for the side-channel) deleted; polling
    *  continues. Returns undefined when no valid resolution is present yet. */
+  /**
+   * Resolve a `quorum >= 2` hold across resumes (ADR-0041) — the accumulating
+   * counterpart of the single-approver resume loop above.
+   *
+   * It does **not** settle on the first valid resolution. Each pass promotes any
+   * newly-arrived signed vote into the durable log (this gate is the sole writer,
+   * so that is what gives a vote a citable event id), then re-adjudicates *every*
+   * vote accumulated so far through the pure `evaluateQuorum`. Because the
+   * accumulated votes live in the **log** and the threshold is recovered from the
+   * durable `approval.requested@1`, a fresh gate instance after a restart picks the
+   * collection up exactly where it was — the same durability the single-approver
+   * hold already has, extended to a partially-collected quorum.
+   *
+   * Terminals, all fail-closed:
+   *   - **satisfied** → emit `approval.quorum_reached@1`, resolve, execute;
+   *   - **vetoed** → one valid deny is decisive regardless of grants collected;
+   *   - **deadline passed** → expire, *including a partially satisfied request*.
+   *     An accumulated M-1 that runs out its budget is not an approval;
+   *   - otherwise still held — the hook resumes again later.
+   */
+  private async resolveQuorumResume(
+    msg: { action_id: string; request_id: string; wait_ms?: number },
+    parked: Action,
+    request: ApprovalRequest,
+    deadlineAt: number | undefined,
+  ): Promise<Omit<GovernResultMessage, "id">> {
+    const kernel = this.requireKernel()
+    // Defence in depth: the constructor already refuses a quorum-declaring policy
+    // with no authority records, but a hand-injected gate could still reach here.
+    assertQuorumRoster(
+      request,
+      this.quorumRoster,
+      "Declare `authority` on the approvals.authorized_keys entries who may vote, or inject RuntimeGateOverrides.quorumRoster.",
+    )
+    const roster = this.quorumRoster
+    const options = quorumOptions(roster, parked.proposed_by)
+    const waitMs = msg.wait_ms ?? 0
+    const startedAt = Date.now()
+
+    for (;;) {
+      if (this.stopping) {
+        return {
+          type: "govern_result",
+          phase: "pending_approval",
+          action_id: msg.action_id,
+          request_id: request.request_id,
+        }
+      }
+
+      // (1) Promote a newly-arrived channel vote, under the same fetch budget the
+      // single-approver path uses (the min of the remaining deadline and the resume
+      // wait window), so a stalled channel cannot hang a short-poll resume.
+      await this.promoteChannelVote(
+        request,
+        roster,
+        channelFetchBudgetMs(deadlineAt, startedAt, waitMs),
+        deadlineAt,
+      )
+
+      // (2) + (3) Re-read the durable log and adjudicate everything accumulated.
+      const evaluation = evaluateQuorum(
+        request,
+        await this.verifiedVotesFromLog(request, roster),
+        options,
+      )
+
+      if (evaluation.satisfied || evaluation.vetoed !== undefined) {
+        const at = new Date().toISOString()
+        const outcome = evaluation.satisfied
+          ? quorumGrantedOutcome(request, evaluation, at)
+          : quorumDeniedOutcome(request, evaluation, at)
+        const resolved = kernel.resolve(parked, outcome)
+        if (resolved.phase !== "approved") {
+          await this.emit("action.rejected", resolved)
+          this.pendingActions.delete(msg.action_id)
+          return {
+            type: "govern_result",
+            phase: "rejected",
+            action_id: msg.action_id,
+            reason: quorumShortfallReason(evaluation),
+            kind: "approval_denied",
+          }
+        }
+        // The authorization, emitted BEFORE `action.approved` so the log never shows
+        // an approved action whose quorum record has not landed yet.
+        await this.emit(
+          QUORUM_REACHED_EVENT.type,
+          quorumReachedPayload(request, evaluation, resolved.approval?.at ?? at),
+          { schema_version: QUORUM_REACHED_EVENT.schema_version },
+        )
+        await this.emit("action.approved", resolved)
+        const result = await this.executeAction(resolved)
+        this.pendingActions.delete(msg.action_id)
+        return result
+      }
+
+      // Fail closed on the deadline — a PARTIAL quorum expires like an untouched
+      // hold; a late vote can never un-park it.
+      if (deadlineAt !== undefined && Date.now() >= deadlineAt) {
+        const expired: ApprovalOutcome = {
+          kind: "expired",
+          action_id: msg.action_id,
+          request_id: request.request_id,
+        }
+        const rejected = kernel.resolve(parked, expired)
+        await this.emit("approval.expired", {
+          request_id: request.request_id,
+          action_id: msg.action_id,
+          at: rejected.approval?.at ?? new Date().toISOString(),
+        })
+        await this.emit("action.rejected", rejected)
+        this.pendingActions.delete(msg.action_id)
+        return {
+          type: "govern_result",
+          phase: "rejected",
+          action_id: msg.action_id,
+          reason: `approval deadline passed without quorum: ${quorumShortfallReason(evaluation)}`,
+          kind: "approval_timeout",
+        }
+      }
+
+      if (waitMs > 0 && Date.now() - startedAt < waitMs) {
+        await delay(RESOLUTION_POLL_INTERVAL_MS)
+        continue
+      }
+      // Wait window elapsed (or a non-blocking resume) with the threshold unmet and
+      // no deadline breach: still held. The hook resumes again later.
+      return {
+        type: "govern_result",
+        phase: "pending_approval",
+        action_id: msg.action_id,
+        request_id: request.request_id,
+      }
+    }
+  }
+
+  /**
+   * Fetch one out-of-band vote and, if it is bound to this request, inside the
+   * deadline, and signature-authentic, promote it to its own `approval.granted@1` /
+   * `approval.denied@1` in this gate's log — then consume it either way.
+   *
+   * Deduped by canonical resolution hash: `consume` is fire-and-forget (a slow
+   * remote DELETE must not eat the approval budget), so a not-yet-deleted file
+   * would otherwise be re-promoted on every pass.
+   */
+  private async promoteChannelVote(
+    request: ApprovalRequest,
+    roster: QuorumRoster,
+    fetchBudgetMs: number,
+    deadlineAt: number | undefined,
+  ): Promise<void> {
+    const ref = this.approvalRef(request.request_id, request.action_id)
+    const resolution = await this.fetchWithinBudget(ref, fetchBudgetMs)
+    if (resolution === undefined) return
+    // Bind to BOTH ids: the channel is untrusted transport, so a replayed
+    // (validly-signed) resolution for a DIFFERENT request on the same action must
+    // not enter this hold. Mirrors `checkResolution`.
+    if (
+      resolution.request_id !== request.request_id ||
+      resolution.action_id !== request.action_id ||
+      !withinDeadline(resolution.at, deadlineAt)
+    ) {
+      // Mis-bound, or dated after the deadline (approver clock skew) — it can
+      // never become valid. CONSUME it: the channel is a single slot per request,
+      // and `lodestar approve` deliberately refuses to clobber a queued peer vote,
+      // so leaving an unusable one in place would block every later approver and
+      // time the quorum out. The single-approver path can leave it (it settles on
+      // the first valid resolution and nobody waits behind it); an accumulating
+      // hold cannot.
+      this.consumeResolution(ref)
+      return
+    }
+    const hash = canonicalApprovalResolutionHash(resolution)
+    if (this.promotedVoteHashes.has(hash)) {
+      this.consumeResolution(ref)
+      return
+    }
+    if (resolutionIsAuthentic(resolution, roster.authorized_keys)) {
+      this.promotedVoteHashes.add(hash)
+      await this.emitCanonicalResolution(outcomeFromResolution(resolution), resolution.signature)
+    } else {
+      await this.emitSignatureRejected(`req:${resolution.request_id}:${hash}`, resolution, {
+        source: "side_channel",
+      })
+    }
+    this.consumeResolution(ref)
+  }
+
+  /**
+   * Every `approval.granted@1` / `approval.denied@1` in the durable log bound to
+   * this request, inside its deadline, whose signature verifies against the
+   * **quorum roster's** pinned keys — as the votes `evaluateQuorum` adjudicates.
+   *
+   * The roster, not `config.approvals.authorized_keys`, is deliberate on two
+   * counts. It honours an injected `RuntimeGateOverrides.quorumRoster` (a host
+   * that pins keys only there would otherwise have every valid vote rejected
+   * before adjudication ever saw it), and it routes through
+   * `resolutionIsAuthentic`, which has **no unsigned path** — unlike the
+   * single-approver `resolutionVerified`, which honours a no-keys + explicit
+   * `allow_unsigned` legacy mode. An unsigned vote is exactly the synthesized
+   * artifact ADR-0041 refuses, so quorum must not inherit that escape hatch.
+   *
+   * Signature verification here is only the *authenticity* half; eligibility,
+   * distinctness, the proposer exclusion and the deny veto are all
+   * `evaluateQuorum`'s, over the same set. A vote that fails the gate is skipped
+   * and audited once (deduped by envelope id — the log is append-only, so the event
+   * never changes), exactly as the single-approver path does.
+   */
+  private async verifiedVotesFromLog(
+    request: ApprovalRequest,
+    roster: QuorumRoster,
+  ): Promise<QuorumVote[]> {
+    let events: EventEnvelope[] = []
+    try {
+      events = await this.readSessionEvents()
+    } catch {
+      // A concurrent append may have left a torn trailing line; treat it as
+      // "nothing new this pass" rather than failing the resume.
+      events = []
+    }
+    const deadlineAt = request.deadline !== undefined ? Date.parse(request.deadline) : undefined
+    const votes: QuorumVote[] = []
+    for (const ev of events) {
+      if (ev.type !== "approval.granted" && ev.type !== "approval.denied") continue
+      const kind = ev.type === "approval.granted" ? "granted" : "denied"
+      const schema = kind === "granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
+      const parsed = schema.safeParse(ev.payload)
+      if (!parsed.success) continue
+      const payload = parsed.data
+      if (payload.request_id !== request.request_id) continue
+      if (payload.action_id !== request.action_id) continue
+      // The deadline applies to the approver's SIGNED `at`, not to the envelope
+      // timestamp (which the single-approver scan uses). The signed field is when
+      // the approver decided — inside the signed bytes, so unforgeable — while the
+      // envelope is when THIS GATE got around to appending it. Filtering on the
+      // envelope charges the approver for the gate's own latency, so a vote
+      // accepted at promotion could be written and then ignored, expiring a quorum
+      // that was reached in time. `evaluateQuorum` re-checks the same signed field
+      // against the same deadline, so nothing is weakened.
+      if (!withinDeadline(payload.at, deadlineAt)) continue
+      const doc: ApprovalResolutionDoc = {
+        request_id: payload.request_id,
+        action_id: payload.action_id,
+        kind,
+        approver_id: payload.approver_id,
+        at: payload.at,
+      }
+      if (payload.reason !== undefined) doc.reason = payload.reason
+      if (
+        !resolutionIsAuthentic({ ...doc, signature: payload.signature }, roster.authorized_keys)
+      ) {
+        await this.emitSignatureRejected(`log:${ev.id}`, doc, {
+          source: "log",
+          rejectedEventId: ev.id,
+        })
+        continue
+      }
+      const vote: QuorumVote = { resolution: doc, event_id: ev.id }
+      if (payload.signature !== undefined) vote.signature = payload.signature
+      votes.push(vote)
+    }
+    return votes
+  }
+
   private async checkResolution(
     requestId: string,
     actionId: string,
@@ -1308,19 +1672,22 @@ export class RuntimeGate {
     return undefined
   }
 
-  private async reconstructRequest(
-    actionId: string,
-  ): Promise<{ request_id: string; deadline?: string } | undefined> {
+  /**
+   * Recover the whole `ApprovalRequest` this action was parked under, from the
+   * durable `approval.requested@1`. Schema-parsed rather than cast: it is read
+   * back to drive adjudication (its `quorum`, `required_authority` and
+   * `requested_at` are all inputs to `evaluateQuorum`), so a malformed record must
+   * not silently become an empty authority — the fail-closed direction is to find
+   * no request at all, which `resolveResume` reports as `unknown_action`.
+   */
+  private async reconstructRequest(actionId: string): Promise<ApprovalRequest | undefined> {
     const events = await this.readSessionEvents()
     for (let i = events.length - 1; i >= 0; i--) {
       const ev = events[i]
       if (ev?.type !== "approval.requested") continue
-      const req = ev.payload as ApprovalRequest
-      if (req?.action_id === actionId) {
-        return req.deadline !== undefined
-          ? { request_id: req.request_id, deadline: req.deadline }
-          : { request_id: req.request_id }
-      }
+      const parsed = ApprovalRequestSchema.safeParse(ev.payload)
+      if (!parsed.success) continue
+      if (parsed.data.action_id === actionId) return parsed.data
     }
     return undefined
   }
@@ -1343,6 +1710,16 @@ export class RuntimeGate {
     // last), breaking callers that branch on the kind for re-planning.
     let expired = false
     let denied = false
+    // ADR-0041: on a quorum hold an `approval.denied` may be a promoted VOTE that
+    // never vetoed — hosts promote an *authentic* vote before knowing it is
+    // *eligible*, and only an eligible deny vetoes. If the quorum was then
+    // satisfied, that deny is definitionally non-vetoing, so classifying the
+    // replay from it would relabel a downstream failure (a revalidated
+    // precondition, say) as `approval_denied` and send the hook off re-planning
+    // around a human refusal that never happened. A veto leaves no
+    // `approval.quorum_reached@1`, so this stays `approval_denied` there — and a
+    // non-quorum action never sets this, so that path is byte-identical.
+    let quorumReached = false
     for (const ev of events) {
       if (ev.type === "observation.recorded") {
         const obs = ev.payload as Observation
@@ -1361,6 +1738,8 @@ export class RuntimeGate {
         if ((ev.payload as { action_id?: string })?.action_id === actionId) expired = true
       } else if (ev.type === "approval.denied") {
         if ((ev.payload as { action_id?: string })?.action_id === actionId) denied = true
+      } else if (ev.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
+        if ((ev.payload as { action_id?: string })?.action_id === actionId) quorumReached = true
       }
     }
     if (completed) {
@@ -1399,7 +1778,7 @@ export class RuntimeGate {
           kind: "approval_timeout",
         }
       }
-      if (denied) {
+      if (denied && !quorumReached) {
         return {
           type: "govern_result",
           phase: "rejected",

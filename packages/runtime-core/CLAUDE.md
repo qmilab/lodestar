@@ -77,10 +77,37 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    `http` channel requires a pinned key and forbids `allow_unsigned`
    (`httpChannelForbidsUnsigned`, shared parse-time + construct-time with the proxy);
    the CLI resolves its `token_env` and the gate never reads `process.env`.
-5. **Honest scope (ADR-0004).** Governance over declared actions, not OS
+5. **A quorum hold accumulates across resumes (ADR-0041).** A request whose
+   matched `require_approval` rule declares `quorum >= 2` does NOT settle on the
+   first valid resolution. Each `resume` promotes any newly-arrived signed vote
+   into the durable log (deduped by canonical resolution hash — `consume` is
+   fire-and-forget, so an undeleted file would otherwise be re-promoted every
+   pass) and re-adjudicates *every* accumulated vote through the pure
+   `evaluateQuorum`. The threshold and the votes both live in the **log**, so a
+   fresh gate after a restart picks a partially-collected quorum up where it was.
+   Terminals stay fail-closed: a deny vetoes regardless of grants collected, and
+   the deadline expires a **partially satisfied** request — an accumulated M-1 is
+   not an approval. `approval.granted@1` remains one approver's *vote*;
+   `approval.quorum_reached@1` is the *authorization* that drives `resolve()`.
+   Config: `approvals.authorized_keys[].authority` is the operator-held
+   eligibility record; a policy declaring quorum with none throws at construction. The quorum log scan applies the deadline to the approver's **signed** `at` rather than the envelope timestamp, so the gate's own append latency cannot expire a quorum that was reached in time (`evaluateQuorum` re-checks the same signed field). The same guard (`quorumRosterShortfall`) also refuses a roster SMALLER than the declared threshold — `quorum: 3` with two fully-configured approvers can never be satisfied by any sequence of votes. And an unusable channel vote (mis-bound, or dated past the deadline) is CONSUMED rather than left in the single-slot channel, where it would block every later approver now that `lodestar approve` refuses to clobber a queued peer vote.
+   The quorum path verifies against the **roster** (honouring an injected
+   `RuntimeGateOverrides.quorumRoster`) via `resolutionIsAuthentic`, which has no
+   unsigned path — not `resolutionVerified`, whose `allow_unsigned` legacy mode
+   quorum must not inherit. **A resume whose durable `approval.requested@1` cannot
+   be recovered fails CLOSED** when the compiled policy says the action needs a
+   quorum: the single-approver fallback keys on the hook-supplied `request_id`, so
+   falling through would let one signed grant un-park a hold the policy held for M
+   approvers — and the accumulated votes are signed against the lost `request_id`,
+   so a freshly-opened request could never match them anyway. On **replay**, a
+   promoted `approval.denied` is not treated as the verdict once
+   `approval.quorum_reached@1` exists for the action: it was a non-vetoing vote,
+   and classifying from it would relabel a later downstream rejection (a
+   revalidated precondition) as a human refusal.
+6. **Honest scope (ADR-0004).** Governance over declared actions, not OS
    containment. Raw I/O outside the tool abstraction is out of scope — state it,
    don't pretend to capture it. Pair with network/filesystem controls.
-6. **stdout is the protocol stream.** Over `stdioChannel`, never write anything
+7. **stdout is the protocol stream.** Over `stdioChannel`, never write anything
    but protocol JSON to stdout; diagnostics go to stderr (`no console.log`).
 
 ## What does not live here

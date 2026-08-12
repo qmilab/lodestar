@@ -477,7 +477,7 @@ probe suite by the
 [`poisoned-file-cannot-hijack-feature-work`](https://github.com/qmilab/lodestar/tree/main/packs/coding-agent-safety)
 probe: a poisoned doc read alongside a legitimate source file must stay
 `external_document` / `unverified`, must never be promoted to `supported`, and
-must never become a dependency of the feature decision. Seventy-nine probes across
+must never become a dependency of the feature decision. Eighty probes across
 two packs gate this and the rest of the system (`bun run probes:ci`).
 
 ---
@@ -620,12 +620,12 @@ bun run examples/documentation-agent/index.ts
 bun run example:telenotes:scripted   # clean feature run
 bun run example:telenotes:poison     # same run + the poisoned file → firewall HELD
 
-# The whole safety suite (79 probes across two packs)
+# The whole safety suite (80 probes across two packs)
 bun run probes:ci
 ```
 
 - Re-render any run's report from its event log with `lodestar report <session-id>`.
-- `probes:ci` runs all 79 probes; seven need extra infrastructure and **skip with
+- `probes:ci` runs all 80 probes; seven need extra infrastructure and **skip with
   a loud banner** without it — three (`tool-poisoning-cross-session`,
   `sql-adapter-enforces-invariants`, `vector-adapter-enforces-invariants`) need a
   Postgres test database via `LODESTAR_TEST_DATABASE_URL`, one needs an OS sandbox

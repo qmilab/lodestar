@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises"
 import { ResourceScopeSchema } from "@qmilab/lodestar-core"
-import { ApprovalChannelConfigSchema, httpChannelForbidsUnsigned } from "@qmilab/lodestar-guard"
+import {
+  ApprovalChannelConfigSchema,
+  ApproverAuthoritySchema,
+  httpChannelForbidsUnsigned,
+} from "@qmilab/lodestar-guard"
 import { z } from "zod"
 
 /**
@@ -77,6 +81,19 @@ export type RuntimePolicyConfig = z.infer<typeof RuntimePolicyConfigSchema>
 export const AuthorizedApproverSchema = z.object({
   actor_id: z.string().min(1),
   public_key: z.string().min(1),
+  /**
+   * This approver's **authority** — required only to satisfy a `quorum >= 2`
+   * rule (ADR-0041), ignored on the single-approver path. Mirrors the MCP
+   * proxy's field exactly (both consume the shared `ApproverAuthoritySchema`),
+   * because quorum needs two orthogonal things and the key answers only one:
+   * the key proves a vote is *authentic*, this record proves the approver is
+   * *eligible* against the rule's `required_authority`. The signed resolution
+   * deliberately carries no authority — self-attested authority is not authority
+   * — so without an operator-held record here, any N pinned approvers would
+   * satisfy any threshold. Read at evaluation time, so demoting an approver
+   * mid-collection stops their vote counting exactly as revoking their key does.
+   */
+  authority: ApproverAuthoritySchema.optional(),
 })
 export type AuthorizedApprover = z.infer<typeof AuthorizedApproverSchema>
 

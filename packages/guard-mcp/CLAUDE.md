@@ -287,6 +287,31 @@ Cognitive Core. The resulting event log is renderable by
     stays held and that an action proposed before the poison is not gated; it must
     keep passing.
 
+11. **A quorum hold accumulates; it never un-parks on one grant (ADR-0041).** A
+    request whose matched `require_approval` rule declares `quorum >= 2` takes
+    `resolveProxyQuorumHold` instead of `waitForResolution`: each poll promotes
+    any newly-arrived signed vote into the log (deduped by canonical resolution
+    hash — `consume` is fire-and-forget, and unlike the single-approver path this
+    loop keeps reading, so an undeleted file would be re-promoted every poll) and
+    re-adjudicates *every* accumulated vote through the pure `evaluateQuorum`.
+    Accumulated votes live in the **log**, not the channel, which is why
+    `ApprovalChannel` needed no change. **The deadline expires a partially
+    satisfied request** — an accumulated 2-of-3 is a soft `approval_timeout`, not
+    an approval; a valid deny short-circuits to `approval_denied`.
+    Authenticity gates the *log write*, eligibility gates the *count*: an
+    authentic vote from an approver who does not clear `required_authority` is
+    still promoted (it is a real vote) but does not count. Config:
+    `approvals.authorized_keys[].authority` is the operator-held eligibility
+    record; guard (D) throws at construction if the policy declares a quorum and
+    no approver carries one, because otherwise every vote would be rejected as
+    ineligible and the hold would look like a stalled approval. The same guard (`quorumRosterShortfall`) also refuses a roster SMALLER than the declared threshold — `quorum: 3` with two fully-configured approvers can never be satisfied by any sequence of votes. The quorum log scan applies the deadline to the approver's **signed** `at`, not to the envelope timestamp the single-approver scan uses: the signed field is when the approver decided (unforgeable, inside the signed bytes) while the envelope is when the host got around to appending, so filtering on it would charge the approver for the host's own latency and expire a quorum reached in time. `evaluateQuorum` re-checks the same signed field, so nothing is weakened. And an unusable channel vote (mis-bound, or dated past the deadline) is CONSUMED rather than left in the single-slot channel, where it would block every later approver now that `lodestar approve` refuses to clobber a queued peer vote. **The quorum path
+    verifies against the ROSTER, not `config.approvals.authorized_keys`** — via
+    the shared `resolutionIsAuthentic`, not `resolutionVerified`. Two reasons:
+    it honours an injected `MCPProxyOverrides.quorumRoster` (a host pinning keys
+    only there would otherwise have every valid vote rejected before adjudication
+    saw it), and it has **no unsigned path**, so quorum does not inherit the
+    single-approver `allow_unsigned` legacy mode.
+
 ## Persistence
 
 By default the proxy builds fresh in-memory firewall stores per

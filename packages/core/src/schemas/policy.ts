@@ -119,14 +119,32 @@ export type RequiredAuthority = z.infer<typeof RequiredAuthoritySchema>
  * `required_authority`. Omitting `required_authority` (or the whole
  * `approval` object) means any configured resolver may approve.
  *
- * A thin wrapper today; it is the seam where multi-approver / N-of-M
- * constraints attach when the team approval surface is built (deferred —
- * `policy-kernel.md`, "a separate team surface").
+ * This is the seam multi-approver / N-of-M constraints attach to (ADR-0041) —
+ * `quorum` is *how many* distinct approvers must each satisfy
+ * `required_authority`. The two compose orthogonally and deliberately live at
+ * different levels: `required_authority` is a predicate on **one** approver
+ * (and is max-merged with the action's own sensitivity by the Policy Kernel's
+ * `withActionSensitivity`), so a count could not live inside it without
+ * becoming meaningless. Team *routing* of a request to real people remains a
+ * separate surface (`policy-kernel.md`); only the adjudication is here.
  */
 export const ApprovalRequirementSchema = z.object({
   required_authority: RequiredAuthoritySchema.optional().describe(
     "constraints an approver must satisfy; omitted means any configured resolver may approve",
   ),
+  // Additive-optional since the schema shipped (ADR-0041). `.optional()` rather
+  // than `.default(1)` on purpose: a default makes the field REQUIRED in the
+  // `z.infer` *output* type, so external TS that builds an ApprovalRequirement
+  // without `quorum` would stop compiling — the same reasoning as `sentinels`
+  // on the probe-pack manifest. Absent means 1, resolved by the consumer.
+  quorum: z
+    .number()
+    .int()
+    .min(1)
+    .optional()
+    .describe(
+      "how many DISTINCT approvers must each satisfy required_authority; absent or 1 is the single-approver path, unchanged. >= 2 additionally bars the action's proposer from counting toward its own quorum (ADR-0041)",
+    ),
 })
 export type ApprovalRequirement = z.infer<typeof ApprovalRequirementSchema>
 

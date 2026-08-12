@@ -41,6 +41,19 @@ export interface PolicyEvaluation {
    *  `data_sensitivity` before the request is written. */
   required_authority?: RequiredAuthority
   /**
+   * Present iff the hold came from a matched `require_approval` rule that
+   * declares one (ADR-0041): how many *distinct* approvers must each satisfy
+   * `required_authority`. It is deliberately a sibling of `required_authority`
+   * rather than a field inside it — the authority is a predicate on **one**
+   * approver, max-merged with the action's sensitivity by `withActionSensitivity`,
+   * so a count could not live inside it without becoming meaningless.
+   *
+   * Absent for a floor-induced hold (no matched rule ⇒ no `ApprovalRequirement`)
+   * and for an escalation-induced hold (the base verdict was `allow`), both of
+   * which default to the single-approver path.
+   */
+  quorum?: number
+  /**
    * Present iff the {@link ArbitrationContext arbitrate hook} *strengthened* the
    * base verdict (a sentinel alert, calibration flag, or low-confidence belief
    * lifting `allow → hold`, or `→ deny`). `from` is the contract+rule verdict
@@ -343,6 +356,7 @@ function evaluatePolicy(policy: Policy, action: Action, decider_id: string): Pol
           decider_id,
           matched: { source: "rule", rule_index: hit.index },
           required_authority: hit.rule.approval?.required_authority ?? {},
+          quorum: hit.rule.approval?.quorum,
         }
       }
       // effect === "allow": the floor blocks the downgrade.
@@ -388,6 +402,7 @@ function evaluatePolicy(policy: Policy, action: Action, decider_id: string): Pol
       decider_id,
       matched: { source: "rule", rule_index: hit.index },
       required_authority: hit.rule.approval?.required_authority ?? {},
+      quorum: hit.rule.approval?.quorum,
     }
   }
 
@@ -579,6 +594,10 @@ function applyArbitration(
     // An escalation-induced hold has no rule authority to inherit (the base was
     // allow); default to `{}` — any approver — exactly as the floor's allow→hold.
     required_authority: effect === "hold" ? (base.required_authority ?? {}) : undefined,
+    // Likewise no quorum to inherit today (the hook only ever lifts `allow`, and
+    // an allow verdict carries none). Carried explicitly rather than dropped so
+    // the field survives if the strictness ranks ever admit a hold→hold path.
+    quorum: effect === "hold" ? base.quorum : undefined,
     escalation: { from: base.verdict, fired },
   }
 }

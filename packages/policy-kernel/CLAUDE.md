@@ -60,6 +60,24 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   point. `payload_hash` alone is *not* forgery-proof (an attacker recomputes it) —
   the signature bytes are. The MCP proxy enforces it on the side-channel; the
   in-process `guard.wrap()` resolver does not (same trusted process).
+- `src/quorum.ts` — M-of-N quorum adjudication (ADR-0041). The **pure**
+  `evaluateQuorum(request, resolutions, { authorizedKeys, approverAuthority,
+  proposedBy })` → `{ satisfied, required, approvals[], vetoed?, rejected[] }`.
+  The client accumulates; **the kernel adjudicates** — a coordinating collector
+  that gathered N signatures and submitted one synthesized grant would leave the
+  kernel recording a *single-approver* decision, so the threshold is decided here
+  over the individual signed resolutions and never attested. Two orthogonal
+  checks with two inputs: `authorizedKeys` proves **authenticity**
+  (`verifyApprovalSignature`), the operator-supplied `Actor` map proves
+  **eligibility** against the request's `required_authority` via the same
+  `approverShortfall` predicate `authorizeResolution` applies (module-exported
+  from `approval.ts` so there is one implementation, not two that can drift).
+  Signatures alone cannot answer the second question — the signed resolution
+  deliberately carries no authority — so keys-only adjudication would let *any*
+  N pinned approvers satisfy a `secret`-clearance quorum. Fail closed on a
+  missing/short `Actor`; **no `allowUnsigned`**; deny vetoes; dedup by
+  `actor_id`; proposer excluded from **grants** at `quorum >= 2` only.
+  Pure — no I/O, no clock, no key access of its own.
 - `src/index.ts` — public exports.
 
 ## Invariants
@@ -105,7 +123,16 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
    backing beliefs rather than waiting on `low-confidence-action`'s same-event
    alert. Sentinels still only observe and the calibrator still only measures —
    the kernel *reads* their outputs; the harness boundary does not move.
-8. **No dependency on the harness.** The gate consults only `flagged_classes`,
+8. **Quorum is adjudicated, never asserted.** `evaluateQuorum` re-verifies every
+   constituent resolution against the roster **in force at evaluation time** — no
+   request-time snapshot, so a revoked key or a demoted approver stops counting
+   immediately (the fail-closed direction; a mid-collection rotation stalls one
+   vote and the approver re-signs). A host may treat only `satisfied` as
+   authorization; an in-progress "2 of 3" derived from `approvals.length` is
+   **advisory progress, never authorization**, and the gate never reads it. At
+   `quorum` absent/`1` the single-approver path is untouched — hosts keep using
+   `authorizeResolution` and emit no `approval.quorum_reached@1`.
+9. **No dependency on the harness.** The gate consults only `flagged_classes`,
    typed as a structural `CalibrationSnapshot`, so `@qmilab/lodestar-policy-kernel`
    does not import `@qmilab/lodestar-harness`. A full harness `CalibrationReport`
    is structurally assignable; the layering (calibrator → its output → kernel

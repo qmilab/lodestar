@@ -63,6 +63,17 @@ export function openApprovalRequest(
   if (options.deadline !== undefined) {
     request.deadline = options.deadline
   }
+  // ADR-0041: the matched rule's quorum rides along so a read-side consumer knows
+  // the target without holding the policy document — the same reason
+  // `required_authority` is copied here. Only `>= 2` is representable on the
+  // request: *absent* IS the single-approver path, so a rule that spells out
+  // `quorum: 1` is normalised to omission and the two spellings cannot disagree
+  // under `canonicalHash`. A floor-held action has no matched rule and therefore
+  // no `ApprovalRequirement`, so it carries no quorum — an operator wanting quorum
+  // on floor-held actions writes an explicit `require_approval` rule.
+  if (evaluation.quorum !== undefined && evaluation.quorum >= 2) {
+    request.quorum = evaluation.quorum
+  }
   return request
 }
 
@@ -187,8 +198,33 @@ function withActionSensitivity(ra: RequiredAuthority, action: Action): RequiredA
   return out
 }
 
-/** `null` if the approver clears the authority, else a human-readable reason. */
-function approverShortfall(approver: Actor, ra: RequiredAuthority): string | null {
+/**
+ * An approver projected down to exactly the fields the authority predicate
+ * reads. Declared structurally *on purpose* — the same idiom as the gate's
+ * {@link import("./gate.js").BackingBelief} and `CalibrationSnapshot`: a full
+ * core {@link Actor} is assignable, so a host that has one hands it straight in,
+ * while a host whose operator config declares only an approver's *authority*
+ * does not have to fabricate identity fields (`kind`, `display_name`,
+ * `created_at`) that adjudication never reads. Fabricated ceremony in a
+ * security-relevant config is a place for mistakes to hide.
+ */
+export type ApproverAuthority = Pick<
+  Actor,
+  "id" | "trust_baseline" | "sensitivity_clearance" | "authority_scope"
+>
+
+/**
+ * `null` if the approver clears the authority, else a human-readable reason.
+ *
+ * Module-exported (not part of the package's public API) so `quorum.ts` applies
+ * the *same* eligibility predicate `authorizeResolution` does — ADR-0041 makes
+ * `required_authority` the sole expression of who is eligible, so a second
+ * implementation drifting from this one would silently weaken every quorum.
+ */
+export function approverShortfall(
+  approver: ApproverAuthority,
+  ra: RequiredAuthority,
+): string | null {
   if (ra.min_trust_baseline !== undefined && approver.trust_baseline < ra.min_trust_baseline) {
     return `trust_baseline ${approver.trust_baseline} is below the required ${ra.min_trust_baseline}`
   }

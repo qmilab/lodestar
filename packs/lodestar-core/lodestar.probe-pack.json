@@ -82,29 +82,66 @@
     "durable_memory_harvest",
     "approval_channel_transport",
     "approval_channel_forgery_boundary",
-    "generic_extractor_opt_in"
+    "generic_extractor_opt_in",
+    "quorum_approvals"
   ],
   "probes": [
-    { "name": "memory-poisoning-basic", "file": "probes/memory-poisoning-basic.ts" },
-    { "name": "epistemic-chain-smoke", "file": "probes/epistemic-chain-smoke.ts" },
-    { "name": "external-document-not-normal", "file": "probes/external-document-not-normal.ts" },
-    { "name": "quarantined-not-retrievable", "file": "probes/quarantined-not-retrievable.ts" },
-    { "name": "sensitivity-ceiling", "file": "probes/sensitivity-ceiling.ts" },
-    { "name": "auto-observation-gate", "file": "probes/auto-observation-gate.ts" },
-    { "name": "guard-import-no-self-promote", "file": "probes/guard-import-no-self-promote.ts" },
+    {
+      "name": "memory-poisoning-basic",
+      "file": "probes/memory-poisoning-basic.ts"
+    },
+    {
+      "name": "epistemic-chain-smoke",
+      "file": "probes/epistemic-chain-smoke.ts"
+    },
+    {
+      "name": "external-document-not-normal",
+      "file": "probes/external-document-not-normal.ts"
+    },
+    {
+      "name": "quarantined-not-retrievable",
+      "file": "probes/quarantined-not-retrievable.ts"
+    },
+    {
+      "name": "sensitivity-ceiling",
+      "file": "probes/sensitivity-ceiling.ts"
+    },
+    {
+      "name": "auto-observation-gate",
+      "file": "probes/auto-observation-gate.ts"
+    },
+    {
+      "name": "guard-import-no-self-promote",
+      "file": "probes/guard-import-no-self-promote.ts"
+    },
     {
       "name": "guard-precondition-revalidation",
       "file": "probes/guard-precondition-revalidation.ts"
     },
-    { "name": "guard-contract-invariants", "file": "probes/guard-contract-invariants.ts" },
+    {
+      "name": "guard-contract-invariants",
+      "file": "probes/guard-contract-invariants.ts"
+    },
     {
       "name": "context-policy-contradiction-routing",
       "file": "probes/context-policy-contradiction-routing.ts"
     },
-    { "name": "kernel-context-propagation", "file": "probes/kernel-context-propagation.ts" },
-    { "name": "event-log-single-writer", "file": "probes/event-log-single-writer.ts" },
-    { "name": "mcp-proxy-roundtrip", "file": "probes/mcp-proxy-roundtrip.ts" },
-    { "name": "mcp-proxy-injection-defense", "file": "probes/mcp-proxy-injection-defense.ts" },
+    {
+      "name": "kernel-context-propagation",
+      "file": "probes/kernel-context-propagation.ts"
+    },
+    {
+      "name": "event-log-single-writer",
+      "file": "probes/event-log-single-writer.ts"
+    },
+    {
+      "name": "mcp-proxy-roundtrip",
+      "file": "probes/mcp-proxy-roundtrip.ts"
+    },
+    {
+      "name": "mcp-proxy-injection-defense",
+      "file": "probes/mcp-proxy-injection-defense.ts"
+    },
     {
       "name": "reflection-cannot-promote-to-normal-alone",
       "file": "probes/reflection-cannot-promote-to-normal-alone.ts"
@@ -113,12 +150,18 @@
       "name": "contradicted-belief-flags-dependent-decisions",
       "file": "probes/contradicted-belief-flags-dependent-decisions.ts"
     },
-    { "name": "event-log-canonical-hash", "file": "probes/event-log-canonical-hash.ts" },
+    {
+      "name": "event-log-canonical-hash",
+      "file": "probes/event-log-canonical-hash.ts"
+    },
     {
       "name": "documentation-evidence-provenance",
       "file": "probes/documentation-evidence-provenance.ts"
     },
-    { "name": "l4-action-requires-approval", "file": "probes/l4-action-requires-approval.ts" },
+    {
+      "name": "l4-action-requires-approval",
+      "file": "probes/l4-action-requires-approval.ts"
+    },
     {
       "name": "l4-floor-preserves-stricter-rule",
       "file": "probes/l4-floor-preserves-stricter-rule.ts"
@@ -163,7 +206,10 @@
       "name": "guard-hold-resolves-via-resolver",
       "file": "probes/guard-hold-resolves-via-resolver.ts"
     },
-    { "name": "approval-timeout-denies", "file": "probes/approval-timeout-denies.ts" },
+    {
+      "name": "approval-timeout-denies",
+      "file": "probes/approval-timeout-denies.ts"
+    },
     {
       "name": "approval-via-side-channel",
       "file": "probes/approval-via-side-channel.ts"
@@ -188,7 +234,10 @@
       "name": "proxy-hold-carries-rule-authority",
       "file": "probes/proxy-hold-carries-rule-authority.ts"
     },
-    { "name": "viewer-is-read-only", "file": "probes/viewer-is-read-only.ts" },
+    {
+      "name": "viewer-is-read-only",
+      "file": "probes/viewer-is-read-only.ts"
+    },
     {
       "name": "otel-export-respects-sensitivity-ceiling",
       "file": "probes/otel-export-respects-sensitivity-ceiling.ts"
@@ -336,6 +385,10 @@
     {
       "name": "public-api-surface",
       "file": "probes/public-api-surface.ts"
+    },
+    {
+      "name": "quorum-requires-distinct-eligible-approvers",
+      "file": "probes/quorum-requires-distinct-eligible-approvers.ts"
     }
   ]
 }

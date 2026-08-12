@@ -384,7 +384,7 @@ Everything above is checkable from a clone
 [Bun](https://bun.sh)):
 
 ```sh
-# The full executable threat model — 79 probes across two packs
+# The full executable threat model — 80 probes across two packs
 # (seven need extra infra — Postgres, an OS sandbox, or a Python runtime —
 #  and skip with a loud banner without it; all run for real in CI)
 bun run probes:ci
