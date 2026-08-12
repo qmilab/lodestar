@@ -34,8 +34,27 @@ import {
   InMemoryEvidenceStore,
   MemoryFirewall,
 } from "@qmilab/lodestar-memory-firewall"
-import { holdEvaluationForParkedAction, openApprovalRequest } from "@qmilab/lodestar-policy-kernel"
-import type { CompiledPolicy, PolicyEvaluation } from "@qmilab/lodestar-policy-kernel"
+import {
+  evaluateQuorum,
+  expireRequest,
+  holdEvaluationForParkedAction,
+  openApprovalRequest,
+} from "@qmilab/lodestar-policy-kernel"
+import type { CompiledPolicy, PolicyEvaluation, QuorumVote } from "@qmilab/lodestar-policy-kernel"
+import {
+  QUORUM_REACHED_EVENT,
+  assertQuorumRoster,
+  needsQuorum,
+  promotedVoteEventType,
+  promotedVotePayload,
+  quorumDeniedOutcome,
+  quorumGrantedOutcome,
+  quorumOptions,
+  quorumReachedPayload,
+  quorumShortfallReason,
+  resolutionIsAuthentic,
+  voteFromResolution,
+} from "./quorum-host.js"
 import type {
   AgentLoop,
   CallToolOptions,
@@ -225,6 +244,9 @@ export async function runGuarded<T>(
   const evidence = config.stores?.evidence ?? new InMemoryEvidenceStore()
   const worldModel = new InMemoryWorldModel()
 
+  // Returns the appended envelope's id. Almost every caller ignores it; the
+  // quorum path needs it, because an `approval.quorum_reached@1` record names its
+  // constituent votes by the `granted_event_id` of the grant each was promoted to.
   const emit = async (
     type: string,
     payload: unknown,
@@ -234,9 +256,10 @@ export async function runGuarded<T>(
       actor_id?: string
       schema_version?: string
     },
-  ): Promise<void> => {
+  ): Promise<string> => {
+    const eventId = randomUUID()
     const envelope = await writer.append({
-      id: randomUUID(),
+      id: eventId,
       type,
       // Most guard status/chain events ride the session schema version; an event
       // with its own governance schema (e.g. `sentinel.alerted@1`) overrides it so
@@ -317,6 +340,7 @@ export async function runGuarded<T>(
           .catch(() => {})
       }
     }
+    return eventId
   }
 
   const firewall = new MemoryFirewall(claims, beliefs, evidence, async (event) => {
@@ -448,6 +472,76 @@ export async function runGuarded<T>(
   }))
 
   /**
+   * Resolve a `quorum >= 2` hold (ADR-0041) — the adjudicated path.
+   *
+   * The client accumulates; the kernel adjudicates. `collect` returns the
+   * approvers' *own* signed resolutions, never a synthesized verdict, and this
+   * function does the rest in the order the whole design depends on:
+   *
+   *   1. **verify then promote** — every authentic vote becomes its own
+   *      `approval.granted@1` / `approval.denied@1` (unchanged meaning: one
+   *      approver's vote), which is what gives it a durable, citable event id. A
+   *      vote that fails the signature gate is never written — a forged grant must
+   *      not sit in the log claiming someone approved. Eligibility is deliberately
+   *      NOT checked here (see `resolutionIsAuthentic`);
+   *   2. **adjudicate** — `evaluateQuorum` re-verifies every vote against the
+   *      roster in force now, checks each approver against the request's
+   *      `required_authority`, dedups by `actor_id`, excludes the proposer, and
+   *      applies the deny veto;
+   *   3. **authorize** — only a `satisfied` evaluation emits
+   *      `approval.quorum_reached@1` and un-parks the action.
+   *
+   * There is no deadline in-process (that is the proxy's concern), so `collect`
+   * is called once and owns any waiting. A collector that returns too few votes
+   * expires the hold as a soft denial — the same conservative terminal the proxy
+   * reaches when its deadline passes, and the reason names exactly what was short.
+   */
+  const resolveQuorumHold = async (parked: Action, request: ApprovalRequest): Promise<Action> => {
+    assertQuorumRoster(
+      request,
+      config.quorum,
+      "Set `GuardConfig.quorum` to { authorized_keys, approvers, collect }.",
+    )
+    const quorum = config.quorum
+
+    const votes: QuorumVote[] = []
+    for (const resolution of await quorum.collect(request)) {
+      if (!resolutionIsAuthentic(resolution, quorum.authorized_keys)) continue
+      const eventId = await emit(promotedVoteEventType(resolution), promotedVotePayload(resolution))
+      votes.push(voteFromResolution(resolution, eventId))
+    }
+
+    const evaluation = evaluateQuorum(request, votes, quorumOptions(quorum, parked.proposed_by))
+
+    if (!evaluation.satisfied && evaluation.vetoed === undefined) {
+      // Too few counted votes and nobody vetoed: expire it. Fail closed — an
+      // accumulated M-1 is NOT an approval, and there is nothing left to wait on.
+      const expired = expireRequest(request, { reason: quorumShortfallReason(evaluation) })
+      const rejected = kernel.resolve(parked, expired)
+      await emit(
+        "approval.expired",
+        approvalEventPayload(expired, request, rejected.approval?.at ?? new Date().toISOString()),
+      )
+      return rejected
+    }
+
+    const at = new Date().toISOString()
+    const outcome = evaluation.satisfied
+      ? quorumGrantedOutcome(request, evaluation, at)
+      : quorumDeniedOutcome(request, evaluation, at)
+    const resolved = kernel.resolve(parked, outcome)
+    const resolvedAt = resolved.approval?.at ?? at
+    if (evaluation.satisfied) {
+      // The authorization, emitted BEFORE the action un-parks so the log never
+      // shows an approved action whose quorum record has not landed yet.
+      await emit(QUORUM_REACHED_EVENT.type, quorumReachedPayload(request, evaluation, resolvedAt), {
+        schema_version: QUORUM_REACHED_EVENT.schema_version,
+      })
+    }
+    return resolved
+  }
+
+  /**
    * Resolve an action the policy held for approval. In-process the hold can
    * simply await the configured {@link GuardConfig.approval_resolver}; there is
    * no deadline (that is the MCP proxy's concern). Emits the canonical
@@ -462,7 +556,11 @@ export async function runGuarded<T>(
     // stream — a report or approval UI reads the parked Action directly, not
     // only inferred from the request.
     await emit("action.pending_approval", parked)
-    if (config.approval_resolver === undefined) {
+    // Either seam satisfies the "a policy that can hold must say who resolves the
+    // hold" rule; which one applies is decided below, once the request is built
+    // and its `quorum` is known. Neither configured is still a hard error here,
+    // before anything else can happen.
+    if (config.approval_resolver === undefined && config.quorum === undefined) {
       throw new Error(
         `guard.callTool: action '${toolName}' was held for approval (pending_approval) but no approval_resolver was configured. A policy that can hold must say who resolves the hold.`,
       )
@@ -482,6 +580,18 @@ export async function runGuarded<T>(
     }
     const request = openApprovalRequest(parked, evaluation)
     await emit("approval.requested", request)
+
+    // ADR-0041: a `quorum >= 2` request takes the adjudicated path instead. The
+    // branch is on the REQUEST, not on config, so a policy that declares a quorum
+    // can never be silently resolved by the single-approver resolver.
+    if (needsQuorum(request)) {
+      return await resolveQuorumHold(parked, request)
+    }
+    if (config.approval_resolver === undefined) {
+      throw new Error(
+        `guard.callTool: action '${toolName}' was held for approval (pending_approval) but no approval_resolver was configured. A policy that can hold must say who resolves the hold.`,
+      )
+    }
 
     const outcome = await config.approval_resolver(request)
     // Apply (and validate the binding) first, so the canonical `at` comes from
@@ -652,7 +762,12 @@ export async function runGuarded<T>(
     // sentinel arbitration: `feedArbiter: false` keeps a raw agent emit (e.g. a
     // forged `guard.session.ended` or `belief.adopted`) out of the arbiter, so an
     // agent cannot reset or poison the enforcement state it is subject to.
-    emit: (type, payload) => emit(type, payload, { feedArbiter: false }),
+    // The envelope id `emit` returns is deliberately NOT surfaced here: it is an
+    // internal handle the quorum path uses to cite its constituent votes, not
+    // part of the agent-facing contract.
+    emit: async (type, payload) => {
+      await emit(type, payload, { feedArbiter: false })
+    },
     recordDecision: async (decision) => {
       // The trusted channel for an agent to declare a decision's
       // `belief_dependencies`. Validated, then emitted as a host-authored

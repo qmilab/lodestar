@@ -15,6 +15,8 @@ import type {
 } from "@qmilab/lodestar-core"
 import type { BeliefStore, ClaimStore, EvidenceStore } from "@qmilab/lodestar-memory-firewall"
 import type { CompiledPolicy } from "@qmilab/lodestar-policy-kernel"
+import type { ApprovalResolution } from "./approvals-channel.js"
+import type { QuorumRoster } from "./quorum-host.js"
 import type { SentinelArbiter } from "./sentinel-arbiter.js"
 
 /**
@@ -40,6 +42,28 @@ import type { SentinelArbiter } from "./sentinel-arbiter.js"
  * load-bearing guard.
  */
 export type ApprovalResolver = (request: ApprovalRequest) => Promise<ApprovalOutcome>
+
+/**
+ * Collects the **signed** resolutions accumulated for a `quorum >= 2` request
+ * (ADR-0041). The quorum counterpart of {@link ApprovalResolver}, and it returns
+ * a different thing on purpose.
+ *
+ * An `ApprovalResolver` returns a *verdict* — an `ApprovalOutcome` the host
+ * applies. A collector returns *votes*: each approver's own signed resolution,
+ * unadjudicated. That difference is the whole point of quorum. If a collector
+ * could hand back one synthesized outcome, the log would record a
+ * **single-approver** decision and "quorum" would degrade into an unverifiable
+ * claim by whatever gathered the signatures. So the client accumulates and the
+ * kernel adjudicates: the host verifies every signature against the pinned keys,
+ * promotes each vote to its own `approval.granted@1`, and only then decides
+ * whether the threshold is met.
+ *
+ * In-process there is no deadline (that is the proxy's concern), so a collector
+ * is expected to *await* until it has the votes it is going to get, exactly as an
+ * `ApprovalResolver` awaits its verdict. It is called once; if the votes it
+ * returns do not satisfy the threshold, the hold expires as a soft denial.
+ */
+export type QuorumCollector = (request: ApprovalRequest) => Promise<readonly ApprovalResolution[]>
 
 /**
  * Configuration for a guarded session.
@@ -90,6 +114,20 @@ export interface GuardConfig {
    * approval or denial.
    */
   approval_resolver?: ApprovalResolver
+
+  /**
+   * Enables M-of-N quorum holds (ADR-0041). Required whenever `policy_gate` can
+   * produce a hold whose matched `require_approval` rule declares `quorum >= 2`;
+   * such a hold with no `quorum` config **throws** rather than falling back to
+   * the single-approver `approval_resolver` — a silent downgrade would turn "three
+   * approvers" into "the first grant wins", the worst possible failure direction.
+   *
+   * `authorized_keys` and `approvers` are the two orthogonal operator inputs (see
+   * {@link QuorumRoster}); `collect` is the seam that gathers the signed votes.
+   * Omit the whole field for a policy that never declares a quorum — every
+   * existing single-approver session is untouched.
+   */
+  quorum?: QuorumRoster & { collect: QuorumCollector }
 
   /**
    * Inject the firewall's belief/claim/evidence stores instead of the

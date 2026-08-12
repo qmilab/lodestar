@@ -72,8 +72,29 @@ export type {
   GuardConfig,
   GuardContext,
   GuardInternals,
+  QuorumCollector,
 } from "./types.js"
 export { alwaysHoldsChecker } from "./policy-presets.js"
+
+// ── M-of-N quorum, host side (ADR-0041) ──────────────────────────────────────
+// The vocabulary the three governance hosts (guard.wrap(), the MCP proxy, the
+// runtime gate) share so they cannot drift on what a host must be configured
+// with, how a satisfied quorum becomes an ApprovalOutcome, and what the
+// authoritative `approval.quorum_reached@1` record says. The adjudication itself
+// is the pure `evaluateQuorum` in `@qmilab/lodestar-policy-kernel`.
+export {
+  QUORUM_REACHED_EVENT,
+  assertQuorumRoster,
+  needsQuorum,
+  quorumDeniedOutcome,
+  quorumGrantedOutcome,
+  quorumOptions,
+  quorumReachedPayload,
+  quorumShortfallReason,
+  resolutionIsAuthentic,
+  voteFromResolution,
+  type QuorumRoster,
+} from "./quorum-host.js"
 
 // ── Sentinel→action arbitration bridge ───────────────────────────────────────
 // The host-side glue that gives sentinel alerts teeth: it runs the sentinels over
