@@ -498,3 +498,32 @@ The options we rejected, each with a one-line reason.
   kill-switch** (the gate denies outright; a valid approval is inert). One probe,
   `payment-adapter-enforces-send-invariants` (always-on, in-memory fake provider, eight cases). No
   `packages/core` schema change; deps = core + action-kernel + zod. **Status: Accepted.**
+- [ADR-0041](0041-kernel-adjudicated-quorum-approvals.md) — kernel-adjudicated **M-of-N quorum
+  approvals** (#175, demand-pull). *The client accumulates; the kernel adjudicates* — if a collector
+  gathers N signatures and submits one synthesized grant, the kernel records a single-approver
+  decision and quorum degrades into an unverifiable claim by that intermediary. The threshold is
+  **`ApprovalRequirement.quorum`, per rule** — never `RequiredAuthority`, which is a *per-approver
+  predicate* max-merged with action sensitivity (the seam's own doc-comment already named it). The
+  load-bearing separation: `approval.granted@1` stays **one approver's vote**, while a new
+  `approval.quorum_reached@1` becomes **the authorization** — at `quorum` absent/`1` no new event is
+  emitted and behaviour is byte-identical to today. Settled: **verify-time roster** (all M
+  re-verified at evaluation, no snapshot — a revoked key must stop authorizing, so a mid-collection
+  rotation stalls a vote, fail-closed); **any deny vetoes** (quorum makes *approval* harder;
+  a deny threshold would stop a lone approver halting an attack); **four-eyes at `quorum ≥ 2`**
+  (`Action.proposed_by` excluded, scoped so the solo path stays ungated); **predicate-only
+  eligibility** (no groups/roster change — RBAC stays consumer-side); dedup by `actor_id` (one
+  human with two identities is a documented **non-guarantee**); incremental per-vote events (a
+  bundle recreates the collector anti-pattern). Adjudication is a **pure** `evaluateQuorum` in
+  `-policy-kernel` (importable without `-guard`, per the read-side reachability ask); `-trace`
+  projects the verified record, with in-progress "2 of 3" explicitly **advisory, never
+  authorization**. It checks **two orthogonal things and so takes two inputs** — authenticity
+  (`authorizedKeys`) *and* eligibility (an operator-supplied `actor_id → Actor` map checked against
+  `required_authority`, fail-closed on unknown): counting signatures alone would let *any* three
+  pinned approvers satisfy a `secret`-clearance quorum, and since `withActionSensitivity()` always
+  stamps a clearance floor that would misfire on **every** quorum, hollowing out the
+  predicate-only-eligibility decision. Raises the predicate from today's self-declared
+  honest-mistake check to an adjudicated one **for the quorum path only** — closing, just there,
+  the "trusted actor registry, deliberately deferred" gap `approve.ts` names. Schema delta =
+  **three additive-optional fields**, permitted by `public-api.md`'s "additive growth only" — not
+  v0.2-lock surgery.
+  **Status: Accepted (design; implementation not yet scheduled).**
