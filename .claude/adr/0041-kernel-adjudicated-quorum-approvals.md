@@ -1,6 +1,6 @@
 # ADR-0041: Kernel-adjudicated M-of-N quorum approvals
 
-- **Status:** Accepted (design; implementation not yet scheduled)
+- **Status:** Accepted (implemented — #175, six slices on `feat/quorum-approvals`)
 - **Date:** 2026-08-05
 - **Deciders:** Nandan, Claude
 - **Related:** #175, ADR-0010 (signed approvals — the forgery boundary this
@@ -250,8 +250,33 @@ instead of its own tally. Every prior single-signature consumer is untouched.
 - **One human with two identities defeats the count** (Q4) — an operator
   responsibility, stated as a non-guarantee.
 
-**Required before implementation.** This is a design ADR; no code has been
-written. Implementation must ship with:
+**Required before implementation — all shipped.** This was a design ADR; the
+implementation landed as six slices (core wire format → the pure
+`evaluateQuorum` → host wiring for `guard.wrap()` / the MCP proxy / the runtime
+gate → the `-trace` projection → the probe → the stability ledger). Two things
+the design did not anticipate turned up in the build and are recorded here:
+
+- **The read-side queue had to change, not just gain a field.** `pendingApprovals`
+  (and `lodestar approve list`) treated any genuine `approval.granted@1` as
+  resolving its request — correct at the single-approver threshold, wrong at
+  `quorum ≥ 2`, where a 3-of-3 hold would have dropped off both queues on the
+  first vote and approvers 2 and 3 would never have seen it.
+- **The eligibility input is a structural narrowing, not a full `Actor`.**
+  `ApproverAuthority = Pick<Actor, "id" | "trust_baseline" |
+  "sensitivity_clearance" | "authority_scope">` — the same deliberate idiom as the
+  gate's `BackingBelief` / `CalibrationSnapshot`, and a full `Actor` stays
+  assignable. Requiring an `Actor` would have made every host config fabricate
+  `kind` / `display_name` / `created_at` that adjudication never reads.
+
+Q8 was **confirmed against the shipped code**: no `ApprovalChannel` change was
+needed. `fetch(ref)` still returns at most one resolution per poll; the host
+verifies it, promotes it to its own `approval.granted@1`, and consumes it, so the
+accumulated votes live in the **log**, not the transport. The one new hazard that
+introduced — a quorum hold keeps polling while `consume` is deliberately
+fire-and-forget, so a not-yet-deleted file would be re-promoted every pass — is
+closed by deduping promotions on the canonical resolution hash.
+
+It shipped with:
 
 - A probe under `packs/lodestar-core/` pinning the adversarial invariants — at
   minimum: a collector-synthesized single grant **cannot** satisfy `quorum: 3`;
