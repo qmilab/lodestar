@@ -91,6 +91,23 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   import in `approvals-channel.ts` into a runtime one — the test statically walks the
   graph and fails, naming the offender. The `.` barrel still re-exports the same
   channel symbols (the subpath is the alternative, not a move).
+- `src/quorum-host.ts` — the **host side** of M-of-N quorum approvals (ADR-0041),
+  shared by all three governance hosts (`guard.wrap()`, the MCP proxy, the runtime
+  gate) so they cannot drift. `QuorumRoster` (the two operator inputs:
+  `authorized_keys` for **authenticity**, an `actor_id → ApproverAuthority` map for
+  **eligibility**), `ApproverAuthoritySchema` + `approverRosterFrom` (host config →
+  roster; a partial roster is fine and fail-closed per approver),
+  `policyDeclaresQuorum` (the construction-time guard hosts use so a
+  quorum-declaring policy with no authority records fails loudly instead of timing
+  out every hold), `resolutionIsAuthentic` (the pre-promotion signature gate —
+  **no `allowUnsigned`**, unlike the single-approver `resolutionVerified`),
+  `promotedVotePayload` / `promotedVoteEventType` / `voteFromResolution`, and the
+  outcome/record builders `quorumGrantedOutcome` / `quorumDeniedOutcome` /
+  `quorumReachedPayload`. **The host flow is promote-then-adjudicate:** verify a
+  signature, promote the vote to its own `approval.granted@1` (which is what gives
+  it a citable `event_id`), then run the pure `evaluateQuorum` over everything
+  accumulated. Adjudication itself lives in `@qmilab/lodestar-policy-kernel` and is
+  never duplicated here.
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is
@@ -145,7 +162,22 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    resolver owns authorisation (match an approver against
    `request.required_authority` via `authorizeResolution`) and must return an
    outcome bound to the request — `resolve()` rejects a mis-bound one.
-6. **Sentinels gate only through a wired arbiter — and only when the agent
+6. **A quorum hold is adjudicated, never resolved by one approver (ADR-0041).**
+   `GuardConfig.quorum = { authorized_keys, approvers, collect }` is the seam for a
+   `quorum >= 2` hold. `QuorumCollector` returns the approvers' **own signed
+   resolutions**, never a synthesized `ApprovalOutcome` — the type-level statement
+   of "the client accumulates; the kernel adjudicates": one synthesized grant would
+   record a *single-approver* decision and degrade quorum into an unverifiable
+   claim by whatever gathered the signatures. The branch is on the **request's**
+   `quorum`, not on config, and a quorum request with no `quorum` config **throws**
+   rather than falling back to `approval_resolver` — a silent downgrade would turn
+   "three approvers" into "the first grant wins". In-process there is no deadline,
+   so `collect` is called once and owns any waiting; too few counted votes expires
+   the hold as a soft denial. Each authentic vote is promoted to its own
+   `approval.granted@1` **carrying its signature** (a reader must be able to
+   re-verify it against their own pinned keys), and only a satisfied evaluation
+   emits `approval.quorum_reached@1` and un-parks the action.
+7. **Sentinels gate only through a wired arbiter — and only when the agent
    declares its decisions.** `GuardConfig.arbiter` is the seam; supplying it (with
    `policy_gate` compiled from the *same* arbiter, i.e. the `compileWithSentinels`
    pair) is the only thing that lets a sentinel alert / calibration flag /

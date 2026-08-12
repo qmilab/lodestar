@@ -77,10 +77,24 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    `http` channel requires a pinned key and forbids `allow_unsigned`
    (`httpChannelForbidsUnsigned`, shared parse-time + construct-time with the proxy);
    the CLI resolves its `token_env` and the gate never reads `process.env`.
-5. **Honest scope (ADR-0004).** Governance over declared actions, not OS
+5. **A quorum hold accumulates across resumes (ADR-0041).** A request whose
+   matched `require_approval` rule declares `quorum >= 2` does NOT settle on the
+   first valid resolution. Each `resume` promotes any newly-arrived signed vote
+   into the durable log (deduped by canonical resolution hash — `consume` is
+   fire-and-forget, so an undeleted file would otherwise be re-promoted every
+   pass) and re-adjudicates *every* accumulated vote through the pure
+   `evaluateQuorum`. The threshold and the votes both live in the **log**, so a
+   fresh gate after a restart picks a partially-collected quorum up where it was.
+   Terminals stay fail-closed: a deny vetoes regardless of grants collected, and
+   the deadline expires a **partially satisfied** request — an accumulated M-1 is
+   not an approval. `approval.granted@1` remains one approver's *vote*;
+   `approval.quorum_reached@1` is the *authorization* that drives `resolve()`.
+   Config: `approvals.authorized_keys[].authority` is the operator-held
+   eligibility record; a policy declaring quorum with none throws at construction.
+6. **Honest scope (ADR-0004).** Governance over declared actions, not OS
    containment. Raw I/O outside the tool abstraction is out of scope — state it,
    don't pretend to capture it. Pair with network/filesystem controls.
-6. **stdout is the protocol stream.** Over `stdioChannel`, never write anything
+7. **stdout is the protocol stream.** Over `stdioChannel`, never write anything
    but protocol JSON to stdout; diagnostics go to stderr (`no console.log`).
 
 ## What does not live here

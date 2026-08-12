@@ -287,6 +287,25 @@ Cognitive Core. The resulting event log is renderable by
     stays held and that an action proposed before the poison is not gated; it must
     keep passing.
 
+11. **A quorum hold accumulates; it never un-parks on one grant (ADR-0041).** A
+    request whose matched `require_approval` rule declares `quorum >= 2` takes
+    `resolveProxyQuorumHold` instead of `waitForResolution`: each poll promotes
+    any newly-arrived signed vote into the log (deduped by canonical resolution
+    hash — `consume` is fire-and-forget, and unlike the single-approver path this
+    loop keeps reading, so an undeleted file would be re-promoted every poll) and
+    re-adjudicates *every* accumulated vote through the pure `evaluateQuorum`.
+    Accumulated votes live in the **log**, not the channel, which is why
+    `ApprovalChannel` needed no change. **The deadline expires a partially
+    satisfied request** — an accumulated 2-of-3 is a soft `approval_timeout`, not
+    an approval; a valid deny short-circuits to `approval_denied`.
+    Authenticity gates the *log write*, eligibility gates the *count*: an
+    authentic vote from an approver who does not clear `required_authority` is
+    still promoted (it is a real vote) but does not count. Config:
+    `approvals.authorized_keys[].authority` is the operator-held eligibility
+    record; guard (D) throws at construction if the policy declares a quorum and
+    no approver carries one, because otherwise every vote would be rejected as
+    ineligible and the hold would look like a stalled approval.
+
 ## Persistence
 
 By default the proxy builds fresh in-memory firewall stores per
