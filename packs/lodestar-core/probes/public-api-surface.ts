@@ -41,6 +41,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
+  APPROVAL_QUORUM_REACHED_EVENT_TYPE,
+  APPROVAL_QUORUM_REACHED_SCHEMA_VERSION,
+  ApprovalQuorumReachedPayloadSchema,
+  type ApprovalRequest,
   type ApprovalRequirement,
   ApprovalRequirementSchema,
   CALIBRATION_COMPUTED_EVENT_TYPE,
@@ -104,6 +108,7 @@ import {
   ProbePackSourceTypeSchema,
   type ProbeResultsBadge,
   ProbeResultsBadgeSchema,
+  QuorumApprovalRefSchema,
   type RequiredAuthority,
   RequiredAuthoritySchema,
   SENTINEL_ALERTED_EVENT_TYPE,
@@ -141,8 +146,13 @@ import {
 } from "@qmilab/lodestar-otel-exporter"
 import {
   ApprovalSignatureError,
+  type ApproverAuthority,
+  type EvaluateQuorumOptions,
+  type QuorumEvaluation,
+  type QuorumVote,
   assertValidApproverKeys,
   canonicalApprovalResolutionHash,
+  evaluateQuorum,
   generateApproverKeyPair,
   signApprovalResolution,
   verifyApprovalSignature,
@@ -152,12 +162,14 @@ import {
   type ChainProjection,
   type MemoryCandidate,
   type PendingApproval,
+  type QuorumRecord,
   type RenderOptions,
   type SupersededLesson,
   type WireProjection,
   harvestCandidates,
   pendingApprovals,
   projectChain,
+  quorumRecords,
   renderReport,
   toWireProjection,
 } from "@qmilab/lodestar-trace"
@@ -188,6 +200,7 @@ pinType<
 >(projectChain)
 pinType<(projection: ChainProjection, opts?: RenderOptions) => string>(renderReport)
 pinType<(events: EventEnvelope[]) => PendingApproval[]>(pendingApprovals)
+pinType<(events: EventEnvelope[]) => QuorumRecord[]>(quorumRecords)
 pinType<
   (
     events: EventEnvelope[],
@@ -195,6 +208,15 @@ pinType<
   ) => MemoryCandidate[]
 >(harvestCandidates)
 pinType<(projection: ChainProjection) => WireProjection>(toWireProjection)
+
+// @qmilab/lodestar-policy-kernel — the pure M-of-N adjudicator (ADR-0041)
+pinType<
+  (
+    request: ApprovalRequest,
+    resolutions: readonly QuorumVote[],
+    options: EvaluateQuorumOptions,
+  ) => QuorumEvaluation
+>(evaluateQuorum)
 
 // @qmilab/lodestar-otel-exporter — deterministic ids + the OTLP IR
 pinType<(projectId: string, sessionId: string) => string>(traceIdFor)
@@ -1292,6 +1314,244 @@ await check(
     )
   },
 )
+
+// ── M-of-N quorum: wire format + adjudicator + read-side (ADR-0041, #175) ──
+await check("core: approval.quorum_reached@1 round-trips and enforces its invariants", () => {
+  const ref = (approver: string) => ({
+    approver_id: approver,
+    at: "2026-01-01T00:00:00.000Z",
+    payload_hash: `hash-${approver}`,
+    granted_event_id: `evt-${approver}`,
+  })
+  const valid = {
+    request_id: "r1",
+    action_id: "a1",
+    quorum: 2,
+    approvals: [ref("alice"), ref("bob")],
+    at: "2026-01-01T00:00:01.000Z",
+  }
+  const parsed = ApprovalQuorumReachedPayloadSchema.safeParse(valid)
+  expect(parsed.success, `valid quorum record rejected: ${JSON.stringify(parsed.error?.issues)}`)
+  expect(
+    APPROVAL_QUORUM_REACHED_EVENT_TYPE === "approval.quorum_reached" &&
+      APPROVAL_QUORUM_REACHED_SCHEMA_VERSION === "1",
+    "approval.quorum_reached event type / schema version drifted",
+  )
+  // Structural, not left to the emitter: a bogus quorum is unrepresentable.
+  expect(
+    !ApprovalQuorumReachedPayloadSchema.safeParse({ ...valid, quorum: 3 }).success,
+    "a record with fewer approvals than its quorum was accepted",
+  )
+  expect(
+    !ApprovalQuorumReachedPayloadSchema.safeParse({
+      ...valid,
+      approvals: [ref("alice"), ref("alice")],
+    }).success,
+    "a record with a duplicate approver_id was accepted — quorum counts DISTINCT approvers",
+  )
+  // The record must NAME ITS EVIDENCE, so a reader can re-verify rather than trust.
+  const noEvidence = { ...ref("alice"), granted_event_id: "" }
+  expect(
+    !QuorumApprovalRefSchema.safeParse(noEvidence).success,
+    "a vote with no granted_event_id was accepted — the claim would be unverifiable",
+  )
+})
+await check("policy-kernel: evaluateQuorum checks authenticity AND eligibility", () => {
+  const alice = generateApproverKeyPair()
+  const intern = generateApproverKeyPair()
+  const request: ApprovalRequest = {
+    request_id: "r1",
+    action_id: "a1",
+    reason: "needs three",
+    required_authority: { sensitivity_clearance: "secret" },
+    requested_at: "2026-01-01T00:00:00.000Z",
+    quorum: 2,
+  }
+  const vote = (id: string, key: string, at: string): QuorumVote => {
+    const doc = {
+      request_id: "r1",
+      action_id: "a1",
+      kind: "granted" as const,
+      approver_id: id,
+      at,
+    }
+    return { resolution: doc, signature: signApprovalResolution(doc, key), event_id: `evt-${id}` }
+  }
+  const authority = (id: string, clearance: "secret" | "public"): ApproverAuthority => ({
+    id,
+    trust_baseline: 1,
+    sensitivity_clearance: clearance,
+    authority_scope: [{ level: "global", identifier: "*" }],
+  })
+  const votes = [
+    vote("alice", alice.privateKeyPem, "2026-01-01T00:00:01.000Z"),
+    vote("intern", intern.privateKeyPem, "2026-01-01T00:00:02.000Z"),
+  ]
+  const keys = new Map([
+    ["alice", alice.publicKeyPem],
+    ["intern", intern.publicKeyPem],
+  ])
+  // Both votes are AUTHENTIC, but the intern does not clear `secret`. Signatures
+  // alone would satisfy the threshold; eligibility is the orthogonal check.
+  const gated: QuorumEvaluation = evaluateQuorum(request, votes, {
+    authorizedKeys: keys,
+    approverAuthority: new Map([
+      ["alice", authority("alice", "secret")],
+      ["intern", authority("intern", "public")],
+    ]),
+  })
+  expect(!gated.satisfied, "a pinned but INELIGIBLE approver counted toward the quorum")
+  expect(gated.required === 2 && gated.approvals.length === 1, "quorum tally drifted")
+  expect(
+    gated.rejected[0]?.code === "shortfall" && gated.rejected[0]?.approver_id === "intern",
+    "the ineligible approver was not recorded with its shortfall",
+  )
+  // Fail closed: no supplied authority record at all also does not count.
+  const noAuthority = evaluateQuorum(request, votes, {
+    authorizedKeys: keys,
+    approverAuthority: new Map([["alice", authority("alice", "secret")]]),
+  })
+  expect(!noAuthority.satisfied, "an approver with no authority record counted")
+  expect(noAuthority.rejected[0]?.code === "no_authority", "fail-closed reason drifted")
+  // No unsigned path: an unsigned vote is the synthesized artifact this refuses.
+  const unsigned = evaluateQuorum(
+    request,
+    [{ ...votes[0], signature: undefined } as QuorumVote, votes[1] as QuorumVote],
+    {
+      authorizedKeys: keys,
+      approverAuthority: new Map([
+        ["alice", authority("alice", "secret")],
+        ["intern", authority("intern", "secret")],
+      ]),
+    },
+  )
+  expect(!unsigned.satisfied, "an unsigned vote counted toward the quorum")
+  expect(unsigned.rejected[0]?.code === "signature", "unsigned rejection reason drifted")
+  // Two eligible, authentic, distinct approvers DO satisfy it (the positive control).
+  const satisfied = evaluateQuorum(request, votes, {
+    authorizedKeys: keys,
+    approverAuthority: new Map([
+      ["alice", authority("alice", "secret")],
+      ["intern", authority("intern", "secret")],
+    ]),
+  })
+  expect(satisfied.satisfied, "two authentic eligible distinct grants did not satisfy quorum 2")
+  // A single valid deny is decisive regardless of grants collected.
+  const denyDoc = {
+    request_id: "r1",
+    action_id: "a1",
+    kind: "denied" as const,
+    approver_id: "alice",
+    at: "2026-01-01T00:00:03.000Z",
+  }
+  const vetoed = evaluateQuorum(
+    request,
+    [
+      ...votes,
+      {
+        resolution: denyDoc,
+        signature: signApprovalResolution(denyDoc, alice.privateKeyPem),
+        event_id: "evt-deny",
+      },
+    ],
+    {
+      authorizedKeys: keys,
+      approverAuthority: new Map([
+        ["alice", authority("alice", "secret")],
+        ["intern", authority("intern", "secret")],
+      ]),
+    },
+  )
+  expect(!vetoed.satisfied, "a valid deny did not veto a satisfied quorum")
+  expect(vetoed.vetoed?.approver_id === "alice", "the veto did not name its approver")
+  // The proposer cannot count toward its own quorum at `quorum >= 2`.
+  const proposerExcluded = evaluateQuorum(request, votes, {
+    authorizedKeys: keys,
+    approverAuthority: new Map([
+      ["alice", authority("alice", "secret")],
+      ["intern", authority("intern", "secret")],
+    ]),
+    proposedBy: "alice",
+  })
+  expect(!proposerExcluded.satisfied, "the action's own proposer counted toward its quorum")
+  expect(proposerExcluded.rejected[0]?.code === "proposer", "proposer-exclusion reason drifted")
+})
+await check("trace: quorumRecords projects the authoritative record verbatim, read-only", () => {
+  const payload = {
+    request_id: "r1",
+    action_id: "a1",
+    quorum: 2,
+    approvals: [
+      {
+        approver_id: "alice",
+        at: "2026-01-01T00:00:01.000Z",
+        payload_hash: "h-a",
+        granted_event_id: "e-a",
+      },
+      {
+        approver_id: "bob",
+        at: "2026-01-01T00:00:02.000Z",
+        payload_hash: "h-b",
+        granted_event_id: "e-b",
+      },
+    ],
+    at: "2026-01-01T00:00:03.000Z",
+  }
+  const event = EventEnvelopeSchema.parse({
+    ...validEnvelope,
+    id: "quorum-1",
+    type: APPROVAL_QUORUM_REACHED_EVENT_TYPE,
+    schema_version: APPROVAL_QUORUM_REACHED_SCHEMA_VERSION,
+    payload_hash: canonicalHash(payload),
+    payload,
+  })
+  const records: QuorumRecord[] = quorumRecords([event])
+  expect(records.length === 1, `expected 1 quorum record, got ${records.length}`)
+  expect(records[0]?.event_id === "quorum-1", "quorum record did not carry its envelope id")
+  expect(
+    records[0]?.approvals.map((a) => a.approver_id).join(",") === "alice,bob",
+    "quorum record did not surface its constituent votes verbatim",
+  )
+  // A quorum-carrying request is NOT resolved by a lone grant: it stays queued
+  // until this record lands, or it would vanish from the operator's queue on the
+  // first vote while the kernel still had the action parked.
+  const requestPayload = {
+    request_id: "r-open",
+    action_id: "a-open",
+    reason: "needs two",
+    required_authority: {},
+    requested_at: "2026-01-01T00:00:00.000Z",
+    quorum: 2,
+  }
+  const grantPayload = {
+    request_id: "r-open",
+    action_id: "a-open",
+    approver_id: "alice",
+    at: "2026-01-01T00:00:01.000Z",
+  }
+  const stillOpen = pendingApprovals([
+    EventEnvelopeSchema.parse({
+      ...validEnvelope,
+      id: "req-open",
+      type: "approval.requested",
+      payload_hash: canonicalHash(requestPayload),
+      payload: requestPayload,
+    }),
+    EventEnvelopeSchema.parse({
+      ...validEnvelope,
+      id: "grant-open",
+      type: "approval.granted",
+      payload_hash: canonicalHash(grantPayload),
+      payload: grantPayload,
+    }),
+  ])
+  expect(stillOpen.length === 1, "a lone grant resolved a quorum request in the pending queue")
+  expect(stillOpen[0]?.quorum === 2, "the pending item did not carry its quorum target")
+  expect(
+    stillOpen[0]?.approvers_so_far?.join(",") === "alice",
+    "advisory quorum progress was not surfaced",
+  )
+})
 
 // ── @qmilab/lodestar-guard: the ApprovalChannel transport seam (ADR-0015) ──
 await check(
