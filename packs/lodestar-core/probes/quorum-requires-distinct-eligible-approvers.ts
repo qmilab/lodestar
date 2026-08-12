@@ -83,6 +83,11 @@
  *   N. Votes accumulate across resumes until the threshold is met and the remoted
  *      tool body runs exactly once; and the same `quorumRoster` override is the
  *      trust root there too.
+ *   Q. A quorum hold whose durable `approval.requested@1` cannot be recovered
+ *      FAILS CLOSED rather than resuming down the single-approver path, where one
+ *      signed grant would un-park an action the policy held for three approvers.
+ *   R. Once a quorum is reached, a promoted deny that never vetoed does not
+ *      relabel a later downstream rejection as a human refusal on replay.
  *
  * Why this matters: quorum is the control an operator reaches for when one
  * approver is not enough — an irreversible payment, a production deploy, a key
@@ -91,7 +96,7 @@
  * is worse than no feature.
  */
 
-import { mkdtemp } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -107,6 +112,7 @@ import {
 } from "@qmilab/lodestar-core"
 import {
   EventLogReader,
+  EventLogWriter,
   _resetEventLogStateForTests,
   canonicalHash,
 } from "@qmilab/lodestar-event-log"
@@ -990,13 +996,21 @@ class GateHook {
   }
 }
 
-async function runtimeGateCase(): Promise<string | undefined> {
+async function buildGate(
+  sessionId: string,
+  logDir: string,
+  toolName: string,
+  /**
+   * Case Q pins the REAL voters in config too. Without that, the single-approver
+   * fallback would reject their grants on the key roster anyway and the case
+   * would pass for the wrong reason — it must fail because the gate REFUSES to
+   * downgrade, not because a key happened not to match.
+   */
+  pinVotersInConfig = false,
+) {
   _resetToolsForTests()
   registry._resetForTests()
   _resetEventLogStateForTests()
-  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-runtime-"))
-  const sessionId = "probe-quorum-runtime"
-  const toolName = "deploy"
   const config = RuntimeGateConfigSchema.parse({
     project_id: PROJECT_ID,
     actor_id: AGENT_ID,
@@ -1018,7 +1032,9 @@ async function runtimeGateCase(): Promise<string | undefined> {
     // As in case M, config pins only an unrelated approver: the injected roster
     // below must be what votes are verified against.
     approvals: {
-      authorized_keys: [{ actor_id: "dave", public_key: publicKeyOf("dave") }],
+      authorized_keys: pinVotersInConfig
+        ? proxyAuthorizedKeys()
+        : [{ actor_id: "dave", public_key: publicKeyOf("dave") }],
       allow_unsigned: false,
     },
   })
@@ -1036,6 +1052,14 @@ async function runtimeGateCase(): Promise<string | undefined> {
   void gate.serve(pair.gate)
   await hook.waitReady()
   await hook.register(toolName)
+  return { gate, hook }
+}
+
+async function runtimeGateCase(): Promise<string | undefined> {
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-runtime-"))
+  const sessionId = "probe-quorum-runtime"
+  const toolName = "deploy"
+  const { gate, hook } = await buildGate(sessionId, logDir, toolName)
 
   const held = await hook.govern(toolName)
   if (held.phase !== "pending_approval") {
@@ -1077,6 +1101,150 @@ async function runtimeGateCase(): Promise<string | undefined> {
   return undefined
 }
 
+/**
+ * Q. A quorum hold whose durable `approval.requested@1` cannot be recovered must
+ *    NOT resume down the single-approver path. That path keys on the
+ *    HOOK-SUPPLIED `request_id`, so one valid signed grant would un-park an action
+ *    the policy required three approvers for — the silent downgrade every other
+ *    quorum surface refuses. Simulated by resuming a fresh gate against a log
+ *    whose request record never landed.
+ */
+async function runtimeGateUnrecoveredRequestCase(): Promise<string | undefined> {
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-unrecovered-"))
+  const sessionId = "probe-quorum-unrecovered"
+  const toolName = "deploy"
+  const { gate, hook } = await buildGate(sessionId, logDir, toolName, true)
+
+  const held = await hook.govern(toolName)
+  if (held.phase !== "pending_approval") {
+    return `[Q] the L4 call was not held (phase '${String(held.phase)}').`
+  }
+  const actionId = String(held.action_id)
+  const requestId = String(held.request_id)
+
+  // Strip the durable request record: the state a torn write, a truncated log, or
+  // a payload that fails strict parse leaves behind.
+  await stripApprovalRequested(logDir, sessionId)
+
+  // One valid signed grant. Under the single-approver fallback this alone would
+  // un-park the action and run the tool.
+  await writeApprovalResolution(
+    logDir,
+    PROJECT_ID,
+    castVote({ request_id: requestId, action_id: actionId }, "alice"),
+  )
+  const resumed = await hook.resume(actionId, requestId, 600)
+  await gate.stop()
+
+  if (resumed.phase === "completed") {
+    return "[Q] a single signed grant resumed a QUORUM hold into execution because the durable request could not be recovered — that is the silent downgrade the whole design refuses."
+  }
+  if (hook.bodyRuns.length !== 0) {
+    return `[Q] the remoted tool body ran ${hook.bodyRuns.length}x on an unrecoverable quorum hold; expected 0.`
+  }
+  if (resumed.phase !== "rejected") {
+    return `[Q] expected the unrecoverable quorum hold to fail closed as 'rejected'; got '${String(resumed.phase)}'.`
+  }
+  if (!/quorum/.test(String(resumed.reason ?? ""))) {
+    return `[Q] the refusal did not explain that a quorum hold could not be resumed. Got: ${String(resumed.reason)}`
+  }
+  return undefined
+}
+
+/**
+ * R. Replay classification: a promoted deny that never vetoed must not relabel a
+ *    DOWNSTREAM failure as a human refusal. Hosts promote an *authentic* vote
+ *    before knowing it is *eligible*, so a quorum log can hold an
+ *    `approval.denied` from an approver who never had the standing to veto. If
+ *    the quorum then succeeds and execution is rejected later (a revalidated
+ *    precondition), an exactly-once replay that keyed on that deny would tell the
+ *    hook "a human denied this" and send it re-planning around a refusal that
+ *    never happened.
+ */
+async function runtimeGateReplayClassificationCase(): Promise<string | undefined> {
+  const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-quorum-replay-"))
+  const sessionId = "probe-quorum-replay"
+  const { gate, hook } = await buildGate(sessionId, logDir, "deploy", true)
+  const actionId = "act-replay"
+  const requestId = "req-replay"
+
+  // The log a satisfied quorum leaves when execution is rejected AFTERWARDS: an
+  // ineligible approver's promoted vote, the authorization, then the terminal.
+  const writer = new EventLogWriter(logDir)
+  const seed = async (type: string, payload: unknown): Promise<void> => {
+    await writer.append({
+      id: `${type}-${actionId}`,
+      type,
+      schema_version: "1",
+      project_id: PROJECT_ID,
+      session_id: sessionId,
+      actor_id: "host:probe",
+      timestamp: new Date().toISOString(),
+      causal_parent_ids: [],
+      payload,
+      payload_hash: canonicalHash(payload),
+      versions: { schema_registry_version: "0.1.0" },
+    })
+  }
+  await seed("approval.denied", {
+    request_id: requestId,
+    action_id: actionId,
+    approver_id: "intern",
+    at: new Date().toISOString(),
+  })
+  await seed("approval.quorum_reached", {
+    request_id: requestId,
+    action_id: actionId,
+    quorum: 3,
+    approvals: ["alice", "bob", "carol"].map((id) => ({
+      approver_id: id,
+      at: new Date().toISOString(),
+      payload_hash: `h-${id}`,
+      granted_event_id: `e-${id}`,
+    })),
+    at: new Date().toISOString(),
+  })
+  await seed("action.rejected", {
+    id: actionId,
+    phase: "rejected",
+    audit: [
+      {
+        phase: "rejected",
+        by_actor_id: "system",
+        at: new Date().toISOString(),
+        detail: "precondition 'branch is clean' no longer holds",
+      },
+    ],
+  })
+
+  const replayed = await hook.resume(actionId, requestId, 0)
+  await gate.stop()
+
+  if (replayed.phase !== "rejected") {
+    return `[R] the replayed terminal was not 'rejected' (got '${String(replayed.phase)}').`
+  }
+  if (replayed.kind === "approval_denied") {
+    return "[R] a NON-VETOING promoted deny relabelled a downstream rejection as 'approval_denied' — the hook would re-plan around a human refusal that never happened. Once the quorum was reached, that deny was definitionally a vote, not the verdict."
+  }
+  if (!/precondition/.test(String(replayed.reason ?? ""))) {
+    return `[R] the replayed rejection lost the real reason. Got: ${String(replayed.reason)}`
+  }
+  return undefined
+}
+
+/** Rewrite the session log with every `approval.requested@1` removed. */
+async function stripApprovalRequested(logDir: string, sessionId: string): Promise<void> {
+  const dir = join(logDir, PROJECT_ID)
+  for (const name of await readdir(dir)) {
+    if (!name.endsWith(".ndjson")) continue
+    const path = join(dir, name)
+    const kept = (await readFile(path, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "" && !line.includes('"type":"approval.requested"'))
+    await writeFile(path, kept.length > 0 ? `${kept.join("\n")}\n` : "")
+  }
+}
+
 async function run(): Promise<ProbeResult> {
   if (!registry.has(OUT_KEY)) registry.register(OUT_KEY, z.object({ ran: z.boolean() }))
 
@@ -1089,10 +1257,16 @@ async function run(): Promise<ProbeResult> {
   const runtimeFailure = await runtimeGateCase()
   if (runtimeFailure !== undefined) return { passed: false, details: runtimeFailure }
 
+  const unrecoveredFailure = await runtimeGateUnrecoveredRequestCase()
+  if (unrecoveredFailure !== undefined) return { passed: false, details: unrecoveredFailure }
+
+  const replayFailure = await runtimeGateReplayClassificationCase()
+  if (replayFailure !== undefined) return { passed: false, details: replayFailure }
+
   return {
     passed: true,
     details:
-      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; and a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too.",
+      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; and a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too; a quorum hold whose durable request record was lost failed CLOSED rather than resuming on a single grant; and a non-vetoing promoted deny did not relabel a downstream rejection as a human refusal on replay.",
   }
 }
 

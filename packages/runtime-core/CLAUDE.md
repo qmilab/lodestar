@@ -94,7 +94,16 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    The quorum path verifies against the **roster** (honouring an injected
    `RuntimeGateOverrides.quorumRoster`) via `resolutionIsAuthentic`, which has no
    unsigned path — not `resolutionVerified`, whose `allow_unsigned` legacy mode
-   quorum must not inherit.
+   quorum must not inherit. **A resume whose durable `approval.requested@1` cannot
+   be recovered fails CLOSED** when the compiled policy says the action needs a
+   quorum: the single-approver fallback keys on the hook-supplied `request_id`, so
+   falling through would let one signed grant un-park a hold the policy held for M
+   approvers — and the accumulated votes are signed against the lost `request_id`,
+   so a freshly-opened request could never match them anyway. On **replay**, a
+   promoted `approval.denied` is not treated as the verdict once
+   `approval.quorum_reached@1` exists for the action: it was a non-vetoing vote,
+   and classifying from it would relabel a later downstream rejection (a
+   revalidated precondition) as a human refusal.
 6. **Honest scope (ADR-0004).** Governance over declared actions, not OS
    containment. Raw I/O outside the tool abstraction is out of scope — state it,
    don't pretend to capture it. Pair with network/filesystem controls.

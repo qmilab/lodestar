@@ -16,6 +16,7 @@ import {
   type IngestResult,
 } from "@qmilab/lodestar-cognitive-core"
 import {
+  APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   ApprovalDeniedPayloadSchema,
   ApprovalGrantedPayloadSchema,
   ApprovalRequestSchema,
@@ -807,6 +808,42 @@ export class RuntimeGate {
     // still knows the threshold it is holding to.
     if (recovered !== undefined && needsQuorum(recovered)) {
       return await this.resolveQuorumResume(msg, parked, recovered, deadlineAt)
+    }
+    if (recovered === undefined) {
+      // The durable `approval.requested@1` is missing or malformed, so we do NOT
+      // know this hold's terms. Falling through would resume on `msg.request_id`
+      // — a HOOK-SUPPLIED id — down the single-approver path, where one valid
+      // signed grant un-parks an action the policy may have required M approvers
+      // for. That is the silent downgrade every other quorum surface refuses
+      // (`assertQuorumRoster` throws rather than fall back), and this is the one
+      // place the terms come from the log rather than a live evaluation.
+      //
+      // Re-run the compiled policy to find out. A `require_approval` rule
+      // declaring a quorum makes this unresolvable — the accumulated votes are
+      // signed against the ORIGINAL `request_id`, which is exactly what was lost,
+      // so a freshly-opened request could never match them. Fail closed and let
+      // the hook re-propose. (A bare `PolicyGate` cannot express quorum at all, so
+      // with no compiled policy there is nothing to downgrade and the existing
+      // single-approver fallback — still bound by the signature's `request_id` +
+      // `action_id` — is untouched.)
+      const reevaluated = this.compiledPolicy?.evaluate(parked)
+      if (reevaluated?.verdict === "hold" && (reevaluated.quorum ?? 1) >= 2) {
+        const expired: ApprovalOutcome = {
+          kind: "expired",
+          action_id: msg.action_id,
+          request_id: requestId,
+        }
+        const rejectedAction = kernel.resolve(parked, expired)
+        await this.emit("action.rejected", rejectedAction)
+        this.pendingActions.delete(msg.action_id)
+        return {
+          type: "govern_result",
+          phase: "rejected",
+          action_id: msg.action_id,
+          reason: `this action requires a quorum of ${reevaluated.quorum} approvers, but its durable approval request could not be recovered from the log — refusing to resume on a single approval. Re-propose the action.`,
+          kind: "approval_required",
+        }
+      }
     }
 
     const waitMs = msg.wait_ms ?? 0
@@ -1669,6 +1706,16 @@ export class RuntimeGate {
     // last), breaking callers that branch on the kind for re-planning.
     let expired = false
     let denied = false
+    // ADR-0041: on a quorum hold an `approval.denied` may be a promoted VOTE that
+    // never vetoed — hosts promote an *authentic* vote before knowing it is
+    // *eligible*, and only an eligible deny vetoes. If the quorum was then
+    // satisfied, that deny is definitionally non-vetoing, so classifying the
+    // replay from it would relabel a downstream failure (a revalidated
+    // precondition, say) as `approval_denied` and send the hook off re-planning
+    // around a human refusal that never happened. A veto leaves no
+    // `approval.quorum_reached@1`, so this stays `approval_denied` there — and a
+    // non-quorum action never sets this, so that path is byte-identical.
+    let quorumReached = false
     for (const ev of events) {
       if (ev.type === "observation.recorded") {
         const obs = ev.payload as Observation
@@ -1687,6 +1734,8 @@ export class RuntimeGate {
         if ((ev.payload as { action_id?: string })?.action_id === actionId) expired = true
       } else if (ev.type === "approval.denied") {
         if ((ev.payload as { action_id?: string })?.action_id === actionId) denied = true
+      } else if (ev.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
+        if ((ev.payload as { action_id?: string })?.action_id === actionId) quorumReached = true
       }
     }
     if (completed) {
@@ -1725,7 +1774,7 @@ export class RuntimeGate {
           kind: "approval_timeout",
         }
       }
-      if (denied) {
+      if (denied && !quorumReached) {
         return {
           type: "govern_result",
           phase: "rejected",
