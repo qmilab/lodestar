@@ -66,11 +66,11 @@ import {
   httpChannelForbidsUnsigned,
   needsQuorum,
   openApprovalRequest,
-  policyDeclaresQuorum,
   quorumDeniedOutcome,
   quorumGrantedOutcome,
   quorumOptions,
   quorumReachedPayload,
+  quorumRosterShortfall,
   quorumShortfallReason,
   resolutionIsAuthentic,
   verifyApprovalSignature,
@@ -367,21 +367,11 @@ export class RuntimeGate {
     // approval rather than a misconfiguration. Fail at construction.
     this.quorumRoster =
       overrides?.quorumRoster ?? approverRosterFrom(config.approvals?.authorized_keys ?? [])
-    if (
-      this.quorumRoster === undefined &&
-      this.compiledPolicy !== undefined &&
-      policyDeclaresQuorum(this.compiledPolicy.policy)
-    ) {
-      throw new Error(
-        "RuntimeGate: the policy declares a require_approval rule with quorum >= 2, but no " +
-          "pinned approver carries an `authority` record. Quorum checks TWO orthogonal things: " +
-          "approvals.authorized_keys[].public_key proves a vote is authentic, and " +
-          "approvals.authorized_keys[].authority ({ trust_baseline, sensitivity_clearance, " +
-          "authority_scope }) proves the approver is eligible against the rule's " +
-          "required_authority. Keys alone would let ANY pinned approvers satisfy the threshold, " +
-          "so a quorum with no authority records can never be satisfied. Declare `authority` on " +
-          "the approvers who may vote, or drop `quorum` from the rule.",
-      )
+    if (this.compiledPolicy !== undefined) {
+      // Covers BOTH provably-unsatisfiable shapes: no authority records at all,
+      // and a roster smaller than the largest threshold the policy can open.
+      const shortfall = quorumRosterShortfall(this.compiledPolicy.policy, this.quorumRoster)
+      if (shortfall !== null) throw new Error(`RuntimeGate: ${shortfall}`)
     }
   }
 
@@ -1389,6 +1379,14 @@ export class RuntimeGate {
       resolution.action_id !== request.action_id ||
       !withinDeadline(resolution.at, deadlineAt)
     ) {
+      // Mis-bound, or dated after the deadline (approver clock skew) — it can
+      // never become valid. CONSUME it: the channel is a single slot per request,
+      // and `lodestar approve` deliberately refuses to clobber a queued peer vote,
+      // so leaving an unusable one in place would block every later approver and
+      // time the quorum out. The single-approver path can leave it (it settles on
+      // the first valid resolution and nobody waits behind it); an accumulating
+      // hold cannot.
+      this.consumeResolution(ref)
       return
     }
     const hash = canonicalApprovalResolutionHash(resolution)
