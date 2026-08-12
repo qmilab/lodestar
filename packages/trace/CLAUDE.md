@@ -33,11 +33,15 @@ projects it into the epistemic chain, then renders markdown.
   `collectResolvedRequestIds` in the `lodestar approve` CLI.
   **Quorum-aware (ADR-0041):** for a request carrying `quorum >= 2`, a lone
   `approval.granted@1` is one approver's *vote* and does NOT resolve it — the
-  request stays queued until the host-authored `approval.quorum_reached@1` (the
-  authorization), a deny (decisive regardless of grants collected), or
-  `approval.expired@1` (which expires a *partially* satisfied hold too). Without
-  that split a 3-of-3 hold would drop off the queue on its first vote while the
-  kernel still had the action parked. Such an item also carries `quorum` and
+  request stays queued until a **host-authored** verdict:
+  `approval.quorum_reached@1` (the authorization), `approval.expired@1` (which
+  expires a *partially* satisfied hold too), or the `action.rejected` the host
+  writes when a deny vetoes. **A promoted deny is a vote too, not a verdict** —
+  a host promotes a vote that is *authentic* before it knows the vote is
+  *eligible*, and only an eligible deny vetoes, so treating any deny as terminal
+  would let a pinned-but-ineligible approver hide a live hold from the queue and
+  doom it with one click. Without either split a 3-of-3 hold would drop off the
+  queue on its first vote while the kernel still had the action parked. Such an item also carries `quorum` and
   `approvers_so_far` — **advisory progress, never authorization**: the projection
   holds no pinned keys and no approver authority records, so it cannot tell
   whether a vote is genuine or whether its approver clears `required_authority`,

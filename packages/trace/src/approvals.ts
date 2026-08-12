@@ -11,6 +11,10 @@ import {
   type QuorumApprovalRef,
 } from "@qmilab/lodestar-core"
 
+/** The host's terminal for a rejected action. Not a core constant — the chain
+ *  event types are plain strings the hosts emit; keep the literal in one place. */
+const ACTION_REJECTED_EVENT_TYPE = "action.rejected"
+
 /**
  * The pending-approval queue, projected from a flat event stream.
  *
@@ -156,6 +160,15 @@ export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
     if (parsed.data.quorum !== undefined) quorumFor.set(parsed.data.request_id, parsed.data.quorum)
   }
 
+  // Actions the host drove to a terminal `rejected`. On a quorum request this is
+  // what closes the queue entry, because no *vote* can: see below.
+  const rejectedActionIds = new Set<string>()
+  for (const event of events) {
+    if (event.type !== ACTION_REJECTED_EVENT_TYPE) continue
+    const actionId = (event.payload as { id?: unknown } | undefined)?.id
+    if (typeof actionId === "string" && actionId.length > 0) rejectedActionIds.add(actionId)
+  }
+
   const resolved = new Set<string>()
   // Advisory only: distinct approvers seen granting, per request. See
   // `PendingApproval.approvers_so_far` for why this can only ever overstate.
@@ -170,17 +183,26 @@ export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
       // real resolution.
       if (rejectedEventIds.has(event.id)) continue
       if (conservativelyTaintedRequestIds.has(requestId)) continue
-      const quorum = quorumFor.get(requestId)
-      if (quorum !== undefined && event.type === APPROVAL_GRANTED_EVENT_TYPE) {
-        // One vote toward a threshold, not a resolution.
-        const seen = votesSeen.get(requestId) ?? []
-        const approverId = payload?.approver_id
-        if (typeof approverId === "string" && !seen.includes(approverId)) seen.push(approverId)
-        votesSeen.set(requestId, seen)
+      // ADR-0041: on a quorum request a promoted `approval.granted@1` /
+      // `approval.denied@1` is ONE APPROVER'S VOTE, never a verdict — for the
+      // deny just as much as for the grant. A host deliberately promotes a vote
+      // that is *authentic* but not yet known to be *eligible* (authenticity
+      // gates the log write; eligibility gates the count), and `evaluateQuorum`
+      // lets only an eligible deny veto. So a pinned approver who does not clear
+      // `required_authority` can cast a deny that the host correctly ignores —
+      // and if this projection treated it as terminal, the still-open hold would
+      // vanish from the queue while the kernel kept waiting, dooming it to expire
+      // with nobody able to see it. That is a denial of service any low-privilege
+      // pinned approver could trigger, so a vote closes nothing here.
+      if (quorumFor.has(requestId)) {
+        if (event.type === APPROVAL_GRANTED_EVENT_TYPE) {
+          const seen = votesSeen.get(requestId) ?? []
+          const approverId = payload?.approver_id
+          if (typeof approverId === "string" && !seen.includes(approverId)) seen.push(approverId)
+          votesSeen.set(requestId, seen)
+        }
         continue
       }
-      // A deny still resolves a quorum request: one valid deny is decisive
-      // regardless of grants collected, so the host rejects the action on it.
       resolved.add(requestId)
     } else if (
       event.type === APPROVAL_EXPIRED_EVENT_TYPE ||
@@ -200,6 +222,11 @@ export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
     if (!parsed.success) continue
     const request = parsed.data
     if (resolved.has(request.request_id)) continue
+
+    // A vetoed quorum has no `approval.*` terminal of its own — the deciding deny
+    // is just a promoted vote — so the host's `action.rejected` is what closes it.
+    // Same signal on every host and every quorum terminal path.
+    if (request.quorum !== undefined && rejectedActionIds.has(request.action_id)) continue
 
     const item: PendingApproval = {
       project_id: event.project_id,

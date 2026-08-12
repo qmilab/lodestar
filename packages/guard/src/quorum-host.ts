@@ -154,6 +154,25 @@ export function policyDeclaresQuorum(policy: Policy): boolean {
   return policy.rules.some((rule) => (rule.approval?.quorum ?? 1) >= 2)
 }
 
+/**
+ * Is this resolution bound to *this* request and action?
+ *
+ * A signature proves **who** signed; it does not prove **what for**. The
+ * `request_id` and `action_id` are inside the signed bytes, so `evaluateQuorum`
+ * re-checks them — but a host must check *before promoting*, not only before
+ * counting. A collector or channel that returns a stale-but-validly-signed
+ * resolution for a different hold would otherwise have it written into this
+ * session's log as an `approval.granted@1` for that other request: adjudication
+ * would correctly refuse to count it, yet the read side would see a terminal-
+ * looking approval for a hold that was never resolved.
+ *
+ * The MCP proxy and the runtime gate already check both ids on their channel
+ * path; this is the shared predicate so the in-process path cannot forget.
+ */
+export function voteIsBoundTo(resolution: ApprovalResolution, request: ApprovalRequest): boolean {
+  return resolution.request_id === request.request_id && resolution.action_id === request.action_id
+}
+
 /** Does this request need quorum adjudication rather than the single-approver path? */
 export function needsQuorum(request: ApprovalRequest): boolean {
   return request.quorum !== undefined && request.quorum >= 2

@@ -54,6 +54,7 @@ import {
   quorumShortfallReason,
   resolutionIsAuthentic,
   voteFromResolution,
+  voteIsBoundTo,
 } from "./quorum-host.js"
 import type {
   AgentLoop,
@@ -506,6 +507,10 @@ export async function runGuarded<T>(
 
     const votes: QuorumVote[] = []
     for (const resolution of await quorum.collect(request)) {
+      // Binding BEFORE promotion, not just before counting: a collector that
+      // returned a stale-but-validly-signed resolution for another hold would
+      // otherwise get it written into this session's log as that hold's grant.
+      if (!voteIsBoundTo(resolution, request)) continue
       if (!resolutionIsAuthentic(resolution, quorum.authorized_keys)) continue
       const eventId = await emit(promotedVoteEventType(resolution), promotedVotePayload(resolution))
       votes.push(voteFromResolution(resolution, eventId))

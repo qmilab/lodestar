@@ -51,6 +51,14 @@
  *   I. The action's own PROPOSER cannot count toward its own quorum.
  *   J. `quorum` absent is byte-identical to today: the single-approver resolver
  *      path runs unchanged and emits NO `approval.quorum_reached@1`.
+ *   O. A promoted deny from a pinned but INELIGIBLE approver leaves the hold
+ *      VISIBLE in the read-side queue. The host promotes an authentic vote before
+ *      it knows the vote is eligible, and only an eligible deny vetoes — so if the
+ *      projection treated any deny as terminal, a low-privilege pinned approver
+ *      could make a live hold vanish from the queue and doom it single-handedly.
+ *   P. A collector's mis-bound vote is never promoted: a validly-signed
+ *      resolution for a DIFFERENT request must not be written into this session's
+ *      log, where it would look like that other request's resolution.
  *
  * And through the REAL MCP proxy, over the REAL signed `.approvals/` file
  * side-channel — the accumulating hold loop, which is where the transport
@@ -93,10 +101,15 @@ import {
   APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   type ApprovalQuorumReachedPayload,
   type EventEnvelope,
+  EventEnvelopeSchema,
   type Policy,
   registry,
 } from "@qmilab/lodestar-core"
-import { EventLogReader, _resetEventLogStateForTests } from "@qmilab/lodestar-event-log"
+import {
+  EventLogReader,
+  _resetEventLogStateForTests,
+  canonicalHash,
+} from "@qmilab/lodestar-event-log"
 import {
   type Actor,
   type ApprovalResolution,
@@ -123,6 +136,7 @@ import {
   RuntimeGateConfigSchema,
   createLoopbackPair,
 } from "@qmilab/lodestar-runtime-core"
+import { pendingApprovals } from "@qmilab/lodestar-trace"
 import { z } from "zod"
 
 interface ProbeResult {
@@ -306,6 +320,7 @@ interface CaseOutcome {
   calls: number
   types: string[]
   error: string
+  sessionId: string
   quorumRecord?: ApprovalQuorumReachedPayload
 }
 
@@ -340,6 +355,7 @@ async function driveQuorum(
     calls: callCount(),
     types: events.map((e) => e.type),
     error,
+    sessionId: run.session_id,
     ...(record !== undefined
       ? { quorumRecord: record.payload as ApprovalQuorumReachedPayload }
       : {}),
@@ -348,6 +364,25 @@ async function driveQuorum(
 
 function countOf(types: string[], type: string): number {
   return types.filter((t) => t === type).length
+}
+
+/** A minimal valid envelope, for the pure-projection assertions. */
+function probeEvent(type: string, id: string, payload: unknown): EventEnvelope {
+  return EventEnvelopeSchema.parse({
+    id,
+    seq: 1,
+    type,
+    schema_version: "1",
+    project_id: PROJECT_ID,
+    session_id: "probe-projection",
+    actor_id: "host:probe",
+    timestamp: "2026-08-12T00:00:03.000Z",
+    logical_clock: 1,
+    causal_parent_ids: [],
+    payload,
+    payload_hash: canonicalHash(payload),
+    versions: { schema_registry_version: "0.1.0" },
+  })
 }
 
 /** Assert an unsatisfied quorum: refused, tool never ran, no authorization event. */
@@ -529,6 +564,79 @@ async function guardCases(): Promise<string | undefined> {
   }
   if (jTypes.includes(APPROVAL_QUORUM_REACHED_EVENT_TYPE)) {
     return `[J] a request with NO quorum emitted '${APPROVAL_QUORUM_REACHED_EVENT_TYPE}' — at the single-approver threshold the grant IS the authorization and no such event may appear.`
+  }
+
+  // O. An INELIGIBLE deny must not make the hold disappear from the read side.
+  //    This is a property of the pure projection, so it is checked over the exact
+  //    event stream a host writes MID-COLLECTION — one grant plus a promoted deny
+  //    from a pinned-but-ineligible approver, with no terminal yet. The host
+  //    promoted that deny because it is authentic (authenticity gates the log
+  //    write) and is still waiting because it is not eligible (eligibility gates
+  //    the count). A projection that read any deny as terminal would hide a live
+  //    hold from the queue — a denial of service any low-privilege pinned approver
+  //    could trigger by denying once.
+  const openRequest = {
+    request_id: "q-open",
+    action_id: "act-open",
+    reason: "needs three",
+    required_authority: { sensitivity_clearance: "secret" },
+    requested_at: "2026-08-12T00:00:00.000Z",
+    quorum: 3,
+  }
+  const midCollection = [
+    probeEvent("approval.requested", "e-req", openRequest),
+    probeEvent("approval.granted", "e-grant", {
+      request_id: "q-open",
+      action_id: "act-open",
+      approver_id: "alice",
+      at: "2026-08-12T00:00:01.000Z",
+    }),
+    probeEvent("approval.denied", "e-deny", {
+      request_id: "q-open",
+      action_id: "act-open",
+      approver_id: "intern",
+      at: "2026-08-12T00:00:02.000Z",
+    }),
+  ]
+  const openQueue = pendingApprovals(midCollection)
+  if (openQueue.length !== 1) {
+    return `[O] the read-side queue showed ${openQueue.length} pending holds; a still-open quorum must stay VISIBLE after an ineligible approver's promoted deny. A promoted vote is not a verdict.`
+  }
+  if (openQueue[0]?.quorum !== 3 || openQueue[0]?.approvers_so_far?.join(",") !== "alice") {
+    return "[O] the pending item lost its quorum target or its advisory progress."
+  }
+  // ...and the host's own terminal DOES close it, so a genuinely vetoed hold does
+  // not linger in the queue forever. That signal is host-authored; a vote is not.
+  const vetoed = pendingApprovals([
+    ...midCollection,
+    probeEvent("action.rejected", "e-rejected", { id: "act-open", phase: "rejected" }),
+  ])
+  if (vetoed.length !== 0) {
+    return "[O] the host's action.rejected did not close the vetoed hold — a settled quorum must not linger in the queue."
+  }
+
+  // P. A collector's MIS-BOUND vote is never promoted. It is validly signed, just
+  //    for another hold; writing it would plant a terminal-looking resolution for
+  //    a request this session never adjudicated.
+  const foreign = { request_id: "other-request", action_id: "other-action" }
+  const p = await driveQuorum((r) => [
+    castVote(r, "alice"),
+    castVote(foreign, "bob"),
+    castVote(foreign, "carol"),
+  ])
+  const pFail = assertNotAuthorized("P", p)
+  if (pFail) return pFail
+  if (countOf(p.types, "approval.granted") !== 1) {
+    return `[P] ${countOf(p.types, "approval.granted")} grants were promoted; expected only the 1 bound to this request. A validly-signed vote for ANOTHER request must not be written into this log.`
+  }
+  const pEvents = await sessionEvents(p.sessionId)
+  const strayForOther = pEvents.some(
+    (e) =>
+      e.type === "approval.granted" &&
+      (e.payload as { request_id?: unknown }).request_id === foreign.request_id,
+  )
+  if (strayForOther) {
+    return "[P] a grant for a DIFFERENT request was written into this session's log — the read side would treat that request as resolved though nothing adjudicated it."
   }
   return undefined
 }
@@ -984,7 +1092,7 @@ async function run(): Promise<ProbeResult> {
   return {
     passed: true,
     details:
-      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; and a request with no quorum took the single-approver path byte-identically, emitting no quorum event. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too.",
+      "Quorum is adjudicated by the kernel, never attested by a client. Through guard.wrap(): three distinct eligible signed grants satisfied quorum 3 (three approval.granted@1 votes, one approval.quorum_reached@1 authorization naming all three with their evidence pointers, tool run once); a collector-synthesized single grant could not satisfy 3; M-1 did not un-park; a duplicate actor_id counted once; a deny after M-1 was decisive; a revoked key's outstanding vote stopped counting (verify-time roster, no snapshot); an authentically-signed but INELIGIBLE pinned approver was promoted-but-not-counted (authenticity gates the log write, eligibility gates the count); an approver with no supplied authority record did not count (fail closed); the action's own proposer could not count toward its own quorum; a request with no quorum took the single-approver path byte-identically, emitting no quorum event; an INELIGIBLE approver's promoted deny left the hold VISIBLE in the read-side queue (a vote is not a verdict — otherwise any pinned approver could hide a live hold) while the host's own action.rejected DID close it; and a collector's validly-signed vote for a DIFFERENT request was never promoted into this session's log. Through the real MCP proxy over the real signed .approvals/ side-channel: three votes cast one at a time accumulated in the LOG until the third authorized the call (the single-slot channel needed no change), and a partially satisfied 2-of-3 that hit its deadline was a SOFT DENIAL with the tool never run; and a host pinning its keys only through the injected quorumRoster override reached quorum, so the override is the effective verification trust root rather than config. And through the real runtime gate over the real NDJSON-RPC loopback: votes accumulated across resumes without un-parking early, the third completed the action with the remoted body run exactly once, and the same injected roster was the trust root there too.",
   }
 }
 

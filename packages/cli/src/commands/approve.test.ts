@@ -648,48 +648,6 @@ describe("lodestar approve — a quorum request keeps accepting votes (ADR-0041)
     }
   })
 
-  test("a promoted DENY is still terminal — one valid deny is decisive", async () => {
-    _resetEventLogStateForTests()
-    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-deny-"))
-    try {
-      const { requestId, actionId } = await seedRequest(logRoot, {}, 3)
-      const payload = {
-        request_id: requestId,
-        action_id: actionId,
-        approver_id: "carol",
-        at: new Date().toISOString(),
-      }
-      await new EventLogWriter(logRoot).append({
-        id: randomUUID(),
-        type: "approval.denied",
-        schema_version: "1",
-        project_id: PROJECT,
-        session_id: SESSION,
-        actor_id: "host:test",
-        timestamp: new Date().toISOString(),
-        causal_parent_ids: [],
-        payload,
-        payload_hash: canonicalHash(payload),
-        versions: { schema_registry_version: "0.1.0" },
-      })
-      const { code, out } = await runApprove([
-        "grant",
-        requestId,
-        "--approver",
-        "bob",
-        "--project",
-        PROJECT,
-        "--log-root",
-        logRoot,
-      ])
-      expect(code).toBe(0)
-      expect(out).toContain("already denied")
-      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
-    } finally {
-      await rm(logRoot, { recursive: true, force: true })
-    }
-  })
-
   test("approval.quorum_reached@1 IS terminal — the authorization already landed", async () => {
     _resetEventLogStateForTests()
     const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-reached-"))
@@ -812,6 +770,134 @@ describe("lodestar approve — a quorum request keeps accepting votes (ADR-0041)
       const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
       expect(queued?.kind).toBe("denied")
       expect(queued?.approver_id).toBe("alice")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a promoted DENY does not block later votes — it is a vote, not a verdict", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-inelig-deny-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {}, 3)
+      // An authentic but INELIGIBLE approver denies. The host promotes the vote
+      // (authenticity gates the log write) but `evaluateQuorum` refuses to let it
+      // veto (eligibility gates the count), so the hold is still open. If this CLI
+      // treated the deny as terminal, that approver could doom any quorum alone.
+      const payload = {
+        request_id: requestId,
+        action_id: actionId,
+        approver_id: "intern",
+        at: new Date().toISOString(),
+      }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "approval.denied",
+        schema_version: "1",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).not.toContain("already denied")
+      expect((await readApprovalResolution(logRoot, PROJECT, requestId))?.approver_id).toBe("bob")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("the host's action.rejected DOES close a vetoed quorum", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-quorum-vetoed-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {}, 3)
+      // The host adjudicated the veto and drove the action to its terminal. That
+      // is the only signal a read/write surface can trust — a promoted deny alone
+      // is not one, because this process cannot tell eligible from ineligible.
+      const action = { id: actionId, phase: "rejected" }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "action.rejected",
+        schema_version: "0.1.0",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload: action,
+        payload_hash: canonicalHash(action),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("already rejected")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a promoted deny on a SINGLE-APPROVER request stays terminal (unchanged)", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-single-deny-"))
+    try {
+      const { requestId, actionId } = await seedRequest(logRoot, {})
+      const payload = {
+        request_id: requestId,
+        action_id: actionId,
+        approver_id: "carol",
+        at: new Date().toISOString(),
+      }
+      await new EventLogWriter(logRoot).append({
+        id: randomUUID(),
+        type: "approval.denied",
+        schema_version: "1",
+        project_id: PROJECT,
+        session_id: SESSION,
+        actor_id: "host:test",
+        timestamp: new Date().toISOString(),
+        causal_parent_ids: [],
+        payload,
+        payload_hash: canonicalHash(payload),
+        versions: { schema_registry_version: "0.1.0" },
+      })
+      const { code, out } = await runApprove([
+        "grant",
+        requestId,
+        "--approver",
+        "bob",
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(out).toContain("already denied")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
     } finally {
       await rm(logRoot, { recursive: true, force: true })
     }

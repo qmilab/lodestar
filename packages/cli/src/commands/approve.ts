@@ -209,7 +209,13 @@ async function listPending(root: string, projectId: string): Promise<number> {
 
   const requests = collectRequests(events)
   const quorumFor = collectQuorumTargets(requests)
-  const resolvedIds = collectResolvedRequestIds(events, quorumFor)
+  const actionForRequest = new Map([...requests.values()].map((r) => [r.request_id, r.action_id]))
+  const resolvedIds = collectResolvedRequestIds(
+    events,
+    quorumFor,
+    collectRejectedActionIds(events),
+    actionForRequest,
+  )
   const quorumProgress = collectQuorumProgress(events)
 
   const pending: ApprovalRequest[] = []
@@ -325,7 +331,13 @@ async function resolveRequest(input: {
   // Already resolved in the log — the proxy (or an in-process resolver) settled
   // it. Report the existing verdict and exit cleanly; the desired end-state holds.
   const quorumFor = collectQuorumTargets(collectRequests(events))
-  const existing = existingResolution(events, requestId, quorumFor)
+  const existing = existingResolution(
+    events,
+    requestId,
+    quorumFor,
+    collectRejectedActionIds(events),
+    request.action_id,
+  )
   if (existing !== undefined) {
     const because =
       existing.note ?? `${existing.verdict}${existing.approver ? ` by '${existing.approver}'` : ""}`
@@ -613,16 +625,22 @@ function isGenuineResolution(
  * the agent re-proposes). A request that was forged-then-rejected but not yet
  * resolved stays actionable so an operator can still grant it.
  *
- * **A grant does not resolve a `quorum >= 2` request** (ADR-0041): there it is one
- * approver's *vote*, and the authorization is the host-authored
- * `approval.quorum_reached@1`. Without this split the second and third approvers
- * would never see the request — it would drop off this queue the moment the first
- * one voted, while the kernel still had the action parked. A *deny* still resolves
- * it: one valid deny is decisive regardless of grants collected.
+ * **No promoted VOTE resolves a `quorum >= 2` request** (ADR-0041) — neither a
+ * grant nor a deny. A host promotes a vote that is *authentic* but not yet known
+ * to be *eligible* (authenticity gates the log write, eligibility gates the
+ * count), and `evaluateQuorum` lets only an eligible deny veto. So a pinned
+ * approver who does not clear `required_authority` can cast a deny the host
+ * correctly ignores; treating it as terminal here would drop the still-open hold
+ * off this queue and make `approve grant` refuse every later eligible vote, so
+ * any low-privilege pinned approver could doom a quorum unilaterally. The
+ * verdicts are host-authored only: `approval.quorum_reached@1`,
+ * `approval.expired@1`, or the `action.rejected` the host writes on a veto.
  */
 function collectResolvedRequestIds(
   events: EventEnvelope[],
   quorumFor: ReadonlyMap<string, number>,
+  rejectedActionIds: ReadonlySet<string>,
+  actionForRequest: ReadonlyMap<string, string>,
 ): Set<string> {
   const index = rejectionIndex(events)
   const out = new Set<string>()
@@ -633,12 +651,28 @@ function collectResolvedRequestIds(
       ).safeParse(e.payload)
       if (!p.success) continue
       if (!isGenuineResolution(e, p.data.request_id, index)) continue
-      if (e.type === "approval.granted" && quorumFor.has(p.data.request_id)) continue
+      if (quorumFor.has(p.data.request_id)) continue
       out.add(p.data.request_id)
     } else if (e.type === "approval.expired" || e.type === APPROVAL_QUORUM_REACHED_EVENT_TYPE) {
       const p = ApprovalExpiredPayloadSchema.pick({ request_id: true }).safeParse(e.payload)
       if (p.success) out.add(p.data.request_id)
     }
+  }
+  // A vetoed quorum has no `approval.*` terminal of its own, so the host's
+  // `action.rejected` is what closes it.
+  for (const [requestId, actionId] of actionForRequest) {
+    if (quorumFor.has(requestId) && rejectedActionIds.has(actionId)) out.add(requestId)
+  }
+  return out
+}
+
+/** Actions the host drove to a terminal `rejected` — the veto/expiry close signal. */
+function collectRejectedActionIds(events: EventEnvelope[]): Set<string> {
+  const out = new Set<string>()
+  for (const e of events) {
+    if (e.type !== "action.rejected") continue
+    const id = (e.payload as { id?: unknown } | undefined)?.id
+    if (typeof id === "string" && id.length > 0) out.add(id)
   }
   return out
 }
@@ -680,22 +714,27 @@ function collectQuorumProgress(events: EventEnvelope[]): Map<string, string[]> {
  * proxy signature-rejected (see {@link collectResolvedRequestIds}), so a forged
  * resolution does not block a real one. `approval.expired@1` is always honoured.
  *
- * **A grant is NOT terminal on a `quorum >= 2` request** (ADR-0041): there it is
- * one approver's *vote*, and the authorization is `approval.quorum_reached@1`.
- * The `quorumFor` map is what makes that distinction; without it the second and
- * third approvers would be told the request "is already granted by <first
- * approver>" and could never cast their vote — quorum would be unusable through
- * this CLI. A *deny* is still terminal: one valid deny is decisive regardless of
- * grants collected. Same split `collectResolvedRequestIds` applies to the read
- * side; the two must agree, or the queue and the write path disagree about what
- * is still open.
+ * **No promoted VOTE is terminal on a `quorum >= 2` request** (ADR-0041) —
+ * neither a grant nor a deny. A host promotes an *authentic* vote before knowing
+ * it is *eligible*, and only an eligible deny vetoes, so a pinned approver who
+ * does not clear `required_authority` could otherwise tell every later approver
+ * the request "is already denied" and doom the quorum single-handedly. The
+ * verdicts are host-authored: `approval.quorum_reached@1`, `approval.expired@1`,
+ * or the `action.rejected` the host writes when a veto lands. Same rule as
+ * `collectResolvedRequestIds`; the two must agree, or the queue and the write
+ * path disagree about what is still open.
  */
 function existingResolution(
   events: EventEnvelope[],
   requestId: string,
   quorumFor: ReadonlyMap<string, number>,
+  rejectedActionIds: ReadonlySet<string>,
+  actionId: string,
 ): { verdict: "granted" | "denied" | "expired"; approver?: string; note?: string } | undefined {
   const index = rejectionIndex(events)
+  if (quorumFor.has(requestId) && rejectedActionIds.has(actionId)) {
+    return { verdict: "denied", note: "its action was already rejected" }
+  }
   for (const e of events) {
     if (e.type === "approval.granted" || e.type === "approval.denied") {
       const p = (
@@ -706,7 +745,7 @@ function existingResolution(
         p.data.request_id === requestId &&
         isGenuineResolution(e, requestId, index)
       ) {
-        if (e.type === "approval.granted" && quorumFor.has(requestId)) continue
+        if (quorumFor.has(requestId)) continue
         return {
           verdict: e.type === "approval.granted" ? "granted" : "denied",
           approver: p.data.approver_id,

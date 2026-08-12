@@ -98,6 +98,7 @@ export {
   quorumShortfallReason,
   resolutionIsAuthentic,
   voteFromResolution,
+  voteIsBoundTo,
   type ApproverAuthorityConfig,
   type ApproverRosterEntry,
   type QuorumRoster,
