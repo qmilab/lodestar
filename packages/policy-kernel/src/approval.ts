@@ -199,6 +199,21 @@ function withActionSensitivity(ra: RequiredAuthority, action: Action): RequiredA
 }
 
 /**
+ * An approver projected down to exactly the fields the authority predicate
+ * reads. Declared structurally *on purpose* — the same idiom as the gate's
+ * {@link import("./gate.js").BackingBelief} and `CalibrationSnapshot`: a full
+ * core {@link Actor} is assignable, so a host that has one hands it straight in,
+ * while a host whose operator config declares only an approver's *authority*
+ * does not have to fabricate identity fields (`kind`, `display_name`,
+ * `created_at`) that adjudication never reads. Fabricated ceremony in a
+ * security-relevant config is a place for mistakes to hide.
+ */
+export type ApproverAuthority = Pick<
+  Actor,
+  "id" | "trust_baseline" | "sensitivity_clearance" | "authority_scope"
+>
+
+/**
  * `null` if the approver clears the authority, else a human-readable reason.
  *
  * Module-exported (not part of the package's public API) so `quorum.ts` applies
@@ -206,7 +221,10 @@ function withActionSensitivity(ra: RequiredAuthority, action: Action): RequiredA
  * `required_authority` the sole expression of who is eligible, so a second
  * implementation drifting from this one would silently weaken every quorum.
  */
-export function approverShortfall(approver: Actor, ra: RequiredAuthority): string | null {
+export function approverShortfall(
+  approver: ApproverAuthority,
+  ra: RequiredAuthority,
+): string | null {
   if (ra.min_trust_baseline !== undefined && approver.trust_baseline < ra.min_trust_baseline) {
     return `trust_baseline ${approver.trust_baseline} is below the required ${ra.min_trust_baseline}`
   }

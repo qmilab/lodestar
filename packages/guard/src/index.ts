@@ -83,9 +83,14 @@ export { alwaysHoldsChecker } from "./policy-presets.js"
 // authoritative `approval.quorum_reached@1` record says. The adjudication itself
 // is the pure `evaluateQuorum` in `@qmilab/lodestar-policy-kernel`.
 export {
+  ApproverAuthoritySchema,
   QUORUM_REACHED_EVENT,
+  approverRosterFrom,
   assertQuorumRoster,
   needsQuorum,
+  policyDeclaresQuorum,
+  promotedVoteEventType,
+  promotedVotePayload,
   quorumDeniedOutcome,
   quorumGrantedOutcome,
   quorumOptions,
@@ -93,6 +98,8 @@ export {
   quorumShortfallReason,
   resolutionIsAuthentic,
   voteFromResolution,
+  type ApproverAuthorityConfig,
+  type ApproverRosterEntry,
   type QuorumRoster,
 } from "./quorum-host.js"
 
@@ -132,6 +139,9 @@ export {
   // can verify a cross-process approval without importing policy-kernel directly.
   canonicalApprovalResolutionDocument,
   canonicalApprovalResolutionHash,
+  // The pure M-of-N adjudicator (ADR-0041). Re-exported so a host wires quorum
+  // from this one package, exactly as it does the rest of the approval lifecycle.
+  evaluateQuorum,
   signApprovalResolution,
   verifyApprovalSignature,
   generateApproverKeyPair,
@@ -147,7 +157,14 @@ export type {
   AuthorizationResult,
   OpenApprovalRequestOptions,
   ApprovalResolutionDoc,
+  ApproverAuthority,
   AuthorizedApproverKeys,
+  EvaluateQuorumOptions,
+  QuorumEvaluation,
+  QuorumRejectionCode,
+  QuorumVeto,
+  QuorumVote,
+  RejectedQuorumVote,
   VerifyApprovalSignatureOptions,
 } from "@qmilab/lodestar-policy-kernel"
 

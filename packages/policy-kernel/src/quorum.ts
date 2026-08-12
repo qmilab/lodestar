@@ -1,4 +1,4 @@
-import type { Actor, ApprovalRequest, QuorumApprovalRef, Signature } from "@qmilab/lodestar-core"
+import type { ApprovalRequest, QuorumApprovalRef, Signature } from "@qmilab/lodestar-core"
 import {
   type ApprovalResolutionDoc,
   ApprovalSignatureError,
@@ -6,7 +6,7 @@ import {
   canonicalApprovalResolutionHash,
   verifyApprovalSignature,
 } from "./approval-signature.js"
-import { approverShortfall } from "./approval.js"
+import { type ApproverAuthority, approverShortfall } from "./approval.js"
 
 /**
  * M-of-N quorum adjudication — the kernel half of ADR-0041.
@@ -38,8 +38,9 @@ import { approverShortfall } from "./approval.js"
  *   {@link verifyApprovalSignature}.
  * - **Eligibility** — "does this approver satisfy the request's
  *   `required_authority` (`min_trust_baseline` / `sensitivity_clearance` /
- *   `scope`)?" Input: {@link EvaluateQuorumOptions.approverAuthority}. Enforced by
- *   the same `approverShortfall` predicate `authorizeResolution` already applies.
+ *   `scope`)?" Input: {@link EvaluateQuorumOptions.approverAuthority}, a map of
+ *   {@link ApproverAuthority}. Enforced by the same `approverShortfall` predicate
+ *   `authorizeResolution` already applies.
  *
  * `authorizedKeys` cannot answer the second question, because **the signed
  * resolution carries no authority** — the canonical document is
@@ -114,15 +115,17 @@ export interface EvaluateQuorumOptions {
    */
   authorizedKeys: AuthorizedApproverKeys
   /**
-   * Operator-supplied approver identities (`actor_id → Actor`) — the
-   * **eligibility** input, checked against the request's `required_authority`.
-   * Distinct from the result's `approvals`, which is the *outcome*.
+   * Operator-supplied approver authorities (`actor_id → ApproverAuthority`) —
+   * the **eligibility** input, checked against the request's
+   * `required_authority`. Distinct from the result's `approvals`, which is the
+   * *outcome*. A full core `Actor` is structurally assignable, so a host that has
+   * one passes it straight in.
    *
    * Fail closed: an approver with no entry here does not count. That is
    * deliberate — a host with no authority source cannot satisfy a `quorum >= 2`
    * rule, since the alternative is a quorum that counts ineligible approvers.
    */
-  approverAuthority: ReadonlyMap<string, Actor>
+  approverAuthority: ReadonlyMap<string, ApproverAuthority>
   /**
    * The held action's `proposed_by`. At `quorum >= 2` this actor's own grant does
    * not count toward the quorum it triggered (four-eyes). Omitted, or at the
@@ -140,9 +143,9 @@ export type QuorumRejectionCode =
   | "out_of_window"
   /** Unsigned, tampered, lifted onto another approver, or signed by an unpinned key. */
   | "signature"
-  /** No `Actor` supplied, so `required_authority` cannot be checked. */
+  /** No authority record supplied, so `required_authority` cannot be checked. */
   | "no_authority"
-  /** `Actor` supplied but it does not clear `required_authority`. */
+  /** An authority record was supplied but it does not clear `required_authority`. */
   | "shortfall"
   /** The action's own proposer, at `quorum >= 2`. */
   | "proposer"
@@ -312,7 +315,7 @@ export function evaluateQuorum(
     if (approver === undefined) {
       reject(
         "no_authority",
-        `no Actor was supplied for approver '${doc.approver_id}', so the request's required_authority cannot be checked`,
+        `no authority record was supplied for approver '${doc.approver_id}', so the request's required_authority cannot be checked`,
       )
       continue
     }
@@ -320,7 +323,7 @@ export function evaluateQuorum(
       // A mis-keyed roster would otherwise lend one actor's authority to another.
       reject(
         "no_authority",
-        `the supplied Actor for '${doc.approver_id}' identifies as '${approver.id}' — the approver roster is mis-keyed`,
+        `the supplied authority record for '${doc.approver_id}' identifies as '${approver.id}' — the approver roster is mis-keyed`,
       )
       continue
     }

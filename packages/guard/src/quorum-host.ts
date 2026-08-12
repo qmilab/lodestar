@@ -4,20 +4,24 @@ import {
   APPROVAL_GRANTED_EVENT_TYPE,
   APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   APPROVAL_QUORUM_REACHED_SCHEMA_VERSION,
-  type Actor,
   type ApprovalGrantedPayload,
   type ApprovalQuorumReachedPayload,
   ApprovalQuorumReachedPayloadSchema,
   type ApprovalRequest,
+  type Policy,
+  ResourceScopeSchema,
+  SensitivitySchema,
 } from "@qmilab/lodestar-core"
 import {
   ApprovalSignatureError,
+  type ApproverAuthority,
   type AuthorizedApproverKeys,
   type EvaluateQuorumOptions,
   type QuorumEvaluation,
   type QuorumVote,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-policy-kernel"
+import { z } from "zod"
 import type { ApprovalResolution } from "./approvals-channel.js"
 
 /**
@@ -70,16 +74,84 @@ export interface QuorumRoster {
    *  `approvals.authorized_keys` — quorum introduces no second trust root. */
   authorized_keys: AuthorizedApproverKeys
   /**
-   * `actor_id → Actor`. Eligibility, checked against the request's
+   * `actor_id → ApproverAuthority`. Eligibility, checked against the request's
    * `required_authority`. This is a **new operator input**, not a roster schema
-   * change: `authorized_keys` keeps its shape and the `Actor` map is supplied
-   * alongside it, exactly as `authorizeResolution` already takes one.
+   * change: `authorized_keys` keeps its shape and the authority map is supplied
+   * alongside it, exactly as `authorizeResolution` already takes an approver.
+   * A full core `Actor` is structurally assignable.
    *
    * A host with no authority source cannot satisfy a `quorum >= 2` rule —
    * deliberately, since the alternative is a quorum that counts ineligible
    * approvers (see {@link assertQuorumRoster}).
    */
-  approvers: ReadonlyMap<string, Actor>
+  approvers: ReadonlyMap<string, ApproverAuthority>
+}
+
+/**
+ * The config shape of one approver's authority. Host config — it lives here
+ * beside {@link ApprovalChannelConfigSchema} rather than in
+ * `@qmilab/lodestar-core` for the same reason: it is meaningless without the
+ * adjudication it drives, and both the MCP proxy and the runtime gate consume it.
+ *
+ * Exactly the fields `approverShortfall` reads, and no more. `id` is absent
+ * because the roster entry already carries `actor_id` — the host supplies it, so
+ * the two can never disagree. `authority_scope` defaults to `[]` ("holds no
+ * named scope"), which is the fail-closed direction: a defaulted value here can
+ * only make approval harder, never easier.
+ */
+export const ApproverAuthoritySchema = z.object({
+  trust_baseline: z.number().min(0).max(1).describe("default credibility [0,1]"),
+  sensitivity_clearance: SensitivitySchema.describe("max sensitivity this approver may handle"),
+  authority_scope: z
+    .array(ResourceScopeSchema)
+    .default([])
+    .describe("scopes this approver may operate within; empty holds none"),
+})
+export type ApproverAuthorityConfig = z.infer<typeof ApproverAuthoritySchema>
+
+/** One roster entry as an operator writes it: key (authenticity) + optional authority (eligibility). */
+export interface ApproverRosterEntry {
+  actor_id: string
+  public_key: string
+  authority?: ApproverAuthorityConfig
+}
+
+/**
+ * Build the {@link QuorumRoster} from a host's pinned-approver config, or
+ * `undefined` when **no** entry declares an `authority` — in which case the host
+ * genuinely cannot adjudicate a quorum and should say so rather than silently
+ * rejecting every vote as ineligible (which would look like a stalled approval,
+ * not a misconfiguration).
+ *
+ * A *partial* roster is fine and deliberate: an approver with a pinned key but no
+ * declared authority can still cast a real, promotable vote — it just does not
+ * count toward a threshold. Fail closed, per approver.
+ */
+export function approverRosterFrom(
+  entries: readonly ApproverRosterEntry[],
+): QuorumRoster | undefined {
+  const approvers = new Map<string, ApproverAuthority>()
+  for (const entry of entries) {
+    if (entry.authority === undefined) continue
+    approvers.set(entry.actor_id, { id: entry.actor_id, ...entry.authority })
+  }
+  if (approvers.size === 0) return undefined
+  return {
+    authorized_keys: entries.map((e) => ({ actor_id: e.actor_id, public_key: e.public_key })),
+    approvers,
+  }
+}
+
+/**
+ * Does this policy contain a rule that would open a `quorum >= 2` hold? Hosts
+ * call this at construction so a config that declares quorum but pins no approver
+ * *authority* fails loudly at startup — the same "no silent non-enforcement"
+ * posture as the proxy's sentinel guards. Catching it at construction is much
+ * better than at hold time, where the first governed L4 call of a real session
+ * would be the thing that discovers the gap.
+ */
+export function policyDeclaresQuorum(policy: Policy): boolean {
+  return policy.rules.some((rule) => (rule.approval?.quorum ?? 1) >= 2)
 }
 
 /** Does this request need quorum adjudication rather than the single-approver path? */
@@ -102,7 +174,7 @@ export function assertQuorumRoster(
 ): asserts roster is QuorumRoster {
   if (roster !== undefined) return
   throw new Error(
-    `approval request '${request.request_id}' requires a quorum of ${request.quorum} distinct approvers, but this host has no approver roster configured. Quorum needs BOTH the pinned approver keys (authenticity) and an operator-supplied actor_id → Actor map (eligibility against required_authority); keys alone would let any ${request.quorum} pinned approvers satisfy it. ${hostHint}`,
+    `approval request '${request.request_id}' requires a quorum of ${request.quorum} distinct approvers, but this host has no approver roster configured. Quorum needs BOTH the pinned approver keys (authenticity) and an operator-supplied actor_id → authority map (eligibility against required_authority); keys alone would let any ${request.quorum} pinned approvers satisfy it. ${hostHint}`,
   )
 }
 

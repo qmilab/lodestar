@@ -45,18 +45,33 @@ import type {
 import { EventLogReader, EventLogWriter, canonicalHash } from "@qmilab/lodestar-event-log"
 import {
   ApprovalSignatureError,
+  QUORUM_REACHED_EVENT,
   alwaysHoldsChecker,
+  approverRosterFrom,
+  assertQuorumRoster,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
+  canonicalApprovalResolutionHash,
+  evaluateQuorum,
   expireRequest,
   holdEvaluationForParkedAction,
+  needsQuorum,
   openApprovalRequest,
+  policyDeclaresQuorum,
+  quorumDeniedOutcome,
+  quorumGrantedOutcome,
+  quorumOptions,
+  quorumReachedPayload,
+  quorumShortfallReason,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
 import type {
   ApprovalResolutionDoc,
   CompiledPolicy,
   PolicyEvaluation,
+  QuorumEvaluation,
+  QuorumRoster,
+  QuorumVote,
   SentinelArbiter,
 } from "@qmilab/lodestar-guard"
 import {
@@ -219,6 +234,15 @@ export interface MCPProxyOverrides {
    * built from config — ignored when `approvalChannel` is injected directly.
    */
   resolveApprovalToken?: (envName: string) => SecretValue
+  /**
+   * Override the M-of-N quorum roster (ADR-0041) — the pinned approver keys
+   * (authenticity) plus the operator-supplied authority map (eligibility).
+   * Defaults to the roster derived from `config.approvals.authorized_keys[]`,
+   * where each entry may declare an `authority`. This is the seam a probe (or a
+   * library host that holds its rosters in code) injects through; it does not
+   * relax any check — `evaluateQuorum` applies the same two gates either way.
+   */
+  quorumRoster?: QuorumRoster
 }
 
 /**
@@ -273,6 +297,26 @@ export class MCPProxy {
    * channel has no `announce`, and an injected channel defaults to `internal`.
    */
   private readonly announceCeiling: Sensitivity
+  /**
+   * The M-of-N quorum roster (ADR-0041), or `undefined` when no pinned approver
+   * declares an `authority` — in which case this proxy cannot adjudicate a quorum
+   * at all, and the constructor has already refused a policy that declares one.
+   */
+  private readonly quorumRoster: QuorumRoster | undefined
+  /**
+   * Canonical hashes of the resolutions already promoted into the log this
+   * session, so the quorum hold loop cannot write the SAME vote twice.
+   *
+   * The single-approver path never needed this: it returns on the first valid
+   * resolution, so a file it promoted is never re-read. A quorum hold keeps
+   * polling, and `consume` is deliberately fire-and-forget (a slow remote DELETE
+   * must not eat the approval budget) — so without this a not-yet-deleted file
+   * would be re-promoted every poll, filling the log with duplicate
+   * `approval.granted@1` events for one vote. `evaluateQuorum` would still count
+   * that approver once (it dedups by `actor_id`), so this is an audit-integrity
+   * guard, not a counting one.
+   */
+  private readonly promotedVoteHashes = new Set<string>()
 
   private firewall?: MemoryFirewall
   private evidenceStore?: EvidenceStore
@@ -531,6 +575,32 @@ export class MCPProxy {
           "decisions, so the sentinels it was compiled with would be inert. Inject the " +
           "matching arbiter via MCPProxyOverrides.arbiter (the compileProxyPolicyWithSentinels " +
           "/ compileWithSentinels pair). The `lodestar guard mcp-proxy` CLI does this for you.",
+      )
+    }
+    // (D) M-of-N quorum (ADR-0041), the same "no silent non-enforcement" shape.
+    //     Build the roster from the pinned approvers' declared `authority`; an
+    //     injected roster (a probe / a library host) wins. If the policy declares a
+    //     `quorum >= 2` rule but no approver carries an authority record, the gate
+    //     could never satisfy that quorum — every vote would be rejected as
+    //     ineligible and the hold would silently time out, looking like a stalled
+    //     approval rather than a misconfiguration. Catch it at construction, not on
+    //     the first governed L4 call of a real session.
+    this.quorumRoster =
+      overrides?.quorumRoster ?? approverRosterFrom(config.approvals?.authorized_keys ?? [])
+    if (
+      this.quorumRoster === undefined &&
+      this.compiledPolicy !== undefined &&
+      policyDeclaresQuorum(this.compiledPolicy.policy)
+    ) {
+      throw new Error(
+        "MCPProxy: the policy declares a require_approval rule with quorum >= 2, but no " +
+          "pinned approver carries an `authority` record. Quorum checks TWO orthogonal " +
+          "things: approvals.authorized_keys[].public_key proves a vote is authentic, and " +
+          "approvals.authorized_keys[].authority ({ trust_baseline, sensitivity_clearance, " +
+          "authority_scope }) proves the approver is eligible against the rule's " +
+          "required_authority. Keys alone would let ANY pinned approvers satisfy the " +
+          "threshold, so a quorum with no authority records can never be satisfied. Declare " +
+          "`authority` on the approvers who may vote, or drop `quorum` from the rule.",
       )
     }
   }
@@ -1099,6 +1169,13 @@ export class MCPProxy {
     // error so nothing rejects unhandled.
     void this.announceHold(request, parked)
 
+    // ADR-0041: a `quorum >= 2` request accumulates votes instead of returning on
+    // the first one. The branch is on the REQUEST, so a policy that declares a
+    // quorum can never be un-parked by a single grant.
+    if (needsQuorum(request)) {
+      return await this.resolveProxyQuorumHold(parked, request, req, deadlineAt, timeoutMs)
+    }
+
     const resolution = await this.waitForResolution(request, parked.id, deadlineAt)
 
     // The proxy was stopped mid-wait: don't append post-teardown events or run
@@ -1168,6 +1245,228 @@ export class MCPProxy {
     }
     await this.emit("action.approved", resolved)
     return { approved: resolved }
+  }
+
+  /**
+   * Resolve a `quorum >= 2` hold (ADR-0041) — the accumulating counterpart of the
+   * single-approver path above.
+   *
+   * The load-bearing difference is that this loop does **not** return on the first
+   * valid resolution. Each poll it promotes any newly-arrived signed vote into the
+   * log (the host is the sole writer, so this is what gives a vote a durable,
+   * citable event id), then re-adjudicates *every* vote accumulated so far through
+   * the pure `evaluateQuorum`. Accumulated votes therefore live in the log, not in
+   * the channel — which is why the `ApprovalChannel` interface needed no change:
+   * `fetch(ref)` still returns at most one resolution per poll, the host promotes
+   * and consumes it, and the next approver's vote arrives on the next poll.
+   *
+   * **The deadline expires a PARTIALLY satisfied request.** An accumulated 2-of-3
+   * that runs out its budget is not an approval — it takes the same
+   * `approval.expired@1` → `approval_timeout` terminal as an untouched hold, with a
+   * reason naming exactly what was short. This is the conservative direction the
+   * whole hold path already takes, applied to a state that did not exist before.
+   *
+   * A veto short-circuits: one valid deny is decisive regardless of grants
+   * collected, so it rejects immediately rather than waiting out the deadline.
+   */
+  private async resolveProxyQuorumHold(
+    parked: Action,
+    request: ApprovalRequest,
+    req: { name: string; arguments: Record<string, unknown> },
+    deadlineAt: number,
+    timeoutMs: number,
+  ): Promise<{ approved: Action } | { result: CallToolResultLike }> {
+    if (this.kernel === undefined) {
+      throw new Error("resolveProxyQuorumHold invoked before start() wired the kernel")
+    }
+    // Defence in depth: the constructor already refuses a quorum-declaring policy
+    // with no authority records, but a hand-injected gate could still get here.
+    assertQuorumRoster(
+      request,
+      this.quorumRoster,
+      "Declare `authority` on the approvals.authorized_keys entries who may vote, or inject MCPProxyOverrides.quorumRoster.",
+    )
+    const roster = this.quorumRoster
+
+    const evaluation = await this.pollQuorum(request, parked, roster, deadlineAt)
+
+    // The proxy was stopped mid-wait: don't append post-teardown events or run the
+    // tool. Same terminal as the single-approver path.
+    if (this.stopping) {
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: "proxy stopped before the held action was resolved",
+          kind: "approval_timeout",
+          action_id: parked.id,
+        }),
+      }
+    }
+
+    if (!evaluation.satisfied && evaluation.vetoed === undefined) {
+      // Deadline passed with the threshold unmet — including a PARTIAL quorum.
+      const expired = expireRequest(request)
+      const rejected = this.kernel.resolve(parked, expired)
+      const at = rejected.approval?.at ?? new Date().toISOString()
+      await this.emit("approval.expired", {
+        request_id: request.request_id,
+        action_id: parked.id,
+        at,
+      })
+      await this.emit("action.rejected", rejected)
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: `approval deadline passed after ${timeoutMs}ms without quorum: ${quorumShortfallReason(evaluation)}`,
+          kind: "approval_timeout",
+          action_id: parked.id,
+        }),
+      }
+    }
+
+    const at = new Date().toISOString()
+    const outcome = evaluation.satisfied
+      ? quorumGrantedOutcome(request, evaluation, at)
+      : quorumDeniedOutcome(request, evaluation, at)
+    const resolved = this.kernel.resolve(parked, outcome)
+    if (resolved.phase !== "approved") {
+      await this.emit("action.rejected", resolved)
+      return {
+        result: buildPolicyDeniedResult({
+          tool_name: req.name,
+          args: req.arguments,
+          reason: quorumShortfallReason(evaluation),
+          kind: "approval_denied",
+          action_id: parked.id,
+        }),
+      }
+    }
+    // The authorization, emitted BEFORE `action.approved` so the log never shows an
+    // approved action whose quorum record has not landed yet.
+    await this.emit(
+      QUORUM_REACHED_EVENT.type,
+      quorumReachedPayload(request, evaluation, resolved.approval?.at ?? at),
+      { schema_version: QUORUM_REACHED_EVENT.schema_version },
+    )
+    await this.emit("action.approved", resolved)
+    return { approved: resolved }
+  }
+
+  /**
+   * Poll until the quorum is decided (satisfied or vetoed) or `deadlineAt` passes,
+   * returning the final evaluation either way. Each round:
+   *
+   *   1. promote any newly-arrived channel resolution that clears the signature
+   *      gate, deduped by canonical hash so a not-yet-consumed file cannot be
+   *      written twice (`consume` is fire-and-forget by design);
+   *   2. re-scan the log for every signed resolution bound to this request and
+   *      re-verify each — the log is a sibling of `.approvals/` under one
+   *      `log_root`, so a writer who can forge one can forge the other, and both
+   *      go through the same gate;
+   *   3. adjudicate the whole accumulated set.
+   *
+   * Signature-verification here is only the *authenticity* half. Eligibility
+   * against `required_authority`, distinctness, the proposer exclusion and the
+   * deny veto are all `evaluateQuorum`'s, over the same set.
+   */
+  private async pollQuorum(
+    request: ApprovalRequest,
+    parked: Action,
+    roster: QuorumRoster,
+    deadlineAt: number,
+  ): Promise<QuorumEvaluation> {
+    const reader = new EventLogReader(this.logRoot)
+    const ref = this.approvalRef(request.request_id, parked.id)
+    let evaluation = evaluateQuorum(request, [], quorumOptions(roster, parked.proposed_by))
+    for (;;) {
+      if (this.stopping) return evaluation
+
+      // (1) Promote a newly-arrived channel vote.
+      const resolution = await this.fetchWithinDeadline(ref, deadlineAt)
+      if (
+        resolution !== undefined &&
+        this.channelVoteIsPromotable(resolution, request, deadlineAt)
+      ) {
+        const hash = canonicalApprovalResolutionHash(resolution)
+        if (this.promotedVoteHashes.has(hash)) {
+          // Already in the log from an earlier poll; just re-consume.
+          this.consumeResolution(ref)
+        } else if (this.resolutionVerified(resolution, resolution.signature)) {
+          this.promotedVoteHashes.add(hash)
+          await this.emitCanonicalResolution(resolutionToOutcome(resolution), resolution.signature)
+          this.consumeResolution(ref)
+        } else {
+          await this.emitSignatureRejected(`req:${resolution.request_id}:${hash}`, resolution, {
+            source: "side_channel",
+          })
+          this.consumeResolution(ref)
+        }
+      }
+
+      // (2) + (3) Re-read the log and adjudicate everything accumulated.
+      let events: EventEnvelope[] = []
+      try {
+        events = await reader.readSession(this.config.project_id, this.sessionId)
+      } catch {
+        // A concurrent append may have left a torn trailing line; treat it as
+        // "nothing new this poll" and keep going rather than failing the call.
+        events = []
+      }
+      evaluation = evaluateQuorum(
+        request,
+        this.verifiedVotesFromLog(events, request, parked.id),
+        quorumOptions(roster, parked.proposed_by),
+      )
+      if (evaluation.satisfied || evaluation.vetoed !== undefined) return evaluation
+
+      const remaining = deadlineAt - Date.now()
+      if (remaining <= 0) return evaluation
+      await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, remaining))
+    }
+  }
+
+  /** Is this channel resolution bound to THIS request and inside the deadline? */
+  private channelVoteIsPromotable(
+    resolution: ApprovalResolution,
+    request: ApprovalRequest,
+    deadlineAt: number,
+  ): boolean {
+    return (
+      channelOutcomeFor(resolution, request.request_id, request.action_id, deadlineAt) !== undefined
+    )
+  }
+
+  /**
+   * Every `approval.granted@1` / `approval.denied@1` in the log that is bound to
+   * this request, inside its deadline, and whose signature verifies against the
+   * operator-pinned approver keys — as the votes `evaluateQuorum` adjudicates.
+   *
+   * A vote that fails the signature gate is skipped and audited once (deduped by
+   * envelope id; the log is append-only so the event never changes), exactly as
+   * the single-approver path does — a planted forgery must not mask the genuine
+   * votes around it, and here it must not be counted toward a threshold either.
+   */
+  private verifiedVotesFromLog(
+    events: EventEnvelope[],
+    request: ApprovalRequest,
+    actionId: string,
+  ): QuorumVote[] {
+    const votes: QuorumVote[] = []
+    for (const found of allResolutionsFor(events, request.request_id, actionId, request.deadline)) {
+      if (!this.resolutionVerified(found.doc, found.signature)) {
+        void this.emitSignatureRejected(`log:${found.eventId}`, found.doc, {
+          source: "log",
+          rejectedEventId: found.eventId,
+        })
+        continue
+      }
+      const vote: QuorumVote = { resolution: found.doc, event_id: found.eventId }
+      if (found.signature !== undefined) vote.signature = found.signature
+      votes.push(vote)
+    }
+    return votes
   }
 
   /**
@@ -2055,6 +2354,50 @@ function resolutionOutcomeFor(
     }
   }
   return undefined
+}
+
+/**
+ * **Every** `approval.granted@1` / `approval.denied@1` in the log bound to this
+ * request and inside its deadline, as canonical resolution documents plus their
+ * signatures and envelope ids — the accumulating counterpart of
+ * {@link resolutionOutcomeFor}, for the M-of-N quorum path (ADR-0041).
+ *
+ * The single-approver path stops at the first qualifying event because one
+ * resolution is expected per request. A quorum request expects N, so this returns
+ * them all in log order and leaves *both* trust decisions to the caller: whether
+ * each signature verifies (the caller's pinned keys) and whether the set meets the
+ * threshold (`evaluateQuorum`). It applies only the two checks that are purely
+ * structural — the request/action binding and the deadline — and no signature
+ * check, deliberately, so that gate lives in exactly one place per host.
+ *
+ * There is no `isRejected` skip list here: a forged event is filtered by the
+ * caller's signature gate on every pass, and unlike the single-approver path
+ * there is nothing for it to "mask" — the scan does not stop at the first hit.
+ */
+function allResolutionsFor(
+  events: EventEnvelope[],
+  requestId: string,
+  actionId: string,
+  notAfter: string | undefined,
+): Array<{ doc: ApprovalResolutionDoc; signature: Signature | undefined; eventId: string }> {
+  const found: Array<{
+    doc: ApprovalResolutionDoc
+    signature: Signature | undefined
+    eventId: string
+  }> = []
+  for (const e of events) {
+    if (e.type !== "approval.granted" && e.type !== "approval.denied") continue
+    if (notAfter !== undefined && e.timestamp > notAfter) continue
+    const schema =
+      e.type === "approval.granted" ? ApprovalGrantedPayloadSchema : ApprovalDeniedPayloadSchema
+    const parsed = schema.safeParse(e.payload)
+    if (!parsed.success) continue
+    const p = parsed.data
+    if (p.request_id !== requestId || p.action_id !== actionId) continue
+    const kind = e.type === "approval.granted" ? "granted" : "denied"
+    found.push({ doc: { ...p, kind }, signature: p.signature, eventId: e.id })
+  }
+  return found
 }
 
 /**
