@@ -110,7 +110,7 @@ invariant. Run the whole suite across both packs:
 bun run probes:ci
 ```
 
-All 79 probes pass under strict TypeScript. A few need extra infrastructure and
+All 80 probes pass under strict TypeScript. A few need extra infrastructure and
 **skip with a loud banner** when it is unavailable, so this stays green on a bare
 checkout: three (`tool-poisoning-cross-session`, `sql-adapter-enforces-invariants`,
 `vector-adapter-enforces-invariants`) need Postgres via `LODESTAR_TEST_DATABASE_URL`,
