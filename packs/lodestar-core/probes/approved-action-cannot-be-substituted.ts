@@ -49,7 +49,9 @@
  *      request pending.
  *   J. A held action whose live inputs were mutated during the hold is refused.
  *   K. Quorum: a mismatched channel vote is never promoted and a mismatched log
- *      vote is audited; correctly bound votes then reach quorum.
+ *      vote is audited; correctly bound votes then reach quorum and the downstream
+ *      tool receives the canonical inputs.
+ *   K2. A bound quorum DENY is promoted with its binding and vetoes at once.
  *
  * The runtime gate (real NDJSON-RPC loopback, durable resume):
  *   L. Single-approver channel + log path: both mismatches refused and audited; an
@@ -60,7 +62,8 @@
  *   N. Restart over a planted `approval.requested` that strips the quorum: one
  *      valid vote must NOT execute a quorum hold — the conflict fails closed.
  *   O. Quorum sites: a mismatched channel vote is never promoted, a mismatched log
- *      vote is audited, and bound votes reach quorum.
+ *      vote is audited, and bound votes reach quorum with the body receiving the
+ *      canonical inputs.
  */
 
 import { mkdtemp } from "node:fs/promises"
@@ -968,7 +971,10 @@ async function proxyCases(): Promise<string | undefined> {
     const sessionId = "probe-representation-proxy-k"
     const { proxy, received } = makeProxy(logDir, sessionId, 6000, 2)
     await proxy.start()
-    const call = proxy.handleCallTool({ name: PROXY_TOOL, arguments: { branch: "main" } })
+    const call = proxy.handleCallTool({
+      name: PROXY_TOOL,
+      arguments: { remote: "origin", branch: "main" },
+    })
     const requested = await waitForEvent(logDir, sessionId, "approval.requested", 3000)
     if (requested === undefined) return "[K] the proxy never opened an approval request."
     const request = requested.payload as ApprovalRequest
@@ -1031,6 +1037,44 @@ async function proxyCases(): Promise<string | undefined> {
     await proxy.stop()
     if (result.isError === true || received.length !== 1) {
       return `[K] correctly bound quorum votes did not execute the held call (downstream calls=${received.length}).`
+    }
+    if (Object.keys(received[0] ?? {}).join(",") !== "branch,remote") {
+      return "[K] the quorum path executed the held call with non-canonical inputs — what runs must be what was hashed."
+    }
+  }
+
+  // K2. A BOUND deny on the quorum path is promoted with its binding and vetoes:
+  //     drop the binding on promotion and the re-read vote no longer verifies, so
+  //     the veto is lost and the hold just waits out its deadline.
+  {
+    resetHost()
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-representation-proxy-k2-"))
+    const sessionId = "probe-representation-proxy-k2"
+    const { proxy, received } = makeProxy(logDir, sessionId, 4000, 2)
+    await proxy.start()
+    const started = Date.now()
+    const call = proxy.handleCallTool({ name: PROXY_TOOL, arguments: { branch: "main" } })
+    const requested = await waitForEvent(logDir, sessionId, "approval.requested", 3000)
+    if (requested === undefined) return "[K2] the proxy never opened an approval request."
+    const request = requested.payload as ApprovalRequest
+    const held = heldFrom(await readSession(logDir, sessionId))
+    await writeApprovalResolution(
+      logDir,
+      PROJECT_ID,
+      vote(request, "alice", actionRepresentationHash(held), "denied"),
+    )
+    const result = await call
+    await proxy.stop()
+    const kind = (result._meta as { _lodestar?: { kind?: unknown } } | undefined)?._lodestar?.kind
+    if (received.length !== 0 || kind !== "approval_denied" || Date.now() - started >= 3500) {
+      return `[K2] a bound quorum deny did not veto promptly (kind '${String(kind)}') — its binding was not carried onto the promoted approval.denied@1, so the re-read vote no longer verified.`
+    }
+    const denied = (await readSession(logDir, sessionId)).find((e) => e.type === "approval.denied")
+    if (
+      (denied?.payload as { inputs_hash?: string } | undefined)?.inputs_hash !==
+      actionRepresentationHash(held)
+    ) {
+      return "[K2] the promoted approval.denied@1 dropped the binding."
     }
   }
   return undefined
@@ -1300,11 +1344,11 @@ async function gateCases(): Promise<string | undefined> {
     const { gate, hook } = await buildGate(sessionId, logDir, 2)
     const { actionId, requestId, request, held } = await gateHold(
       hook,
-      { branch: "main" },
+      { remote: "origin", branch: "main" },
       logDir,
       sessionId,
     )
-    const shown = benignHashFor(held, { branch: "docs" })
+    const shown = benignHashFor(held, { remote: "origin", branch: "docs" })
     await writeApprovalResolution(logDir, PROJECT_ID, vote(request, "alice", shown))
     await hook.resume(actionId, requestId, 0)
     const plantedLog = await appendToLog(
@@ -1334,8 +1378,13 @@ async function gateCases(): Promise<string | undefined> {
       last = await hook.resume(actionId, requestId, 600)
     }
     await gate.stop()
-    if (last.phase !== "completed" || hook.bodyArgs.length !== 1) {
+    if (last.phase !== "completed" || hook.runs() !== 1) {
       return `[O] correctly bound quorum votes did not complete the action (phase '${String(last.phase)}').`
+    }
+    if (
+      Object.keys((hook.bodyArgs[0] ?? {}) as Record<string, unknown>).join(",") !== "branch,remote"
+    ) {
+      return "[O] the gate's quorum path executed non-canonical inputs — what runs must be what was hashed."
     }
   }
   return undefined
