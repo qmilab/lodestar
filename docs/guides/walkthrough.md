@@ -477,7 +477,7 @@ probe suite by the
 [`poisoned-file-cannot-hijack-feature-work`](https://github.com/qmilab/lodestar/tree/main/packs/coding-agent-safety)
 probe: a poisoned doc read alongside a legitimate source file must stay
 `external_document` / `unverified`, must never be promoted to `supported`, and
-must never become a dependency of the feature decision. Eighty probes across
+must never become a dependency of the feature decision. Eighty-two probes across
 two packs gate this and the rest of the system (`bun run probes:ci`).
 
 ---

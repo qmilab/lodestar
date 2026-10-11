@@ -16,7 +16,7 @@ The two first-party packs live in `packs/`:
 - **`lodestar-core`** — the core epistemic-chain, memory-firewall, guard,
   event-log, Policy Kernel, sentinel-wiring, adapter, cognitive-core,
   trust-pack-registry, probe-runner, runtime-adapter, and read-side invariants
-  (76 probes).
+  (78 probes).
 - **`coding-agent-safety`** — the "wrap a coding agent" story: prompt injection,
   tool poisoning, confidence drift, plus the three first-party sentinels (4 probes
   + 3 sentinels).
@@ -66,7 +66,7 @@ against the built-in `FIRST_PARTY_SENTINELS` registry. v0 does not support
 third-party sentinels or `npm`-sourced packs — both are reserved for the post-v1
 registry.
 
-## The 76 probes in `lodestar-core`
+## The 78 probes in `lodestar-core`
 
 **Firewall, epistemic-chain, guard, and event-log invariants** (Batches 1–5):
 
@@ -110,6 +110,7 @@ registry.
 | `approval-via-http-channel` | a hold resolves through the pluggable HTTP approval-transport channel |
 | `forged-approval-via-http-channel-cannot-execute` | a hostile channel can delay but never mint/tamper/replay an approval — the Ed25519 boundary holds after transport |
 | `quorum-requires-distinct-eligible-approvers` | M-of-N quorum is adjudicated by the kernel, never attested by a client — a collector-synthesized grant, M-1 votes, a duplicate `actor_id`, a revoked key, a pinned-but-ineligible approver, an approver with no authority record, and the action's own proposer all fail to satisfy it; a deny is decisive; a partial quorum at its deadline is a soft denial; and the single-approver path is unchanged |
+| `approved-action-cannot-be-substituted` | an approval request bound to a held operation (`action_type` + `inputs_hash`) is refused at promote in every host when the hash disagrees with the stored action; approvers see the canonical inputs they sign; unbound pre-0.7 requests resume unchanged (ADR-0042) |
 | `pending-queue-excludes-rejected-forgery` | a rejected forged resolution never appears in the pending-approvals queue |
 
 **Sentinel→action and calibration→action wiring:**
@@ -187,6 +188,7 @@ registry.
 | --- | --- |
 | `evidence-linker-cross-belief-join` | a claim corroborated by an independent higher-quality belief promotes `unverified → supported`; two `external_document` beliefs still can't promote each other |
 | `harvest-projection-surfaces-durable-lessons` | a read-side projection surfaces end-of-run `supported` beliefs as advisory memory candidates; a poisoned/quarantined belief never launders through |
+| `taint-projection-matches-dependents` | `taintSet` / `lodestar report --taint` returns exactly a belief's dependent decisions, actions, outcomes and transitively dependent beliefs — nothing else — with ceiling redaction and the log untouched |
 | `reflection-derives-supersession-from-conflict` | the reflection DERIVE rule proposes (never auto-applies) a supersession from two conflicting `supported` beliefs |
 | `generic-llm-extractor-stays-unverified` | the opt-in generic LLM extractor mints `model_inference`-quality claims that stay `unverified` (Parallax across LLM inferences) |
 | `corroboration-strength-rewards-independent-sources` | a separate additive corroboration scalar rises with independent sources while the gate input stays byte-for-byte unmoved |
