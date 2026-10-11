@@ -34,7 +34,8 @@ TypeScript, .NET and others, with framework integrations (LangGraph, OpenAI
 Agents SDK, and more) [1][2].
 
 **Overlap.** Both put a policy decision in front of tool calls. Lodestar's
-default is deny for anything unmatched. Lodestar's Policy Kernel is also
+actions at trust levels L0–L3 that match no rule are denied; an L4 action is
+held for approval by the trust-ladder floor, and L5 is always denied. Lodestar's Policy Kernel is also
 declarative and three-valued (allow / deny / hold for approval).
 
 **Approvals and quorum.** The announcement lists "approval workflows with
@@ -126,8 +127,8 @@ existence is not a claim that the invariant is fully met.
 
 | # | HCP invariant [5][6] | Lodestar probe(s) | Coverage | Honest gap |
 |---|---|---|---|---|
-| I1 | Metadata is not policy authority | `mcp-proxy-injection-defense`, `runtime-gate-enforces-two-phase` (operator-owned `tool_defaults`; unregistered tool denied), `unmatched-action-defaults-to-deny` | Partial | Tool *results* are demoted to `external_document`, and the hook only declares a tool name. No probe pins that a hostile tool *description* cannot influence a rule. |
-| I2 | Approval cannot bypass grant | `l4-action-requires-approval`, `ladder-floor-overrides-allow-rule`, `granted-approval-still-revalidates-preconditions`, `forged-approval-cannot-execute`, `quorum-requires-distinct-eligible-approvers` | Partial | Approval resolves a hold and is signature-checked, and the trust-ladder floor cannot be loosened by an allow rule. Lodestar has no separate *grant* object distinct from policy, so "approval AND grant" is not expressed as two artifacts. |
+| I1 | Metadata is not policy authority | `mcp-proxy-injection-defense`, `runtime-gate-enforces-two-phase` (operator-owned `tool_defaults`; unregistered tool denied), `unmatched-action-defaults-to-deny` | Partial | The tool-call envelope is recorded as `tool_result` evidence, while text or resource content a tool returns is tagged `external_document` and cannot self-promote. The hook only declares a tool name. No probe pins that a hostile tool *description* cannot influence a rule. |
+| I2 | Approval cannot bypass grant | `l4-action-requires-approval`, `ladder-floor-overrides-allow-rule`, `granted-approval-still-revalidates-preconditions`, `forged-approval-cannot-execute`, `quorum-requires-distinct-eligible-approvers` | Partial | Approval resolves a hold. Out-of-band approvals and quorum votes are Ed25519-verified; the embedded `guard.wrap()` `ApprovalResolver` is a trusted in-process producer and is not signature-checked. The trust-ladder floor cannot be loosened by an allow rule. Lodestar has no separate *grant* object distinct from policy, so "approval AND grant" is not expressed as two artifacts. |
 | I3 | Provider-canonical resources | `filesystem-adapter-enforces-write-invariants` (realpath/symlink confinement), `http-adapter-enforces-egress-invariants` (per-hop redirect re-validation), `git-adapter-enforces-egress-invariants` (remote pinning) | Partial | Canonicalisation is per adapter. There is no general provider-resolved-resource layer for arbitrary MCP downstream servers. |
 | I4 | Principal binding | `forged-approval-cannot-execute`, `quorum-requires-distinct-eligible-approvers` (proposer cannot count toward own quorum) | Weak | Binding exists for *approvers*. There are no handles; grants and handles are not owned by a principal, so wrong-principal invocation is not a modelled case. **Gap.** |
 | I5 | Grant-backed scoped invocation | `proxy-hold-carries-rule-authority`, `l4-floor-preserves-stricter-rule` | Partial | `required_authority` (min trust, scope) is matched at approval time. There is no per-invocation capability-scope matching against a stored grant. |
