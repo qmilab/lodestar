@@ -37,6 +37,19 @@ Agents SDK, and more) [1][2].
 default is deny for anything unmatched. Lodestar's Policy Kernel is also
 declarative and three-valued (allow / deny / hold for approval).
 
+**Approvals and quorum.** The announcement lists "approval workflows with
+quorum logic" among its mitigations [1], and the repository's policy example
+shows a `require_approval` action with an `approvers` list [2]. Neither source
+says how a quorum is computed or how an approver's identity or decision is
+verified, so we make no claim about those mechanics. M-of-N approval is
+therefore not a differentiator for Lodestar. What Lodestar's version
+(ADR-0041, probe `quorum-requires-distinct-eligible-approvers`) pins is
+narrower: the kernel adjudicates the threshold over each approver's own
+Ed25519-signed resolution, checks each approver's eligibility against the
+request's required authority, and a client-synthesised single grant cannot
+satisfy it. Whether the toolkit does the same is not stated in the material we
+read.
+
 **Different.** The toolkit's unit is the action and the message. Nothing on the
 announcement page describes a model of what the agent has *come to believe*
 from untrusted content, or a promotion gate between reading and believing.
