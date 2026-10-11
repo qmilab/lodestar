@@ -58,6 +58,7 @@ nav:
       - "Threat model — memory poisoning": concepts/threat-model/memory-poisoning.md
       - "Threat model — registry supply chain": concepts/threat-model/registry-supply-chain.md
       - "OWASP Top 10 for Agentic Applications": concepts/owasp-agentic-top-10.md
+      - "EU AI Act: record-keeping and oversight": concepts/eu-ai-act-record-keeping.md
   - Reference:
       - Architecture: reference/architecture.md
       - CLI: reference/cli.md
