@@ -113,6 +113,7 @@ export {
 // so the three hosts cannot drift on what counts as a mismatch.
 export {
   REPRESENTATION_MISMATCH_PREFIX,
+  bindOutcomeToRequest,
   canonicalForExecution,
   representationMismatch,
 } from "./representation.js"

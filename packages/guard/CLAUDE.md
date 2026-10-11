@@ -123,9 +123,15 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   signed `inputs_hash` (each when present — verify-if-present) to name it.
   Recomputed at the check, never remembered, because the log a host might
   remember from is unauthenticated. `canonicalForExecution(action)` swaps in the
-  canonical JSON `inputs` / `contract` (hash unchanged) — the proxy and runtime
-  gate execute it; `guard.wrap()` does not (in process a tool schema may yield
-  non-JSON values). `approvals-channel.ts` declares the optional `inputs_hash`
+  canonical JSON `inputs` / `contract` (hash unchanged) for a **bound** request
+  only (a pre-0.7 hold executes exactly as before) — the proxy and runtime gate
+  execute it; `guard.wrap()` does not (in process a tool schema may yield
+  non-JSON values). `bindOutcomeToRequest(outcome, request)` binds the outcome a
+  host hands `resolve()` to the request's representation, so the kernel
+  re-checks the held action at the transition — closing the window an awaited
+  promotion write leaves after the promote-time check. Never apply it to the
+  outcome that is logged (a promoted grant must carry exactly what its approver
+  signed). `quorumGrantedOutcome` / `quorumDeniedOutcome` carry the binding too. `approvals-channel.ts` declares the optional `inputs_hash`
   (the schema is strict) and `resolutionToOutcome` carries it;
   `quorum-host.ts`'s `promotedVotePayload` / `voteFromResolution` /
   `resolutionIsAuthentic` carry it too — it is inside the signed bytes, so a
@@ -214,7 +220,11 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    outcome expires the request at once (`approval.expired@1`, then
    `action.rejected` whose audit names the mismatch — the in-process soft-denial
    terminal), and a mismatched quorum vote is skipped and named in the shortfall
-   expiry. In process this is a **consistency assertion**, not a boundary (the
+   expiry. A satisfied quorum is **re-checked immediately before `resolve()`**
+   (each vote's promotion is an awaited write, so the held action could change
+   after the last vote's check) and expires gracefully on a change; the
+   resolved outcome is also bound to the request, so the kernel refuses it
+   independently. In process this is a **consistency assertion**, not a boundary (the
    resolver and the agent share a realm — ADR-0010's posture): it catches a held
    action whose live inputs were mutated while the resolver waited. The window
    between `resolve()` and the tool body is the Action Kernel's.

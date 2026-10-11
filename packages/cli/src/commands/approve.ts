@@ -85,10 +85,14 @@ const APPROVER_KEY_ENV = "LODESTAR_APPROVER_KEY"
  * local writer can plant records. `grant` refuses a `MISMATCH` (exit 6) and, on a
  * verified request, signs the representation hash it recomputed from the record
  * it rendered — the host refuses any grant that names a different operation.
- * `--expect-hash <prefix>` makes the acknowledgement explicit: `grant` then also
- * refuses unless the verified hash starts with it. `deny` binds the verified hash
- * when there is one and otherwise signs unbound, rather than assert a
- * representation it never showed.
+ * **A bound grant must acknowledge what it signs:** on a verified request `grant`
+ * requires `--expect-hash <prefix>` (16–64 hex, printed by `list` beside the
+ * operation) and refuses unless the verified hash starts with it. Without it,
+ * `grant` prints the full operation and the exact command, and refuses — so a
+ * signature is never produced for an operation that was not on the approver's
+ * screen. A legacy (UNBOUND) request grants exactly as before. `deny` binds the
+ * verified hash when there is one and otherwise signs unbound, rather than assert
+ * a representation it never showed; it needs no acknowledgement.
  *
  * Exit codes:
  *   0  — success (resolution written, or list rendered)
@@ -140,9 +144,9 @@ export async function approveCommand(argv: string[]): Promise<number> {
     else if (arg === "--out" || arg === "-o") outPath = rest[++i]
     else if (arg === "--expect-hash") {
       const v = rest[++i]
-      if (v === undefined || !/^[0-9a-f]{8,64}$/.test(v)) {
+      if (v === undefined || !/^[0-9a-f]{16,64}$/.test(v)) {
         process.stderr.write(
-          `invalid --expect-hash '${escapeUntrustedText(v ?? "")}' (expected 8–64 lowercase hex characters of the representation hash 'approve list' prints)\n`,
+          `invalid --expect-hash '${escapeUntrustedText(v ?? "")}' (expected 16–64 lowercase hex characters of the representation hash 'approve list' prints)\n`,
         )
         return 2
       }
@@ -514,6 +518,17 @@ async function resolveRequest(input: {
     if (representation.status === "mismatch") {
       process.stderr.write(
         `[approve] refused: the operation request '${escapeUntrustedText(requestId)}' would authorize could not be verified:\n${representation.problems.map((p) => `          - ${escapeUntrustedText(p)}`).join("\n")}\n          Deny it instead ('lodestar approve deny ...') and let the agent re-propose.\n`,
+      )
+      return 6
+    }
+    // A bound grant is a signature over a specific operation, so it must be an
+    // ACKNOWLEDGED one: show the operation here and require the hash `list`
+    // printed beside it, rather than sign something the approver may never have
+    // looked at. Legacy (UNBOUND) requests keep today's flow.
+    if (representation.status === "verified" && expectHash === undefined) {
+      writeRepresentation(representation)
+      process.stderr.write(
+        `[approve] refused: granting signs the operation above. Review it, then acknowledge it explicitly:\n          lodestar approve grant ${shellArg(escapeUntrustedText(requestId))} --expect-hash ${(representation.representation_hash ?? "").slice(0, 16)} --approver ${shellArg(escapeUntrustedText(approver))} --project ${shellArg(projectId)}\n`,
       )
       return 6
     }
@@ -967,7 +982,8 @@ function writeUsage(stream: NodeJS.WritableStream): void {
       "  What you approve (ADR-0042): 'list' shows each held operation — tool, full inputs,\n" +
       "  contract — and whether the request is bound to it (verified / UNBOUND / MISMATCH).\n" +
       "  grant refuses a MISMATCH (exit 6) and signs the representation it showed you.\n" +
-      "    --expect-hash <hex>   grant only if the held operation's representation hash\n" +
-      "                          starts with this (8–64 hex chars; 'list' prints it).\n",
+      "    --expect-hash <hex>   acknowledge the operation you reviewed: grant only if its\n" +
+      "                          representation hash starts with this (16–64 hex chars;\n" +
+      "                          'list' prints it). Required to grant a bound request.\n",
   )
 }

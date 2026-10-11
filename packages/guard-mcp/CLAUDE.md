@@ -323,10 +323,13 @@ Cognitive Core. The resulting event log is renderable by
     source: the file is consumed) and the hold keeps waiting to its deadline. The
     promoted `approval.granted@1` / `approval.denied@1` carries the approver's
     `inputs_hash` (it is inside the signed bytes — drop it and the promoted vote
-    no longer verifies, losing a quorum vote or a veto), and an approved held
-    action executes `canonicalForExecution(resolved)` — the downstream tool gets
+    no longer verifies, losing a quorum vote or a veto). The outcome handed to
+    `resolve()` is bound to the request (`bindOutcomeToRequest`, or the quorum
+    outcome's own binding), so the kernel re-checks the held action at the
+    transition. An approved held action executes
+    `canonicalForExecution(resolved, request)` — the downstream tool gets
     byte-for-byte the value the approver's hash covers, so key order and `-0`
-    cannot differ. See the `approved-action-cannot-be-substituted` probe.
+    cannot differ (bound requests only; an unbound hold runs as before). See the `approved-action-cannot-be-substituted` probe.
 
 ## Persistence
 

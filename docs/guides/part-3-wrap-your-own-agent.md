@@ -393,12 +393,13 @@ Mint your approver key once, then resolve holds from any other terminal:
 # alice.pub, and prints the authorized_keys pin to paste above
 bun run lodestar approve keygen --approver alice --out ~/.lodestar/alice
 
-# see what's parked
+# see what's parked — the tool, its full inputs, and the contract it runs under
 bun run lodestar approve list --project my-project
 
-# let it through (or: approve deny <request-id> ... --reason "not today")
-bun run lodestar approve grant <request-id> --approver alice \
-  --key ~/.lodestar/alice.key --project my-project
+# let it through, acknowledging the operation you reviewed by the hash `list`
+# printed beside it (or: approve deny <request-id> ... --reason "not today")
+bun run lodestar approve grant <request-id> --expect-hash <hash-prefix> \
+  --approver alice --key ~/.lodestar/alice.key --project my-project
 ```
 
 The mechanics are worth one sentence each, because they're load-bearing: the

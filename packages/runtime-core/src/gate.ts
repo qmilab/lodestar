@@ -62,6 +62,7 @@ import {
   assertQuorumRoster,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
+  bindOutcomeToRequest,
   canonicalApprovalResolutionHash,
   canonicalForExecution,
   createApprovalChannel,
@@ -893,7 +894,13 @@ export class RuntimeGate {
           // exactly-once keys on the durable terminal event, not the file's absence.
           this.consumeResolution(this.approvalRef(requestId, msg.action_id))
         }
-        const resolved = kernel.resolve(parked, resolution.outcome)
+        // ADR-0042: the kernel re-checks, at the transition, that the held action
+        // is still the operation the request named (an awaited write sits
+        // between the promote-time check and here). A legacy request binds none.
+        const resolved = kernel.resolve(
+          parked,
+          bindOutcomeToRequest(resolution.outcome, recovered ?? {}),
+        )
         if (resolved.phase !== "approved") {
           await this.emit("action.rejected", resolved)
           this.pendingActions.delete(msg.action_id)
@@ -906,8 +913,9 @@ export class RuntimeGate {
           }
         }
         // ADR-0042: execute the canonical form — the remoted body receives
-        // byte-for-byte the value the approver's representation hash covers.
-        const approved = canonicalForExecution(resolved)
+        // byte-for-byte the value the approver's representation hash covers. A
+        // legacy (unbound) request resumes exactly as before ADR-0042.
+        const approved = canonicalForExecution(resolved, recovered ?? {})
         await this.emit("action.approved", approved)
         const result = await this.executeAction(approved)
         this.pendingActions.delete(msg.action_id)
@@ -1337,7 +1345,7 @@ export class RuntimeGate {
           { schema_version: QUORUM_REACHED_EVENT.schema_version },
         )
         // ADR-0042: execute the canonical form — what runs is what was hashed.
-        const approved = canonicalForExecution(resolved)
+        const approved = canonicalForExecution(resolved, request)
         await this.emit("action.approved", approved)
         const result = await this.executeAction(approved)
         this.pendingActions.delete(msg.action_id)

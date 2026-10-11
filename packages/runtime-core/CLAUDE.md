@@ -111,8 +111,11 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    `guard.approval.signature_rejected@1` (`representation mismatch:` reason) and
    never promoted. The rebuilt `ApprovalResolutionDoc` carries `inputs_hash` from
    the log payload (drop it and a genuine bound vote fails verification as a
-   forgery), the promoted event carries it, and an approved action executes
-   `canonicalForExecution`. **Resume no longer reads latest-wins:**
+   forgery), the promoted event carries it, the outcome handed to `resolve()` is
+   bound to the request (`bindOutcomeToRequest` / the quorum outcome's binding)
+   so the kernel re-checks at the transition, and an approved action executes
+   `canonicalForExecution(resolved, request)` — **only for a bound request**: a
+   hold opened by a pre-0.7 host resumes byte-for-byte as before. **Resume no longer reads latest-wins:**
    `reconstructParkedAction` schema-parses every `action.pending_approval` for the
    id and `reconstructRequest` every `approval.requested`; if the log holds records
    that **disagree** (a second representation, or a second request — e.g. one

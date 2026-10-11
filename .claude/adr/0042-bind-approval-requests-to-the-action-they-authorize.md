@@ -82,6 +82,10 @@ canonical JSON re-parse**. The value the tool receives is then byte-for-byte the
 value the approver's hash covers, and the representation hash is unchanged by the
 replacement (canonical JSON is a fixed point).
 
+This applies **only to a bound request**. A hold opened by a pre-0.7 host binds no
+representation, so a runtime gate resuming it executes the reconstructed action
+exactly as before — same key order, same `action.approved` bytes.
+
 `guard.wrap()` does not replace. In process, a tool schema may legitimately
 produce non-JSON values such as a `Date`, and those are bound only through their
 JSON form. That is consistent with §4's in-process posture.
@@ -212,6 +216,18 @@ An attacker who can *rewrite* the log, rather than append to it, defeats restart
 reconstruction wholesale. That is outside this ADR; ADR-0025's durability already
 trusts the log's contents.
 
+**The window after the check is closed at the transition.** Between a host's
+promote-time check and `ActionKernel.resolve()` sits at least one awaited log
+write (the promoted vote), during which code sharing the host's realm could
+change the held action. So hosts resolve with the outcome bound to the request's
+representation: `bindOutcomeToRequest` on the single-approver paths, and the
+synthesized `quorumGrantedOutcome` / `quorumDeniedOutcome` carry it too. The
+kernel then re-checks the held action at the transition itself. That outcome is
+never the one written to the log; a promoted vote carries exactly what its
+approver signed. `guard.wrap()`, where same-realm mutation is plausible, also
+re-checks immediately before resolving a satisfied quorum and expires gracefully
+rather than leaving the kernel to throw.
+
 Two backstops add defence in depth; neither is the boundary:
 
 - `ActionKernel.resolve()` refuses an outcome whose `inputs_hash` differs from
@@ -296,11 +312,15 @@ verbatim (`PendingApproval` grows additively).
 `UNBOUND`. A `MISMATCH` is never signed. On a verified request, the grant signs
 `inputs_hash` set to the hash recomputed from the record it rendered.
 
-The approving act can also acknowledge the display explicitly.
-`approve list` prints the representation hash and a ready-to-run
-`grant … --expect-hash <prefix>` command, and `grant --expect-hash` refuses
-unless the verified hash starts with that prefix. The flag is optional, so
-existing scripts keep working.
+**A bound grant must acknowledge what it signs.** `approve list` prints the
+representation hash beside the operation, plus a ready-to-run
+`grant … --expect-hash <prefix>` command. On a `verified` request, `grant`
+requires `--expect-hash` (16–64 hex) and refuses unless the verified hash starts
+with it. Without the flag, it prints the full operation and the exact command,
+and refuses. A signature is therefore never produced over an operation that was
+not on the approver's screen, and a direct `grant <id>` cannot sign blind. An
+`UNBOUND` (legacy) request grants as before, so scripts against pre-0.7 hosts are
+unaffected.
 
 `approve deny` binds the rendered hash when the binding is `verified`. Otherwise
 it signs **unbound**, with a warning naming the problems, rather than assert a
@@ -327,6 +347,12 @@ same vote, correctly bound, executes.
   inputs were mutated during the hold (`guard.wrap()` and the proxy).
 - **What runs is what was hashed:** the proxy and the runtime gate hand the tool
   the canonical inputs.
+- **The final window:** the held action changes *during* the last vote's
+  promotion, after its check passed. `guard.wrap()` re-checks and expires the
+  hold, and a synthesized quorum outcome carries the binding so the kernel would
+  refuse it independently.
+- **Legacy resume:** a hold opened by a pre-0.7 host resumes on the runtime gate
+  with its inputs in their original order.
 - **The approver-visible rendering** re-parses to the canonical stored inputs and
   re-hashes to the request's `inputs_hash`. A bidi control and an ANSI escape
   planted in a log-sourced field render escaped. A planted conflicting
@@ -342,8 +368,9 @@ same vote, correctly bound, executes.
 
 **Easier.**
 
-- An approver sees the tool, the full canonical inputs and the contract on the
-  surface they approve from.
+- An approver using `lodestar approve` sees the tool, the full canonical inputs and
+  the contract, and must acknowledge them before a bound grant is signed. Any
+  approval surface built on `approvalRepresentation` can show the same.
 - Loopjacking's representation mismatch is closed for every approver whose
   tooling binds the hash. A planted `action.proposed` is flagged `MISMATCH` and
   never signed by the CLI. If other tooling signs the planted representation, the
@@ -377,6 +404,17 @@ same vote, correctly bound, executes.
 
 **Not addressed.**
 
+- **Remote (HTTP) approval surfaces cannot show the operation.** The
+  `ApprovalChannel` `announce` carries only the `ApprovalRequest` —
+  `action_type` and `inputs_hash`, not the inputs, contract or actor — and a
+  remote service has no log. A remote approver can therefore only copy the
+  host's hash, which binds nothing they were shown. This is no weaker than
+  before ADR-0042, when such an approver signed a bare `action_id`. A bound
+  signature attests what the approver's *tooling rendered*; tooling that copies
+  the request's hash without rendering a representation asserts nothing. Sending
+  the representation over `announce` would put the inputs on a new egress path.
+  That needs its own decision — an operator opt-in, gated by the existing
+  announce sensitivity ceiling — and is a follow-up, not part of this ADR.
 - The in-process mutation window between `resolve()` and the tool body (§4). It
   belongs to the Action Kernel.
 - Per-event authentication of the log. The log stays unauthenticated, and the

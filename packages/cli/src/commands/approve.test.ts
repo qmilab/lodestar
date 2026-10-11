@@ -1044,13 +1044,38 @@ describe("lodestar approve — the representation binding (ADR-0042)", () => {
     }
   })
 
-  test("grant on a verified request signs the representation it rendered", async () => {
+  test("a bound grant must acknowledge the operation it signs (--expect-hash)", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-ack-"))
+    try {
+      const { privPath } = await keyFile(logRoot)
+      const { requestId, hash } = await seedBoundHold(logRoot, { branch: "main", force: true })
+      const blind = await runApprove(grantArgs(requestId, logRoot, privPath))
+      expect(blind.code).toBe(6)
+      // The refusal puts the operation on screen and hands back the exact command.
+      expect(blind.out).toContain('"force": true')
+      expect(blind.out).toContain("tool: mcp.git.push")
+      expect(blind.err).toContain(`--expect-hash ${hash.slice(0, 16)}`)
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+      // An 8-hex acknowledgement is too short to bind anything.
+      const short = await runApprove(
+        grantArgs(requestId, logRoot, privPath, ["--expect-hash", hash.slice(0, 8)]),
+      )
+      expect(short.code).toBe(2)
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("an acknowledged grant signs the representation it rendered", async () => {
     _resetEventLogStateForTests()
     const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-bound-"))
     try {
       const { privPath, publicKeyPem } = await keyFile(logRoot)
       const { requestId, action, hash } = await seedBoundHold(logRoot, { branch: "main" })
-      const { code, out } = await runApprove(grantArgs(requestId, logRoot, privPath))
+      const { code, out } = await runApprove(
+        grantArgs(requestId, logRoot, privPath, ["--expect-hash", hash.slice(0, 16)]),
+      )
       expect(code).toBe(0)
       expect(out).toContain(`Bound to representation ${hash}`)
       const queued = await readApprovalResolution(logRoot, PROJECT, requestId)

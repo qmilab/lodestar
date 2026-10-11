@@ -38,6 +38,10 @@
  *      refused: the request no longer describes it.
  *   G. Quorum votes bound to a different representation are never promoted; the
  *      bound control reaches quorum and its promoted votes still verify.
+ *   Q. The held action changes DURING the final vote's promotion — after every
+ *      promote-time check passed: the host re-checks before the transition and
+ *      expires the hold, and the synthesized quorum outcome carries the request's
+ *      binding so the kernel would refuse it independently.
  *
  * The MCP proxy (real `.approvals/` side-channel + its own log):
  *   H. Single-approver channel: a validly signed grant naming a different
@@ -64,9 +68,11 @@
  *   O. Quorum sites: a mismatched channel vote is never promoted, a mismatched log
  *      vote is audited, and bound votes reach quorum with the body receiving the
  *      canonical inputs.
+ *   P. A hold opened by a pre-0.7 host (no binding) resumes byte-for-byte as before
+ *      — the gate does not canonicalize what it runs.
  */
 
-import { mkdtemp } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -103,12 +109,14 @@ import {
   type ApproverAuthorityConfig,
   type GuardConfig,
   type QuorumRoster,
+  SentinelArbiter,
   alwaysHoldsChecker,
   authorizeResolution,
   canonicalApprovalResolutionHash,
   compile,
   evaluateQuorum,
   generateApproverKeyPair,
+  quorumGrantedOutcome,
   runGuarded,
   signApprovalResolution,
   verifyApprovalSignature,
@@ -407,6 +415,55 @@ function pureCases(): string | undefined {
   })
   if (resolved.phase !== "approved") {
     return "[B] a correctly bound outcome did not resolve the action."
+  }
+  // The synthesized quorum outcome carries the request's binding, so the kernel
+  // re-checks it at the transition — the awaited vote promotions leave a window
+  // after every promote-time check that only this closes.
+  const quorumOutcome = quorumGrantedOutcome(
+    {
+      request_id: "req-q",
+      action_id: held.id,
+      reason: "held",
+      required_authority: {},
+      requested_at: "2026-10-11T00:00:00.000Z",
+      quorum: 2,
+      inputs_hash: actionRepresentationHash(held),
+    },
+    {
+      satisfied: true,
+      required: 2,
+      approvals: [
+        {
+          approver_id: "alice",
+          at: "2026-10-11T00:00:01.000Z",
+          payload_hash: "p1",
+          granted_event_id: "e1",
+        },
+        {
+          approver_id: "bob",
+          at: "2026-10-11T00:00:02.000Z",
+          payload_hash: "p2",
+          granted_event_id: "e2",
+        },
+      ],
+      rejected: [],
+    },
+    "2026-10-11T00:00:03.000Z",
+  )
+  if (
+    quorumOutcome.kind === "expired" ||
+    quorumOutcome.inputs_hash !== actionRepresentationHash(held)
+  ) {
+    return "[B] a satisfied quorum's outcome does not carry the request's representation — the kernel could not re-check the held action at the transition."
+  }
+  let mutatedThrew = false
+  try {
+    kernel.resolve({ ...held, inputs: { branch: "main", force: true } }, quorumOutcome)
+  } catch {
+    mutatedThrew = true
+  }
+  if (!mutatedThrew) {
+    return "[B] a quorum outcome resolved a held action that changed after the votes were cast."
   }
 
   // C. The quorum backstop.
@@ -734,6 +791,45 @@ async function guardCases(): Promise<string | undefined> {
     }
     if (countOf(okRun.events, APPROVAL_QUORUM_REACHED_EVENT_TYPE) !== 1) {
       return "[G] the bound quorum did not emit its approval.quorum_reached@1."
+    }
+  }
+
+  // Q. The final window: the held action changes DURING the last vote's
+  //    promotion — after that vote's own promote-time check passed. An arbiter
+  //    is fed every host emit, so it can rewrite the live inputs at exactly that
+  //    point, deterministically. The host must re-check before the transition.
+  {
+    const target: Record<string, unknown> = { branch: "release" }
+    let grantsSeen = 0
+    class MutatingArbiter extends SentinelArbiter {
+      override async observe(envelope: EventEnvelope) {
+        if (envelope.type === "approval.granted") {
+          grantsSeen += 1
+          if (grantsSeen === 2) {
+            target.branch = "main"
+            target.force = true
+          }
+        }
+        return super.observe(envelope)
+      }
+    }
+    const config: GuardConfig = {
+      ...guardConfig(logDir, 2),
+      arbiter: new MutatingArbiter({ sentinels: [] }),
+      quorum: {
+        ...roster(),
+        collect: async (request) => [
+          vote(request, "alice", request.inputs_hash),
+          vote(request, "bob", request.inputs_hash),
+        ],
+      },
+    }
+    const qRun = await driveGuard(logDir, target, config)
+    if (qRun.result !== "threw" || callCount() !== 0) {
+      return `[Q] guard.wrap() executed a quorum-approved action whose inputs changed during the final vote's promotion (tool ran ${callCount()}x with ${JSON.stringify(lastInputs)}).`
+    }
+    if (!qRun.error.includes("no longer describes")) {
+      return `[Q] the final-window change was not refused gracefully at the host — it must re-check the held action immediately before resolve(). Got: ${qRun.error}`
     }
   }
   return undefined
@@ -1222,6 +1318,28 @@ async function gateHold(
   }
 }
 
+/**
+ * Rewrite a log so every `approval.requested@1` looks as a pre-0.7 host wrote it
+ * — no `action_type`, no `inputs_hash` — for the legacy-resume case.
+ */
+async function unbindLoggedRequests(logDir: string): Promise<void> {
+  const dir = join(logDir, PROJECT_ID)
+  for (const name of await readdir(dir)) {
+    if (!name.endsWith(".ndjson")) continue
+    const path = join(dir, name)
+    const rewritten = (await readFile(path, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => {
+        const envelope = JSON.parse(line) as { type: string; payload: Record<string, unknown> }
+        if (envelope.type !== "approval.requested") return line
+        const { action_type: _t, inputs_hash: _h, ...payload } = envelope.payload
+        return JSON.stringify({ ...envelope, payload, payload_hash: canonicalHash(payload) })
+      })
+    await writeFile(path, `${rewritten.join("\n")}\n`)
+  }
+}
+
 async function gateCases(): Promise<string | undefined> {
   // L. Single-approver channel + log paths, then an UNBOUND legacy grant resolves.
   {
@@ -1393,6 +1511,34 @@ async function gateCases(): Promise<string | undefined> {
       Object.keys((hook.bodyArgs[0] ?? {}) as Record<string, unknown>).join(",") !== "branch,remote"
     ) {
       return "[O] the gate's quorum path executed non-canonical inputs — what runs must be what was hashed."
+    }
+  }
+
+  // P. A hold opened by a pre-0.7 host resumes EXACTLY as before: its request
+  //    binds no representation, so the gate must not canonicalize what it runs.
+  {
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-representation-gate-p-"))
+    const sessionId = "probe-representation-gate-p"
+    const first = await buildGate(sessionId, logDir)
+    const { actionId, requestId, request } = await gateHold(
+      first.hook,
+      { remote: "origin", branch: "main" },
+      logDir,
+      sessionId,
+    )
+    await first.gate.stop()
+    await unbindLoggedRequests(logDir)
+    const second = await buildGate(sessionId, logDir)
+    const { action_type: _t, inputs_hash: _h, ...legacy } = request
+    await writeApprovalResolution(logDir, PROJECT_ID, vote(legacy, "alice"))
+    const done = await second.hook.resume(actionId, requestId, 600)
+    await second.gate.stop()
+    if (done.phase !== "completed" || second.hook.runs() !== 1) {
+      return `[P] a legacy hold did not resume (phase '${String(done.phase)}').`
+    }
+    const order = Object.keys((second.hook.bodyArgs[0] ?? {}) as Record<string, unknown>).join(",")
+    if (order !== "remote,branch") {
+      return `[P] a LEGACY hold executed with its inputs reordered to '${order}' — a request that binds no representation must resume byte-for-byte as before ADR-0042.`
     }
   }
   return undefined

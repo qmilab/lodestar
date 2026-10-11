@@ -355,6 +355,11 @@ export function quorumGrantedOutcome(
     approver_id: completing.approver_id,
     reason: `quorum of ${evaluation.required} reached — ${evaluation.approvals.length} verified approval(s): ${named}`,
     at,
+    // ADR-0042: the quorum authorizes the request's representation, so the
+    // outcome carries it and `ActionKernel.resolve()` re-checks that the held
+    // action is still that operation at the transition — closing the window the
+    // awaited vote promotions leave after each promote-time check.
+    ...(request.inputs_hash !== undefined ? { inputs_hash: request.inputs_hash } : {}),
   }
 }
 
@@ -378,6 +383,7 @@ export function quorumDeniedOutcome(
       evaluation.vetoed.reason ??
       `approver '${evaluation.vetoed.approver_id}' denied; a single valid deny is decisive`,
     at,
+    ...(request.inputs_hash !== undefined ? { inputs_hash: request.inputs_hash } : {}),
   }
 }
 

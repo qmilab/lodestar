@@ -145,6 +145,7 @@ import {
   REPRESENTATION_MISMATCH_PREFIX,
   approverRosterFrom,
   assertQuorumRoster,
+  bindOutcomeToRequest,
   canonicalForExecution,
   needsQuorum,
   policyDeclaresQuorum,
@@ -307,7 +308,12 @@ pinType<
     resolution?: { inputs_hash?: string },
   ) => string | null
 >(representationMismatch)
-pinType<(action: Action) => Action>(canonicalForExecution)
+pinType<(action: Action, request: Pick<ApprovalRequest, "inputs_hash">) => Action>(
+  canonicalForExecution,
+)
+pinType<
+  (outcome: ApprovalOutcome, request: Pick<ApprovalRequest, "inputs_hash">) => ApprovalOutcome
+>(bindOutcomeToRequest)
 pinType<
   (doc: {
     request_id: string
@@ -2024,11 +2030,28 @@ await check("ADR-0042: an approval binds the operation it authorizes", () => {
     representationMismatch(action, { ...request, inputs_hash: other }) !== null,
     "a request that no longer describes the held action was not refused",
   )
-  const canonical = canonicalForExecution(action)
+  const canonical = canonicalForExecution(action, request)
   expect(
     actionRepresentationHash(canonical) === hash &&
       Object.keys(canonical.inputs as object).join(",") === "branch,remote",
     "canonicalForExecution moved the hash or did not canonicalize the inputs",
+  )
+  expect(
+    canonicalForExecution(action, {}) === action,
+    "an UNBOUND (legacy) request's action was canonicalized — it must execute exactly as before",
+  )
+  const unboundGrant: ApprovalOutcome = {
+    kind: "granted",
+    action_id: "a1",
+    request_id: "r1",
+    approver_id: "operator",
+  }
+  const boundGrant = bindOutcomeToRequest(unboundGrant, request)
+  expect(
+    boundGrant.kind !== "expired" &&
+      boundGrant.inputs_hash === hash &&
+      bindOutcomeToRequest(unboundGrant, {}) === unboundGrant,
+    "bindOutcomeToRequest did not bind to a bound request, or bound a legacy one",
   )
 
   // The signed document: unbound bytes unchanged, bound is a different document.

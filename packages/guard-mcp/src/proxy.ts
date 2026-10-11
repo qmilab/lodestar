@@ -51,6 +51,7 @@ import {
   assertQuorumRoster,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
+  bindOutcomeToRequest,
   canonicalApprovalResolutionHash,
   canonicalForExecution,
   evaluateQuorum,
@@ -1222,8 +1223,11 @@ export class MCPProxy {
       this.consumeResolution(this.approvalRef(request.request_id, parked.id))
     }
 
-    // A resolution arrived out-of-band. resolve() validates the binding.
-    const resolved = this.kernel.resolve(parked, outcome)
+    // A resolution arrived out-of-band. resolve() validates the binding — the
+    // action id, and (ADR-0042) the request's representation, so a held action
+    // that changed after the promote-time check (an awaited write sits between)
+    // is refused at the transition.
+    const resolved = this.kernel.resolve(parked, bindOutcomeToRequest(outcome, request))
     if (resolved.phase !== "approved") {
       await this.emit("action.rejected", resolved)
       return {
@@ -1239,7 +1243,7 @@ export class MCPProxy {
     // ADR-0042: execute the canonical form, so the downstream tool receives
     // byte-for-byte the value the approver's representation hash covers — no key
     // order or `-0` the hash cannot see. The representation is unchanged by it.
-    const approved = canonicalForExecution(resolved)
+    const approved = canonicalForExecution(resolved, request)
     await this.emit("action.approved", approved)
     return { approved }
   }
@@ -1348,7 +1352,7 @@ export class MCPProxy {
       { schema_version: QUORUM_REACHED_EVENT.schema_version },
     )
     // ADR-0042: execute the canonical form — what runs is what was hashed.
-    const approved = canonicalForExecution(resolved)
+    const approved = canonicalForExecution(resolved, request)
     await this.emit("action.approved", approved)
     return { approved }
   }

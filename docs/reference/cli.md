@@ -22,7 +22,7 @@ lodestar otel export <session-id> [--endpoint <url>] [--sensitivity-ceiling <lev
 lodestar guard wrap --target <module> [--project <id>] [--actor <id>]
 lodestar guard mcp-proxy --config <path>
 lodestar approve list --project <id> [--log-root <path>]
-lodestar approve grant <request-id> --approver <id> --project <id>
+lodestar approve grant <request-id> --expect-hash <hex> --approver <id> --project <id>
 lodestar approve deny  <request-id> --approver <id> --project <id>
 lodestar action list
 lodestar action describe <action-id>
@@ -176,12 +176,17 @@ escaped so a planted record cannot rewrite the display. It also prints a
 
 `grant` refuses a `MISMATCH` (exit `6`) and signs the representation it showed
 you. The host refuses any grant that names a different operation.
-`--expect-hash <prefix>` (printed by `list`) makes `grant` also refuse unless the
-held operation still has that hash. See ADR-0042.
+
+Granting a `verified` request requires `--expect-hash <prefix>`: 16–64 hex
+characters of the representation hash, which `list` prints beside the
+operation and in its suggested command. This makes the grant an explicit
+acknowledgement of the operation you reviewed. Without the flag, `grant` prints
+the operation and the exact command, and refuses (exit `6`). A request from a
+host older than 0.7 (`UNBOUND`) grants as before. See ADR-0042.
 
 ```sh
 lodestar approve list --project my-project
-lodestar approve grant req-abc123 --approver alice --project my-project
+lodestar approve grant req-abc123 --expect-hash 9b1d04e7a2c35f68 --approver alice --project my-project
 ```
 
 ## `action` — introspect the tool catalogue

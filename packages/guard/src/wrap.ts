@@ -58,7 +58,7 @@ import {
   voteFromResolution,
   voteIsBoundTo,
 } from "./quorum-host.js"
-import { representationMismatch } from "./representation.js"
+import { bindOutcomeToRequest, representationMismatch } from "./representation.js"
 import type {
   AgentLoop,
   ApprovalResolver,
@@ -576,6 +576,26 @@ export async function runGuarded<T>(
       return rejected
     }
 
+    // ADR-0042: every vote was checked against the held action BEFORE its
+    // promotion, but each promotion is an awaited log write — code sharing this
+    // realm can still change the held action during the last one. Re-check
+    // immediately before the transition (nothing awaits between here and
+    // `resolve()`), and expire rather than authorize an operation the approvers
+    // never saw. The granted outcome also carries the request's binding, so the
+    // kernel backstop refuses it independently.
+    if (evaluation.satisfied) {
+      const changed = representationMismatch(parked, request)
+      if (changed !== null) {
+        const expired = expireRequest(request, { reason: changed })
+        const rejected = kernel.resolve(parked, expired)
+        await emit(
+          "approval.expired",
+          approvalEventPayload(expired, request, rejected.approval?.at ?? new Date().toISOString()),
+        )
+        return rejected
+      }
+    }
+
     const at = new Date().toISOString()
     const outcome = evaluation.satisfied
       ? quorumGrantedOutcome(request, evaluation, at)
@@ -692,8 +712,10 @@ export async function runGuarded<T>(
       }
     }
     // Apply (and validate the binding) first, so the canonical `at` comes from
-    // the kernel transition and a mis-bound outcome throws before we log it.
-    const resolved = kernel.resolve(parked, outcome)
+    // the kernel transition and a mis-bound outcome throws before we log it. The
+    // kernel sees the outcome bound to the request's representation (ADR-0042);
+    // the event below records exactly what the resolver returned.
+    const resolved = kernel.resolve(parked, bindOutcomeToRequest(outcome, request))
     const at = resolved.approval?.at ?? new Date().toISOString()
     await emit(`approval.${outcome.kind}`, approvalEventPayload(outcome, request, at))
     return resolved

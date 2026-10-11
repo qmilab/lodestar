@@ -1,3 +1,4 @@
+import type { ApprovalOutcome } from "@qmilab/lodestar-action-kernel"
 import {
   type Action,
   type ApprovalRequest,
@@ -77,11 +78,40 @@ export function representationMismatch(
  * The MCP proxy and the runtime gate use it; their inputs arrive as JSON anyway,
  * so only key order and `-0` can change. `guard.wrap()` does not: in process, a
  * tool schema may produce non-JSON values (a `Date`) that this would destroy.
+ *
+ * Only a **bound** request (one carrying `inputs_hash`) is canonicalized. A
+ * pre-ADR-0042 request — a runtime gate resuming a hold from an older log — binds
+ * no representation, so its action executes exactly as it did before: its
+ * behaviour, and the bytes of its `action.approved`, are unchanged.
  */
-export function canonicalForExecution(action: Action): Action {
+export function canonicalForExecution(
+  action: Action,
+  request: Pick<ApprovalRequest, "inputs_hash">,
+): Action {
+  if (request.inputs_hash === undefined) return action
   return {
     ...action,
     inputs: canonicalJsonValue(action.inputs),
     contract: canonicalJsonValue(action.contract),
   }
+}
+
+/**
+ * The outcome a host hands `ActionKernel.resolve()`, bound to the request's
+ * representation when the outcome does not already carry one — so the kernel's
+ * backstop re-checks, at the moment of the transition, that the held action is
+ * still the operation the request named. It closes the window between a host's
+ * promote-time check and `resolve()` (an awaited log write sits between them).
+ *
+ * Apply it to the outcome passed to `resolve()` ONLY, never to the one written to
+ * the log: a promoted `approval.granted@1` must carry exactly the fields its
+ * approver signed, or it would no longer verify.
+ */
+export function bindOutcomeToRequest(
+  outcome: ApprovalOutcome,
+  request: Pick<ApprovalRequest, "inputs_hash">,
+): ApprovalOutcome {
+  if (outcome.kind === "expired" || outcome.inputs_hash !== undefined) return outcome
+  if (request.inputs_hash === undefined) return outcome
+  return { ...outcome, inputs_hash: request.inputs_hash }
 }
