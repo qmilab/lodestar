@@ -106,9 +106,13 @@ context to escalate access.
 **What Lodestar does.** The trust-ladder *floor* means a policy rule cannot
 grant an action less scrutiny than its rung requires. Approvals are signed
 (Ed25519) and verified against operator-pinned approver keys, so a forged or
-tampered grant cannot release a held action. For high-stakes actions, an
-M-of-N quorum is adjudicated by the kernel over each approver's own signed
-resolution, counting only eligible, distinct approvers. Adapter credentials
+tampered grant cannot release a held action. Signature verification applies
+wherever approver keys are pinned; an operator can explicitly opt out with
+`allow_unsigned` for trusted local setups. Where an operator configures a
+policy rule with `quorum >= 2`, an M-of-N quorum is adjudicated by the kernel
+over each approver's own signed resolution, counting only eligible, distinct
+approvers and excluding the action's own proposer. Quorum is opt-in per rule,
+not automatic for high-stakes actions. Adapter credentials
 are operator-supplied, scoped, and kept out of inputs, observations, and
 errors.
 
@@ -210,9 +214,10 @@ poisoned memory) propagates across agents and compounds into system-wide
 harm.
 
 **What Lodestar does.** It limits propagation of *epistemic* faults along the
-chain. When a belief is contradicted or quarantined, decisions that depended
-on it are flagged, and sentinel alerts can hold dependent actions at
-`pending_approval` instead of letting them execute.
+chain. When a belief is contradicted, the reflection pass proposes flagging
+the decisions that depended on it. Separately, sentinel alerts (for example on
+a suspicious memory origin) can hold dependent actions at `pending_approval`
+instead of letting them execute.
 
 **Probes.** `contradicted-belief-flags-dependent-decisions`,
 `sentinel-alert-gates-dependent-action`, `guard-arbiter-gates-dependent-action`,
@@ -228,8 +233,11 @@ propagation.
 risky actions approved, or to mask what they are doing.
 
 **What Lodestar does.** Approval is an explicit, out-of-band, signed event, so
-an agent cannot approve its own action, and a forged, unsigned, or
-timed-out approval cannot release a held action. The decision chain is
+a forged or tampered approval cannot release a held action when approver keys
+are pinned (the unsigned opt-out is explicit), and a held action that times
+out is denied. Separating approver from proposer is enforced by the kernel
+only for quorum-enabled holds; on the single-approver path it depends on the
+resolver being a separately authenticated channel, not the agent. The decision chain is
 recorded and can be reported on afterwards.
 
 **Probes.** `forged-approval-cannot-execute`,
@@ -240,8 +248,8 @@ recorded and can be reported on afterwards.
 understood *what* they approved. The approver is not guaranteed to see the
 tool and inputs of the action in front of them, so a persuasive agent can
 still shape a rubber-stamp. This is a known gap we intend to close, and no
-probe pins it yet. Quorum raises the cost of such an attack but does not
-remove it.
+probe pins it yet. Opt-in quorum raises the cost of such an attack but does
+not remove it.
 
 ## ASI10 — Rogue Agents · Not addressed
 
