@@ -118,7 +118,7 @@ one needs an OS sandbox mechanism, and one each needs a Python + LangGraph / Cre
 AutoGen runtime. CI provides all of them. To run just one pack:
 
 ```sh
-bun run lodestar harness run --pack lodestar-core      # the 75 core probes
+bun run lodestar harness run --pack lodestar-core      # the 76 core probes
 bun run lodestar harness run --pack coding-agent-safety # the 4 safety probes + 3 sentinels
 ```
 
