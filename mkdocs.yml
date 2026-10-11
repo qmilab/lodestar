@@ -54,6 +54,7 @@ nav:
       - "The Policy Kernel & approvals": concepts/policy-kernel.md
       - "Governed egress & native adapters": concepts/governed-egress.md
       - Sentinels and calibration: concepts/sentinels-and-calibration.md
+      - "EU AI Act: record-keeping and oversight": concepts/eu-ai-act-record-keeping.md
       - "Threat model — memory poisoning": concepts/threat-model/memory-poisoning.md
       - "Threat model — registry supply chain": concepts/threat-model/registry-supply-chain.md
   - Reference:
