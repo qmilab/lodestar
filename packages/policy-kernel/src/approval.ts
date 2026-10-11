@@ -1,12 +1,13 @@
 import { randomUUID } from "node:crypto"
 import { type ApprovalOutcome, sensitivityForContract } from "@qmilab/lodestar-action-kernel"
-import type {
-  Action,
-  Actor,
-  ApprovalRequest,
-  RequiredAuthority,
-  ResourceScope,
-  Sensitivity,
+import {
+  type Action,
+  type Actor,
+  type ApprovalRequest,
+  type RequiredAuthority,
+  type ResourceScope,
+  type Sensitivity,
+  actionRepresentationHash,
 } from "@qmilab/lodestar-core"
 import type { PolicyEvaluation } from "./gate.js"
 
@@ -42,6 +43,9 @@ export interface OpenApprovalRequestOptions {
  * least the action's sensitivity. `deadline` is set only when supplied —
  * never written as `undefined` (the canonical-hash discipline the
  * `approval.*` payloads hold).
+ *
+ * The request also names the held operation (ADR-0042): `action_type` is the
+ * action's `tool` and `inputs_hash` its `actionRepresentationHash`.
  */
 export function openApprovalRequest(
   action: Action,
@@ -74,6 +78,13 @@ export function openApprovalRequest(
   if (evaluation.quorum !== undefined && evaluation.quorum >= 2) {
     request.quorum = evaluation.quorum
   }
+  // ADR-0042: say WHAT is held, so the approval surface can show it and an
+  // approver can bind their signature to it. Every host opens its requests here,
+  // so all three emit the binding with no host-specific code. The hash is over
+  // the action's phase-independent representation, which is what lets a host
+  // recompute it from the action it is about to run at promotion time.
+  request.action_type = action.tool
+  request.inputs_hash = actionRepresentationHash(action)
   return request
 }
 

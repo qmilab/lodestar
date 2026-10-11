@@ -312,6 +312,25 @@ Cognitive Core. The resulting event log is renderable by
     saw it), and it has **no unsigned path**, so quorum does not inherit the
     single-approver `allow_unsigned` legacy mode.
 
+12. **A resolution must name the operation the proxy will run (ADR-0042).** At
+    every promotion site — `waitForResolution`'s log path and channel path,
+    `pollQuorum`'s channel promotion, and `verifiedVotesFromLog` — a resolution
+    that clears the signature gate must also clear `representationMismatch`
+    against the parked action (recomputed there, from the live action). A
+    mismatch is audited as `guard.approval.signature_rejected@1` with a
+    `representation mismatch:` reason (log source: with its `rejected_event_id`,
+    so the read side excludes exactly it and the scan moves past it; channel
+    source: the file is consumed) and the hold keeps waiting to its deadline. The
+    promoted `approval.granted@1` / `approval.denied@1` carries the approver's
+    `inputs_hash` (it is inside the signed bytes — drop it and the promoted vote
+    no longer verifies, losing a quorum vote or a veto). The outcome handed to
+    `resolve()` is bound to the request (`bindOutcomeToRequest`, or the quorum
+    outcome's own binding), so the kernel re-checks the held action at the
+    transition. An approved held action executes
+    `canonicalForExecution(resolved, request)` — the downstream tool gets
+    byte-for-byte the value the approver's hash covers, so key order and `-0`
+    cannot differ (bound requests only; an unbound hold runs as before). See the `approved-action-cannot-be-substituted` probe.
+
 ## Persistence
 
 By default the proxy builds fresh in-memory firewall stores per

@@ -27,6 +27,12 @@ import {
   readApprovalResolution,
   writeApprovalResolution,
 } from "@qmilab/lodestar-guard-mcp"
+import {
+  type ApprovalRepresentation,
+  approvalRepresentation,
+  escapeUntrustedText,
+  renderCanonicalJson,
+} from "@qmilab/lodestar-trace"
 
 /** Env var holding the approver's PKCS#8 PEM private key (off argv; never logged). */
 const APPROVER_KEY_ENV = "LODESTAR_APPROVER_KEY"
@@ -69,12 +75,33 @@ const APPROVER_KEY_ENV = "LODESTAR_APPROVER_KEY"
  * `list` reads the log read-only to show what is waiting (including each
  * request's `required_authority`); it never writes.
  *
+ * **What you approve is what you were shown (ADR-0042).** `list` renders, for
+ * each request, the held operation from the log — its tool, its full canonical
+ * inputs and contract (never truncated; invisible / bidi code points escaped),
+ * and the actor it runs as — plus a binding line: `verified` (the request's
+ * `inputs_hash` matches the single record of the action), `UNBOUND` (a legacy
+ * request with no hash), or `MISMATCH` (conflicting records, a hash or tool that
+ * disagrees, or no record at all). Every log-sourced string is escaped, since a
+ * local writer can plant records. `grant` refuses a `MISMATCH` (exit 6) and, on a
+ * verified request, signs the representation hash it recomputed from the record
+ * it rendered — the host refuses any grant that names a different operation.
+ * **A bound grant must acknowledge what it signs:** on a verified request `grant`
+ * requires `--expect-hash <prefix>` (16–64 hex, printed by `list` beside the
+ * operation) and refuses unless the verified hash starts with it. Without it,
+ * `grant` prints the full operation and the exact command, and refuses — so a
+ * signature is never produced for an operation that was not on the approver's
+ * screen. A legacy (UNBOUND) request grants exactly as before. `deny` binds the
+ * verified hash when there is one and otherwise signs unbound, rather than assert
+ * a representation it never showed; it needs no acknowledgement.
+ *
  * Exit codes:
  *   0  — success (resolution written, or list rendered)
  *   1  — runtime error (unreadable log, write failed)
  *   2  — usage error (bad/missing flags or subcommand)
  *   3  — the named request is not a pending approval in this log
  *   4  — the approver does not clear the request's required_authority
+ *   5  — a peer's quorum vote is queued and not yet promoted (retry shortly)
+ *   6  — grant refused: the held operation could not be verified (ADR-0042)
  */
 export async function approveCommand(argv: string[]): Promise<number> {
   const [sub, ...rest] = argv
@@ -98,6 +125,8 @@ export async function approveCommand(argv: string[]): Promise<number> {
   // is never an argv value — only a file path or the LODESTAR_APPROVER_KEY env.
   let keyPath: string | undefined
   let outPath: string | undefined
+  // ADR-0042: an optional acknowledgement of the representation `list` showed.
+  let expectHash: string | undefined
   // Approver authority — conservative defaults (no silent clearance). The
   // approver asserts what they hold; `authorizeResolution` checks it against the
   // request's `required_authority` before grant/deny is written.
@@ -113,7 +142,16 @@ export async function approveCommand(argv: string[]): Promise<number> {
     else if (arg === "--reason" || arg === "-r") reason = rest[++i]
     else if (arg === "--key" || arg === "-k") keyPath = rest[++i]
     else if (arg === "--out" || arg === "-o") outPath = rest[++i]
-    else if (arg === "--clearance") {
+    else if (arg === "--expect-hash") {
+      const v = rest[++i]
+      if (v === undefined || !/^[0-9a-f]{16,64}$/.test(v)) {
+        process.stderr.write(
+          `invalid --expect-hash '${escapeUntrustedText(v ?? "")}' (expected 16–64 lowercase hex characters of the representation hash 'approve list' prints)\n`,
+        )
+        return 2
+      }
+      expectHash = v
+    } else if (arg === "--clearance") {
       const v = rest[++i]
       const parsed = SensitivitySchema.safeParse(v)
       if (!parsed.success) {
@@ -193,6 +231,7 @@ export async function approveCommand(argv: string[]): Promise<number> {
     trustBaseline,
     scopes,
     keyPath,
+    expectHash,
   })
 }
 
@@ -239,14 +278,17 @@ async function listPending(root: string, projectId: string): Promise<number> {
     `${pending.length} pending approval${pending.length === 1 ? "" : "s"} for project '${projectId}':\n\n`,
   )
   for (const req of pending) {
-    process.stdout.write(`  request: ${req.request_id}\n`)
-    process.stdout.write(`   action: ${req.action_id}\n`)
-    process.stdout.write(`   reason: ${req.reason}\n`)
-    process.stdout.write(`requested: ${req.requested_at}\n`)
+    // Every string below comes from the log, which a local writer can append to,
+    // so every one is escaped (ADR-0042): a planted entry can add lines to this
+    // queue, never rewrite another entry's.
+    process.stdout.write(`  request: ${escapeUntrustedText(req.request_id)}\n`)
+    process.stdout.write(`   action: ${escapeUntrustedText(req.action_id)}\n`)
+    process.stdout.write(`   reason: ${escapeUntrustedText(req.reason)}\n`)
+    process.stdout.write(`requested: ${escapeUntrustedText(req.requested_at)}\n`)
     if (req.deadline !== undefined) {
       const overdue = Date.parse(req.deadline) < Date.now()
       process.stdout.write(
-        ` deadline: ${req.deadline}${overdue ? "  (PASSED — proxy will time out)" : ""}\n`,
+        ` deadline: ${escapeUntrustedText(req.deadline)}${overdue ? "  (PASSED — proxy will time out)" : ""}\n`,
       )
     }
     const authority = describeAuthority(req)
@@ -258,14 +300,95 @@ async function listPending(root: string, projectId: string): Promise<number> {
       const voters = quorumProgress.get(req.request_id) ?? []
       process.stdout.write(
         `   quorum: ${req.quorum} distinct approvers required; ${voters.length} vote(s) seen so far` +
-          `${voters.length > 0 ? ` (${voters.join(", ")})` : ""} — advisory, the host adjudicates\n`,
+          `${voters.length > 0 ? ` (${voters.map(escapeUntrustedText).join(", ")})` : ""} — advisory, the host adjudicates\n`,
       )
     }
-    process.stdout.write(
-      `  resolve: lodestar approve grant ${req.request_id} --approver <id> --project ${projectId}\n\n`,
-    )
+    const representation = approvalRepresentation(events, req)
+    writeRepresentation(representation)
+    process.stdout.write(`${resolveHint(req, representation, projectId)}\n\n`)
   }
   return 0
+}
+
+/**
+ * Render what the approver would authorize (ADR-0042): the held operation, in
+ * full, and whether the request is bound to it. Indented so a multi-line JSON
+ * block reads as one field.
+ */
+function writeRepresentation(rep: ApprovalRepresentation): void {
+  const r = rep.representation
+  if (r !== undefined) {
+    process.stdout.write(`     tool: ${escapeUntrustedText(r.tool)}\n`)
+    process.stdout.write(`       as: ${escapeUntrustedText(r.proposed_by)}\n`)
+    process.stdout.write(`   inputs: ${indentBlock(renderCanonicalJson(r.inputs ?? null))}\n`)
+    process.stdout.write(` contract: ${indentBlock(renderCanonicalJson(r.contract))}\n`)
+  } else if (rep.action_type !== undefined) {
+    process.stdout.write(
+      `     tool: ${escapeUntrustedText(rep.action_type)} (as named by the request)\n`,
+    )
+  }
+  if (rep.status === "verified") {
+    process.stdout.write(`  binding: verified — representation ${rep.representation_hash}\n`)
+  } else if (rep.status === "unbound") {
+    process.stdout.write(
+      "  binding: UNBOUND — this request predates ADR-0042 and names no representation; what is shown cannot be verified\n",
+    )
+  } else {
+    process.stdout.write("  binding: MISMATCH — do not grant:\n")
+  }
+  for (const problem of rep.problems) {
+    process.stdout.write(`           - ${escapeUntrustedText(problem)}\n`)
+  }
+}
+
+/** The next-step command for a pending request, shell-safe even for a planted id. */
+function resolveHint(req: ApprovalRequest, rep: ApprovalRepresentation, projectId: string): string {
+  const id = shellArg(req.request_id)
+  const project = shellArg(projectId)
+  if (rep.status === "mismatch") {
+    return `  resolve: lodestar approve deny ${id} --approver <id> --project ${project}   (grant is refused on a MISMATCH)`
+  }
+  const ack =
+    rep.representation_hash !== undefined
+      ? ` --expect-hash ${rep.representation_hash.slice(0, 16)}`
+      : ""
+  return `  resolve: lodestar approve grant ${id}${ack} --approver <id> --project ${project}`
+}
+
+/** Indent every line after the first so a JSON block hangs under its label. */
+function indentBlock(text: string): string {
+  return text.split("\n").join("\n           ")
+}
+
+/**
+ * Quote a value for a shell, LOSSLESSLY, so a suggested command an approver copies
+ * names exactly the original id — and never carries a planted id's
+ * metacharacters into their shell, nor a raw control / bidi / invisible code point
+ * onto their terminal.
+ *
+ * A plain token is printed as-is; a value with no unsafe code point is
+ * single-quoted; anything else uses ANSI-C quoting (`$'...'`, bash and zsh), with
+ * each unsafe code point written as a `\u` / `\U` escape the shell decodes back to
+ * the original character.
+ */
+function shellArg(value: string): string {
+  if (/^[A-Za-z0-9._:@/-]+$/.test(value)) return value
+  if (escapeUntrustedText(value) === value) return `'${value.replace(/'/g, `'\\''`)}'`
+  let out = "$'"
+  for (const ch of value) {
+    if (ch === "\\" || ch === "'") {
+      out += `\\${ch}`
+    } else if (ch !== '"' && escapeUntrustedText(ch) !== ch) {
+      const codePoint = ch.codePointAt(0) ?? 0
+      out +=
+        codePoint > 0xffff
+          ? `\\U${codePoint.toString(16).padStart(8, "0")}`
+          : `\\u${codePoint.toString(16).padStart(4, "0")}`
+    } else {
+      out += ch
+    }
+  }
+  return `${out}'`
 }
 
 // ── grant | deny ───────────────────────────────────────────────────────────
@@ -281,6 +404,7 @@ async function resolveRequest(input: {
   trustBaseline: number
   scopes: ResourceScope[]
   keyPath: string | undefined
+  expectHash: string | undefined
 }): Promise<number> {
   const {
     root,
@@ -293,6 +417,7 @@ async function resolveRequest(input: {
     trustBaseline,
     scopes,
     keyPath,
+    expectHash,
   } = input
 
   // Load the approver's signing key, if one is supplied. A signed resolution is
@@ -405,6 +530,40 @@ async function resolveRequest(input: {
     return 4
   }
 
+  // ADR-0042 — sign what you were shown. Resolve the held operation from the log
+  // exactly as `list` rendered it. A grant is never signed over a MISMATCH, and on
+  // a verified request it binds the hash recomputed from the record — not the
+  // request's own field — so a planted record yields a hash the host refuses.
+  const representation = approvalRepresentation(events, request)
+  if (kind === "granted") {
+    if (representation.status === "mismatch") {
+      process.stderr.write(
+        `[approve] refused: the operation request '${escapeUntrustedText(requestId)}' would authorize could not be verified:\n${representation.problems.map((p) => `          - ${escapeUntrustedText(p)}`).join("\n")}\n          Deny it instead ('lodestar approve deny ...') and let the agent re-propose.\n`,
+      )
+      return 6
+    }
+    // A bound grant is a signature over a specific operation, so it must be an
+    // ACKNOWLEDGED one: show the operation here and require the hash `list`
+    // printed beside it, rather than sign something the approver may never have
+    // looked at. Legacy (UNBOUND) requests keep today's flow.
+    if (representation.status === "verified" && expectHash === undefined) {
+      writeRepresentation(representation)
+      process.stderr.write(
+        `[approve] refused: granting signs the operation above. Review it, then acknowledge it explicitly:\n          lodestar approve grant ${shellArg(requestId)} --expect-hash ${(representation.representation_hash ?? "").slice(0, 16)} --approver ${shellArg(approver)} --project ${shellArg(projectId)}\n`,
+      )
+      return 6
+    }
+    if (
+      expectHash !== undefined &&
+      !(representation.representation_hash ?? "").startsWith(expectHash)
+    ) {
+      process.stderr.write(
+        `[approve] refused: --expect-hash ${expectHash} does not match the held operation (${representation.representation_hash ?? "no record of it in the log"}).\n          Run 'lodestar approve list' again and review what changed.\n`,
+      )
+      return 6
+    }
+  }
+
   const resolution: ApprovalResolution = {
     request_id: requestId,
     action_id: request.action_id,
@@ -413,6 +572,16 @@ async function resolveRequest(input: {
     at,
   }
   if (reason !== undefined && reason !== "") resolution.reason = reason
+  if (representation.status === "verified" && representation.representation_hash !== undefined) {
+    resolution.inputs_hash = representation.representation_hash
+  } else if (kind === "denied" && representation.status === "mismatch") {
+    // Denial is the safe direction, so it proceeds — but UNBOUND: signing the
+    // request's own hash would assert a representation this approver was never
+    // shown. An unbound deny is the legacy shape every host accepts.
+    process.stderr.write(
+      `[approve] warning: denying WITHOUT a representation binding — the held operation could not be verified:\n${representation.problems.map((p) => `          - ${escapeUntrustedText(p)}`).join("\n")}\n`,
+    )
+  }
 
   // Sign over the canonical resolution document. The signature's signer_id is
   // bound to approver_id, so the proxy rejects a signature lifted onto a
@@ -435,8 +604,12 @@ async function resolveRequest(input: {
     return 1
   }
 
+  const bound =
+    resolution.inputs_hash !== undefined
+      ? `\n          Bound to representation ${resolution.inputs_hash} — the host refuses it for any other operation.`
+      : ""
   process.stdout.write(
-    `[approve] ${kind} request '${requestId}' (action '${request.action_id}') as '${approver}'${privateKeyPem !== undefined ? " (signed)" : " (UNSIGNED)"}.\n          Queued at ${path}\n          The proxy will pick it up on its next poll and emit the canonical approval.${kind === "granted" ? "granted" : "denied"}@1 event.\n`,
+    `[approve] ${kind} request '${escapeUntrustedText(requestId)}' (action '${escapeUntrustedText(request.action_id)}') as '${escapeUntrustedText(approver)}'${privateKeyPem !== undefined ? " (signed)" : " (UNSIGNED)"}.${bound}\n          Queued at ${path}\n          The proxy will pick it up on its next poll and emit the canonical approval.${kind === "granted" ? "granted" : "denied"}@1 event.\n`,
   )
   return 0
 }
@@ -774,7 +947,9 @@ function describeAuthority(req: ApprovalRequest): string | undefined {
   const ra = req.required_authority
   if (ra.min_trust_baseline !== undefined) parts.push(`trust ≥ ${ra.min_trust_baseline}`)
   if (ra.sensitivity_clearance !== undefined) parts.push(`clearance ≥ ${ra.sensitivity_clearance}`)
-  if (ra.scope !== undefined) parts.push(`scope ${ra.scope.level}:${ra.scope.identifier}`)
+  if (ra.scope !== undefined) {
+    parts.push(`scope ${ra.scope.level}:${escapeUntrustedText(ra.scope.identifier)}`)
+  }
   return parts.length > 0 ? parts.join(", ") : undefined
 }
 
@@ -805,7 +980,7 @@ function delay(ms: number): Promise<void> {
 function writeUsage(stream: NodeJS.WritableStream): void {
   stream.write(
     "usage: lodestar approve list   --project <id> [--log-root <path>]\n" +
-      "       lodestar approve grant  <request-id> --approver <id> --key <path> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
+      "       lodestar approve grant  <request-id> --approver <id> --key <path> [auth] [--expect-hash <hex>] [--reason <text>] --project <id> [--log-root <path>]\n" +
       "       lodestar approve deny   <request-id> --approver <id> --key <path> [auth] [--reason <text>] --project <id> [--log-root <path>]\n" +
       "       lodestar approve keygen --approver <id> [--out <prefix>]\n" +
       "\n" +
@@ -823,6 +998,13 @@ function writeUsage(stream: NodeJS.WritableStream): void {
       "    --trust-baseline <0..1>                             (default 0)\n" +
       "    --scope <level:identifier> | global   (repeatable;  default none)\n" +
       "  An approver who does not clear the request's required_authority is refused (exit 4);\n" +
-      "  'lodestar approve list' prints each request's authority requirement.\n",
+      "  'lodestar approve list' prints each request's authority requirement.\n" +
+      "\n" +
+      "  What you approve (ADR-0042): 'list' shows each held operation — tool, full inputs,\n" +
+      "  contract — and whether the request is bound to it (verified / UNBOUND / MISMATCH).\n" +
+      "  grant refuses a MISMATCH (exit 6) and signs the representation it showed you.\n" +
+      "    --expect-hash <hex>   acknowledge the operation you reviewed: grant only if its\n" +
+      "                          representation hash starts with this (16–64 hex chars;\n" +
+      "                          'list' prints it). Required to grant a bound request.\n",
   )
 }

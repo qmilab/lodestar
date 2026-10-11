@@ -24,7 +24,10 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   pair was compiled together — the guard-mcp proxy rejects a mismatch.
 - `src/approval.ts` — the approval lifecycle: `openApprovalRequest()` builds the
   `ApprovalRequest` for a held action (mapping the action's `data_sensitivity`
-  into the 4-value clearance via the Action Kernel's `sensitivityForContract`);
+  into the 4-value clearance via the Action Kernel's `sensitivityForContract`,
+  and — ADR-0042 — stamping `action_type` (the tool) and `inputs_hash` (the
+  action's `actionRepresentationHash`), so every host's request names the held
+  operation with no host-specific code);
   `authorizeResolution()` matches a resolver's `Actor` against the request's
   `required_authority` and produces the `ApprovalOutcome` the Action Kernel's
   `resolve()` applies; `expireRequest()` produces the deadline-passed outcome;
@@ -50,7 +53,12 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   Since ADR-0017 these are thin wrappers over the shared core primitive
   (`signPayloadHash` / `verifyPayloadHashSignature`), keeping the same signatures,
   the same `ApprovalSignatureError`, and the same reject set — behaviour unchanged,
-  the crypto is no longer copied.
+  the crypto is no longer copied. **ADR-0042:** the document gains an optional
+  `inputs_hash` (the action representation the approver was shown), added only
+  when present exactly like `reason` — so an unbound resolution's canonical bytes
+  are the pre-0.7 bytes and every earlier signature verifies, while a bound one
+  carries the binding inside the signed bytes (it cannot be stripped). A pre-0.7
+  verifier rejects a bound resolution — the declared forward-compat boundary.
   Unlike the policy signature (a host-injected `verifySignature` seam, placeholder
   crypto in-repo), this is **real** `node:crypto` Ed25519 — the approval
   side-channel is a genuine cross-process forgery surface, so the verification must
@@ -76,7 +84,10 @@ Design lock: `docs/architecture/policy-kernel.md`. Read it first.
   deliberately carries no authority — so keys-only adjudication would let *any*
   N pinned approvers satisfy a `secret`-clearance quorum. Fail closed on a
   missing/short `Actor`; **no `allowUnsigned`**; deny vetoes; dedup by
-  `actor_id`; proposer excluded from **grants** at `quorum >= 2` only.
+  `actor_id`; proposer excluded from **grants** at `quorum >= 2` only. A vote
+  whose signed `inputs_hash` differs from the request's is rejected under the
+  existing `not_for_request` code (ADR-0042 — a backstop, so a log
+  re-adjudicator reaches the host's answer; the union does not grow).
   Pure — no I/O, no clock, no key access of its own.
 - `src/index.ts` — public exports.
 

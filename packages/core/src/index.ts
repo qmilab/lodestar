@@ -68,6 +68,8 @@ export * from "./crypto/signing.js"
 export * from "./crypto/probe-pack-signing.js"
 export * from "./crypto/badge-signing.js"
 export * from "./crypto/pack-index-signing.js"
+// The action representation an approval binds (ADR-0042) — pure canonicalisation
+export * from "./crypto/action-representation.js"
 
 // Schema registry
 export * as registry from "./registry.js"

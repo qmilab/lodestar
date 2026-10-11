@@ -527,3 +527,28 @@ The options we rejected, each with a one-line reason.
   **three additive-optional fields**, permitted by `public-api.md`'s "additive growth only" — not
   v0.2-lock surgery.
   **Status: Accepted (design; implementation not yet scheduled).**
+- [ADR-0042](0042-bind-approval-requests-to-the-action-they-authorize.md) — bind approval requests
+  to the **action they authorize** (#179, closing Loopjacking's *representation mismatch*: the
+  approver was shown an `action_id`, never the operation). An action's **representation** is
+  `{ action_id, tool, inputs, contract, proposed_by }` (everything `execute()` reads), hashed by a phase-independent core primitive
+  (`actionRepresentationHash`) so the same value comes out of the proposed action, the log record,
+  and a parked action the runtime gate rebuilt after a restart — **not** the `action.proposed`
+  envelope hash, which covers phase/audit/timestamps a host cannot recompute from what it is about
+  to run. `ApprovalRequest` gains additive-optional `action_type` + `inputs_hash` (ADR-0041's
+  precedent; omitted-not-undefined, so existing requests are byte-identical). `inputs_hash` joins
+  the signed resolution **optionally** — omitted when absent, so every existing signature verifies —
+  and the approver signs **what they were shown**. Each of the three hosts recomputes the hash from
+  the action it will execute and **refuses at promote** a resolution (or a request) naming anything
+  else: not promoted, audited as `guard.approval.signature_rejected@1` (reused deliberately so every
+  existing read-side consumer already excludes it), hold expires. The proxy and runtime gate then
+  execute the **canonical** inputs (what runs is byte-for-byte what was hashed — key order and `-0`
+  cannot differ), and the runtime gate's resume **fails closed on conflicting log records** (a planted
+  `action.pending_approval` or quorum-stripping `approval.requested` is a conflict, not latest-wins). Backstops in `ActionKernel.resolve()`
+  and `evaluateQuorum` (existing `not_for_request` code). `lodestar approve list` escapes **every**
+  log-sourced string and renders tool + full canonical inputs (never truncated) + full contract + a
+  `verified` / `UNBOUND` / `MISMATCH` binding; `grant` refuses a mismatch and takes an optional
+  `--expect-hash` acknowledgement; a mismatched `deny` signs unbound rather than assert what it did not
+  show. Bound resolutions are a declared forward-compat boundary (pre-0.7 verifiers fail closed). Honest scope: binding is
+  verify-if-present (an unbound legacy resolution still resolves; a require-binding opt-in is
+  deferred), and the hash can confirm guesses of low-entropy inputs to whoever already sees the
+  request. Implemented with probe `approved-action-cannot-be-substituted`. **Status: Accepted.**

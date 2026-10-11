@@ -17,6 +17,7 @@ import {
 } from "@qmilab/lodestar-cognitive-core"
 import {
   APPROVAL_QUORUM_REACHED_EVENT_TYPE,
+  ActionSchema,
   ApprovalDeniedPayloadSchema,
   ApprovalGrantedPayloadSchema,
   ApprovalRequestSchema,
@@ -26,6 +27,8 @@ import {
   GUARD_APPROVAL_SIGNATURE_REJECTED_SCHEMA_VERSION,
   SENTINEL_ALERTED_EVENT_TYPE,
   SENTINEL_ALERTED_SCHEMA_VERSION,
+  actionRepresentationHash,
+  canonicalHashHex,
   firewallEventType,
 } from "@qmilab/lodestar-core"
 import type {
@@ -59,7 +62,9 @@ import {
   assertQuorumRoster,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
+  bindOutcomeToRequest,
   canonicalApprovalResolutionHash,
+  canonicalForExecution,
   createApprovalChannel,
   evaluateQuorum,
   holdEvaluationForParkedAction,
@@ -72,6 +77,7 @@ import {
   quorumReachedPayload,
   quorumRosterShortfall,
   quorumShortfallReason,
+  representationMismatch,
   resolutionIsAuthentic,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
@@ -775,8 +781,18 @@ export class RuntimeGate {
     // Reconstruct the parked action — from memory (fast path) or the durable log
     // (a fresh instance after a restart). The deadline comes from the log's
     // approval.requested@1, never recomputed, so a restart cannot reset it.
-    const parked =
-      this.pendingActions.get(msg.action_id) ?? (await this.reconstructParkedAction(msg.action_id))
+    //
+    // ADR-0042: both are read back from an unauthenticated log, so neither is
+    // read latest-wins any more. An appending writer cannot remove the genuine
+    // record, so a planted shadow — an `action.pending_approval` that swaps the
+    // operation, an `approval.requested` that strips the quorum or the binding —
+    // always shows up as a SECOND, DISAGREEING record. That is refused, fail
+    // closed, whichever record came first.
+    const rebuilt =
+      this.pendingActions.get(msg.action_id) === undefined
+        ? await this.reconstructParkedAction(msg.action_id)
+        : undefined
+    const parked = this.pendingActions.get(msg.action_id) ?? rebuilt?.action
     if (parked === undefined) {
       return {
         type: "govern_result",
@@ -786,7 +802,19 @@ export class RuntimeGate {
         kind: "unknown_action",
       }
     }
-    const recovered = await this.reconstructRequest(msg.action_id)
+    const requestRecord = await this.reconstructRequest(msg.action_id)
+    const conflict = rebuilt?.conflict ?? requestRecord?.conflict
+    if (conflict !== undefined) {
+      // Expire EVERY request id the log holds for this action, not just the one
+      // that sorts first — a planted record can sort ahead of the genuine one,
+      // and the genuine request must not be left open in the read-side queue.
+      return await this.refuseConflictingHold(
+        parked,
+        requestRecord?.requestIds ?? [msg.request_id],
+        conflict,
+      )
+    }
+    const recovered = requestRecord?.request
     const requestId = recovered?.request_id ?? msg.request_id
     const deadlineAt =
       recovered?.deadline !== undefined ? Date.parse(recovered.deadline) : undefined
@@ -856,7 +884,8 @@ export class RuntimeGate {
       const fetchBudgetMs = channelFetchBudgetMs(deadlineAt, startedAt, waitMs)
       const resolution = await this.checkResolution(
         requestId,
-        msg.action_id,
+        parked,
+        recovered ?? {},
         deadlineAt,
         fetchBudgetMs,
       )
@@ -868,7 +897,13 @@ export class RuntimeGate {
           // exactly-once keys on the durable terminal event, not the file's absence.
           this.consumeResolution(this.approvalRef(requestId, msg.action_id))
         }
-        const resolved = kernel.resolve(parked, resolution.outcome)
+        // ADR-0042: the kernel re-checks, at the transition, that the held action
+        // is still the operation the request named (an awaited write sits
+        // between the promote-time check and here). A legacy request binds none.
+        const resolved = kernel.resolve(
+          parked,
+          bindOutcomeToRequest(resolution.outcome, recovered ?? {}),
+        )
         if (resolved.phase !== "approved") {
           await this.emit("action.rejected", resolved)
           this.pendingActions.delete(msg.action_id)
@@ -880,8 +915,12 @@ export class RuntimeGate {
             kind: "approval_denied",
           }
         }
-        await this.emit("action.approved", resolved)
-        const result = await this.executeAction(resolved)
+        // ADR-0042: execute the canonical form — the remoted body receives
+        // byte-for-byte the value the approver's representation hash covers. A
+        // legacy (unbound) request resumes exactly as before ADR-0042.
+        const approved = canonicalForExecution(resolved, recovered ?? {})
+        await this.emit("action.approved", approved)
+        const result = await this.executeAction(approved)
         this.pendingActions.delete(msg.action_id)
         return result
       }
@@ -1271,6 +1310,7 @@ export class RuntimeGate {
       // wait window), so a stalled channel cannot hang a short-poll resume.
       await this.promoteChannelVote(
         request,
+        parked,
         roster,
         channelFetchBudgetMs(deadlineAt, startedAt, waitMs),
         deadlineAt,
@@ -1279,7 +1319,7 @@ export class RuntimeGate {
       // (2) + (3) Re-read the durable log and adjudicate everything accumulated.
       const evaluation = evaluateQuorum(
         request,
-        await this.verifiedVotesFromLog(request, roster),
+        await this.verifiedVotesFromLog(request, parked, roster),
         options,
       )
 
@@ -1307,8 +1347,10 @@ export class RuntimeGate {
           quorumReachedPayload(request, evaluation, resolved.approval?.at ?? at),
           { schema_version: QUORUM_REACHED_EVENT.schema_version },
         )
-        await this.emit("action.approved", resolved)
-        const result = await this.executeAction(resolved)
+        // ADR-0042: execute the canonical form — what runs is what was hashed.
+        const approved = canonicalForExecution(resolved, request)
+        await this.emit("action.approved", approved)
+        const result = await this.executeAction(approved)
         this.pendingActions.delete(msg.action_id)
         return result
       }
@@ -1364,6 +1406,7 @@ export class RuntimeGate {
    */
   private async promoteChannelVote(
     request: ApprovalRequest,
+    parked: Action,
     roster: QuorumRoster,
     fetchBudgetMs: number,
     deadlineAt: number | undefined,
@@ -1395,8 +1438,22 @@ export class RuntimeGate {
       return
     }
     if (resolutionIsAuthentic(resolution, roster.authorized_keys)) {
-      this.promotedVoteHashes.add(hash)
-      await this.emitCanonicalResolution(outcomeFromResolution(resolution), resolution.signature)
+      // ADR-0042: authentic is not enough — the vote must name the operation this
+      // gate holds. A vote for a different operation is refused and never
+      // written: the log would otherwise say this approver granted what they
+      // never saw.
+      const mismatch = representationMismatch(parked, request, resolution)
+      if (mismatch !== null) {
+        await this.emitSignatureRejected(
+          `req:${resolution.request_id}:${hash}`,
+          resolution,
+          { source: "side_channel" },
+          mismatch,
+        )
+      } else {
+        this.promotedVoteHashes.add(hash)
+        await this.emitCanonicalResolution(outcomeFromResolution(resolution), resolution.signature)
+      }
     } else {
       await this.emitSignatureRejected(`req:${resolution.request_id}:${hash}`, resolution, {
         source: "side_channel",
@@ -1427,6 +1484,7 @@ export class RuntimeGate {
    */
   private async verifiedVotesFromLog(
     request: ApprovalRequest,
+    parked: Action,
     roster: QuorumRoster,
   ): Promise<QuorumVote[]> {
     let events: EventEnvelope[] = []
@@ -1465,6 +1523,9 @@ export class RuntimeGate {
         at: payload.at,
       }
       if (payload.reason !== undefined) doc.reason = payload.reason
+      // ADR-0042: inside the signed bytes — rebuild the document without it and a
+      // genuine bound vote would fail verification as if it were forged.
+      if (payload.inputs_hash !== undefined) doc.inputs_hash = payload.inputs_hash
       if (
         !resolutionIsAuthentic({ ...doc, signature: payload.signature }, roster.authorized_keys)
       ) {
@@ -1472,6 +1533,16 @@ export class RuntimeGate {
           source: "log",
           rejectedEventId: ev.id,
         })
+        continue
+      }
+      const mismatch = representationMismatch(parked, request, doc)
+      if (mismatch !== null) {
+        await this.emitSignatureRejected(
+          `log:${ev.id}`,
+          doc,
+          { source: "log", rejectedEventId: ev.id },
+          mismatch,
+        )
         continue
       }
       const vote: QuorumVote = { resolution: doc, event_id: ev.id }
@@ -1483,12 +1554,14 @@ export class RuntimeGate {
 
   private async checkResolution(
     requestId: string,
-    actionId: string,
+    parked: Action,
+    request: Pick<ApprovalRequest, "action_type" | "inputs_hash">,
     deadlineAt: number | undefined,
     fetchBudgetMs: number,
   ): Promise<
     { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
   > {
+    const actionId = parked.id
     // Log path: an in-process resolver (or a forged append on the sibling NDJSON
     // log) — both clear the same signature gate.
     const reader = new EventLogReader(this.logRoot)
@@ -1501,12 +1574,24 @@ export class RuntimeGate {
     const logHit = this.resolutionFromLog(events, requestId, actionId, deadlineAt)
     if (logHit !== undefined) {
       if (this.resolutionVerified(logHit.doc, logHit.signature)) {
-        return { outcome: outcomeFromDoc(logHit.doc), source: "log" }
+        // ADR-0042: authentic is not enough — the resolution, and the request it
+        // answers, must name the operation this gate holds. A mismatch is audited
+        // with its event id (the read side excludes exactly it; the scan skips it
+        // next pass) and the hold keeps waiting.
+        const mismatch = representationMismatch(parked, request, logHit.doc)
+        if (mismatch === null) return { outcome: outcomeFromDoc(logHit.doc), source: "log" }
+        await this.emitSignatureRejected(
+          `log:${logHit.eventId}`,
+          logHit.doc,
+          { source: "log", rejectedEventId: logHit.eventId },
+          mismatch,
+        )
+      } else {
+        await this.emitSignatureRejected(`log:${logHit.eventId}`, logHit.doc, {
+          source: "log",
+          rejectedEventId: logHit.eventId,
+        })
       }
-      await this.emitSignatureRejected(`log:${logHit.eventId}`, logHit.doc, {
-        source: "log",
-        rejectedEventId: logHit.eventId,
-      })
     }
     // Channel path: the separate-process resolver, read through the pluggable
     // ApprovalChannel (ADR-0015). The default file channel reads the same
@@ -1538,11 +1623,25 @@ export class RuntimeGate {
         return undefined
       }
       if (this.resolutionVerified(resolution, resolution.signature)) {
-        return {
-          outcome: outcomeFromResolution(resolution),
-          source: "channel",
-          ...(resolution.signature !== undefined ? { signature: resolution.signature } : {}),
+        // ADR-0042: the same binding check as the log path. A resolution naming a
+        // different operation can never become valid for this hold — audit it,
+        // consume it, keep waiting.
+        const mismatch = representationMismatch(parked, request, resolution)
+        if (mismatch === null) {
+          return {
+            outcome: outcomeFromResolution(resolution),
+            source: "channel",
+            ...(resolution.signature !== undefined ? { signature: resolution.signature } : {}),
+          }
         }
+        await this.emitSignatureRejected(
+          `req:${resolution.request_id}:${canonicalApprovalResolutionHash(resolution)}`,
+          resolution,
+          { source: "side_channel" },
+          mismatch,
+        )
+        this.consumeResolution(this.approvalRef(requestId, actionId))
+        return undefined
       }
       await this.emitSignatureRejected(`req:${resolution.request_id}`, resolution, {
         source: "side_channel",
@@ -1580,6 +1679,8 @@ export class RuntimeGate {
         at: payload.at,
       }
       if (payload.reason !== undefined) doc.reason = payload.reason
+      // ADR-0042: inside the signed bytes, so the rebuilt document must carry it.
+      if (payload.inputs_hash !== undefined) doc.inputs_hash = payload.inputs_hash
       return { doc, signature: payload.signature, eventId: ev.id }
     }
     return undefined
@@ -1605,6 +1706,7 @@ export class RuntimeGate {
     dedupKey: string,
     doc: ApprovalResolutionDoc,
     origin: { source: "log"; rejectedEventId: string } | { source: "side_channel" },
+    reason = "resolution failed Ed25519 verification against pinned approver keys",
   ): Promise<void> {
     if (this.warnedSignatureRejections.has(dedupKey)) return
     try {
@@ -1617,7 +1719,7 @@ export class RuntimeGate {
         request_id: doc.request_id,
         action_id: doc.action_id,
         approver_id: doc.approver_id,
-        reason: "resolution failed Ed25519 verification against pinned approver keys",
+        reason,
         at: new Date().toISOString(),
         source: origin.source,
       }
@@ -1645,6 +1747,9 @@ export class RuntimeGate {
     }
     if (outcome.reason !== undefined) payload.reason = outcome.reason
     if (signature !== undefined) payload.signature = signature
+    // ADR-0042: inside the signed bytes, so it rides along or the promoted event
+    // would no longer verify.
+    if (outcome.inputs_hash !== undefined) payload.inputs_hash = outcome.inputs_hash
     await this.emit(outcome.kind === "granted" ? "approval.granted" : "approval.denied", payload)
   }
 
@@ -1659,17 +1764,42 @@ export class RuntimeGate {
     }
   }
 
-  private async reconstructParkedAction(actionId: string): Promise<Action | undefined> {
+  /**
+   * Rebuild the parked action from the durable log — schema-parsed, never cast —
+   * or report a conflict.
+   *
+   * ADR-0042: the earliest well-formed `action.pending_approval` for this id
+   * carries the full parked Action (phase pending_approval, with audit), which
+   * `kernel.resolve` accepts. Every OTHER record for the id must have the same
+   * `actionRepresentationHash`; a disagreeing one is a planted shadow (the gate
+   * writes exactly one per hold), so the hold is refused rather than resumed on
+   * whichever record happens to sort last. Records that differ only in narrative
+   * or lifecycle fields (`intent`, `audit`, …) are not conflicts — `execute()`
+   * reads none of them.
+   */
+  private async reconstructParkedAction(
+    actionId: string,
+  ): Promise<{ action: Action; conflict?: string } | undefined> {
     const events = await this.readSessionEvents()
-    // The latest action.pending_approval event for this id carries the full parked
-    // Action (phase pending_approval, with audit) — kernel.resolve accepts it.
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]
-      if (ev?.type !== "action.pending_approval") continue
-      const action = ev.payload as Action
-      if (action?.id === actionId && action.phase === "pending_approval") return action
+    let first: Action | undefined
+    const hashes = new Set<string>()
+    for (const ev of events) {
+      if (ev.type !== "action.pending_approval") continue
+      const parsed = ActionSchema.safeParse(ev.payload)
+      if (!parsed.success) continue
+      const action = parsed.data
+      if (action.id !== actionId || action.phase !== "pending_approval") continue
+      first ??= action
+      hashes.add(actionRepresentationHash(action))
     }
-    return undefined
+    if (first === undefined) return undefined
+    if (hashes.size > 1) {
+      return {
+        action: first,
+        conflict: `the durable log holds ${hashes.size} different representations of held action '${actionId}' (action.pending_approval) — a planted record; refusing to resume on any of them`,
+      }
+    }
+    return { action: first }
   }
 
   /**
@@ -1680,16 +1810,71 @@ export class RuntimeGate {
    * not silently become an empty authority — the fail-closed direction is to find
    * no request at all, which `resolveResume` reports as `unknown_action`.
    */
-  private async reconstructRequest(actionId: string): Promise<ApprovalRequest | undefined> {
+  private async reconstructRequest(
+    actionId: string,
+  ): Promise<{ request: ApprovalRequest; conflict?: string; requestIds: string[] } | undefined> {
+    // ADR-0042: the terms this hold is adjudicated under — `quorum`,
+    // `required_authority`, `deadline`, the representation binding — come back
+    // from an unauthenticated log, so they are not read latest-wins. The gate
+    // writes one `approval.requested@1` per held action; a second record whose
+    // parsed content differs is a planted shadow (one that strips a quorum, say),
+    // and the hold is refused rather than adjudicated under either.
     const events = await this.readSessionEvents()
-    for (let i = events.length - 1; i >= 0; i--) {
-      const ev = events[i]
-      if (ev?.type !== "approval.requested") continue
+    let first: ApprovalRequest | undefined
+    const contents = new Set<string>()
+    const requestIds = new Set<string>()
+    for (const ev of events) {
+      if (ev.type !== "approval.requested") continue
       const parsed = ApprovalRequestSchema.safeParse(ev.payload)
       if (!parsed.success) continue
-      if (parsed.data.action_id === actionId) return parsed.data
+      if (parsed.data.action_id !== actionId) continue
+      first ??= parsed.data
+      contents.add(canonicalHashHex(parsed.data))
+      requestIds.add(parsed.data.request_id)
     }
-    return undefined
+    if (first === undefined) return undefined
+    if (contents.size > 1) {
+      return {
+        request: first,
+        requestIds: [...requestIds],
+        conflict: `the durable log holds ${contents.size} different approval requests for held action '${actionId}' — a planted record; refusing to adjudicate under any of them`,
+      }
+    }
+    return { request: first, requestIds: [first.request_id] }
+  }
+
+  /**
+   * Fail closed on a hold whose durable records disagree (ADR-0042): reject the
+   * action and expire its request, so the terminal is recorded — a later resume
+   * returns it idempotently rather than re-reading the conflict — and the read
+   * side closes the request. The hook re-proposes if it wants.
+   */
+  private async refuseConflictingHold(
+    parked: Action,
+    requestIds: readonly string[],
+    conflict: string,
+  ): Promise<Omit<GovernResultMessage, "id">> {
+    const kernel = this.requireKernel()
+    const expired: ApprovalOutcome = {
+      kind: "expired",
+      action_id: parked.id,
+      request_id: requestIds[0] ?? "",
+      reason: conflict,
+    }
+    const rejected = kernel.resolve(parked, expired)
+    const at = rejected.approval?.at ?? new Date().toISOString()
+    for (const requestId of requestIds) {
+      await this.emit("approval.expired", { request_id: requestId, action_id: parked.id, at })
+    }
+    await this.emit("action.rejected", rejected)
+    this.pendingActions.delete(parked.id)
+    return {
+      type: "govern_result",
+      phase: "rejected",
+      action_id: parked.id,
+      reason: conflict,
+      kind: "approval_required",
+    }
   }
 
   /** Exactly-once: the recorded terminal outcome for an action, if it already
@@ -1947,6 +2132,9 @@ function outcomeFromDoc(doc: ApprovalResolutionDoc): ApprovalOutcome {
     approver_id: doc.approver_id,
     reason: doc.reason,
     at: doc.at,
+    // ADR-0042: the approver's binding, carried to the promoted event and to
+    // `ActionKernel.resolve()`. Omitted when unset.
+    ...(doc.inputs_hash !== undefined ? { inputs_hash: doc.inputs_hash } : {}),
   }
 }
 
@@ -1958,6 +2146,7 @@ function outcomeFromResolution(r: ApprovalResolution): ApprovalOutcome {
     approver_id: r.approver_id,
     reason: r.reason,
     at: r.at,
+    ...(r.inputs_hash !== undefined ? { inputs_hash: r.inputs_hash } : {}),
   }
 }
 

@@ -44,7 +44,7 @@ import { type ApproverAuthority, approverShortfall } from "./approval.js"
  *
  * `authorizedKeys` cannot answer the second question, because **the signed
  * resolution carries no authority** — the canonical document is
- * `{ request_id, action_id, kind, approver_id, reason?, at }`, deliberately (see
+ * `{ request_id, action_id, kind, approver_id, reason?, inputs_hash?, at }`, deliberately (see
  * `approval-signature.ts`; self-attested authority is not authority). Without the
  * second input, a rule reading `{ required_authority: { sensitivity_clearance:
  * "secret" }, quorum: 3 }` would be satisfied by *any three pinned approvers*.
@@ -137,7 +137,11 @@ export interface EvaluateQuorumOptions {
 
 /** Why a vote did not count. Audit-facing; each is a fail-closed outcome. */
 export type QuorumRejectionCode =
-  /** Bound to a different `request_id` / `action_id` — a vote for another hold. */
+  /**
+   * Bound to a different `request_id` / `action_id` — a vote for another hold —
+   * or (ADR-0042) to a different action representation than the request's
+   * `inputs_hash`: a vote for a different operation on the same action id.
+   */
   | "not_for_request"
   /** `at` unparseable, before `requested_at`, or past the request's `deadline`. */
   | "out_of_window"
@@ -265,6 +269,23 @@ export function evaluateQuorum(
       reject(
         "not_for_request",
         `resolution is bound to request '${doc.request_id}' / action '${doc.action_id}', not '${request.request_id}' / '${request.action_id}'`,
+      )
+      continue
+    }
+    // ADR-0042: a vote that binds an action representation must bind THIS
+    // request's. A mismatch is a vote for a different operation on the same
+    // action id, so it shares the binding code rather than growing the stable
+    // `QuorumRejectionCode` union. Hosts refuse such a vote before promoting it;
+    // this keeps a log re-adjudicator, which only has the request and the votes,
+    // reaching the same answer. Either side absent is the unbound legacy shape.
+    if (
+      doc.inputs_hash !== undefined &&
+      request.inputs_hash !== undefined &&
+      doc.inputs_hash !== request.inputs_hash
+    ) {
+      reject(
+        "not_for_request",
+        `resolution is bound to action representation ${doc.inputs_hash}, but the request's is ${request.inputs_hash}`,
       )
       continue
     }

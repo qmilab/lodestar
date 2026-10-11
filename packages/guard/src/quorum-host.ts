@@ -285,6 +285,9 @@ export function promotedVotePayload(resolution: ApprovalResolution): ApprovalGra
   }
   if (resolution.reason !== undefined) payload.reason = resolution.reason
   if (resolution.signature !== undefined) payload.signature = resolution.signature
+  // ADR-0042: the binding is inside the signed bytes, so it must ride along for
+  // the promoted vote to stay re-verifiable — the same reason the signature does.
+  if (resolution.inputs_hash !== undefined) payload.inputs_hash = resolution.inputs_hash
   return payload
 }
 
@@ -308,6 +311,7 @@ export function voteFromResolution(resolution: ApprovalResolution, eventId: stri
       approver_id: resolution.approver_id,
       at: resolution.at,
       ...(resolution.reason !== undefined ? { reason: resolution.reason } : {}),
+      ...(resolution.inputs_hash !== undefined ? { inputs_hash: resolution.inputs_hash } : {}),
     },
     event_id: eventId,
   }
@@ -351,6 +355,11 @@ export function quorumGrantedOutcome(
     approver_id: completing.approver_id,
     reason: `quorum of ${evaluation.required} reached — ${evaluation.approvals.length} verified approval(s): ${named}`,
     at,
+    // ADR-0042: the quorum authorizes the request's representation, so the
+    // outcome carries it and `ActionKernel.resolve()` re-checks that the held
+    // action is still that operation at the transition — closing the window the
+    // awaited vote promotions leave after each promote-time check.
+    ...(request.inputs_hash !== undefined ? { inputs_hash: request.inputs_hash } : {}),
   }
 }
 
@@ -374,6 +383,7 @@ export function quorumDeniedOutcome(
       evaluation.vetoed.reason ??
       `approver '${evaluation.vetoed.approver_id}' denied; a single valid deny is decisive`,
     at,
+    ...(request.inputs_hash !== undefined ? { inputs_hash: request.inputs_hash } : {}),
   }
 }
 
@@ -432,6 +442,7 @@ export function resolutionIsAuthentic(
         approver_id: resolution.approver_id,
         at: resolution.at,
         ...(resolution.reason !== undefined ? { reason: resolution.reason } : {}),
+        ...(resolution.inputs_hash !== undefined ? { inputs_hash: resolution.inputs_hash } : {}),
       },
       resolution.signature,
       { authorizedKeys, allowUnsigned: false },

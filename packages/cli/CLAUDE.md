@@ -89,6 +89,24 @@ written without a key is still produced (the `allow_unsigned` path) but
 loudly marked `(UNSIGNED)`. See ADR-0010 and the
 `forged-approval-cannot-execute` probe.
 
+**What you approve is what you were shown (ADR-0042, #179).** `approve list`
+renders, per pending request, the held operation from the log — tool, `as`
+(the proposing actor), the full canonical inputs and contract (never
+truncated) — and a binding line from `-trace`'s `approvalRepresentation`:
+`verified`, `UNBOUND` (a pre-0.7 request), or `MISMATCH` with its problems.
+**Every log-sourced string is escaped** (`escapeUntrustedText`), since a local
+writer can plant records; the suggested `resolve:` command shell-quotes a
+non-plain id. `grant` refuses a `MISMATCH` (exit **6**) and, on a verified
+request, signs `inputs_hash` = the hash recomputed from the record it rendered
+(not the request's own field), so a planted record yields a hash the host
+refuses. **A bound grant must be acknowledged:** on a verified request `grant`
+requires `--expect-hash <16–64 hex>` (printed by `list` beside the operation)
+and refuses unless the verified hash starts with it; without the flag it prints
+the full operation plus the exact command and refuses (exit 6) — a signature is
+never produced for an operation that was not on the approver's screen. `deny` binds the verified hash when there is one and otherwise signs
+**unbound** — never asserting a representation it did not show. A legacy
+(`UNBOUND`) request grants exactly as before, with no `inputs_hash`.
+
 ## Invariants
 
 1. **`lodestar report` is the headline surface.** It must produce output

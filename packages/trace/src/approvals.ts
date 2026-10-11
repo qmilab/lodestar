@@ -65,6 +65,18 @@ export interface PendingApproval {
    * `corroborationStrength` (feeds no gate).
    */
   approvers_so_far?: string[]
+  /**
+   * The held action's tool, verbatim from the request (ADR-0042). Absent on a
+   * request written before the field existed.
+   */
+  action_type?: string
+  /**
+   * The `actionRepresentationHash` the request is bound to, verbatim (ADR-0042) —
+   * `{ action_id, tool, inputs, contract, proposed_by }`. Absent on a legacy
+   * request. Surfaced, not verified: `approvalRepresentation(events, request)`
+   * resolves what it names against the log, and the host is the boundary.
+   */
+  inputs_hash?: string
 }
 
 /**
@@ -239,6 +251,8 @@ export function pendingApprovals(events: EventEnvelope[]): PendingApproval[] {
       status: "pending",
     }
     if (request.deadline !== undefined) item.deadline = request.deadline
+    if (request.action_type !== undefined) item.action_type = request.action_type
+    if (request.inputs_hash !== undefined) item.inputs_hash = request.inputs_hash
     if (request.quorum !== undefined) {
       item.quorum = request.quorum
       item.approvers_so_far = votesSeen.get(request.request_id) ?? []

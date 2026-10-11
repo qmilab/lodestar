@@ -296,15 +296,26 @@ approval.requested@1 {
   }
   requested_at
   deadline?            // ISO 8601; the proxy's hold timeout, absent in-process
+  quorum?              // ADR-0041: distinct approvals required (>= 2)
+  action_type?         // ADR-0042: the held action's tool
+  inputs_hash?         // ADR-0042: actionRepresentationHash of the held operation
 }
 
-approval.granted@1  { request_id, action_id, approver_id, reason?, at }
-approval.denied@1   { request_id, action_id, approver_id, reason?,  at }
+approval.granted@1  { request_id, action_id, approver_id, reason?, at, signature?, inputs_hash? }
+approval.denied@1   { request_id, action_id, approver_id, reason?,  at, signature?, inputs_hash? }
 approval.expired@1  { request_id, action_id, at }   // deadline passed, no human
 ```
 
 Design notes, in the discipline the sentinel/reflection wire formats already
 hold:
+- **A request names the operation it would authorize (ADR-0042).**
+  `action_type` and `inputs_hash` bind the request to the held action's
+  representation, `{ action_id, tool, inputs, contract, proposed_by }`. An
+  approver's tooling binds the representation it *rendered* into the signed
+  resolution. Every host recomputes the hash from the action it is about to run,
+  and refuses at promote any resolution or request that names something else.
+  Both fields are additive-optional and omitted when absent; an unbound
+  resolution keeps its pre-0.7 canonical bytes.
 - **Grant and deny are distinct event types, not one event with an `approved`
   flag.** `approval.granted@1` / `approval.denied@1` carry no `approved` boolean —
   the type *is* the verdict, so a redundant flag (which could disagree with the

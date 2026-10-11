@@ -4,15 +4,17 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
+  type Action,
   GUARD_APPROVAL_SIGNATURE_REJECTED_EVENT_TYPE,
   type RequiredAuthority,
+  actionRepresentationHash,
 } from "@qmilab/lodestar-core"
 import {
   EventLogWriter,
   _resetEventLogStateForTests,
   canonicalHash,
 } from "@qmilab/lodestar-event-log"
-import { verifyApprovalSignature } from "@qmilab/lodestar-guard"
+import { generateApproverKeyPair, verifyApprovalSignature } from "@qmilab/lodestar-guard"
 import { readApprovalResolution } from "@qmilab/lodestar-guard-mcp"
 import { approveCommand } from "./approve.js"
 
@@ -922,6 +924,266 @@ describe("lodestar approve — a quorum request keeps accepting votes (ADR-0041)
       expect(code).toBe(0)
       expect(out).toContain("already granted")
       expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+})
+
+// ── ADR-0042: what you approve is what you were shown ───────────────────────
+
+describe("lodestar approve — the representation binding (ADR-0042)", () => {
+  const RLO = String.fromCodePoint(0x202e)
+  const ESC = String.fromCodePoint(0x1b)
+
+  async function append(logRoot: string, type: string, payload: unknown): Promise<void> {
+    await new EventLogWriter(logRoot).append({
+      id: randomUUID(),
+      type,
+      schema_version: "0.1.0",
+      project_id: PROJECT,
+      session_id: SESSION,
+      actor_id: "agent:test",
+      timestamp: new Date().toISOString(),
+      causal_parent_ids: [],
+      payload,
+      payload_hash: canonicalHash(payload),
+      versions: { schema_registry_version: "0.1.0" },
+    })
+  }
+
+  function heldAction(inputs: unknown): Action {
+    return {
+      id: randomUUID(),
+      intent: "push",
+      tool: "mcp.git.push",
+      inputs,
+      contract: {
+        required_level: 4,
+        blast_radius: "external",
+        reversibility: "irreversible",
+        scope: { level: "global", identifier: "*" },
+        data_sensitivity: "public",
+        preconditions: [],
+      },
+      phase: "pending_approval",
+      audit: [{ phase: "proposed", by_actor_id: "agent:test", at: new Date().toISOString() }],
+      proposed_at: new Date().toISOString(),
+      proposed_by: "agent:test",
+    }
+  }
+
+  /** A host-shaped hold: the action's records plus a request bound to it. */
+  async function seedBoundHold(
+    logRoot: string,
+    inputs: unknown,
+    reason = "L4 egress requires approval",
+    requestId: string = randomUUID(),
+  ): Promise<{ requestId: string; action: Action; hash: string }> {
+    const action = heldAction(inputs)
+    await append(logRoot, "action.proposed", { ...action, phase: "proposed" })
+    await append(logRoot, "action.pending_approval", action)
+    const hash = actionRepresentationHash(action)
+    await append(logRoot, "approval.requested", {
+      request_id: requestId,
+      action_id: action.id,
+      reason,
+      required_authority: {},
+      requested_at: new Date().toISOString(),
+      action_type: action.tool,
+      inputs_hash: hash,
+    })
+    return { requestId, action, hash }
+  }
+
+  async function keyFile(dir: string): Promise<{ privPath: string; publicKeyPem: string }> {
+    const { privateKeyPem, publicKeyPem } = generateApproverKeyPair()
+    const privPath = join(dir, "approver.key")
+    await writeFile(privPath, privateKeyPem, { mode: 0o600 })
+    return { privPath, publicKeyPem }
+  }
+
+  const grantArgs = (
+    requestId: string,
+    logRoot: string,
+    privPath: string,
+    extra: string[] = [],
+  ) => [
+    "grant",
+    requestId,
+    "--approver",
+    "human:operator",
+    "--key",
+    privPath,
+    ...extra,
+    "--project",
+    PROJECT,
+    "--log-root",
+    logRoot,
+  ]
+
+  test("list renders the held operation in full and escapes every log-sourced string", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-render-"))
+    try {
+      const inputs = { branch: `main${RLO}gnp`, remote: "origin" }
+      const { hash } = await seedBoundHold(logRoot, inputs, `ship it${ESC}[2J`)
+      const { code, out } = await runApprove(["list", "--project", PROJECT, "--log-root", logRoot])
+      expect(code).toBe(0)
+      expect(out).toContain("tool: mcp.git.push")
+      expect(out).toContain("as: agent:test")
+      expect(out).toContain(`binding: verified — representation ${hash}`)
+      expect(out).toContain(`--expect-hash ${hash.slice(0, 16)}`)
+      // The bidi override and the ANSI escape are shown escaped, never raw.
+      expect(out).not.toContain(RLO)
+      expect(out).not.toContain(ESC)
+      expect(out).toContain("main\\u202egnp")
+      expect(out).toContain("ship it\\u001b[2J")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("the suggested command quotes a hostile request id losslessly", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-shellarg-"))
+    try {
+      const hostileId = `req"x${ESC}[2J'y`
+      await seedBoundHold(logRoot, { branch: "main" }, "held", hostileId)
+      const { out } = await runApprove(["list", "--project", PROJECT, "--log-root", logRoot])
+      // ANSI-C quoting: the shell decodes it back to exactly the original id, and
+      // no raw ESC reaches the terminal.
+      expect(out).toContain(`lodestar approve grant $'req"x\\u001b[2J\\'y'`)
+      expect(out).not.toContain(ESC)
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("a bound grant must acknowledge the operation it signs (--expect-hash)", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-ack-"))
+    try {
+      const { privPath } = await keyFile(logRoot)
+      const { requestId, hash } = await seedBoundHold(logRoot, { branch: "main", force: true })
+      const blind = await runApprove(grantArgs(requestId, logRoot, privPath))
+      expect(blind.code).toBe(6)
+      // The refusal puts the operation on screen and hands back the exact command.
+      expect(blind.out).toContain('"force": true')
+      expect(blind.out).toContain("tool: mcp.git.push")
+      expect(blind.err).toContain(`--expect-hash ${hash.slice(0, 16)}`)
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+      // An 8-hex acknowledgement is too short to bind anything.
+      const short = await runApprove(
+        grantArgs(requestId, logRoot, privPath, ["--expect-hash", hash.slice(0, 8)]),
+      )
+      expect(short.code).toBe(2)
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("an acknowledged grant signs the representation it rendered", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-bound-"))
+    try {
+      const { privPath, publicKeyPem } = await keyFile(logRoot)
+      const { requestId, action, hash } = await seedBoundHold(logRoot, { branch: "main" })
+      const { code, out } = await runApprove(
+        grantArgs(requestId, logRoot, privPath, ["--expect-hash", hash.slice(0, 16)]),
+      )
+      expect(code).toBe(0)
+      expect(out).toContain(`Bound to representation ${hash}`)
+      const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
+      expect(queued?.inputs_hash).toBe(hash)
+      // The binding is inside the signed bytes.
+      expect(() =>
+        verifyApprovalSignature(
+          {
+            request_id: requestId,
+            action_id: action.id,
+            kind: "granted",
+            approver_id: "human:operator",
+            at: queued?.at ?? "",
+            inputs_hash: hash,
+          },
+          queued?.signature,
+          { authorizedKeys: [{ actor_id: "human:operator", public_key: publicKeyPem }] },
+        ),
+      ).not.toThrow()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("grant refuses (exit 6) when a conflicting record of the action is planted", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-planted-"))
+    try {
+      const { privPath } = await keyFile(logRoot)
+      const { requestId, action } = await seedBoundHold(logRoot, { branch: "release" })
+      // A local writer appends a benign-looking record of the same action.
+      await append(logRoot, "action.proposed", {
+        ...action,
+        phase: "proposed",
+        inputs: { branch: "docs-typo" },
+      })
+      const listed = await runApprove(["list", "--project", PROJECT, "--log-root", logRoot])
+      expect(listed.out).toContain("binding: MISMATCH")
+      expect(listed.out).toContain("lodestar approve deny")
+      const { code, err } = await runApprove(grantArgs(requestId, logRoot, privPath))
+      expect(code).toBe(6)
+      expect(err).toContain("could not be verified")
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("--expect-hash refuses a grant whose held operation does not match", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-expect-"))
+    try {
+      const { privPath } = await keyFile(logRoot)
+      const { requestId, hash } = await seedBoundHold(logRoot, { branch: "main" })
+      const wrong = await runApprove(
+        grantArgs(requestId, logRoot, privPath, ["--expect-hash", "0123456789abcdef"]),
+      )
+      expect(wrong.code).toBe(6)
+      expect(await readApprovalResolution(logRoot, PROJECT, requestId)).toBeUndefined()
+      const right = await runApprove(
+        grantArgs(requestId, logRoot, privPath, ["--expect-hash", hash.slice(0, 16)]),
+      )
+      expect(right.code).toBe(0)
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("deny on a MISMATCH signs unbound rather than assert what it never showed", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-deny-unbound-"))
+    try {
+      const { privPath } = await keyFile(logRoot)
+      const { requestId, action } = await seedBoundHold(logRoot, { branch: "release" })
+      await append(logRoot, "action.pending_approval", { ...action, inputs: { branch: "x" } })
+      const { code, err } = await runApprove([
+        "deny",
+        requestId,
+        "--approver",
+        "human:operator",
+        "--key",
+        privPath,
+        "--project",
+        PROJECT,
+        "--log-root",
+        logRoot,
+      ])
+      expect(code).toBe(0)
+      expect(err).toContain("WITHOUT a representation binding")
+      const queued = await readApprovalResolution(logRoot, PROJECT, requestId)
+      expect(queued?.kind).toBe("denied")
+      expect(queued?.inputs_hash).toBeUndefined()
     } finally {
       await rm(logRoot, { recursive: true, force: true })
     }

@@ -25,6 +25,17 @@ This package defines the epistemic chain primitives. Everything else in the mono
   `security_scan` discriminated union and the `badges/` layout constants), and the
   discovery-index format in `src/schemas/pack-index.ts` (the `PackIndex` listing +
   `index_publisher_keys` trust-root key), beside the manifest + registry schemas.
+  `action-representation.ts` (ADR-0042, #179) is the canonical **action
+  representation** an approval binds — `{ action_id, tool, inputs, contract,
+  proposed_by }`, exactly the fields the Action Kernel's `execute()` reads —
+  with `actionRepresentationHash` (sha-256 of its `stableStringify`; what
+  `ApprovalRequest.inputs_hash` carries and a signed resolution binds) and
+  `canonicalJsonValue` (JSON-normalize + key-sort; a fixed point the
+  cross-process hosts execute so what runs is what was hashed). Phase-independent
+  by construction, so a host recomputes it from the action it is about to run.
+  `schemas/approval.ts` gains the additive-optional `ApprovalRequest.action_type`
+  / `inputs_hash` and `approval.granted@1` / `approval.denied@1` `inputs_hash`,
+  each omitted when absent (a pre-0.7 request is byte-identical).
 
 ## Invariants
 

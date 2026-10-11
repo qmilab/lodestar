@@ -104,10 +104,30 @@ the RPC protocol + the gate server. No core schema change, no kernel change.
    `approval.quorum_reached@1` exists for the action: it was a non-vetoing vote,
    and classifying from it would relabel a later downstream rejection (a
    revalidated precondition) as a human refusal.
-6. **Honest scope (ADR-0004).** Governance over declared actions, not OS
+6. **A resolution must name the operation the gate will run, and resume reads
+   terms it can trust (ADR-0042).** Every promotion site — `checkResolution`'s
+   log and channel paths, `promoteChannelVote`, `verifiedVotesFromLog` — runs
+   `representationMismatch` against the parked action; a mismatch is audited as
+   `guard.approval.signature_rejected@1` (`representation mismatch:` reason) and
+   never promoted. The rebuilt `ApprovalResolutionDoc` carries `inputs_hash` from
+   the log payload (drop it and a genuine bound vote fails verification as a
+   forgery), the promoted event carries it, the outcome handed to `resolve()` is
+   bound to the request (`bindOutcomeToRequest` / the quorum outcome's binding)
+   so the kernel re-checks at the transition, and an approved action executes
+   `canonicalForExecution(resolved, request)` — **only for a bound request**: a
+   hold opened by a pre-0.7 host resumes byte-for-byte as before. **Resume no longer reads latest-wins:**
+   `reconstructParkedAction` schema-parses every `action.pending_approval` for the
+   id and `reconstructRequest` every `approval.requested`; if the log holds records
+   that **disagree** (a second representation, or a second request — e.g. one
+   that strips the quorum), `refuseConflictingHold` rejects the action and expires
+   the request, fail closed. An appending writer cannot remove the genuine record,
+   so a planted shadow always shows up as a conflict, whichever came first. An
+   attacker who can *rewrite* the log defeats restart reconstruction wholesale —
+   out of scope, as before.
+7. **Honest scope (ADR-0004).** Governance over declared actions, not OS
    containment. Raw I/O outside the tool abstraction is out of scope — state it,
    don't pretend to capture it. Pair with network/filesystem controls.
-7. **stdout is the protocol stream.** Over `stdioChannel`, never write anything
+8. **stdout is the protocol stream.** Over `stdioChannel`, never write anything
    but protocol JSON to stdout; diagnostics go to stderr (`no console.log`).
 
 ## What does not live here

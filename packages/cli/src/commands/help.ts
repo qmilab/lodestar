@@ -9,7 +9,7 @@ Usage:
   lodestar guard mcp-proxy --config <path>
   lodestar runtime gate --config <path>
   lodestar approve list --project <id> [--log-root <path>]
-  lodestar approve grant <request-id> --approver <id> --project <id>
+  lodestar approve grant <request-id> --expect-hash <hex> --approver <id> --project <id>
   lodestar approve deny  <request-id> --approver <id> --project <id>
   lodestar action list
   lodestar action describe <action-id>
@@ -84,7 +84,7 @@ Examples:
   lodestar guard mcp-proxy --config ./lodestar-mcp-proxy.config.json
   lodestar runtime gate --config ./lodestar-runtime-gate.config.json
   lodestar approve list --project my-project
-  lodestar approve grant 7f3c… --approver me --project my-project
+  lodestar approve grant 7f3c… --expect-hash 9b1d04e7a2c35f68 --approver me --project my-project
   lodestar action list
   lodestar action describe git.status
   lodestar trace inspect <event-id>

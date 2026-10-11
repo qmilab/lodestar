@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto"
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import type { ApprovalOutcome } from "@qmilab/lodestar-action-kernel"
-import { SignatureSchema, TimestampSchema } from "@qmilab/lodestar-core"
+import {
+  ACTION_REPRESENTATION_HASH_PATTERN,
+  SignatureSchema,
+  TimestampSchema,
+} from "@qmilab/lodestar-core"
 import { z } from "zod"
 
 /**
@@ -78,6 +82,17 @@ export const ApprovalResolutionSchema = z
     signature: SignatureSchema.optional().describe(
       "Ed25519 signature over the canonical resolution; the host verifies it against the pinned approver keys before promoting. Omitted only on the explicit allow_unsigned path.",
     ),
+    // ADR-0042. Declared because the schema is strict: a resolution that binds
+    // the representation its approver was shown must be readable. A pre-0.7 host
+    // rejects it as malformed — approver tooling binds only when the request
+    // carries an `inputs_hash`, which only a >= 0.7 host writes.
+    inputs_hash: z
+      .string()
+      .regex(ACTION_REPRESENTATION_HASH_PATTERN)
+      .optional()
+      .describe(
+        "actionRepresentationHash of the operation the approver was shown; inside the signed document when present, omitted when unset",
+      ),
   })
   .strict()
 export type ApprovalResolution = z.infer<typeof ApprovalResolutionSchema>
@@ -186,7 +201,7 @@ export async function deleteApprovalResolution(
  * same binding `authorizeResolution()` produces for an in-process resolver.
  */
 export function resolutionToOutcome(resolution: ApprovalResolution): ApprovalOutcome {
-  return {
+  const outcome: Extract<ApprovalOutcome, { kind: "granted" | "denied" }> = {
     kind: resolution.kind,
     action_id: resolution.action_id,
     request_id: resolution.request_id,
@@ -194,4 +209,9 @@ export function resolutionToOutcome(resolution: ApprovalResolution): ApprovalOut
     reason: resolution.reason,
     at: resolution.at,
   }
+  // ADR-0042: carry the approver's binding through to the promoted event (it is
+  // inside the signed bytes, so dropping it would make the event unverifiable)
+  // and to `ActionKernel.resolve()`, which refuses a mismatch. Omitted when unset.
+  if (resolution.inputs_hash !== undefined) outcome.inputs_hash = resolution.inputs_hash
+  return outcome
 }

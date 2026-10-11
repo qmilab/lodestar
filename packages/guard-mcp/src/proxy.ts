@@ -51,7 +51,9 @@ import {
   assertQuorumRoster,
   assertValidApproverKeys,
   autoApprovePolicyCompiled,
+  bindOutcomeToRequest,
   canonicalApprovalResolutionHash,
+  canonicalForExecution,
   evaluateQuorum,
   expireRequest,
   holdEvaluationForParkedAction,
@@ -63,6 +65,7 @@ import {
   quorumReachedPayload,
   quorumRosterShortfall,
   quorumShortfallReason,
+  representationMismatch,
   resolutionIsAuthentic,
   verifyApprovalSignature,
 } from "@qmilab/lodestar-guard"
@@ -1167,7 +1170,7 @@ export class MCPProxy {
       return await this.resolveProxyQuorumHold(parked, request, req, deadlineAt, timeoutMs)
     }
 
-    const resolution = await this.waitForResolution(request, parked.id, deadlineAt)
+    const resolution = await this.waitForResolution(request, parked, deadlineAt)
 
     // The proxy was stopped mid-wait: don't append post-teardown events or run
     // the tool (its registration may already be gone). Return a terminal result;
@@ -1220,8 +1223,11 @@ export class MCPProxy {
       this.consumeResolution(this.approvalRef(request.request_id, parked.id))
     }
 
-    // A resolution arrived out-of-band. resolve() validates the binding.
-    const resolved = this.kernel.resolve(parked, outcome)
+    // A resolution arrived out-of-band. resolve() validates the binding — the
+    // action id, and (ADR-0042) the request's representation, so a held action
+    // that changed after the promote-time check (an awaited write sits between)
+    // is refused at the transition.
+    const resolved = this.kernel.resolve(parked, bindOutcomeToRequest(outcome, request))
     if (resolved.phase !== "approved") {
       await this.emit("action.rejected", resolved)
       return {
@@ -1234,8 +1240,12 @@ export class MCPProxy {
         }),
       }
     }
-    await this.emit("action.approved", resolved)
-    return { approved: resolved }
+    // ADR-0042: execute the canonical form, so the downstream tool receives
+    // byte-for-byte the value the approver's representation hash covers — no key
+    // order or `-0` the hash cannot see. The representation is unchanged by it.
+    const approved = canonicalForExecution(resolved, request)
+    await this.emit("action.approved", approved)
+    return { approved }
   }
 
   /**
@@ -1341,8 +1351,10 @@ export class MCPProxy {
       quorumReachedPayload(request, evaluation, resolved.approval?.at ?? at),
       { schema_version: QUORUM_REACHED_EVENT.schema_version },
     )
-    await this.emit("action.approved", resolved)
-    return { approved: resolved }
+    // ADR-0042: execute the canonical form — what runs is what was hashed.
+    const approved = canonicalForExecution(resolved, request)
+    await this.emit("action.approved", approved)
+    return { approved }
   }
 
   /**
@@ -1394,8 +1406,25 @@ export class MCPProxy {
           // Already in the log from an earlier poll; just re-consume.
           this.consumeResolution(ref)
         } else if (resolutionIsAuthentic(resolution, roster.authorized_keys)) {
-          this.promotedVoteHashes.add(hash)
-          await this.emitCanonicalResolution(resolutionToOutcome(resolution), resolution.signature)
+          // ADR-0042: authentic is not enough — the vote must name the operation
+          // this proxy holds, checked against the held action as it stands now. A
+          // vote for a different operation is refused, never written: the log
+          // would otherwise say this approver granted something they never saw.
+          const mismatch = representationMismatch(parked, request, resolution)
+          if (mismatch !== null) {
+            await this.emitSignatureRejected(
+              `req:${resolution.request_id}:${hash}`,
+              resolution,
+              { source: "side_channel" },
+              mismatch,
+            )
+          } else {
+            this.promotedVoteHashes.add(hash)
+            await this.emitCanonicalResolution(
+              resolutionToOutcome(resolution),
+              resolution.signature,
+            )
+          }
           this.consumeResolution(ref)
         } else {
           await this.emitSignatureRejected(`req:${resolution.request_id}:${hash}`, resolution, {
@@ -1416,7 +1445,7 @@ export class MCPProxy {
       }
       evaluation = evaluateQuorum(
         request,
-        this.verifiedVotesFromLog(events, request, parked.id, roster),
+        this.verifiedVotesFromLog(events, request, parked, roster),
         quorumOptions(roster, parked.proposed_by),
       )
       if (evaluation.satisfied || evaluation.vetoed !== undefined) return evaluation
@@ -1460,11 +1489,16 @@ export class MCPProxy {
   private verifiedVotesFromLog(
     events: EventEnvelope[],
     request: ApprovalRequest,
-    actionId: string,
+    parked: Action,
     roster: QuorumRoster,
   ): QuorumVote[] {
     const votes: QuorumVote[] = []
-    for (const found of allResolutionsFor(events, request.request_id, actionId, request.deadline)) {
+    for (const found of allResolutionsFor(
+      events,
+      request.request_id,
+      parked.id,
+      request.deadline,
+    )) {
       if (
         !resolutionIsAuthentic({ ...found.doc, signature: found.signature }, roster.authorized_keys)
       ) {
@@ -1472,6 +1506,19 @@ export class MCPProxy {
           source: "log",
           rejectedEventId: found.eventId,
         })
+        continue
+      }
+      // ADR-0042: a log vote naming a different operation than the one held is
+      // refused like a forgery — skipped, and audited with its event id so the
+      // read side excludes exactly that event rather than counting it.
+      const mismatch = representationMismatch(parked, request, found.doc)
+      if (mismatch !== null) {
+        void this.emitSignatureRejected(
+          `log:${found.eventId}`,
+          found.doc,
+          { source: "log", rejectedEventId: found.eventId },
+          mismatch,
+        )
         continue
       }
       const vote: QuorumVote = { resolution: found.doc, event_id: found.eventId }
@@ -1611,11 +1658,12 @@ export class MCPProxy {
 
   private async waitForResolution(
     request: ApprovalRequest,
-    actionId: string,
+    parked: Action,
     deadlineAt: number,
   ): Promise<
     { outcome: ApprovalOutcome; source: "log" | "channel"; signature?: Signature } | undefined
   > {
+    const actionId = parked.id
     const reader = new EventLogReader(this.logRoot)
     const ref = this.approvalRef(request.request_id, actionId)
     for (;;) {
@@ -1644,12 +1692,24 @@ export class MCPProxy {
       )
       if (logResult !== undefined) {
         if (this.resolutionVerified(logResult.doc, logResult.signature)) {
-          return { outcome: logResult.outcome, source: "log" }
+          // ADR-0042: authentic is not enough — the resolution, and the request it
+          // answers, must name the operation this proxy holds. A mismatch is
+          // audited with the event id (so the read side excludes exactly it and
+          // the scan moves past it next poll) and the hold keeps waiting.
+          const mismatch = representationMismatch(parked, request, logResult.doc)
+          if (mismatch === null) return { outcome: logResult.outcome, source: "log" }
+          await this.emitSignatureRejected(
+            `log:${logResult.eventId}`,
+            logResult.doc,
+            { source: "log", rejectedEventId: logResult.eventId },
+            mismatch,
+          )
+        } else {
+          await this.emitSignatureRejected(`log:${logResult.eventId}`, logResult.doc, {
+            source: "log",
+            rejectedEventId: logResult.eventId,
+          })
         }
-        await this.emitSignatureRejected(`log:${logResult.eventId}`, logResult.doc, {
-          source: "log",
-          rejectedEventId: logResult.eventId,
-        })
       }
       // Then the approval channel (the separate-process side-channel by default,
       // or a remote HTTP service; ADR-0015). Read errors / malformed / oversized
@@ -1665,7 +1725,24 @@ export class MCPProxy {
       // un-park the action. `resolution` is defined whenever `channelOutcome` is.
       if (channelOutcome !== undefined && resolution !== undefined) {
         if (this.resolutionVerified(resolution, resolution.signature)) {
-          return { outcome: channelOutcome, source: "channel", signature: resolution.signature }
+          // ADR-0042: the same binding check as the log path. A resolution that
+          // names a different operation can never become valid for this hold, so
+          // it is audited and consumed like a forgery, and the hold keeps waiting.
+          const mismatch = representationMismatch(parked, request, resolution)
+          if (mismatch === null) {
+            return { outcome: channelOutcome, source: "channel", signature: resolution.signature }
+          }
+          await this.emitSignatureRejected(
+            `req:${resolution.request_id}:${canonicalApprovalResolutionHash(resolution)}`,
+            resolution,
+            { source: "side_channel" },
+            mismatch,
+          )
+          this.consumeResolution(ref)
+          const left = deadlineAt - Date.now()
+          if (left <= 0) return undefined
+          await delay(Math.min(APPROVAL_POLL_INTERVAL_MS, left))
+          continue
         }
         // A forged / unsigned / tampered file can never become valid: record it
         // once (the diagnostic is the durable forensic record) and DELETE the
@@ -1731,6 +1808,7 @@ export class MCPProxy {
     dedupKey: string,
     res: { request_id: string; action_id: string; approver_id: string },
     origin: { source: "log"; rejectedEventId: string } | { source: "side_channel" },
+    reason = "approval signature verification failed against the pinned approver keys",
   ): Promise<void> {
     if (this.warnedSignatureRejections.has(dedupKey)) return
     try {
@@ -1743,7 +1821,7 @@ export class MCPProxy {
         request_id: res.request_id,
         action_id: res.action_id,
         approver_id: res.approver_id,
-        reason: "approval signature verification failed against the pinned approver keys",
+        reason,
         at: new Date().toISOString(),
         source: origin.source,
       }
@@ -1785,6 +1863,9 @@ export class MCPProxy {
       }
       if (outcome.reason !== undefined) payload.reason = outcome.reason
       if (signature !== undefined) payload.signature = signature
+      // ADR-0042: inside the signed bytes, so it rides along or the promoted
+      // event would no longer verify.
+      if (outcome.inputs_hash !== undefined) payload.inputs_hash = outcome.inputs_hash
       await this.emit("approval.granted", payload)
     } else if (outcome.kind === "denied") {
       const payload: ApprovalDeniedPayload = {
@@ -1795,6 +1876,7 @@ export class MCPProxy {
       }
       if (outcome.reason !== undefined) payload.reason = outcome.reason
       if (signature !== undefined) payload.signature = signature
+      if (outcome.inputs_hash !== undefined) payload.inputs_hash = outcome.inputs_hash
       await this.emit("approval.denied", payload)
     }
   }
@@ -2356,6 +2438,7 @@ function resolutionOutcomeFor(
         approver_id: p.approver_id,
         reason: p.reason,
         at: p.at,
+        ...(p.inputs_hash !== undefined ? { inputs_hash: p.inputs_hash } : {}),
       },
       // The full parsed payload + kind is a superset of ApprovalResolutionDoc;
       // `verifyApprovalSignature` rebuilds the canonical fields itself (so this
