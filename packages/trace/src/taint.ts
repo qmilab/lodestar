@@ -8,6 +8,7 @@ import {
   type EventEnvelope,
   FIREWALL_BELIEF_ADOPTED_EVENT_TYPE,
   FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE,
+  ObservationSchema,
   type Outcome,
   OutcomeSchema,
   type Sensitivity,
@@ -101,8 +102,8 @@ interface TaintNodeBase {
 export interface TaintedBelief extends TaintNodeBase {
   belief_id: string
   claim_id?: string
-  /** The outcome that fed this belief; absent for the root. */
-  via_outcome_id?: string
+  /** The tainted action whose output fed this belief; absent for the root. */
+  via_action_id?: string
   /** Claim statement; absent when redacted or the claim is not in the log. */
   statement?: string
 }
@@ -130,7 +131,8 @@ export interface TaintedOutcome extends TaintNodeBase {
   outcome_id: string
   action_id: string
   result?: Outcome["result"]
-  effect_observation_ids?: string[]
+  /** Structural edges: always shown, even when the outcome content is redacted. */
+  effect_observation_ids: string[]
 }
 
 export interface TaintSupersession {
@@ -195,9 +197,17 @@ export function taintSet(
     p: Record<string, unknown>
   }> = []
   const actionsById = new Map<string, { action: Action; event: EventEnvelope }>()
-  const actionDecision = new Map<string, string>() // any action.* event naming a decision
+  // Edges are UNIONED, never overwritten: a later (possibly forged) event naming a
+  // different decision / successor must not erase the genuine earlier edge.
+  const addEdge = <K, V>(m: Map<K, Set<V>>, k: K, v: V): void => {
+    const set = m.get(k) ?? new Set<V>()
+    set.add(v)
+    m.set(k, set)
+  }
+  const actionDecision = new Map<string, Set<string>>() // action → every decision any action.* event names
+  const observationsByAction = new Map<string, Set<string>>() // action id → observations it produced
   const outcomes: Array<{ event: EventEnvelope; outcome: Outcome }> = []
-  const successor = new Map<string, string>() // predecessor → successor
+  const successor = new Map<string, Set<string>>() // predecessor → successors
 
   const noteBelief = (
     id: string,
@@ -241,6 +251,15 @@ export function taintSet(
       continue
     }
 
+    if (type === "observation.recorded") {
+      // The kernel records a tool's output as an observation whose
+      // `source.invocation_id` is the action id — the edge ordinary Guard / MCP
+      // sessions have (they emit no `action.outcome`).
+      const o = ObservationSchema.safeParse(p)
+      if (o.success) addEdge(observationsByAction, o.data.source.invocation_id, o.data.id)
+      continue
+    }
+
     if (type === "claim.extracted") {
       const c = ClaimSchema.safeParse(p)
       if (c.success && !claims.has(c.data.id)) {
@@ -261,13 +280,13 @@ export function taintSet(
         noteBelief(p.belief_id, event, typeof p.claim_id === "string" ? p.claim_id : undefined)
       }
       if (full.success && full.data.superseded_by)
-        successor.set(full.data.id, full.data.superseded_by)
+        addEdge(successor, full.data.id, full.data.superseded_by)
       continue
     }
 
     if (type === "belief.transitioned" || type === FIREWALL_BELIEF_TRANSITIONED_EVENT_TYPE) {
       if (typeof p.belief_id === "string" && typeof p.superseded_by === "string") {
-        successor.set(p.belief_id, p.superseded_by)
+        addEdge(successor, p.belief_id, p.superseded_by)
       }
       continue
     }
@@ -285,13 +304,13 @@ export function taintSet(
           action: a.data,
           event: actionsById.get(a.data.id)?.event ?? event,
         })
-        if (a.data.decision_id) actionDecision.set(a.data.id, a.data.decision_id)
+        if (a.data.decision_id) addEdge(actionDecision, a.data.id, a.data.decision_id)
       } else if (
         type === ACTION_REJECTED_EVENT_TYPE &&
         typeof p.action_id === "string" &&
         typeof p.decision_id === "string"
       ) {
-        actionDecision.set(p.action_id, p.decision_id)
+        addEdge(actionDecision, p.action_id, p.decision_id)
       }
     }
   }
@@ -312,11 +331,7 @@ export function taintSet(
   const seenActions = new Set<string>()
   const seenOutcomes = new Set<string>()
 
-  const beliefNode = (
-    id: string,
-    depth: number,
-    viaOutcome?: string,
-  ): TaintedBelief | undefined => {
+  const beliefNode = (id: string, depth: number, viaAction?: string): TaintedBelief | undefined => {
     const rec = beliefRecords.get(id)
     if (!rec) return undefined
     const claimId = rec.claim_id ?? rec.belief?.claim_id
@@ -327,7 +342,7 @@ export function taintSet(
     return {
       belief_id: id,
       ...(claimId ? { claim_id: claimId } : {}),
-      ...(viaOutcome ? { via_outcome_id: viaOutcome } : {}),
+      ...(viaAction ? { via_action_id: viaAction } : {}),
       depth,
       event_id: rec.event.id,
       payload_hash: rec.event.payload_hash,
@@ -379,15 +394,17 @@ export function taintSet(
     const actionOrder = [...candidateActionIds]
       .map((id) => ({ id, event: actionsById.get(id)?.event }))
       .filter((x) => {
-        const dec = actionDecision.get(x.id)
-        return dec !== undefined && decisionSet.has(dec)
+        const decs = actionDecision.get(x.id)
+        return decs !== undefined && [...decs].some((d) => decisionSet.has(d))
       })
     for (const { id } of actionOrder) {
       if (seenActions.has(id)) continue
       seenActions.add(id)
       waveActionIds.push(id)
       const rec = actionsById.get(id)
-      const decisionId = actionDecision.get(id) as string
+      const decisionId = [...(actionDecision.get(id) ?? [])].find((d) =>
+        decisionSet.has(d),
+      ) as string
       if (rec) {
         const g = gate(contentSensitivityForAction(rec.action.contract.data_sensitivity))
         outActions.push({
@@ -415,9 +432,15 @@ export function taintSet(
       }
     }
 
-    // Outcomes of this wave's actions, and the beliefs their effects fed.
+    // Outcomes of this wave's actions, and the beliefs their output fed. An
+    // action's output reaches claims two ways: an Outcome's effect observations,
+    // and observations the kernel recorded with `source.invocation_id = action.id`
+    // (the only edge ordinary Guard / MCP sessions emit).
     const actionSet = new Set(waveActionIds)
-    const next: string[] = []
+    const fed = new Map<string, string>() // observation id → tainted action id
+    for (const id of waveActionIds) {
+      for (const obs of observationsByAction.get(id) ?? []) if (!fed.has(obs)) fed.set(obs, id)
+    }
     for (const { event, outcome } of outcomes) {
       if (!actionSet.has(outcome.action_id) || seenOutcomes.has(outcome.id)) continue
       seenOutcomes.add(outcome.id)
@@ -429,35 +452,49 @@ export function taintSet(
       outOutcomes.push({
         outcome_id: outcome.id,
         action_id: outcome.action_id,
-        result: outcome.result,
+        // Content (result) is gated; the effect-observation ids are structural
+        // edges and always shown.
+        ...(!g.redacted ? { result: outcome.result } : {}),
+        effect_observation_ids: outcome.effect_observation_ids,
         depth,
         event_id: event.id,
         payload_hash: event.payload_hash,
         ...g,
-        ...(!g.redacted ? { effect_observation_ids: outcome.effect_observation_ids } : {}),
       })
-      // The observation ids are structural edges, followed regardless of redaction.
       for (const obs of outcome.effect_observation_ids) {
-        for (const claimId of claimsByObservation.get(obs) ?? []) {
-          for (const b of beliefsByClaim.get(claimId) ?? []) {
-            if (seenBeliefs.has(b)) continue
-            seenBeliefs.add(b)
-            const node = beliefNode(b, depth, outcome.id)
-            if (node) outBeliefs.push(node)
-            next.push(b)
-          }
+        if (!fed.has(obs)) fed.set(obs, outcome.action_id)
+      }
+    }
+    const newBeliefs: Array<{ id: string; via: string }> = []
+    for (const [obs, via] of fed) {
+      for (const claimId of claimsByObservation.get(obs) ?? []) {
+        for (const b of beliefsByClaim.get(claimId) ?? []) {
+          if (seenBeliefs.has(b)) continue
+          seenBeliefs.add(b)
+          newBeliefs.push({ id: b, via })
         }
       }
+    }
+    // Order by the adoption event's clock (then id), per the documented walk order.
+    const clockOf = (id: string): number => beliefRecords.get(id)?.event.logical_clock ?? 0
+    newBeliefs.sort((x, y) => clockOf(x.id) - clockOf(y.id) || x.id.localeCompare(y.id))
+    const next: string[] = []
+    for (const { id, via } of newBeliefs) {
+      const node = beliefNode(id, depth, via)
+      if (node) outBeliefs.push(node)
+      next.push(id)
     }
     frontier = next
   }
 
   // Supersession links touching any tainted belief (reported, not walked).
   const supersessions: TaintSupersession[] = []
-  for (const [pred, succ] of successor) {
-    if (seenBeliefs.has(pred) || seenBeliefs.has(succ)) {
-      supersessions.push({ predecessor_id: pred, successor_id: succ })
-      if (pred === beliefId || succ === beliefId) rootReferenced = true
+  for (const [pred, succs] of successor) {
+    for (const succ of succs) {
+      if (seenBeliefs.has(pred) || seenBeliefs.has(succ)) {
+        supersessions.push({ predecessor_id: pred, successor_id: succ })
+        if (pred === beliefId || succ === beliefId) rootReferenced = true
+      }
     }
   }
 
@@ -513,7 +550,7 @@ export function renderTaintSet(t: TaintSet): string {
   for (const b of t.beliefs) {
     if (b.depth === 0) continue
     lines.push(
-      `- \`${b.belief_id}\` (wave ${b.depth}, via outcome \`${b.via_outcome_id}\`)${b.statement ? `: ${b.statement}` : ""}${hash(b)}`,
+      `- \`${b.belief_id}\` (wave ${b.depth}, via action \`${b.via_action_id}\`)${b.statement ? `: ${b.statement}` : ""}${hash(b)}`,
     )
   }
   if (t.supersessions.length > 0) {

@@ -48,7 +48,8 @@ function parseArgs(argv: string[]): ParsedArgs {
     } else if (arg === "--out" || arg === "-o") {
       out.out = argv[++i]
     } else if (arg === "--taint") {
-      out.taint = argv[++i] ?? ""
+      const next = argv[++i]
+      out.taint = next && !next.startsWith("-") ? next : ""
     } else if (arg === "--sensitivity-ceiling") {
       const next = argv[++i] ?? ""
       if (isSensitivity(next)) out.ceiling = next

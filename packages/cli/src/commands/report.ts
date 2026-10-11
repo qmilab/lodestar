@@ -35,7 +35,12 @@ export async function reportCommand(argv: string[]): Promise<number> {
     } else if (arg === "--out" || arg === "-o") {
       out = argv[++i]
     } else if (arg === "--taint") {
-      taint = argv[++i] ?? ""
+      const next = argv[++i]
+      if (!next || next.startsWith("-")) {
+        process.stderr.write("--taint requires a belief id\n")
+        return 2
+      }
+      taint = next
     } else if (arg === "--sensitivity-ceiling") {
       const next = argv[++i]
       if (!isSensitivity(next)) {

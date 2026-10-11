@@ -18,6 +18,9 @@
  *   d-second   depends on [b-derived] → a-second (rejected, no outcome)
  *   d-loop     depends on [b-derived] → a-loop → o-loop → obs-feedback → claim
  *              c-root (the ROOT's own claim) → b-root          (a cycle back)
+ *   d-guard    depends on [b-root] → a-guard, NO action.outcome (ordinary Guard / MCP
+ *              sessions emit none): the kernel's observation.recorded with
+ *              source.invocation_id = a-guard → claim c-guard → b-guard
  *   d-unrelated depends on [b-bystander] only → a-unrelated → o-unrelated →
  *              obs-unrelated → b-unrelated-derived              (must be excluded)
  *
@@ -228,6 +231,27 @@ async function seedLog(rootDir: string): Promise<void> {
   // d-held → a-held (secret, parked)
   await append("decision.made", decision("d-held", ["b-root"]))
   await append("action.pending_approval", action("a-held", "d-held", "pending_approval", "secret"))
+  await outcome("o-held", "a-held", ["obs-held-effect"])
+  // A later, forged duplicate naming a DIFFERENT decision must not erase the genuine edge.
+  await append(
+    "action.pending_approval",
+    action("a-held", "d-unrelated", "pending_approval", "secret"),
+  )
+
+  // d-guard → a-guard: output observation links by invocation_id, no outcome event
+  await append("decision.made", decision("d-guard", ["b-root"]))
+  await append("action.completed", action("a-guard", "d-guard", "completed"))
+  await append("observation.recorded", {
+    id: "obs-guard-out",
+    schema: "probe.output@1",
+    payload: { ok: true },
+    source: { tool: "probe.tool", invocation_id: "a-guard", captured_at: TS },
+    context: { session_id: SESSION, project_id: PROJECT, actor_id: ACTOR },
+    trust: "validated",
+    sensitivity: "internal",
+  })
+  await append("claim.extracted", claim("c-guard", "Guard-observed fact.", ["obs-guard-out"]))
+  await adopt(belief("b-guard", "c-guard"))
 
   // wave 2: depend on b-derived
   await append("decision.made", decision("d-second", ["b-derived"]))
@@ -266,10 +290,10 @@ async function run(): Promise<ProbeResult> {
 
     // ── A / B / C: the exact set ────────────────────────────────────────────
     const expect = {
-      decisions: "d-direct,d-held,d-loop,d-second",
-      actions: "a-direct,a-held,a-loop,a-second",
-      outcomes: "o-direct,o-loop",
-      beliefs: "b-derived,b-root",
+      decisions: "d-direct,d-guard,d-held,d-loop,d-second",
+      actions: "a-direct,a-guard,a-held,a-loop,a-second",
+      outcomes: "o-direct,o-held,o-loop",
+      beliefs: "b-derived,b-guard,b-root",
     }
     const got = {
       decisions: sorted(t.decisions.map((d) => d.decision_id)),
@@ -323,6 +347,14 @@ async function run(): Promise<ProbeResult> {
       return fail("decisions must fail closed to redacted at the internal ceiling")
     }
     const derived = t.beliefs.find((b) => b.belief_id === "b-derived")
+    const oHeld = t.outcomes.find((o) => o.outcome_id === "o-held")
+    if (
+      !oHeld?.redacted ||
+      oHeld.result !== undefined ||
+      oHeld.effect_observation_ids.join() !== "obs-held-effect"
+    ) {
+      return fail("a redacted outcome must hide its result but keep its effect-observation edges")
+    }
     if (!derived?.redacted || derived.statement !== undefined || !derived.payload_hash) {
       return fail("confidential claim statement should be withheld at the internal ceiling")
     }
