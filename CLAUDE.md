@@ -25,11 +25,11 @@ two packages that had landed at 0.3.0 were the 23rd,
 `@qmilab/lodestar-adapter-sql` (the governed SQL/database adapter,
 ADR-0013), and the 24th, `@qmilab/lodestar-ship` (the read-side session
 shipper — `lodestar ship`, the `lodestar.session_ship@1` NDJSON wire
-format, ADR-0014). Eighty probes pass under
+format, ADR-0014). Eighty-two probes pass under
 strict TypeScript (three need a Postgres test database; one needs a Python
 + LangGraph runtime; one needs a Python + CrewAI runtime; one needs a
 Python + AutoGen runtime — see below).
-Seventy-six live in the first-party pack
+Seventy-eight live in the first-party pack
 `packs/lodestar-core/`: six firewall probes, three guard / contract
 probes, the three pre-Batch-3 fixes (contradiction routing, kernel
 context propagation, event-log single-writer), two Batch 3 MCP probes
@@ -222,7 +222,32 @@ proxy** over the real signed `.approvals/` side-channel — the accumulating hol
 loop: three votes cast one at a time are each promoted and accumulate **in the
 LOG** until the third authorizes the call (the single-slot channel needed no
 interface change), and a **partially satisfied** 2-of-3 that hits its deadline is
-a **soft denial**, not an approval), one
+a **soft denial**, not an approval), one **approval-representation**
+probe (`approved-action-cannot-be-substituted` — #179 / ADR-0042, the
+Loopjacking *representation-mismatch* half: an `ApprovalRequest` may now name the
+held operation via additive-optional `action_type` + `inputs_hash` (the
+`actionRepresentationHash` of `{action_id, tool, inputs, contract, proposed_by}`),
+`lodestar approve list` renders the tool + canonical inputs from the log it already
+opens, a grant on a bound request must carry `--expect-hash`, approver tooling binds
+the rendered representation into the signed resolution, and **every host**
+(`guard.wrap()`, MCP proxy, runtime gate) recomputes the hash from the action it is
+about to run before promoting anything — a request whose hash disagrees with the
+stored action is refused at promote, a held action mutated during the final quorum
+vote is expired, and a pre-0.7 request with no hash resumes byte-identically.
+Known gap recorded in the ADR: a remote HTTP approval service sees only the tool
+name + hash — shipping inputs to a remote approver is a new egress path needing its
+own decision), one **belief taint / blast-radius** probe
+(`taint-projection-matches-dependents` — #182: the pure read-side projection
+`taintSet(events, beliefId)` in `@qmilab/lodestar-trace` (+ `lodestar report
+<session> --taint <belief_id>`) walks the causal edges the log already records —
+belief → decision (`belief_dependency`) → action (any phase) → outcome → effect
+observation → claim → dependent belief, plus touching supersession links — BFS by
+wave with a cycle guard; over a real on-disk NDJSON log the set is **exact** (every
+dependent incl. transitive, held/rejected and outcome-less actions; an unrelated
+chain excluded), edges are unioned so a forged duplicate cannot erase a real one,
+the sensitivity ceiling redacts content but keeps ids/edges/`payload_hash`, and log
+bytes + input array are untouched; no new event, no `packages/core` change, OFF the
+stable public-API ledger as a v0 heuristic), one
 Governing-UI read-side probe (`viewer-is-read-only` — the read-side
 viewer surfaces the chain + pending approvals but exposes no mutation
 route and never writes the log), two OTel-exporter probes
@@ -621,7 +646,7 @@ packages/
   cognitive-core/      # (exists) claim extraction, belief adoption, planner, reflection
   cli/                 # (exists) `lodestar` CLI — report, guard wrap, action, trace, probe, pack (keygen/publish/attest/add, ADR-0019/0020; search/list/index-sign discovery, ADR-0021)
   guard/               # (exists) meta-package + guard.wrap() helper; in-process ApprovalResolver seam for held actions; re-exports the graduated autoApprovePolicy from policy-kernel; SentinelArbiter + compileWithSentinels wire the harness sentinels into the gate's arbitrate hook (sentinel→action, ADR-0001); arbiter also exposes observedBeliefIds() — the conservative observed-belief set guard-mcp reads to synthesize decisions for its opaque agent (cumulative, never reduced by execution; ADR-0003)
-  trace/               # (exists) read side + `lodestar report` CLI
+  trace/               # (exists) read side + `lodestar report` CLI (+ `--taint <belief_id>` blast-radius projection, #182)
   viewer/              # (exists, post-v1) read-side Governing UI — `lodestar view`; Elysia + no-build vanilla SPA over the log; strictly read-only (no mutation route, never writes the log); surfaces pending approvals for visibility only
   guard-mcp/           # (exists, Batch 3) MCP proxy mode — `lodestar guard mcp-proxy`; held L4 actions wait up to `approval_timeout_ms` polling for an out-of-band `approval.granted@1`, else synthetic `approval_timeout`; optionally wires a SentinelArbiter (config.sentinels) and synthesizes a decision.made per action from the recency window so a belief-scoped alert holds the dependent tools/call — opaque-agent decision source (ADR-0003)
   runtime-core/        # (exists, v1.5) language-agnostic governance-gate sidecar — `lodestar runtime gate`; the reusable TS spine of the non-MCP runtime-adapter epic (#75/#83, ADR-0024/ADR-0025). Reuses the SAME engine the MCP proxy runs (ActionKernel two-phase, CompiledPolicy gate, CognitiveCore.ingest, SentinelArbiter decision synthesis, signed-approval hold path) and exposes it to a native runtime hook over a thin bidirectional NDJSON-RPC channel: govern → propose/arbitrate → (hold | remoted execute, the tool body runs back in the hook only inside the execute phase). Durable + idempotent holds reconstructed from the log + signed .approvals/ side-channel (survives a sidecar restart, exactly-once per action id); operator-owned tool_defaults contract (the untrusted hook only declares a name; unregistered → fail-closed deny); runtime tools namespaced runtime.<name> like the proxy's mcp.<server>.<tool>; lodestar.runtime_tool_result@1 observation + RuntimeAwareEvidenceLinker (external_document content can't auto-promote); RpcChannel transport seam (stdio for the CLI, in-process loopback for the always-on probe). No core schema / kernel change. Depends on guard (NOT guard-mcp → no MCP SDK)
@@ -675,7 +700,7 @@ runtimes/                    # (v1.5) non-MCP runtime adapters — Python siblin
                              #   lodestar-runtime-client (#128, ADR-0028); autogen imported lazily
 
 packs/
-  lodestar-core/             # (exists, Batch 4) first-party probe pack: 76 probes +
+  lodestar-core/             # (exists, Batch 4) first-party probe pack: 78 probes +
                              #   lodestar.probe-pack.json manifest; loads via @qmilab/lodestar-harness
   coding-agent-safety/       # (exists, Batch 4) first non-core pack; ships
                              #   prompt-injection-cross-tool, tool-poisoning-cross-session,
@@ -753,7 +778,7 @@ These are settled. If a session starts to question them, redirect it.
 - **CLI naming**: `lodestar report <session-id>` is the headline command. Not `lodestar trace report`.
 - **TypeScript stays the implementation language through v0–v1.** Rust evaluation is post-v1.
 - **`@qmilab/lodestar-*` workspace aliases stay for the duration of Batch 2.** The decision about the published npm scope (e.g., `@qmilab/lodestar-*`) is deferred and is mechanical when made.
-- **Eighty probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Three — `tool-poisoning-cross-session`, `sql-adapter-enforces-invariants`, and `vector-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
+- **Eighty-two probes pass and must keep passing.** Probes are spec, not test scaffolding. Do not edit them to match changed code. (Three — `tool-poisoning-cross-session`, `sql-adapter-enforces-invariants`, and `vector-adapter-enforces-invariants` — need a Postgres test database via `LODESTAR_TEST_DATABASE_URL`; they skip cleanly — exit 0 with a loud banner — when that is unset, and run for real in CI. One — `runner-sandboxes-probe-filesystem-and-network` — needs an OS sandbox mechanism (`sandbox-exec` on macOS / `bubblewrap` on Linux) and likewise skips loudly when none is available; CI installs bubblewrap. One — `langgraph-tool-calls-are-governed` — needs a Python + LangGraph runtime; it skips loudly when absent and runs for real in the CI `langgraph-runtime` job, which pip-installs `runtimes/langgraph[langgraph]`. One — `crewai-tool-calls-are-governed` — needs a Python + CrewAI runtime; it skips loudly when absent and runs for real in the CI `crewai-runtime` job, which pip-installs `runtimes/crewai[crewai]` on Python 3.12. One — `autogen-tool-calls-are-governed` — needs a Python + AutoGen runtime; it skips loudly when absent and runs for real in the CI `autogen-runtime` job, which pip-installs `runtimes/autogen[autogen]` on Python 3.12. The runner now spawns probes under a scoped env (#114, ADR-0022) and, when requested, an OS sandbox (#121, ADR-0023), so the operator forwards the DB var with `--allow-env LODESTAR_TEST_DATABASE_URL` — wired into `probes:all`/`probes:safety`.)
 
 ## Quick references
 
