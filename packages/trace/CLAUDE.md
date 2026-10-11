@@ -52,6 +52,22 @@ projects it into the epistemic chain, then renders markdown.
   pinned keys can re-verify the claim instead of trusting the emitter. The gate
   never reads either surface. Same posture as the trust-pack badges (advisory,
   never a gate) and `corroborationStrength` (feeds no gate).
+- `src/representation.ts` — what an approver is shown (ADR-0042, #179).
+  `approvalRepresentation(events, request)` finds every `action.proposed` /
+  `action.pending_approval` record of the held action and every
+  `approval.requested` for the request or action, and returns the canonical
+  representation plus a binding `status`: `verified`, `unbound` (a pre-0.7
+  request) or `mismatch` with `problems`. Conflicting records are **reported,
+  never resolved by picking one** — an appending writer cannot remove the genuine
+  record, so a planted shadow is always visible. Advisory: the log is
+  unauthenticated and the host is the boundary. `renderCanonicalJson` (sorted,
+  pretty, never truncated, invisible / bidi / C1 code points escaped — re-parses
+  to the canonical value) and `escapeUntrustedText` (plain text unchanged,
+  anything else an escaped JSON literal) are the rendering primitives
+  `lodestar approve list` prints. The unsafe set is a **numeric** code-point table
+  on purpose: the source stays ASCII, so no tool can turn an escape into the
+  character it names. `pendingApprovals` surfaces the request's `action_type` /
+  `inputs_hash` verbatim.
 - `src/harvest.ts` — `harvestCandidates(events)` derives the **durable-memory
   harvest queue** (every supported, clean, retrievable belief worth offering a
   human as a keeper *lesson*, with its evidence + provenance) and the

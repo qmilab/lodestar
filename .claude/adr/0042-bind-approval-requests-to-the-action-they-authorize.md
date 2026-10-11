@@ -1,9 +1,9 @@
 # ADR-0042: Bind approval requests to the action they authorize
 
-- **Status:** Proposed
+- **Status:** Accepted (implemented — #179, PR #192 on `feat/approval-representation-adr-0042`)
 - **Date:** 2026-10-11
 - **Deciders:** Nandan, Claude
-- **Related:** #179, ADR-0010 (signed approval resolutions — the forgery
+- **Related:** #179, PR #192, ADR-0010 (signed approval resolutions — the forgery
   boundary this extends), ADR-0015 (the `ApprovalChannel` transport seam and its
   `announce` sensitivity ceiling), ADR-0041 (quorum — the additive-optional
   precedent, and the promote-then-adjudicate host flow),

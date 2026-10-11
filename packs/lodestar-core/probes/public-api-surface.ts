@@ -41,8 +41,11 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import {
+  ACTION_REPRESENTATION_HASH_PATTERN,
   APPROVAL_QUORUM_REACHED_EVENT_TYPE,
   APPROVAL_QUORUM_REACHED_SCHEMA_VERSION,
+  type Action,
+  type ActionRepresentation,
   type ApprovalGrantedPayload,
   type ApprovalQuorumReachedPayload,
   ApprovalQuorumReachedPayloadSchema,
@@ -111,6 +114,7 @@ import {
   type ProbeResultsBadge,
   ProbeResultsBadgeSchema,
   QuorumApprovalRefSchema,
+  type RepresentableAction,
   type RequiredAuthority,
   RequiredAuthoritySchema,
   SENTINEL_ALERTED_EVENT_TYPE,
@@ -123,6 +127,9 @@ import {
   SentinelSeveritySchema,
   SentinelSubjectSchema,
   type UnsignedPackBadge,
+  actionRepresentationHash,
+  canonicalActionRepresentation,
+  canonicalJsonValue,
   firewallEventType,
 } from "@qmilab/lodestar-core"
 import { EventLogReader, canonicalHash } from "@qmilab/lodestar-event-log"
@@ -135,8 +142,10 @@ import {
   QUORUM_REACHED_EVENT,
   type QuorumCollector,
   type QuorumRoster,
+  REPRESENTATION_MISMATCH_PREFIX,
   approverRosterFrom,
   assertQuorumRoster,
+  canonicalForExecution,
   needsQuorum,
   policyDeclaresQuorum,
   promotedVoteEventType,
@@ -146,6 +155,7 @@ import {
   quorumOptions,
   quorumReachedPayload,
   quorumShortfallReason,
+  representationMismatch,
   resolutionIsAuthentic,
   voteFromResolution,
 } from "@qmilab/lodestar-guard"
@@ -185,6 +195,8 @@ import {
 } from "@qmilab/lodestar-policy-kernel"
 import { ShipManifestSchema, ShipRecordSchema } from "@qmilab/lodestar-ship"
 import {
+  type ApprovalBindingStatus,
+  type ApprovalRepresentation,
   type ChainProjection,
   type MemoryCandidate,
   type PendingApproval,
@@ -192,10 +204,13 @@ import {
   type RenderOptions,
   type SupersededLesson,
   type WireProjection,
+  approvalRepresentation,
+  escapeUntrustedText,
   harvestCandidates,
   pendingApprovals,
   projectChain,
   quorumRecords,
+  renderCanonicalJson,
   renderReport,
   toWireProjection,
 } from "@qmilab/lodestar-trace"
@@ -272,6 +287,38 @@ pinType<(evaluation: QuorumEvaluation) => string>(quorumShortfallReason)
 pinType<QuorumCollector>(
   async (_request: ApprovalRequest): Promise<readonly ApprovalResolution[]> => [],
 )
+
+// The approval representation binding (ADR-0042). Core owns the canonical
+// representation and its hash (an external approver tool must compute exactly
+// this to bind a signature); -trace owns what an approver is shown; -guard owns
+// the promote-time check every host runs.
+pinType<(action: RepresentableAction) => string>(actionRepresentationHash)
+pinType<(action: RepresentableAction) => ActionRepresentation>(canonicalActionRepresentation)
+pinType<<T>(value: T) => T>(canonicalJsonValue)
+pinType<(events: EventEnvelope[], request: ApprovalRequest) => ApprovalRepresentation>(
+  approvalRepresentation,
+)
+pinType<(text: string) => string>(escapeUntrustedText)
+pinType<(value: unknown) => string>(renderCanonicalJson)
+pinType<
+  (
+    action: RepresentableAction,
+    request: Pick<ApprovalRequest, "action_type" | "inputs_hash">,
+    resolution?: { inputs_hash?: string },
+  ) => string | null
+>(representationMismatch)
+pinType<(action: Action) => Action>(canonicalForExecution)
+pinType<
+  (doc: {
+    request_id: string
+    action_id: string
+    kind: "granted" | "denied"
+    approver_id: string
+    reason?: string
+    inputs_hash?: string
+    at: string
+  }) => string
+>(canonicalApprovalResolutionHash)
 
 // @qmilab/lodestar-otel-exporter — deterministic ids + the OTLP IR
 pinType<(projectId: string, sessionId: string) => string>(traceIdFor)
@@ -1905,6 +1952,154 @@ await check("policy-kernel: sign → verify round-trip + the contractual reject 
   )
   // the explicit allow_unsigned opt-out lets an unsigned resolution through
   verifyApprovalSignature(validResolution, undefined, { authorizedKeys, allowUnsigned: true })
+})
+
+// ── ADR-0042: the approval representation binding ──────────────────────────
+await check("ADR-0042: an approval binds the operation it authorizes", () => {
+  const action: Action = {
+    id: "a1",
+    intent: "push",
+    tool: "git.push",
+    inputs: { remote: "origin", branch: "main" },
+    contract: {
+      required_level: 4,
+      blast_radius: "external",
+      reversibility: "irreversible",
+      scope: { level: "global", identifier: "*" },
+      data_sensitivity: "private",
+      preconditions: [],
+    },
+    phase: "pending_approval",
+    audit: [],
+    proposed_at: "2026-01-01T00:00:00.000Z",
+    proposed_by: "agent",
+  }
+  const hash = actionRepresentationHash(action)
+  const asProposed: Action = { ...action, phase: "proposed", intent: "x", audit: [] }
+  expect(ACTION_REPRESENTATION_HASH_PATTERN.test(hash), "representation hash is not sha-256 hex")
+  expect(
+    actionRepresentationHash(asProposed) === hash,
+    "the representation hash moved with phase / narrative fields",
+  )
+  expect(
+    actionRepresentationHash(JSON.parse(JSON.stringify(action)) as Action) === hash,
+    "the representation hash did not survive the log's JSON round-trip",
+  )
+  expect(
+    actionRepresentationHash({ ...action, proposed_by: "other" }) !== hash,
+    "proposed_by (the tool's actor_id) is not bound",
+  )
+  expect(
+    canonicalActionRepresentation(action).tool === "git.push",
+    "canonical representation lost the tool",
+  )
+  expect(
+    JSON.stringify(canonicalJsonValue({ b: 1, a: 2 })) === '{"a":2,"b":1}',
+    "canonicalJsonValue did not sort keys",
+  )
+
+  // The host check: null when bound to this operation, a prefixed reason otherwise.
+  const request: ApprovalRequest = {
+    request_id: "r1",
+    action_id: "a1",
+    reason: "held",
+    required_authority: {},
+    requested_at: "2026-01-01T00:00:00.000Z",
+    action_type: "git.push",
+    inputs_hash: hash,
+  }
+  expect(
+    representationMismatch(action, request, { inputs_hash: hash }) === null,
+    "bound check refused a match",
+  )
+  expect(representationMismatch(action, request, {}) === null, "an unbound resolution was refused")
+  const other = actionRepresentationHash({ ...action, inputs: { branch: "docs" } })
+  expect(
+    representationMismatch(action, request, { inputs_hash: other })?.startsWith(
+      REPRESENTATION_MISMATCH_PREFIX,
+    ) === true,
+    "a resolution bound to another operation was not refused",
+  )
+  expect(
+    representationMismatch(action, { ...request, inputs_hash: other }) !== null,
+    "a request that no longer describes the held action was not refused",
+  )
+  const canonical = canonicalForExecution(action)
+  expect(
+    actionRepresentationHash(canonical) === hash &&
+      Object.keys(canonical.inputs as object).join(",") === "branch,remote",
+    "canonicalForExecution moved the hash or did not canonicalize the inputs",
+  )
+
+  // The signed document: unbound bytes unchanged, bound is a different document.
+  const unbound = {
+    request_id: "r1",
+    action_id: "a1",
+    kind: "granted" as const,
+    approver_id: "operator",
+    at: "2026-01-01T00:00:00.000Z",
+  }
+  const preAdr = new Bun.CryptoHasher("sha256")
+    .update(
+      '{"action_id":"a1","approver_id":"operator","at":"2026-01-01T00:00:00.000Z","kind":"granted","request_id":"r1"}',
+    )
+    .digest("hex")
+  expect(
+    canonicalApprovalResolutionHash(unbound) === preAdr,
+    "an unbound resolution's canonical hash moved",
+  )
+  expect(
+    canonicalApprovalResolutionHash({ ...unbound, inputs_hash: hash }) !== preAdr,
+    "inputs_hash is not inside the signed document",
+  )
+  expect(
+    ApprovalResolutionSchema.safeParse({ ...unbound, inputs_hash: hash }).success,
+    "the side-channel schema rejected a bound resolution",
+  )
+  expect(
+    !ApprovalResolutionSchema.safeParse({ ...unbound, inputs_hash: "not-a-hash" }).success,
+    "the side-channel schema accepted a malformed inputs_hash",
+  )
+
+  // What an approver is shown.
+  const envelope = (id: string, type: string, payload: unknown) =>
+    EventEnvelopeSchema.parse({
+      ...validEnvelope,
+      id,
+      type,
+      payload_hash: canonicalHash(payload),
+      payload,
+    })
+  const honest = [
+    envelope("p1", "action.proposed", { ...action, phase: "proposed" }),
+    envelope("r1", "approval.requested", request),
+  ]
+  const shown: ApprovalRepresentation = approvalRepresentation(honest, request)
+  const status: ApprovalBindingStatus = shown.status
+  expect(status === "verified", `an honest log did not verify: ${shown.problems.join("; ")}`)
+  expect(
+    shown.representation_hash === hash &&
+      JSON.stringify(JSON.parse(renderCanonicalJson(shown.representation?.inputs))) ===
+        JSON.stringify(canonicalJsonValue(action.inputs)),
+    "the rendering is not the canonical stored inputs",
+  )
+  expect(
+    approvalRepresentation(
+      [...honest, envelope("p2", "action.proposed", { ...action, inputs: { branch: "docs" } })],
+      request,
+    ).status === "mismatch",
+    "a planted conflicting record was not a MISMATCH",
+  )
+  expect(escapeUntrustedText("plain") === "plain", "plain text was altered")
+  expect(
+    escapeUntrustedText(`a${String.fromCodePoint(0x1b)}b`) === '"a\\u001bb"',
+    "a control character was not escaped",
+  )
+  const pending = pendingApprovals([envelope("r1", "approval.requested", request)])
+  expect(
+    pending[0]?.action_type === "git.push" && pending[0]?.inputs_hash === hash,
+    "pendingApprovals did not surface action_type / inputs_hash",
+  )
 })
 
 // ── @qmilab/lodestar-ship: lodestar.session_ship@1 wire format ────────────

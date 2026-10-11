@@ -156,12 +156,28 @@ un-park the hold. The proxy stays the sole event-log writer.
 
 | Subcommand | Flags | Meaning |
 | --- | --- | --- |
-| `approve list` | `--project <id>`, `--log-root <path>` | List requests awaiting approval |
-| `approve grant <request-id>` | `--approver <id>`, `--project <id>`, `--key <path>` | Grant, signed with the approver's key |
+| `approve list` | `--project <id>`, `--log-root <path>` | List requests awaiting approval, with the held operation and its binding |
+| `approve grant <request-id>` | `--approver <id>`, `--project <id>`, `--key <path>`, `--expect-hash <hex>` | Grant, signed with the approver's key and bound to the operation shown |
 | `approve deny <request-id>` | `--approver <id>`, `--project <id>`, `--key <path>` | Deny the request |
 | `approve keygen` | `--approver <id>`, `--out <path>` | Generate an Ed25519 approver keypair |
 
 The signing key is read from `--key` or `LODESTAR_APPROVER_KEY` — never from argv.
+
+**What you approve is what you were shown.** `approve list` renders each held
+operation from the log: its tool, the actor it runs as, and the full canonical
+inputs and contract. Nothing is truncated, and every log-sourced string is
+escaped so a planted record cannot rewrite the display. It also prints a
+`binding` line:
+
+- `verified` — the request's representation hash matches the single record of
+  the action.
+- `UNBOUND` — a request from a host older than 0.7.
+- `MISMATCH` — conflicting records, or a hash or tool that disagrees.
+
+`grant` refuses a `MISMATCH` (exit `6`) and signs the representation it showed
+you. The host refuses any grant that names a different operation.
+`--expect-hash <prefix>` (printed by `list`) makes `grant` also refuse unless the
+held operation still has that hash. See ADR-0042.
 
 ```sh
 lodestar approve list --project my-project

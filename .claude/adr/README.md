@@ -551,4 +551,4 @@ The options we rejected, each with a one-line reason.
   show. Bound resolutions are a declared forward-compat boundary (pre-0.7 verifiers fail closed). Honest scope: binding is
   verify-if-present (an unbound legacy resolution still resolves; a require-binding opt-in is
   deferred), and the hash can confirm guesses of low-entropy inputs to whoever already sees the
-  request. **Status: Proposed.**
+  request. Implemented with probe `approved-action-cannot-be-substituted`. **Status: Accepted.**

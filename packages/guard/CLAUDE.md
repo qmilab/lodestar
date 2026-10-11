@@ -114,6 +114,22 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
   than downgrading; `quorumGrantedOutcome` throws on an unsatisfied evaluation;
   `promotedVotePayload` carries the signature). The *wording* of
   `quorumShortfallReason` is deliberately not contractual.
+- `src/representation.ts` — the host side of ADR-0042 (#179, Loopjacking's
+  *representation mismatch*), shared by all three governance hosts so they cannot
+  drift. `representationMismatch(action, request, resolution?)` → `null` or a
+  reason prefixed `REPRESENTATION_MISMATCH_PREFIX`: it recomputes the
+  `actionRepresentationHash` of **the action the host is about to run** and
+  requires the request's `action_type` / `inputs_hash` and the resolution's
+  signed `inputs_hash` (each when present — verify-if-present) to name it.
+  Recomputed at the check, never remembered, because the log a host might
+  remember from is unauthenticated. `canonicalForExecution(action)` swaps in the
+  canonical JSON `inputs` / `contract` (hash unchanged) — the proxy and runtime
+  gate execute it; `guard.wrap()` does not (in process a tool schema may yield
+  non-JSON values). `approvals-channel.ts` declares the optional `inputs_hash`
+  (the schema is strict) and `resolutionToOutcome` carries it;
+  `quorum-host.ts`'s `promotedVotePayload` / `voteFromResolution` /
+  `resolutionIsAuthentic` carry it too — it is inside the signed bytes, so a
+  promoted vote that dropped it would no longer verify.
 - `src/policy-presets.ts` — `alwaysHoldsChecker` only. `autoApprovePolicy` has
   **graduated** into `@qmilab/lodestar-policy-kernel` (it now honours the
   trust-ladder floor: L4 always holds, L5 denies; its ceiling caps at L3) and is
@@ -191,7 +207,18 @@ A meta-package. Mostly re-exports plus two helpers: `wrap` and the
    is written**: emitting first and throwing after would leave a durable pending
    approval in the log that nothing configured could ever resolve, indexed as an
    open hold in `pendingApprovals` and `lodestar approve list` forever.
-7. **Sentinels gate only through a wired arbiter — and only when the agent
+7. **An approval is bound to the operation it authorizes (ADR-0042).** Before a
+   resolver's outcome is applied, and before each collected quorum vote is
+   promoted, `guard.wrap()` runs `representationMismatch` against the parked
+   action as it stands *now*. A mismatch is never promoted: a single-approver
+   outcome expires the request at once (`approval.expired@1`, then
+   `action.rejected` whose audit names the mismatch — the in-process soft-denial
+   terminal), and a mismatched quorum vote is skipped and named in the shortfall
+   expiry. In process this is a **consistency assertion**, not a boundary (the
+   resolver and the agent share a realm — ADR-0010's posture): it catches a held
+   action whose live inputs were mutated while the resolver waited. The window
+   between `resolve()` and the tool body is the Action Kernel's.
+8. **Sentinels gate only through a wired arbiter — and only when the agent
    declares its decisions.** `GuardConfig.arbiter` is the seam; supplying it (with
    `policy_gate` compiled from the *same* arbiter, i.e. the `compileWithSentinels`
    pair) is the only thing that lets a sentinel alert / calibration flag /
