@@ -72,6 +72,8 @@ that run in CI.
 - [Sentinels and calibration](concepts/sentinels-and-calibration.md) — runtime
   monitoring and confidence measurement.
 - [Memory poisoning](concepts/threat-model/memory-poisoning.md) — the threat model.
+- [OWASP Top 10 for Agentic Applications](concepts/owasp-agentic-top-10.md) —
+  what Lodestar addresses in each category, and what it doesn't.
 
 **Reference:** [architecture](reference/architecture.md) ·
 [CLI](reference/cli.md) · [probe packs](reference/probe-packs.md)
