@@ -920,7 +920,15 @@ async function proxyCases(): Promise<string | undefined> {
       "approval.granted",
       asGrantedPayload(vote(request, "alice", benignHashFor(held, { branch: "docs" }))),
     )
-    const result = await call
+    // A host that skipped its own check would hit the ActionKernel backstop and
+    // throw out of the hold. Report that as THIS host's failure, not a crash.
+    let result: Awaited<typeof call>
+    try {
+      result = await call
+    } catch (err) {
+      await proxy.stop()
+      return `[I] the proxy did not refuse a log-path grant bound to a different operation at promote — it reached ActionKernel.resolve() and threw: ${err instanceof Error ? err.message : String(err)}`
+    }
     await proxy.stop()
     const events = await readSession(logDir, sessionId)
     const audit = representationRejections(events).find((p) => p.rejected_event_id === planted)
