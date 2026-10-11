@@ -184,7 +184,7 @@ Everything runs locally — free, Apache-2.0, no hosted service and no account r
 
 ## Status
 
-**v0.5.0 — published to npm (27 packages via CI trusted publishing), v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch.** Batches 1–5 are complete, and the post-v1 build track has landed: sentinel→action wiring, the Policy Kernel, nine native governed adapters, the read-side Governing UI, the OpenTelemetry exporter, signed approval resolutions, and a durable calibration event. The v1.5 build track has also landed: the non-MCP runtime adapters (LangGraph / CrewAI / AutoGen Python hooks on the shared runtime-gate, published to PyPI), the trust-pack registry, and the cognitive-core belief-enrichment epic.
+**v0.6.0 — published to npm (27 packages via CI trusted publishing), v0.2 architecture. Renamed from the internal codename Orrery to Lodestar prior to public launch.** Batches 1–5 are complete, and the post-v1 build track has landed: sentinel→action wiring, the Policy Kernel, nine native governed adapters, the read-side Governing UI, the OpenTelemetry exporter, signed approval resolutions, and a durable calibration event. The v1.5 build track has also landed: the non-MCP runtime adapters (LangGraph / CrewAI / AutoGen Python hooks on the shared runtime-gate, published to PyPI), the trust-pack registry, and the cognitive-core belief-enrichment epic.
 
 **Highlights:**
 

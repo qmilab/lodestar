@@ -2,9 +2,11 @@
 
 Codename `Lodestar`. Open epistemic governance framework for AI agents.
 
-**Status**: v0.5.0 published to npm (all 27 packages) and PyPI (the four
+**Status**: v0.6.0 published to npm (all 27 packages) and PyPI (the four
 `lodestar-runtime-*` Python hooks) via CI trusted publishing — staged
-publishing, maintainer-approved; v0.2 architecture locked. The 0.5.0
+publishing, maintainer-approved; v0.2 architecture locked. The 0.6.0
+release shipped kernel-adjudicated M-of-N quorum approvals (#175,
+ADR-0041) and added no new packages. The 0.5.0
 release added the 26th and 27th npm packages —
 `@qmilab/lodestar-adapter-vector` (the governed Vector/RAG retrieval adapter
 over pgvector, ADR-0039) and `@qmilab/lodestar-adapter-payments` (the
