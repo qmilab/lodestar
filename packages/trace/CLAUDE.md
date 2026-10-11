@@ -96,6 +96,23 @@ projects it into the epistemic chain, then renders markdown.
   (`truth_status: superseded`), never a separate top-level candidate — replacement
   with the history preserved, not overwritten. Advisory only — every item is
   `status: "candidate"`; keeping a lesson is a separate write-side surface.
+- `src/taint.ts` — `taintSet(events, beliefId, { sensitivityCeiling? })` and
+  `renderTaintSet()`: the **belief blast-radius projection** (#182,
+  `lodestar report <session> --taint <belief_id>`). Pure, read-only, no new event,
+  no core schema change. Walks belief → `decision.made.belief_dependencies` →
+  actions naming the decision (`action.decision_id`, any phase) → outcomes →
+  `effect_observation_ids` → claims (`source_observation_ids`) → adopted beliefs,
+  repeating for the newly tainted beliefs. **Order:** breadth-first by wave
+  (`depth`; root = 0), entries ordered by `logical_clock` then event id.
+  **Cycle guard:** every belief/decision/action/outcome id is visited once
+  (first-reached = shortest path), so a loop back to an already-tainted belief
+  terminates. Supersession links touching the set are reported, not walked.
+  **Over-approximates by design** (no firewall-authentication, unlike harvest — a
+  missed dependent is the dangerous error in an audit). **Ceiling:** the shipper's
+  posture via the core gate primitives — ids/edges/phases/`payload_hash` always,
+  content above `internal` (default) withheld; decisions/outcomes with no
+  own label fail closed to `secret`. **Not on the stable public-API ledger**
+  (v0 heuristic; the edge set will grow). Probe: `taint-projection-matches-dependents`.
 - `src/report.ts` — `renderReport()` turns a projection into markdown.
 - `src/load.ts` — convenience wrappers around `EventLogReader` for the
   CLI; finds project directories and the default log root.

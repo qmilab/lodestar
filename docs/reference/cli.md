@@ -49,10 +49,35 @@ meant to be pasted into a GitHub issue or a Slack message.
 | `--log-root <path>` | `-l` | Event-log root directory |
 | `--out <file>` | `-o` | Write the report to a file instead of stdout |
 | `--raw-events <n>` | | Append the last *n* raw event envelopes for debugging |
+| `--taint <belief-id>` | | Render the belief's **blast radius** instead of the full report (below) |
+| `--sensitivity-ceiling <level>` | | With `--taint`: content above this level is withheld (default `internal`) |
 
 ```sh
 lodestar report session-1779551238212
 ```
+
+### `--taint` — what did this belief touch?
+
+```sh
+lodestar report session-1779551238212 --taint belief-8f2c
+```
+
+Lists every `decision.made` that carried the belief as a `belief_dependency`,
+every action those decisions justified (proposed, held, rejected, completed,
+failed), their outcomes, and the beliefs those outcomes' effect observations fed
+— followed transitively, each node once, so a feedback loop terminates.
+Supersession links that touch the set are listed but not walked. It is a pure
+read-side projection of the existing log: nothing is written and no new event
+is needed.
+
+The set deliberately **over-approximates** — it follows recorded edges without
+discarding events an agent could have forged, because a missed dependent is the
+dangerous error. The sensitivity ceiling applies as it does for `lodestar ship`:
+ids, edges and `payload_hash` always show; content above the ceiling (a secret
+action's intent and inputs, a confidential claim's statement, and — failing
+closed — every decision's question) is withheld and the node marked redacted.
+Exits `0` even when the belief is unknown (the output says so). This projection
+is a v0 heuristic and is not on the stable public-API ledger.
 
 ## `view` — the read-side Governing UI
 
