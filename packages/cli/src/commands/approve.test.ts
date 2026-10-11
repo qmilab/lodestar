@@ -978,11 +978,11 @@ describe("lodestar approve — the representation binding (ADR-0042)", () => {
     logRoot: string,
     inputs: unknown,
     reason = "L4 egress requires approval",
+    requestId: string = randomUUID(),
   ): Promise<{ requestId: string; action: Action; hash: string }> {
     const action = heldAction(inputs)
     await append(logRoot, "action.proposed", { ...action, phase: "proposed" })
     await append(logRoot, "action.pending_approval", action)
-    const requestId = randomUUID()
     const hash = actionRepresentationHash(action)
     await append(logRoot, "approval.requested", {
       request_id: requestId,
@@ -1039,6 +1039,22 @@ describe("lodestar approve — the representation binding (ADR-0042)", () => {
       expect(out).not.toContain(ESC)
       expect(out).toContain("main\\u202egnp")
       expect(out).toContain("ship it\\u001b[2J")
+    } finally {
+      await rm(logRoot, { recursive: true, force: true })
+    }
+  })
+
+  test("the suggested command quotes a hostile request id losslessly", async () => {
+    _resetEventLogStateForTests()
+    const logRoot = await mkdtemp(join(tmpdir(), "cli-approve-shellarg-"))
+    try {
+      const hostileId = `req"x${ESC}[2J'y`
+      await seedBoundHold(logRoot, { branch: "main" }, "held", hostileId)
+      const { out } = await runApprove(["list", "--project", PROJECT, "--log-root", logRoot])
+      // ANSI-C quoting: the shell decodes it back to exactly the original id, and
+      // no raw ESC reaches the terminal.
+      expect(out).toContain(`lodestar approve grant $'req"x\\u001b[2J\\'y'`)
+      expect(out).not.toContain(ESC)
     } finally {
       await rm(logRoot, { recursive: true, force: true })
     }

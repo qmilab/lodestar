@@ -65,6 +65,8 @@
  *      the gate refuses to resume rather than run whichever record sorts last.
  *   N. Restart over a planted `approval.requested` that strips the quorum: one
  *      valid vote must NOT execute a quorum hold — the conflict fails closed.
+ *   N2. A planted request with a different id: the conflict fails closed and
+ *      every request id for the action is expired, none left open in the queue.
  *   O. Quorum sites: a mismatched channel vote is never promoted, a mismatched log
  *      vote is audited, and bound votes reach quorum with the body receiving the
  *      canonical inputs.
@@ -546,6 +548,33 @@ function pureCases(): string | undefined {
   )
   if (shadowed.status !== "mismatch") {
     return "[D] a planted UNBOUND copy of a bound request was not flagged — an attacker could downgrade the binding by shadowing the request."
+  }
+  // An own `__proto__` key is valid JSON, hashed and executed — so it must be
+  // rendered too, never swallowed by the prototype setter.
+  const protoInputs = JSON.parse('{"branch":"main","opts":{"__proto__":{"force":true}}}') as unknown
+  const protoAction = sampleAction(protoInputs)
+  const protoRendered = renderCanonicalJson(canonicalJsonValue(protoAction.inputs))
+  if (!protoRendered.includes('"__proto__"')) {
+    return "[D] an own __proto__ key vanished from the approver's rendering while the hash and the executed value keep it — the approver sees less than they sign."
+  }
+  if (
+    actionRepresentationHash({ ...protoAction, inputs: JSON.parse(protoRendered) }) !==
+    actionRepresentationHash(protoAction)
+  ) {
+    return "[D] the rendering of an own __proto__ key does not re-hash to the action's representation."
+  }
+  // A legacy request that still NAMES a tool is checked against it: every host
+  // refuses a resolution whose request names a different tool.
+  const legacyWrongTool = approvalRepresentation(honest, {
+    request_id: "req-legacy",
+    action_id: stored.id,
+    reason: "held",
+    required_authority: {},
+    requested_at: "2026-10-11T00:00:00.000Z",
+    action_type: "mcp.other.tool",
+  })
+  if (legacyWrongTool.status !== "mismatch") {
+    return `[D] a request naming a DIFFERENT tool (and no inputs_hash) was '${legacyWrongTool.status}', not a MISMATCH — the CLI would sign a grant every host then refuses.`
   }
   return undefined
 }
@@ -1460,6 +1489,37 @@ async function gateCases(): Promise<string | undefined> {
     }
     if (resumed.phase !== "rejected") {
       return `[N] a conflicting planted approval.requested did not fail the resume closed (phase '${String(resumed.phase)}').`
+    }
+  }
+
+  // N2. A planted request with a DIFFERENT id for the same action: the conflict
+  //     fails the resume closed AND expires every request id the log holds for
+  //     the action — none is left open in the read-side queue.
+  {
+    const logDir = await mkdtemp(join(tmpdir(), "lodestar-probe-representation-gate-n2-"))
+    const sessionId = "probe-representation-gate-n2"
+    const first = await buildGate(sessionId, logDir)
+    const { actionId, requestId, request } = await gateHold(
+      first.hook,
+      { branch: "main" },
+      logDir,
+      sessionId,
+    )
+    await first.gate.stop()
+    await appendToLog(logDir, sessionId, "approval.requested", {
+      ...request,
+      request_id: crypto.randomUUID(),
+      reason: "routine",
+    })
+    const second = await buildGate(sessionId, logDir)
+    const resumed = await second.hook.resume(actionId, requestId, 0)
+    await second.gate.stop()
+    if (resumed.phase !== "rejected" || second.hook.runs() !== 0) {
+      return `[N2] a conflicting request with a different id did not fail the resume closed (phase '${String(resumed.phase)}').`
+    }
+    const open = pendingApprovals(await readSession(logDir, sessionId))
+    if (open.length !== 0) {
+      return `[N2] after refusing the conflicting hold, ${open.length} request(s) stayed open in the read-side queue — every request id for the action must be expired.`
     }
   }
 

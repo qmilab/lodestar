@@ -57,12 +57,16 @@ export const ACTION_REPRESENTATION_HASH_PATTERN = /^[0-9a-f]{64}$/
  *
  * Throws on what `JSON.stringify` throws on (a `BigInt`, a cycle) — a value the
  * event log could not have recorded either.
+ *
+ * Typed `unknown → unknown` on purpose: normalization is not type-preserving (a
+ * `Date` becomes a string, a function `undefined`, `NaN` `null`), so a caller that
+ * knows its value is already JSON-shaped asserts that itself.
  */
-export function canonicalJsonValue<T>(value: T): T {
-  if (value === undefined) return value
+export function canonicalJsonValue(value: unknown): unknown {
+  if (value === undefined) return undefined
   const text = JSON.stringify(value)
-  if (text === undefined) return undefined as T
-  return JSON.parse(stableStringify(JSON.parse(text))) as T
+  if (text === undefined) return undefined
+  return JSON.parse(stableStringify(JSON.parse(text)))
 }
 
 /**

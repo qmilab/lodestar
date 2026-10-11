@@ -121,13 +121,25 @@ export function approvalRepresentation(
   }
 
   if (request.inputs_hash === undefined) {
-    // Legacy request: render what can be rendered, but nothing binds it.
+    // Legacy request: render what can be rendered, but nothing binds it. A tool it
+    // DOES name is still checked — every host refuses a resolution whose request
+    // names a different tool, so signing one here would only stall the hold.
     if (representations.size === 0) {
       result.problems.push(
         `no record of action '${request.action_id}' in the log — the operation cannot be shown`,
       )
     }
-    result.status = requestContents.size > 1 || representations.size > 1 ? "mismatch" : "unbound"
+    const toolDisagrees =
+      request.action_type !== undefined &&
+      result.representation !== undefined &&
+      request.action_type !== result.representation.tool
+    if (toolDisagrees) {
+      result.problems.push(
+        `the request names tool '${request.action_type}', but the action record runs '${result.representation?.tool}'`,
+      )
+    }
+    result.status =
+      requestContents.size > 1 || representations.size > 1 || toolDisagrees ? "mismatch" : "unbound"
     return result
   }
 
@@ -246,7 +258,15 @@ function sortKeysDeep(value: unknown): unknown {
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {}
     for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = sortKeysDeep((value as Record<string, unknown>)[key])
+      // Define, never assign: `out["__proto__"] = v` would invoke the legacy
+      // prototype setter and DROP the key from the rendering, while the hash and
+      // the executed value keep it — the approver would see less than they sign.
+      Object.defineProperty(out, key, {
+        value: sortKeysDeep((value as Record<string, unknown>)[key]),
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      })
     }
     return out
   }

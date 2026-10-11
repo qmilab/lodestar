@@ -295,7 +295,7 @@ pinType<QuorumCollector>(
 // the promote-time check every host runs.
 pinType<(action: RepresentableAction) => string>(actionRepresentationHash)
 pinType<(action: RepresentableAction) => ActionRepresentation>(canonicalActionRepresentation)
-pinType<<T>(value: T) => T>(canonicalJsonValue)
+pinType<(value: unknown) => unknown>(canonicalJsonValue)
 pinType<(events: EventEnvelope[], request: ApprovalRequest) => ApprovalRepresentation>(
   approvalRepresentation,
 )

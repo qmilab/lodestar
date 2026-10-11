@@ -92,7 +92,9 @@ export function canonicalForExecution(
   return {
     ...action,
     inputs: canonicalJsonValue(action.inputs),
-    contract: canonicalJsonValue(action.contract),
+    // An ActionContract is JSON-shaped by schema (its one open field,
+    // `expected_at_approval`, is `unknown`), so normalization keeps the shape.
+    contract: canonicalJsonValue(action.contract) as Action["contract"],
   }
 }
 

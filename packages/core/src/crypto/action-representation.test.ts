@@ -105,7 +105,7 @@ describe("canonicalJsonValue", () => {
     const canonicalized = {
       ...proposed,
       inputs: once,
-      contract: canonicalJsonValue(proposed.contract),
+      contract: canonicalJsonValue(proposed.contract) as Action["contract"],
     }
     expect(actionRepresentationHash(canonicalized)).toBe(actionRepresentationHash(proposed))
   })

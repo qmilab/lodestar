@@ -343,7 +343,7 @@ function writeRepresentation(rep: ApprovalRepresentation): void {
 
 /** The next-step command for a pending request, shell-safe even for a planted id. */
 function resolveHint(req: ApprovalRequest, rep: ApprovalRepresentation, projectId: string): string {
-  const id = shellArg(escapeUntrustedText(req.request_id))
+  const id = shellArg(req.request_id)
   const project = shellArg(projectId)
   if (rep.status === "mismatch") {
     return `  resolve: lodestar approve deny ${id} --approver <id> --project ${project}   (grant is refused on a MISMATCH)`
@@ -361,13 +361,34 @@ function indentBlock(text: string): string {
 }
 
 /**
- * Quote a value for a POSIX shell when it is not a plain token, so a suggested
- * command an approver copies cannot carry a planted request id's metacharacters
- * into their shell.
+ * Quote a value for a shell, LOSSLESSLY, so a suggested command an approver copies
+ * names exactly the original id — and never carries a planted id's
+ * metacharacters into their shell, nor a raw control / bidi / invisible code point
+ * onto their terminal.
+ *
+ * A plain token is printed as-is; a value with no unsafe code point is
+ * single-quoted; anything else uses ANSI-C quoting (`$'...'`, bash and zsh), with
+ * each unsafe code point written as a `\u` / `\U` escape the shell decodes back to
+ * the original character.
  */
 function shellArg(value: string): string {
   if (/^[A-Za-z0-9._:@/-]+$/.test(value)) return value
-  return `'${value.replace(/'/g, `'\\''`)}'`
+  if (escapeUntrustedText(value) === value) return `'${value.replace(/'/g, `'\\''`)}'`
+  let out = "$'"
+  for (const ch of value) {
+    if (ch === "\\" || ch === "'") {
+      out += `\\${ch}`
+    } else if (ch !== '"' && escapeUntrustedText(ch) !== ch) {
+      const codePoint = ch.codePointAt(0) ?? 0
+      out +=
+        codePoint > 0xffff
+          ? `\\U${codePoint.toString(16).padStart(8, "0")}`
+          : `\\u${codePoint.toString(16).padStart(4, "0")}`
+    } else {
+      out += ch
+    }
+  }
+  return `${out}'`
 }
 
 // ── grant | deny ───────────────────────────────────────────────────────────
@@ -528,7 +549,7 @@ async function resolveRequest(input: {
     if (representation.status === "verified" && expectHash === undefined) {
       writeRepresentation(representation)
       process.stderr.write(
-        `[approve] refused: granting signs the operation above. Review it, then acknowledge it explicitly:\n          lodestar approve grant ${shellArg(escapeUntrustedText(requestId))} --expect-hash ${(representation.representation_hash ?? "").slice(0, 16)} --approver ${shellArg(escapeUntrustedText(approver))} --project ${shellArg(projectId)}\n`,
+        `[approve] refused: granting signs the operation above. Review it, then acknowledge it explicitly:\n          lodestar approve grant ${shellArg(requestId)} --expect-hash ${(representation.representation_hash ?? "").slice(0, 16)} --approver ${shellArg(approver)} --project ${shellArg(projectId)}\n`,
       )
       return 6
     }

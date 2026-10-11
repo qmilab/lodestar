@@ -805,9 +805,12 @@ export class RuntimeGate {
     const requestRecord = await this.reconstructRequest(msg.action_id)
     const conflict = rebuilt?.conflict ?? requestRecord?.conflict
     if (conflict !== undefined) {
+      // Expire EVERY request id the log holds for this action, not just the one
+      // that sorts first — a planted record can sort ahead of the genuine one,
+      // and the genuine request must not be left open in the read-side queue.
       return await this.refuseConflictingHold(
         parked,
-        requestRecord?.request.request_id ?? msg.request_id,
+        requestRecord?.requestIds ?? [msg.request_id],
         conflict,
       )
     }
@@ -1809,7 +1812,7 @@ export class RuntimeGate {
    */
   private async reconstructRequest(
     actionId: string,
-  ): Promise<{ request: ApprovalRequest; conflict?: string } | undefined> {
+  ): Promise<{ request: ApprovalRequest; conflict?: string; requestIds: string[] } | undefined> {
     // ADR-0042: the terms this hold is adjudicated under — `quorum`,
     // `required_authority`, `deadline`, the representation binding — come back
     // from an unauthenticated log, so they are not read latest-wins. The gate
@@ -1819,6 +1822,7 @@ export class RuntimeGate {
     const events = await this.readSessionEvents()
     let first: ApprovalRequest | undefined
     const contents = new Set<string>()
+    const requestIds = new Set<string>()
     for (const ev of events) {
       if (ev.type !== "approval.requested") continue
       const parsed = ApprovalRequestSchema.safeParse(ev.payload)
@@ -1826,15 +1830,17 @@ export class RuntimeGate {
       if (parsed.data.action_id !== actionId) continue
       first ??= parsed.data
       contents.add(canonicalHashHex(parsed.data))
+      requestIds.add(parsed.data.request_id)
     }
     if (first === undefined) return undefined
     if (contents.size > 1) {
       return {
         request: first,
+        requestIds: [...requestIds],
         conflict: `the durable log holds ${contents.size} different approval requests for held action '${actionId}' — a planted record; refusing to adjudicate under any of them`,
       }
     }
-    return { request: first }
+    return { request: first, requestIds: [first.request_id] }
   }
 
   /**
@@ -1845,22 +1851,21 @@ export class RuntimeGate {
    */
   private async refuseConflictingHold(
     parked: Action,
-    requestId: string,
+    requestIds: readonly string[],
     conflict: string,
   ): Promise<Omit<GovernResultMessage, "id">> {
     const kernel = this.requireKernel()
     const expired: ApprovalOutcome = {
       kind: "expired",
       action_id: parked.id,
-      request_id: requestId,
+      request_id: requestIds[0] ?? "",
       reason: conflict,
     }
     const rejected = kernel.resolve(parked, expired)
-    await this.emit("approval.expired", {
-      request_id: requestId,
-      action_id: parked.id,
-      at: rejected.approval?.at ?? new Date().toISOString(),
-    })
+    const at = rejected.approval?.at ?? new Date().toISOString()
+    for (const requestId of requestIds) {
+      await this.emit("approval.expired", { request_id: requestId, action_id: parked.id, at })
+    }
     await this.emit("action.rejected", rejected)
     this.pendingActions.delete(parked.id)
     return {
