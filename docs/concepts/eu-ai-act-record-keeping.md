@@ -70,16 +70,16 @@ Every row names something that exists in this repository today.
 
 | Provision shape | Lodestar artifact | Where it lives | Pinned by |
 | --- | --- | --- | --- |
-| Automatic recording of events over the system's lifetime (Art. 12(1)) | Every governed step is an `EventEnvelope` appended to an NDJSON log; `seq`, `logical_clock`, `causal_parent_ids`, `actor_id`, `timestamp` and a `versions` block (model, prompt hash, tool version, policy version) are on every record | `packages/core/src/schemas/event.ts`, `packages/event-log` | `event-log-single-writer`, `event-log-canonical-hash` |
+| Automatic recording of events over the system's lifetime (Art. 12(1)) | Every governed step is an `EventEnvelope` appended to an NDJSON log; `seq`, `logical_clock`, `causal_parent_ids`, `actor_id` and `timestamp` are on every record, along with a `versions` object whose fields (model, prompt hash, tool version, policy version, memory snapshot) are all optional; the guard, MCP-proxy and runtime-gate emitters currently populate only `schema_registry_version`, so a host that wants the rest must set them | `packages/core/src/schemas/event.ts`, `packages/event-log` | `event-log-single-writer`, `event-log-canonical-hash` |
 | Logs that are trustworthy as evidence | `payload_hash` = sha-256 of the canonical payload: tamper-evident without per-event signatures. It is **evidence of alteration, not a forgery boundary**; signatures are added where authority matters (approvals, policy versions, packs) | `EventEnvelopeSchema.payload_hash` | `event-log-canonical-hash` (round-trip), `policy-version-signature-required` |
 | Reconstructing an individual decision after the fact (Art. 12(2)) | The eight-link chain Observation → Claim → EvidenceSet → Belief → Decision → Action → Outcome → Revision is a causal DAG over the log; `lodestar report <session-id>` renders it as a pure read-side projection | [epistemic chain](epistemic-chain.md), `packages/trace` | `documentation-evidence-provenance`, `contradicted-belief-flags-dependent-decisions` |
 | Recording events relevant to risk situations (Art. 12(2)(a)) | `sentinel.alerted` events when a sentinel (for example `suspicious-memory-origin`) fires; `firewall.*@1` audit events for belief adoption and transitions | `schemas/sentinel.ts`, `schemas/firewall.ts` | `guard-arbiter-gates-dependent-action`, `harvest-projection-surfaces-durable-lessons` |
 | Monitoring performance over time (Art. 12(2)(b)–(c)) | `calibration.computed@1`: a calibration pass recorded as a durable, schema-valid, replayable event (measure ≠ write) | `schemas/calibration.ts`, `lodestar harness calibrate` | `calibration-event-is-durable` |
-| A human can intervene on a consequential action (Art. 14(4), Art. 26(2)) | High-trust actions (L4 and above) park at `pending_approval` and execute nothing until resolved; `approval.requested@1` carries the matched rule's `reason` and the `required_authority` an approver must hold | [trust ladder](trust-ladder.md), [Policy Kernel](policy-kernel.md), `schemas/approval.ts` | `l4-action-requires-approval`, `pending-approval-cannot-execute` |
+| A human can intervene on a consequential action (Art. 14(4), Art. 26(2)) | L4 actions park at `pending_approval` (L5 is prohibited and always denied, so it never reaches an approver) and execute nothing until resolved; `approval.requested@1` carries the matched rule's `reason` and the `required_authority` an approver must hold | [trust ladder](trust-ladder.md), [Policy Kernel](policy-kernel.md), `schemas/approval.ts` | `l4-action-requires-approval`, `pending-approval-cannot-execute` |
 | The intervention itself is recorded, with a reason | `approval.granted@1` / `approval.denied@1` (approver id and optional note), `approval.expired@1` on timeout, and `action.rejected` carrying the action's `reason` | `schemas/approval.ts`, `schemas/action.ts` | `approval-timeout-denies`, `approval-via-side-channel` |
-| Oversight by someone with the authority to exercise it (Art. 26(2)) | The approver's signed resolution is verified against operator-pinned keys, and eligibility is checked against `required_authority`; a forged, unsigned or ineligible grant cannot un-park an action | `schemas/approval.ts`, `packages/policy-kernel` | `forged-approval-cannot-execute`, `forged-approval-via-http-channel-cannot-execute` |
+| Oversight by someone with the authority to exercise it (Art. 26(2)) | On the signed side-channel and quorum paths, an approver's resolution is verified against operator-pinned keys, and quorum adjudication also checks eligibility against `required_authority`; a forged or unsigned grant cannot un-park an action there. This is **not uniform across every single-approver path**: `guard.wrap()` trusts the `ApprovalOutcome` returned by the resolver you inject, the proxy and runtime hosts do not themselves apply `required_authority` to a signed single-approver response, and a local channel can be configured with `allow_unsigned` | `schemas/approval.ts`, `packages/policy-kernel` | `forged-approval-cannot-execute`, `forged-approval-via-http-channel-cannot-execute` |
 | More than one overseer for the highest-stakes actions | M-of-N quorum: each approver's own signed vote is logged; the kernel, not a client, adjudicates and emits `approval.quorum_reached@1` naming every vote | ADR-0041, `schemas/approval.ts` | `quorum-requires-distinct-eligible-approvers` |
-| Stopping a run | A pending hold stays parked; a deny or deadline expiry is a terminal soft denial that cannot be resumed into execution | `packages/action-kernel`, `packages/runtime-core` | `approval-timeout-denies`, `runtime-gate-enforces-two-phase` |
+| Blocking an action before it runs (partial answer to Art. 14(4)(d)–(e)) | A pending hold stays parked; a deny or deadline expiry is a terminal soft denial of **that action** that cannot be resumed into execution. The agent can re-plan and propose something else. This is pre-execution blocking, not a stop button | `packages/action-kernel`, `packages/runtime-core` | `approval-timeout-denies`, `runtime-gate-enforces-two-phase` |
 | Keeping logs without over-collection (Art. 26(6), read alongside data-minimisation duties) | `lodestar ship` applies a **sensitivity ceiling** client-side before transfer: above-ceiling records ship as a redaction marker plus the original `payload_hash`, so tamper evidence survives without the content leaving; an invalid ceiling throws rather than failing open | `packages/ship` (`lodestar.session_ship@1`) | `ship-respects-sensitivity-ceiling`, `ship-wire-roundtrip` |
 | Retention for at least six months (Art. 26(6)) | The log is an append-only NDJSON file under the operator's control; **retention is an operator practice, not something Lodestar enforces** (see below) | operator storage | not applicable |
 
@@ -100,6 +100,7 @@ Every row names something that exists in this repository today.
 - **Personal data.** A log containing personal data is itself subject to data
   protection law. The sensitivity ceiling reduces what leaves the machine; it
   is not a lawful-basis analysis.
+- **A system-level stop.** Nothing here interrupts an already-executing tool or halts the agent as a whole; a deny refuses one proposed action. An Art. 14(4)(e)-style stop is the host's to provide.
 - **The model.** The log records what the agent observed, claimed, decided and
   did. It does not explain the internals of the model underneath.
 - **Trust in the host.** The log is tamper-*evident*, not tamper-proof. An
@@ -110,8 +111,10 @@ Every row names something that exists in this repository today.
 
 If you are assessing a deployment, a reasonable way to use the mapping is to
 take one real consequential action, run `lodestar report` for its session, and
-check that the report alone lets a reviewer answer: what did the system
-observe, what did it conclude, who was asked to approve, who did, and what
-happened next. If the answer is yes for your own cases, you have evidence of
+check that it answers what the system observed, what it concluded, and (on the
+action) who finally approved or rejected it and why. `lodestar report` does not
+project `approval.*` or quorum events, so the `required_authority` of the
+request and the individual votes must be read from the raw log events (or the
+approval projections in `@qmilab/lodestar-trace`). If both reads give a reviewer what they need in your own cases, you have evidence of
 the *shape* described above, which counsel can then weigh against the actual
 obligations.
