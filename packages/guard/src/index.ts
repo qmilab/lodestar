@@ -107,6 +107,16 @@ export {
   type QuorumRoster,
 } from "./quorum-host.js"
 
+// ── Approval representation binding (ADR-0042) ───────────────────────────────
+// The predicate every host runs before promoting a resolution: does it — and the
+// request it answers — still name the operation the host is about to run? Shared
+// so the three hosts cannot drift on what counts as a mismatch.
+export {
+  REPRESENTATION_MISMATCH_PREFIX,
+  canonicalForExecution,
+  representationMismatch,
+} from "./representation.js"
+
 // ── Sentinel→action arbitration bridge ───────────────────────────────────────
 // The host-side glue that gives sentinel alerts teeth: it runs the sentinels over
 // the guarded session's event stream and projects their landed alerts (plus the

@@ -415,3 +415,55 @@ describe("openApprovalRequest carries the rule's quorum", () => {
     expect("quorum" in req).toBe(false)
   })
 })
+
+describe("ADR-0042 — the representation binding", () => {
+  const HASH_A = "a".repeat(64)
+  const HASH_B = "b".repeat(64)
+
+  test("openApprovalRequest names the held operation", () => {
+    const action = {
+      id: "act-1",
+      tool: "http.request",
+      inputs: { url: "https://example.test" },
+      proposed_by: "agent",
+      contract: {
+        required_level: 4,
+        blast_radius: "external",
+        reversibility: "irreversible",
+        data_sensitivity: "internal",
+        scope: { level: "global", identifier: "*" },
+        preconditions: [],
+      },
+    } as unknown as Parameters<typeof openApprovalRequest>[0]
+    const evaluation: PolicyEvaluation = {
+      verdict: "hold",
+      reason: "held",
+      decider_id: "policy",
+      matched: { source: "floor" },
+      required_authority: {},
+    }
+    const req = openApprovalRequest(action, evaluation, { request_id: "r" })
+    expect(req.action_type).toBe("http.request")
+    expect(req.inputs_hash).toMatch(/^[0-9a-f]{64}$/)
+  })
+
+  test("a vote bound to a different representation than the request's does not count", () => {
+    const [a, b, c] = [approver("alice"), approver("bob"), approver("carol")]
+    const req = request({ inputs_hash: HASH_A })
+    const result = evaluateQuorum(
+      req,
+      [
+        vote(a, { inputs_hash: HASH_A }, req),
+        vote(b, { inputs_hash: HASH_B }, req),
+        vote(c, {}, req),
+      ],
+      { authorizedKeys: keyRoster(a, b, c), approverAuthority: authorityRoster(a, b, c) },
+    )
+    expect(result.satisfied).toBe(false)
+    expect(result.rejected.map((r) => [r.approver_id, r.code])).toEqual([
+      ["bob", "not_for_request"],
+    ])
+    // An unbound vote (carol) is the legacy shape and still counts.
+    expect(result.approvals.map((x) => x.approver_id)).toEqual(["alice", "carol"])
+  })
+})

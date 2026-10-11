@@ -58,6 +58,7 @@ import {
   voteFromResolution,
   voteIsBoundTo,
 } from "./quorum-host.js"
+import { representationMismatch } from "./representation.js"
 import type {
   AgentLoop,
   ApprovalResolver,
@@ -533,12 +534,25 @@ export async function runGuarded<T>(
     }
 
     const votes: QuorumVote[] = []
+    // Votes refused at promote because they name a different operation than the
+    // one held (ADR-0042) — never written, so the shortfall reason names them.
+    const refusedForRepresentation: string[] = []
     for (const resolution of await quorum.collect(request)) {
       // Binding BEFORE promotion, not just before counting: a collector that
       // returned a stale-but-validly-signed resolution for another hold would
       // otherwise get it written into this session's log as that hold's grant.
       if (!voteIsBoundTo(resolution, request)) continue
       if (!resolutionIsAuthentic(resolution, quorum.authorized_keys)) continue
+      // ADR-0042: the representation binding, checked against the held action as
+      // it stands NOW — so neither a vote for a different operation nor a held
+      // action whose live inputs changed during the hold can be promoted. Not
+      // written: the log would otherwise say this approver granted an operation
+      // they never saw.
+      const mismatch = representationMismatch(parked, request, resolution)
+      if (mismatch !== null) {
+        refusedForRepresentation.push(`${resolution.approver_id} — ${mismatch}`)
+        continue
+      }
       const eventId = await emit(promotedVoteEventType(resolution), promotedVotePayload(resolution))
       votes.push(voteFromResolution(resolution, eventId))
     }
@@ -548,7 +562,12 @@ export async function runGuarded<T>(
     if (!evaluation.satisfied && evaluation.vetoed === undefined) {
       // Too few counted votes and nobody vetoed: expire it. Fail closed — an
       // accumulated M-1 is NOT an approval, and there is nothing left to wait on.
-      const expired = expireRequest(request, { reason: quorumShortfallReason(evaluation) })
+      const shortfall = quorumShortfallReason(evaluation)
+      const reason =
+        refusedForRepresentation.length === 0
+          ? shortfall
+          : `${shortfall}; refused at promote: ${refusedForRepresentation.join("; ")}`
+      const expired = expireRequest(request, { reason })
       const rejected = kernel.resolve(parked, expired)
       await emit(
         "approval.expired",
@@ -653,6 +672,25 @@ export async function runGuarded<T>(
     }
 
     const outcome = await resolver(request)
+    // ADR-0042: before the resolver's verdict is applied, the held action must
+    // still be the operation the request names (its live inputs may have changed
+    // while the resolver waited), and an outcome that carries the representation
+    // its resolver showed must name this one. In process this is a consistency
+    // assertion, not a boundary — the resolver and the agent share the realm (the
+    // ADR-0010 posture). A mismatch expires the request at once: the in-process
+    // soft-denial terminal, with the reason on the action's rejection audit.
+    if (outcome.kind !== "expired") {
+      const mismatch = representationMismatch(parked, request, outcome)
+      if (mismatch !== null) {
+        const expired = expireRequest(request, { reason: mismatch })
+        const rejected = kernel.resolve(parked, expired)
+        await emit(
+          "approval.expired",
+          approvalEventPayload(expired, request, rejected.approval?.at ?? new Date().toISOString()),
+        )
+        return rejected
+      }
+    }
     // Apply (and validate the binding) first, so the canonical `at` comes from
     // the kernel transition and a mis-bound outcome throws before we log it.
     const resolved = kernel.resolve(parked, outcome)
@@ -905,6 +943,8 @@ function approvalEventPayload(
     at,
   }
   if (outcome.reason !== undefined) payload.reason = outcome.reason
+  // ADR-0042: the representation the resolver bound, carried onto the event.
+  if (outcome.inputs_hash !== undefined) payload.inputs_hash = outcome.inputs_hash
   return payload
 }
 

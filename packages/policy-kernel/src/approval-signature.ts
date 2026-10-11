@@ -50,6 +50,13 @@ import {
  * `kind` from the event type. `reason` is omitted when unset, matching the
  * omit-never-undefined discipline the wire formats hold — so `stableStringify`
  * (which drops undefined keys) reproduces the signer's bytes byte-for-byte.
+ *
+ * `inputs_hash` (ADR-0042) is the action representation the approver was shown
+ * and is authorizing — the `actionRepresentationHash` of the operation. It is
+ * optional under the same rule as `reason`: absent, the canonical document is
+ * exactly the pre-ADR document, so every signature made before it still
+ * verifies. Present, it is inside the signed bytes, so it cannot be stripped from
+ * a bound resolution without breaking the signature.
  */
 export interface ApprovalResolutionDoc {
   request_id: string
@@ -57,6 +64,7 @@ export interface ApprovalResolutionDoc {
   kind: "granted" | "denied"
   approver_id: string
   reason?: string
+  inputs_hash?: string
   at: string
 }
 
@@ -74,6 +82,9 @@ export function canonicalApprovalResolutionDocument(
     at: doc.at,
   }
   if (doc.reason !== undefined) canonical.reason = doc.reason
+  // Added only when present, exactly like `reason`, so an unbound resolution's
+  // canonical bytes are the pre-ADR-0042 bytes and its signature still verifies.
+  if (doc.inputs_hash !== undefined) canonical.inputs_hash = doc.inputs_hash
   return canonical
 }
 

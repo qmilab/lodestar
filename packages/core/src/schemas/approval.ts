@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { ACTION_REPRESENTATION_HASH_PATTERN } from "../crypto/action-representation.js"
 import { SignatureSchema } from "./actor.js"
 import { TimestampSchema } from "./common.js"
 import { RequiredAuthoritySchema } from "./policy.js"
@@ -33,6 +34,14 @@ import { RequiredAuthoritySchema } from "./policy.js"
  */
 
 /**
+ * An `actionRepresentationHash` (ADR-0042): sha-256 of the canonical
+ * `{ action_id, tool, inputs, contract, proposed_by }`, 64 lowercase hex.
+ */
+const RepresentationHashSchema = z
+  .string()
+  .regex(ACTION_REPRESENTATION_HASH_PATTERN, "expected a sha-256 hex action representation hash")
+
+/**
  * The payload of an `approval.requested@1` event: a parked action awaiting a
  * human (or auto-rule) verdict. `reason` is the matched rule's reason,
  * verbatim. `required_authority` says what an approver must be (checked
@@ -43,6 +52,14 @@ import { RequiredAuthoritySchema } from "./policy.js"
  * `tools/call` open indefinitely without tripping client timeouts); it is
  * *omitted entirely* in the in-process `guard.wrap()` path, where a hold can
  * simply await the resolver — never set to `undefined`.
+ *
+ * `action_type` and `inputs_hash` (ADR-0042) say *what* the parked action is:
+ * its tool, and the `actionRepresentationHash` of the operation it will run. They
+ * close Loopjacking's representation mismatch — an approver signing an
+ * `action_id` they could not inspect. Both are omitted entirely when absent, so a
+ * request written before them is byte-identical and parses unchanged. The hash is
+ * unsalted: it can confirm a *guess* of low-entropy inputs to anyone who already
+ * sees the request, and travels only where the request already does.
  */
 export const ApprovalRequestSchema = z.object({
   request_id: z.string().min(1),
@@ -68,6 +85,18 @@ export const ApprovalRequestSchema = z.object({
     .describe(
       "distinct approvals required; omitted entirely for the single-approver path (so >= 2 here, never 1)",
     ),
+  // ADR-0042: what the parked action IS, so the approval surface can show it and
+  // an approver can bind their signature to it. Stamped by the host when it opens
+  // the request; omitted entirely when absent (never undefined), so a request
+  // written before these fields is byte-identical.
+  action_type: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("the held action's tool, verbatim (e.g. mcp.<server>.<tool>); omitted when unset"),
+  inputs_hash: RepresentationHashSchema.optional().describe(
+    "actionRepresentationHash of the held action — { action_id, tool, inputs, contract, proposed_by }; omitted when unset",
+  ),
 })
 export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
 
@@ -77,7 +106,7 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
  * omitted entirely when unset.
  *
  * `signature` is an optional Ed25519 signature over the canonical resolution
- * document (`{ request_id, action_id, kind, approver_id, reason?, at }`),
+ * document (`{ request_id, action_id, kind, approver_id, reason?, inputs_hash?, at }`),
  * produced by the approver's private key. When present it makes the granted
  * event **self-verifying in the log**: a reader can later re-check the grant
  * came from an operator-pinned approver key, not merely trust that the proxy
@@ -87,6 +116,12 @@ export type ApprovalRequest = z.infer<typeof ApprovalRequestSchema>
  * requires it (a forged side-channel grant cannot un-park an action), while the
  * in-process resolver path may omit it (same trusted process, no forgery
  * surface). Hash + verification live in `@qmilab/lodestar-policy-kernel`.
+ *
+ * `inputs_hash` (ADR-0042) is the action representation the approver bound their
+ * signature to. It must ride the promoted event whenever the approver signed it,
+ * because it is *inside* the signed document: a reader that rebuilt the document
+ * without it would reject a genuine vote. A pre-0.7 reader does exactly that and
+ * fails closed — the forward-compatibility boundary ADR-0042 declares.
  */
 export const ApprovalGrantedPayloadSchema = z.object({
   request_id: z.string().min(1),
@@ -96,6 +131,9 @@ export const ApprovalGrantedPayloadSchema = z.object({
   at: TimestampSchema,
   signature: SignatureSchema.optional().describe(
     "Ed25519 signature over the canonical resolution; signer_id === approver_id; omitted entirely when unset",
+  ),
+  inputs_hash: RepresentationHashSchema.optional().describe(
+    "the action representation the approver bound their signature to (ADR-0042); inside the signed document when present, omitted when unset",
   ),
 })
 export type ApprovalGrantedPayload = z.infer<typeof ApprovalGrantedPayloadSchema>
@@ -116,6 +154,9 @@ export const ApprovalDeniedPayloadSchema = z.object({
   at: TimestampSchema,
   signature: SignatureSchema.optional().describe(
     "Ed25519 signature over the canonical resolution; signer_id === approver_id; omitted entirely when unset",
+  ),
+  inputs_hash: RepresentationHashSchema.optional().describe(
+    "the action representation the approver bound their signature to (ADR-0042); inside the signed document when present, omitted when unset",
   ),
 })
 export type ApprovalDeniedPayload = z.infer<typeof ApprovalDeniedPayloadSchema>
@@ -240,6 +281,14 @@ export const APPROVAL_QUORUM_REACHED_SCHEMA_VERSION = "1" as const
  * NOT verify against the operator-pinned approver keys, refused to promote it,
  * and left the action held. A host status record, not an agent signal — the
  * durable forensic trail of a forgery attempt (`feedArbiter: false`).
+ *
+ * Since ADR-0042 it also records a resolution refused because its **binding**
+ * failed: the signature may verify, but the resolution (or the request it
+ * answers) names an action representation other than the one the host will run.
+ * Its `reason` then begins `representation mismatch:` and names both hashes. The
+ * event's read-side contract is unchanged and is the reason it was reused rather
+ * than a new type minted: *refused at the promotion boundary — never count it as a
+ * resolution*, which every existing consumer already honours.
  *
  * `source` says which resolution source the rejected forgery came from, which
  * is what lets a read-side projection respond *precisely* rather than tainting

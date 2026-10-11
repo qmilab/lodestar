@@ -393,6 +393,10 @@
     {
       "name": "taint-projection-matches-dependents",
       "file": "probes/taint-projection-matches-dependents.ts"
+    },
+    {
+      "name": "approved-action-cannot-be-substituted",
+      "file": "probes/approved-action-cannot-be-substituted.ts"
     }
   ]
 }

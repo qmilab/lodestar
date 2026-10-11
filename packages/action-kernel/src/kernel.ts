@@ -4,6 +4,7 @@ import {
   type ActionContract,
   type ActionPrecondition,
   type Observation,
+  actionRepresentationHash,
   registry,
 } from "@qmilab/lodestar-core"
 import { type Tool, lookupTool } from "./registry.js"
@@ -43,6 +44,12 @@ export interface PolicyDecision {
  * `resolve()` refuses to apply an outcome whose `action_id` is not the action
  * being un-parked. Without this, a grant authorised for one pending action
  * could be applied to a different one (both merely sit at `pending_approval`).
+ *
+ * A granted / denied outcome may also carry the `inputs_hash` its approver bound
+ * (ADR-0042) — the `actionRepresentationHash` of the operation they were shown.
+ * When present, `resolve()` refuses to apply it to an action whose representation
+ * hashes differently: approval is bound to the operation, not only to its id.
+ * Omitted entirely when unset, so an unbound outcome behaves exactly as before.
  */
 export type ApprovalOutcome =
   | {
@@ -52,6 +59,7 @@ export type ApprovalOutcome =
       approver_id: string
       reason?: string
       at?: string
+      inputs_hash?: string
     }
   | {
       kind: "denied"
@@ -60,6 +68,7 @@ export type ApprovalOutcome =
       approver_id: string
       reason?: string
       at?: string
+      inputs_hash?: string
     }
   | { kind: "expired"; action_id: string; request_id: string; reason?: string; at?: string }
 
@@ -293,7 +302,10 @@ export class ActionKernel {
    * The outcome must be bound to this action: `outcome.action_id` has to equal
    * `action.id`, or `resolve()` throws. This stops an outcome authorised for
    * one pending action from being applied to another (both at
-   * `pending_approval`) — approval is per-action, not a fungible token.
+   * `pending_approval`) — approval is per-action, not a fungible token. When the
+   * outcome carries an `inputs_hash` (ADR-0042) it must also equal the action's
+   * `actionRepresentationHash`, or `resolve()` throws — approval is bound to the
+   * operation the approver was shown, not only to its id.
    */
   resolve(action: Action, outcome: ApprovalOutcome): Action {
     if (action.phase !== "pending_approval") {
@@ -303,6 +315,18 @@ export class ActionKernel {
       throw new Error(
         `action-kernel: approval outcome is bound to action '${outcome.action_id}' (request '${outcome.request_id}'), not the action '${action.id}' being resolved`,
       )
+    }
+    // ADR-0042 backstop: an outcome that names the representation its approver
+    // saw may only un-park an action that still IS that representation. Hosts
+    // check this before promotion and handle a mismatch gracefully (audit, keep
+    // the hold); reaching it here is a host bug, so it is loud, not silent.
+    if (outcome.kind !== "expired" && outcome.inputs_hash !== undefined) {
+      const actual = actionRepresentationHash(action)
+      if (outcome.inputs_hash !== actual) {
+        throw new Error(
+          `action-kernel: approval outcome for action '${action.id}' (request '${outcome.request_id}') is bound to representation ${outcome.inputs_hash}, but the action being resolved hashes to ${actual}`,
+        )
+      }
     }
     const granted = outcome.kind === "granted"
     const phase = granted ? "approved" : "rejected"

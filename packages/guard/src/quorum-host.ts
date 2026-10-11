@@ -285,6 +285,9 @@ export function promotedVotePayload(resolution: ApprovalResolution): ApprovalGra
   }
   if (resolution.reason !== undefined) payload.reason = resolution.reason
   if (resolution.signature !== undefined) payload.signature = resolution.signature
+  // ADR-0042: the binding is inside the signed bytes, so it must ride along for
+  // the promoted vote to stay re-verifiable — the same reason the signature does.
+  if (resolution.inputs_hash !== undefined) payload.inputs_hash = resolution.inputs_hash
   return payload
 }
 
@@ -308,6 +311,7 @@ export function voteFromResolution(resolution: ApprovalResolution, eventId: stri
       approver_id: resolution.approver_id,
       at: resolution.at,
       ...(resolution.reason !== undefined ? { reason: resolution.reason } : {}),
+      ...(resolution.inputs_hash !== undefined ? { inputs_hash: resolution.inputs_hash } : {}),
     },
     event_id: eventId,
   }
@@ -432,6 +436,7 @@ export function resolutionIsAuthentic(
         approver_id: resolution.approver_id,
         at: resolution.at,
         ...(resolution.reason !== undefined ? { reason: resolution.reason } : {}),
+        ...(resolution.inputs_hash !== undefined ? { inputs_hash: resolution.inputs_hash } : {}),
       },
       resolution.signature,
       { authorizedKeys, allowUnsigned: false },

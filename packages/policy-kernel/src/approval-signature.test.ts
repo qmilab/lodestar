@@ -156,3 +156,30 @@ describe("signApprovalResolution / verifyApprovalSignature", () => {
     expect(() => signApprovalResolution(DOC, rsaPem)).toThrow(ApprovalSignatureError)
   })
 })
+
+describe("ADR-0042 — inputs_hash in the signed document", () => {
+  test("a resolution without inputs_hash keeps its pre-ADR canonical hash", () => {
+    // The literal pre-ADR canonical bytes: sorted keys, no inputs_hash.
+    const preAdr =
+      '{"action_id":"act-1","approver_id":"operator","at":"2026-06-07T00:00:00Z","kind":"granted","request_id":"req-1"}'
+    const expected = new Bun.CryptoHasher("sha256").update(preAdr).digest("hex")
+    expect(canonicalApprovalResolutionHash(DOC)).toBe(expected)
+  })
+
+  test("a bound resolution signs and verifies, and the binding cannot be stripped", () => {
+    const { publicKeyPem, privateKeyPem } = generateApproverKeyPair()
+    const authorizedKeys = [{ actor_id: "operator", public_key: publicKeyPem }]
+    const bound: ApprovalResolutionDoc = { ...DOC, inputs_hash: "c".repeat(64) }
+    expect(canonicalApprovalResolutionHash(bound)).not.toBe(canonicalApprovalResolutionHash(DOC))
+    const signature = signApprovalResolution(bound, privateKeyPem)
+    verifyApprovalSignature(bound, signature, { authorizedKeys })
+    expect(() => verifyApprovalSignature(DOC, signature, { authorizedKeys })).toThrow(
+      ApprovalSignatureError,
+    )
+    expect(() =>
+      verifyApprovalSignature({ ...bound, inputs_hash: "d".repeat(64) }, signature, {
+        authorizedKeys,
+      }),
+    ).toThrow(ApprovalSignatureError)
+  })
+})
