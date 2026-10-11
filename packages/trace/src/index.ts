@@ -30,6 +30,17 @@ export type { PendingApproval, QuorumRecord } from "./approvals.js"
 export { harvestCandidates } from "./harvest.js"
 export type { MemoryCandidate, SupersededLesson } from "./harvest.js"
 
+export { renderTaintSet, taintSet } from "./taint.js"
+export type {
+  TaintOptions,
+  TaintSet,
+  TaintSupersession,
+  TaintedAction,
+  TaintedBelief,
+  TaintedDecision,
+  TaintedOutcome,
+} from "./taint.js"
+
 export { renderReport } from "./report.js"
 export type { RenderOptions } from "./report.js"
 

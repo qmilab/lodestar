@@ -16,15 +16,20 @@
  */
 
 import { writeFile } from "node:fs/promises"
+import { type Sensitivity, isSensitivity } from "@qmilab/lodestar-core"
 import { projectChain } from "./chain.js"
 import { defaultLogRoot, loadSessionEvents } from "./load.js"
 import { renderReport } from "./report.js"
+import { renderTaintSet, taintSet } from "./taint.js"
 
 interface ParsedArgs {
   session_id?: string
   project_id?: string
   log_root: string
   out?: string
+  taint?: string
+  ceiling?: Sensitivity
+  bad_ceiling?: string
   raw_event_limit: number
 }
 
@@ -42,6 +47,13 @@ function parseArgs(argv: string[]): ParsedArgs {
       if (next) out.log_root = next
     } else if (arg === "--out" || arg === "-o") {
       out.out = argv[++i]
+    } else if (arg === "--taint") {
+      const next = argv[++i]
+      out.taint = next && !next.startsWith("-") ? next : ""
+    } else if (arg === "--sensitivity-ceiling") {
+      const next = argv[++i] ?? ""
+      if (isSensitivity(next)) out.ceiling = next
+      else out.bad_ceiling = next
     } else if (arg === "--raw-events") {
       const next = argv[++i]
       const parsed = next ? Number.parseInt(next, 10) : Number.NaN
@@ -57,8 +69,17 @@ async function main(): Promise<number> {
   const args = parseArgs(process.argv.slice(2))
   if (!args.session_id) {
     process.stderr.write(
-      "usage: lodestar-report <session-id> [--project <id>] [--log-root <path>] [--out <file>] [--raw-events <n>]\n",
+      "usage: lodestar-report <session-id> [--project <id>] [--log-root <path>] [--out <file>] [--raw-events <n>] [--taint <belief-id> [--sensitivity-ceiling <level>]]\n",
     )
+    return 2
+  }
+
+  if (args.bad_ceiling !== undefined) {
+    process.stderr.write(`invalid --sensitivity-ceiling: ${JSON.stringify(args.bad_ceiling)}\n`)
+    return 2
+  }
+  if (args.taint === "") {
+    process.stderr.write("--taint requires a belief id\n")
     return 2
   }
 
@@ -73,6 +94,19 @@ async function main(): Promise<number> {
       `no events found for session '${args.session_id}' under '${args.log_root}'\n`,
     )
     return 3
+  }
+
+  if (args.taint !== undefined) {
+    const md = renderTaintSet(
+      taintSet(loaded.events, args.taint, args.ceiling ? { sensitivityCeiling: args.ceiling } : {}),
+    )
+    if (args.out) {
+      await writeFile(args.out, `${md}\n`, "utf8")
+      process.stderr.write(`wrote ${md.length} bytes to ${args.out}\n`)
+    } else {
+      process.stdout.write(`${md}\n`)
+    }
+    return 0
   }
 
   const projection = projectChain(loaded.events, {

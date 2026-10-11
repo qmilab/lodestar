@@ -389,6 +389,10 @@
     {
       "name": "quorum-requires-distinct-eligible-approvers",
       "file": "probes/quorum-requires-distinct-eligible-approvers.ts"
+    },
+    {
+      "name": "taint-projection-matches-dependents",
+      "file": "probes/taint-projection-matches-dependents.ts"
     }
   ]
 }
